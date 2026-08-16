@@ -3,6 +3,170 @@
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2);
 
+static void feedGpsLine(char *line); // defined in the UBX parser section below
+
+// ----------------------------------------------------------------------------
+// Demo mode: simulate the RAW sensors instead of faking final values.
+// The hardware reads below are swapped for synthetic raw values (ADC counts,
+// hall pulses, magnetometer axes and a synthetic GPS NMEA stream), so the
+// ENTIRE real processing pipeline runs unchanged on simulated data: EMA
+// filters, fuel touch-table interpolation, NTC->temperature math, hall
+// speed, GPS parse/fusion (HAL/GPS/G+H), odometer, fuel consumption and the
+// acceleration timer. The only simulated outputs are the raw readings
+// themselves.
+// ----------------------------------------------------------------------------
+
+// Steady 20°/s heading rotation, shared by the compass and the GPS course so
+// the two always agree.
+static float demoSimHeadingDeg(unsigned long t) {
+  return fmodf((float)t * 0.02f, 360.0f);
+}
+
+// Scripted drive cycle - the single source of truth for hall + GPS + all
+// speed consumers. 0-8s: accelerate 0 -> ~55 km/h (crosses ACCEL_TARGET_SPEED
+// well before the ACCEL_MAX_TIME cap, so the accel timer finishes with a real
+// time). 8-60s: cruise climbing to ~95 km/h with ripple. 60-85s: brake to
+// standstill. 85-90s: idle stop (accel timer re-arms, tank refuels). Then the
+// loop restarts.
+static float demoSimSpeedKmph(unsigned long t) {
+  float phase = fmodf((float)t, 90000.0f);
+  float v = 0.0f;
+  if (phase < 8000.0f) {
+    v = 55.0f * (phase / 8000.0f);
+  } else if (phase < 60000.0f) {
+    float p = phase - 8000.0f;
+    v = 55.0f + 40.0f * (p / 52000.0f) + 5.0f * sinf(p / 4500.0f) +
+        2.0f * sinf(p / 800.0f);
+  } else if (phase < 85000.0f) {
+    v = 95.0f * (1.0f - (phase - 60000.0f) / 25000.0f);
+  }
+  return (v < 0.0f) ? 0.0f : v;
+}
+
+// Inverse of the fuel touch-table: map a desired fuel level (liters) back to
+// the raw ADC reading processFuelSensor() would have to see to compute it.
+static int demoAdcForFuelLiters(float liters) {
+  int n = FUEL_TOUCH_POINTS;
+  if (n < 2) return touchTable[0];
+  float l = constrain(liters, 0.0f, (float)(n - 1));
+  int i = (int)l;
+  if (i >= n - 1) i = n - 2;
+  float frac = l - (float)i;
+  float reading = (float)touchTable[i] +
+                  frac * (float)(touchTable[i + 1] - touchTable[i]);
+  return (int)(reading + 0.5f);
+}
+
+// Inverse of the NTC divider math: the raw ADC count that processTemperature-
+// Sensor() would convert into the given degrees C. Kept clear of the
+// 100/4000 "sensor fault" clamp.
+static int demoAdcForTempC(float c) {
+  float tKelvin = c + 273.15f;
+  float r = NTC_R_ROOM * expf(NTC_BETA * (1.0f / tKelvin - NTC_INV_ROOM_KELVIN));
+  float vOut = 3.3f * r / (r + NTC_R_BALANCE);
+  int adc = (int)(vOut / ADC_VOLTS_FACTOR);
+  return constrain(adc, 150, 3900);
+}
+
+// Inverse of the battery divider formula (processBatterySensor).
+static int demoAdcForBatteryVoltage(float v) {
+  int adc = (int)(((v - 0.2f) / (ADC_VOLTS_FACTOR * 5.7f)) + 0.5f);
+  return constrain(adc, 0, 4095);
+}
+
+// Simulated distance accumulated by the REAL odometer math (hall pulses and
+// GPS movement). Kept separate from totalDistanceKm so demo mileage is
+// display-only and can never reach NVS (see updateGPSOdometer).
+static double demoOdoKm = 0.0;
+
+// Injects synthetic hall pulses on the sensor task tick: interval is derived
+// from the simulated speed (so getHallSpeed() reports it) and the pulse count
+// accumulates real distance through updateGPSOdometer's hall path.
+void simulateRawSensors() {
+  unsigned long now = millis();
+  static unsigned long lastSimTickMs = 0;
+  static float pulseFraction = 0.0f;
+  if (lastSimTickMs == 0) lastSimTickMs = now;
+  float v = demoSimSpeedKmph(now);
+  if (v > 0.5f) {
+    unsigned long intervalUs = (unsigned long)(WHEEL_SPEED_FACTOR / v);
+    float dtH = (float)(now - lastSimTickMs) / 3600000.0f;
+    pulseFraction += (v * dtH) / (float)WHEEL_DIST_PER_PULSE_KM;
+    int pulses = (int)pulseFraction;
+    if (pulses > 0) pulseFraction -= (float)pulses;
+    portENTER_CRITICAL(&hallMux);
+    lastHallPulseTimeUs = micros();
+    hallPulseIntervalUs = intervalUs;
+    if (pulses > 0) hallPulseCount += (unsigned long)pulses;
+    portEXIT_CRITICAL(&hallMux);
+  }
+  lastSimTickMs = now;
+}
+
+// Synthesizes one GPRMC + GPGGA pair per second and feeds them through
+// gps.encode() so TinyGPSPlus parses genuine sentences: satellites, speed,
+// location, date/time and the fusion logic all run for real. The date/time
+// comes from the real system clock when one is set (never applied back - see
+// gpsTask), else from a simulated wall clock.
+static void demoGpsSentence() {
+  static double demoLat = 48.1372, demoLon = 11.5755;
+  unsigned long t = millis();
+  float v = demoSimSpeedKmph(t);
+  // Small independent wobble vs. the hall speed so the fusion occasionally
+  // lands in the G+H band (GPS_MIN_DEV_KMH < delta < MAX_SPEED_DELTA_KMH).
+  float gpsV = v + 2.0f * sinf((float)t / 20000.0f);
+  if (gpsV < 0.0f) gpsV = 0.0f;
+  float course = demoSimHeadingDeg(t);
+  int sats = 6 + (int)(4.0f * (0.5f + 0.5f * sinf((float)t / 12000.0f)));
+  bool hasFix = v > 0.5f;
+
+  if (hasFix) {
+    double dKm = v / 3600.0;
+    double rad = course * (M_PI / 180.0f);
+    demoLat += dKm * cos(rad) / 111.32;
+    demoLon += dKm * sin(rad) / (111.32 * cos(demoLat * M_PI / 180.0f));
+  }
+
+  int yr, mo, da, hr, mi, sc;
+  {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec > 1000000000) {
+      struct tm *g = gmtime(&tv.tv_sec);
+      yr = g->tm_year % 100; mo = g->tm_mon + 1; da = g->tm_mday;
+      hr = g->tm_hour; mi = g->tm_min; sc = g->tm_sec;
+    } else {
+      unsigned long s = 10UL * 3600UL + t / 1000UL;
+      yr = 26; mo = 7; da = 16;
+      hr = (s / 3600) % 24; mi = (s / 60) % 60; sc = s % 60;
+    }
+  }
+
+  char alat[20], alon[20];
+  double aLat = fabs(demoLat);
+  int dLat = (int)aLat;
+  int mLat = (int)(((aLat - dLat) * 60.0) * 10000.0 + 0.5);
+  if (mLat >= 600000) { mLat -= 600000; dLat++; }
+  sprintf(alat, "%02d%02d.%04d", dLat, mLat / 10000, mLat % 10000);
+  double aLon = fabs(demoLon);
+  int dLon = (int)aLon;
+  int mLon = (int)(((aLon - dLon) * 60.0) * 10000.0 + 0.5);
+  if (mLon >= 600000) { mLon -= 600000; dLon++; }
+  sprintf(alon, "%03d%02d.%04d", dLon, mLon / 10000, mLon % 10000);
+
+  char line[130];
+  float knots = gpsV / 1.852f;
+  sprintf(line, "$GPRMC,%02d%02d%02d.00,%c,%s,%c,%s,%c,%.2f,%.1f,%02d%02d%02d*",
+          hr, mi, sc, hasFix ? 'A' : 'V', alat, demoLat < 0 ? 'S' : 'N',
+          alon, demoLon < 0 ? 'W' : 'E', knots, course, da, mo, yr);
+  feedGpsLine(line);
+
+  sprintf(line, "$GPGGA,%02d%02d%02d.00,%s,%c,%s,%c,%d,%02d,%.1f,%.1f,M,0.0,M,,*",
+          hr, mi, sc, alat, demoLat < 0 ? 'S' : 'N', alon, demoLon < 0 ? 'W' : 'E',
+          hasFix ? 1 : 0, sats, 1.2f, 150.0f);
+  feedGpsLine(line);
+}
+
 // ----------------------------------------------------------------------------
 // Compass driver (I2C) - auto-detects the chip actually fitted:
 //   QMC5883P @ 0x2C  (newest revision, used by BZGNSS P25 Pro: CHIPID 0x80,
@@ -281,16 +445,28 @@ static void compassCalFinish() {
 }
 
 void processCompassSensor() {
-  if (!compassReady) return;
   int16_t x, y, z;
   bool ok = false;
-  if (compassChip == COMPASS_HMC)
-    ok = compassRead6(compassAddr, HMC5883L_X_MSB, true, x, y, z);
-  else if (compassChip == COMPASS_P)
-    ok = compassRead6(compassAddr, QMC5883P_DATA, false, x, y, z);
-  else
-    ok = compassRead6(compassAddr, QMC5883L_X_LSB, false, x, y, z);
-  if (!ok) return;
+  if (ENABLE_DEMO_MODE) {
+    // Simulated rotating field. The calibration offsets are added back to the
+    // raw axes so the offset-subtraction and tilt-compensation math in the
+    // heading calculation below still operates on centered values.
+    unsigned long t = millis();
+    float rad = demoSimHeadingDeg(t) * (M_PI / 180.0f);
+    x = COMPASS_CAL_X + (int16_t)(400.0f * cosf(rad));
+    y = COMPASS_CAL_Y + (int16_t)(400.0f * sinf(rad));
+    z = COMPASS_CAL_Z + (int16_t)(60.0f * sinf((float)t / 7000.0f));
+    ok = true;
+  } else {
+    if (!compassReady) return;
+    if (compassChip == COMPASS_HMC)
+      ok = compassRead6(compassAddr, HMC5883L_X_MSB, true, x, y, z);
+    else if (compassChip == COMPASS_P)
+      ok = compassRead6(compassAddr, QMC5883P_DATA, false, x, y, z);
+    else
+      ok = compassRead6(compassAddr, QMC5883L_X_LSB, false, x, y, z);
+    if (!ok) return;
+  }
   compassRawX = x;
   compassRawY = y;
   compassRawZ = z;
@@ -627,7 +803,16 @@ void updateFilteredSpeed() {
 // Analog sensors
 // ----------------------------------------------------------------------------
 void processBatterySensor() {
-  int rawADC = analogRead(BATTERY_SENSE_PIN);
+  int rawADC;
+  if (ENABLE_DEMO_MODE) {
+    // Simulated raw ADC: 12.2..13.8V with a charging ripple - the real
+    // voltage conversion below turns it back into a voltage.
+    unsigned long t = millis();
+    rawADC = demoAdcForBatteryVoltage(
+        12.2f + 1.6f * (0.5f + 0.5f * sinf((float)t / 24000.0f)));
+  } else {
+    rawADC = analogRead(BATTERY_SENSE_PIN);
+  }
   rawBatteryADC = rawADC;
   batteryVoltage = ((float)rawADC * ADC_VOLTS_FACTOR * 5.7f) + 0.2f;
   if (batteryVoltage < 2.0f)
@@ -636,7 +821,16 @@ void processBatterySensor() {
 
 void processTemperatureSensor() {
   static float filteredEngineTemp = -1000.0f;
-  int rawADC = analogRead(TEMP_SENSE_PIN);
+  int rawADC;
+  if (ENABLE_DEMO_MODE) {
+    // Simulated raw ADC: 20C cold start, ~90s warmup to ~85C with ripple.
+    unsigned long t = millis();
+    float warm = fminf((float)t / 90000.0f, 1.0f);
+    rawADC = demoAdcForTempC(
+        20.0f + 65.0f * warm + 2.5f * sinf((float)t / 15000.0f));
+  } else {
+    rawADC = analogRead(TEMP_SENSE_PIN);
+  }
   rawTempADC = rawADC;
   if (rawADC <= 100 || rawADC >= 4000) {
     filteredEngineTemp = -1000.0f;
@@ -661,8 +855,16 @@ void processTemperatureSensor() {
 
 void processLightSensor() {
   static const float alpha = 0.15f;
-  analogRead(LIGHT_SENSOR_PIN);
-  int raw = analogRead(LIGHT_SENSOR_PIN);
+  int raw;
+  if (ENABLE_DEMO_MODE) {
+    // Simulated raw ADC: slow day/night cycle so the ambient-value EMA and
+    // auto-brightness run for real.
+    unsigned long t = millis();
+    raw = 300 + (int)(3400.0f * (0.5f + 0.5f * sinf((float)t / 45000.0f)));
+  } else {
+    analogRead(LIGHT_SENSOR_PIN);
+    raw = analogRead(LIGHT_SENSOR_PIN);
+  }
   ambientLightValue = raw;
   rawLightADC = raw;
   if (filteredAmbientValue < 1.0f)
@@ -672,11 +874,34 @@ void processLightSensor() {
 }
 
 void processFuelSensor() {
-  int sum = 0;
-  for (int i = 0; i < 16; i++) {
-    sum += analogRead(FUEL_TOUCH_PIN);
+  int instantReading;
+  if (ENABLE_DEMO_MODE) {
+    // Simulated fuel: burns in proportion to the distance driven (~6 L per
+    // 100 km, so the km/L and average consumption calculations downstream
+    // produce realistic numbers), refills slowly while parked, and carries a
+    // tiny slosh so the gauge is not dead-still. The touch-table interpolation
+    // + EMA below convert the raw ADC back to liters/percent.
+    unsigned long t = millis();
+    static float demoFuelLevel = 5.5f;
+    static unsigned long lastFuelSimMs = 0;
+    if (lastFuelSimMs == 0) lastFuelSimMs = t;
+    float dtS = (float)(t - lastFuelSimMs) / 1000.0f;
+    lastFuelSimMs = t;
+    float vNow = demoSimSpeedKmph(t);
+    if (vNow > 0.5f)
+      demoFuelLevel -= (vNow * dtS / 3600.0f) * 0.06f; // burn while driving
+    else
+      demoFuelLevel += 0.05f * dtS; // refuel while parked
+    demoFuelLevel = constrain(demoFuelLevel, 0.3f, 5.5f);
+    instantReading =
+        demoAdcForFuelLiters(demoFuelLevel + 0.03f * sinf((float)t / 5000.0f));
+  } else {
+    int sum = 0;
+    for (int i = 0; i < 16; i++) {
+      sum += analogRead(FUEL_TOUCH_PIN);
+    }
+    instantReading = sum / 16;
   }
-  int instantReading = sum / 16;
   rawFuelADC = instantReading;
   filteredReading = ((float)instantReading * FUEL_FILTER_ALPHA) +
                     (filteredReading * (1.0f - FUEL_FILTER_ALPHA));
@@ -706,7 +931,9 @@ void processFuelSensor() {
 // Odometer (Hall pulses + GPS distance)
 // ----------------------------------------------------------------------------
 void updateGPSOdometer() {
-  if (ENABLE_POWER_SENSE && digitalRead(POWER_SENSE_PIN) == LOW) {
+  // Demo mode never sleeps on the power-sense pin (no real power module).
+  if (ENABLE_POWER_SENSE && !ENABLE_DEMO_MODE &&
+      digitalRead(POWER_SENSE_PIN) == LOW) {
     pendingSleep = true;
     while (1)
       vTaskDelay(pdMS_TO_TICKS(100));
@@ -718,15 +945,24 @@ void updateGPSOdometer() {
   portEXIT_CRITICAL(&hallMux);
   bool isGpsValid =
       (gps.location.isValid() && gps.satellites.value() >= MIN_SATELLITES);
+  // In demo mode the odometer math still runs, but the simulated distance is
+  // accumulated into demoOdoKm and the NVS-backed totalDistanceKm is never
+  // touched - demo mileage can never corrupt the stored real odometer.
+  bool isDemo = ENABLE_DEMO_MODE;
 
   if (!isGpsValid && pulses > 0) {
-    totalDistanceKm += (double)pulses * WHEEL_DIST_PER_PULSE_KM;
-    tripDistanceKm += (double)pulses * WHEEL_DIST_PER_PULSE_KM;
-    if (totalDistanceKm - lastSavedOdo >= 1.0) {
-      preferences.begin("dashboard", false);
-      preferences.putDouble("odo", totalDistanceKm);
-      preferences.end();
-      lastSavedOdo = totalDistanceKm;
+    double dKm = (double)pulses * WHEEL_DIST_PER_PULSE_KM;
+    tripDistanceKm += dKm;
+    if (isDemo) {
+      demoOdoKm += dKm;
+    } else {
+      totalDistanceKm += dKm;
+      if (totalDistanceKm - lastSavedOdo >= 1.0) {
+        preferences.begin("dashboard", false);
+        preferences.putDouble("odo", totalDistanceKm);
+        preferences.end();
+        lastSavedOdo = totalDistanceKm;
+      }
     }
   }
   if (isGpsValid && gps.location.isUpdated()) {
@@ -735,13 +971,17 @@ void updateGPSOdometer() {
           gps.location.lat(), gps.location.lng(), lastLat, lastLon);
       if (distanceMeters < 500.0) {
         double dKm = (distanceMeters / 1000.0);
-        totalDistanceKm += dKm;
         tripDistanceKm += dKm;
-        if (totalDistanceKm - lastSavedOdo >= 1.0) {
-          preferences.begin("dashboard", false);
-          preferences.putDouble("odo", totalDistanceKm);
-          preferences.end();
-          lastSavedOdo = totalDistanceKm;
+        if (isDemo) {
+          demoOdoKm += dKm;
+        } else {
+          totalDistanceKm += dKm;
+          if (totalDistanceKm - lastSavedOdo >= 1.0) {
+            preferences.begin("dashboard", false);
+            preferences.putDouble("odo", totalDistanceKm);
+            preferences.end();
+            lastSavedOdo = totalDistanceKm;
+          }
         }
       }
     }
@@ -761,16 +1001,23 @@ void processFuelConsumption() {
     float consumed = tripStartFuelLiters - fuelLiters;
     if (consumed > 0.0f)
       tripFuelConsumedLiters = consumed;
-    else if (consumed < -0.5f) {
+    // A fuel-level rise beyond the user-set threshold (REFUEL_RESET_LITERS,
+    // webui "Refuel Reset Threshold") counts as a refuel: reset the trip
+    // consumption instead of subtracting the rising level.
+    else if (consumed < -REFUEL_RESET_LITERS) {
       tripStartFuelLiters = fuelLiters;
       tripFuelConsumedLiters = 0.0f;
     }
   }
-  averageKml = (tripDistanceKm > 0.05 && tripFuelConsumedLiters > 0.01f)
-                   ? (float)(tripDistanceKm / tripFuelConsumedLiters)
-                   : 0.0f;
-  if (averageKml > 99.9f)
-    averageKml = 99.9f;
+  // Consumption is computed internally as L/100km (the physically natural
+  // unit, fuel per distance) and converted to km/L for display:
+  // km/L = 100 / (L/100km). The 99.9 km/L display cap corresponds to
+  // 1.001 L/100km.
+  float avgL100 =
+      (tripDistanceKm > 0.05 && tripFuelConsumedLiters > 0.01f)
+          ? (float)((tripFuelConsumedLiters / tripDistanceKm) * 100.0)
+          : 0.0f;
+  averageKml = (avgL100 > 1.001f) ? (100.0f / avgL100) : 99.9f;
 
   static unsigned long lastInstSampleTime = 0;
   static double lastInstDistKm = 0.0;
@@ -782,9 +1029,9 @@ void processFuelConsumption() {
     lastInstDistKm = tripDistanceKm;
     lastInstFuelLiters = fuelLiters;
     if (getFilteredSpeed() > 0.0f && dDist > 0.005 && dFuel > 0.001f) {
-      float rawInst = (float)(dDist / dFuel);
-      if (rawInst > 99.9f)
-        rawInst = 99.9f;
+      // Same L/100km intermediate as the average above, then km/L.
+      float instL100 = (float)((dFuel / dDist) * 100.0);
+      float rawInst = (instL100 > 1.001f) ? (100.0f / instL100) : 99.9f;
       instantKml = (rawInst * 0.4f) + (instantKml * 0.6f);
     } else if (getFilteredSpeed() == 0.0f)
       instantKml = 0.0f;
@@ -1000,53 +1247,6 @@ static void ubxParseByte(uint8_t b) {
 }
 
 // ----------------------------------------------------------------------------
-// Demo-mode data override.
-// Generates the demo values from millis() on the DISPLAY core (called from the
-// display loop right after the mutex snapshot). The sensor task generates demo
-// data on core 0 at priority 2, which the WiFi/TCP stack (priorities 16-23,
-// same core) preempts for the whole duration of any HTTP/TLS transfer
-// (weather fetch, OTA check, browser polling). When that happens the sensor
-// task freezes and the dashboard shows frozen values for SECONDS while the
-// loop keeps drawing 60 fps. Regenerating here means demo animation can never
-// be stalled by core-0 network activity.
-// ----------------------------------------------------------------------------
-void demoSnapshotOverride(SensorSnapshot &snap) {
-  unsigned long t = millis();
-  float simSpeed = 60.0f + 50.0f * sinf(t / 2000.0f);
-  snap.currentSpeed = (simSpeed < 0.0f) ? 0.0f : simSpeed;
-  snap.fuelLiters = 5.0f + 5.0f * sinf(t / 5000.0f);
-  snap.fuelPercentage = (int)((snap.fuelLiters / 10.0f) * 100.0f);
-  snap.batteryVoltage = 12.5f + 1.5f * sinf(t / 3000.0f);
-  snap.engineTemperature = 10.0f + 100.0f * (0.5f + 0.5f * sinf(t / 8000.0f));
-  snap.satellites = 8 + (int)(3.0f * sinf(t / 10000.0f));
-  snap.totalDistanceKm = totalDistanceKm + (t / 10000.0);
-  snap.accelResultTime = 4.5f;
-  snap.accelState = FINISHED;
-  static float demoInstKml = 15.0f;
-  static float demoAvgKml = 18.5f;
-  static unsigned long lastDemoKmlUpdate = 0;
-  if (t - lastDemoKmlUpdate >= 1000) {
-    lastDemoKmlUpdate = t;
-    demoInstKml = 15.0f + 5.0f * cosf(t / 2000.0f);
-    demoAvgKml = 18.0f + 2.0f * sinf(t / 6000.0f);
-  }
-  snap.instantKml = demoInstKml;
-  snap.averageKml = demoAvgKml;
-  snap.averageSpeed = simSpeed * 0.8f;
-  snap.timeValid = true;
-  snap.dateValid = true;
-  snap.isGpsSpeedValid = true;
-  snap.speedSourceMode = 1;
-  snap.heading = fmodf((float)t * 0.02f, 360.0f); // steady 20°/s rotation
-  ambientLightValue = 500 + (int)(2500.0f * (0.5f + 0.5f * sinf(t / 3000.0f)));
-  snap.localHour = 10;
-  snap.minute = (t / 1000) % 60;
-  snap.day = 16;
-  snap.month = 7;
-  snap.year = 26;
-}
-
-// ----------------------------------------------------------------------------
 // Shared local-time computation. Returns false when the system clock has not
 // been set yet. Used both by the sensor task (once per tick) and by the
 // display loop (every frame), so the on-screen clock keeps ticking even if the
@@ -1123,26 +1323,37 @@ void gpsTask(void *pvParameters) {
     uint32_t gpsReadLoopTotal = 0;
     uint32_t gpsEncUsTotal = 0;
     int gpsSlowestByteUs = 0;
-    uint8_t gpsBuf[1024];
-    size_t gpsAvail = (size_t)gpsSerial.available();
-    if (gpsAvail > sizeof(gpsBuf)) gpsAvail = sizeof(gpsBuf);
-    if (gpsAvail > 0) {
-      int64_t t0 = esp_timer_get_time();
-      size_t got = gpsSerial.readBytes(gpsBuf, gpsAvail);
-      int64_t t1 = esp_timer_get_time();
-      gpsReadLoopTotal += (uint32_t)(t1 - t0);
-      for (size_t j = 0; j < got; j++) {
-        uint8_t b = gpsBuf[j];
-        if (gpsRawIdx < sizeof(gpsRawBuf))
-          gpsRawBuf[gpsRawIdx++] = b;
-        gpsRxBytes++;
-        int64_t t2 = esp_timer_get_time();
-        gps.encode((char)b);
-        ubxParseByte(b);
-        int64_t t3 = esp_timer_get_time();
-        gpsEncUsTotal += (uint32_t)(t3 - t2);
-        int byt = (int)(t3 - t0);
-        if (byt > gpsSlowestByteUs) gpsSlowestByteUs = byt;
+    if (ENABLE_DEMO_MODE) {
+      // Demo mode: no serial data - synthesize one NMEA sentence pair per
+      // second and feed it through gps.encode() so TinyGPSPlus genuinely
+      // parses satellites/speed/location/date/time (see demoGpsSentence).
+      static unsigned long lastDemoNmeaMs = 0;
+      if (millis() - lastDemoNmeaMs >= 1000) {
+        lastDemoNmeaMs = millis();
+        demoGpsSentence();
+      }
+    } else {
+      uint8_t gpsBuf[1024];
+      size_t gpsAvail = (size_t)gpsSerial.available();
+      if (gpsAvail > sizeof(gpsBuf)) gpsAvail = sizeof(gpsBuf);
+      if (gpsAvail > 0) {
+        int64_t t0 = esp_timer_get_time();
+        size_t got = gpsSerial.readBytes(gpsBuf, gpsAvail);
+        int64_t t1 = esp_timer_get_time();
+        gpsReadLoopTotal += (uint32_t)(t1 - t0);
+        for (size_t j = 0; j < got; j++) {
+          uint8_t b = gpsBuf[j];
+          if (gpsRawIdx < sizeof(gpsRawBuf))
+            gpsRawBuf[gpsRawIdx++] = b;
+          gpsRxBytes++;
+          int64_t t2 = esp_timer_get_time();
+          gps.encode((char)b);
+          ubxParseByte(b);
+          int64_t t3 = esp_timer_get_time();
+          gpsEncUsTotal += (uint32_t)(t3 - t2);
+          int byt = (int)(t3 - t0);
+          if (byt > gpsSlowestByteUs) gpsSlowestByteUs = byt;
+        }
       }
     }
     {
@@ -1153,8 +1364,8 @@ void gpsTask(void *pvParameters) {
                   "loopUs=%llu readAvg=%luus encAvg=%luus slowestByte=%dus)\n",
                   (unsigned long)gpsMs, (unsigned long)(gpsRxBytes - gpsBytesStart),
                   (int)gpsSerial.available(), (unsigned long long)gpsUs,
-                  (unsigned long)(gpsReadLoopTotal / (gpsRxBytes - gpsBytesStart)),
-                  (unsigned long)(gpsEncUsTotal / (gpsRxBytes - gpsBytesStart)),
+                  (unsigned long)((gpsRxBytes - gpsBytesStart) ? gpsReadLoopTotal / (gpsRxBytes - gpsBytesStart) : 0),
+                  (unsigned long)((gpsRxBytes - gpsBytesStart) ? gpsEncUsTotal / (gpsRxBytes - gpsBytesStart) : 0),
                   gpsSlowestByteUs);
     }
     if (gpsWatchdogStart == 0)
@@ -1228,7 +1439,9 @@ void gpsTask(void *pvParameters) {
         gpsTimeReady = (gpsTickCount >= 3);
       }
     }
-    if (gpsTimeReady) {
+    // Demo mode: the synthesized NMEA clock must never be applied to the real
+    // system clock - it could clobber an NTP/sensor-synced RTC.
+    if (!ENABLE_DEMO_MODE && gpsTimeReady) {
       struct timeval tv;
       gettimeofday(&tv, NULL);
       if (abs((long)(tv.tv_sec - gpsLastEpoch)) > 5) {
@@ -1249,6 +1462,9 @@ void gpsTask(void *pvParameters) {
 // ----------------------------------------------------------------------------
 void sensorTask(void *pvParameters) {
   for (;;) {
+    if (ENABLE_DEMO_MODE)
+      simulateRawSensors(); // synthetic hall pulses; the analog/compass
+                            // read sites inject their own simulated raw values
     {
       unsigned long tStage = millis();
       processCompassSensor();
@@ -1285,83 +1501,49 @@ void sensorTask(void *pvParameters) {
     }
 
     if (xSemaphoreTake(g_stateMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      if (ENABLE_DEMO_MODE) {
-        unsigned long t = millis();
-        float simSpeed = 60.0f + 50.0f * sinf(t / 2000.0f);
-        g_sensorData.currentSpeed = (simSpeed < 0.0f) ? 0.0f : simSpeed;
-        g_sensorData.fuelLiters = 5.0f + 5.0f * sinf(t / 5000.0f);
-        g_sensorData.fuelPercentage =
-            (int)((g_sensorData.fuelLiters / 10.0f) * 100.0f);
-        g_sensorData.batteryVoltage = 12.5f + 1.5f * sinf(t / 3000.0f);
-        g_sensorData.engineTemperature = 10.0f + 100.0f * (0.5f + 0.5f * sinf(t / 8000.0f));
-        g_sensorData.satellites = 8 + (int)(3.0f * sinf(t / 10000.0f));
-        g_sensorData.totalDistanceKm = totalDistanceKm + (t / 10000.0);
-        g_sensorData.accelResultTime = 4.5f;
-        g_sensorData.accelState = FINISHED;
-        static float demoInstKml = 15.0f;
-        static float demoAvgKml = 18.5f;
-        static unsigned long lastDemoKmlUpdate = 0;
-        if (t - lastDemoKmlUpdate >= 1000) {
-          lastDemoKmlUpdate = t;
-          demoInstKml = 15.0f + 5.0f * cosf(t / 2000.0f);
-          demoAvgKml = 18.0f + 2.0f * sinf(t / 6000.0f);
-        }
-        g_sensorData.instantKml = demoInstKml;
-        g_sensorData.averageKml = demoAvgKml;
-        g_sensorData.averageSpeed = simSpeed * 0.8f;
+      g_sensorData.currentSpeed = currentCachedSpeed;
+      g_sensorData.fuelLiters = fuelLiters;
+      g_sensorData.fuelPercentage = fuelPercentage;
+      g_sensorData.batteryVoltage = batteryVoltage;
+      g_sensorData.engineTemperature = engineTemperature;
+      g_sensorData.satellites = gps.satellites.value();
+      // Demo mode: the odometer math has accumulated simulated distance into
+      // demoOdoKm (NVS untouched) - surface it as a display-only total.
+      g_sensorData.totalDistanceKm =
+          ENABLE_DEMO_MODE ? (totalDistanceKm + demoOdoKm) : totalDistanceKm;
+      g_sensorData.accelResultTime = accelResultTime;
+      g_sensorData.accelState = accelState;
+      g_sensorData.instantKml = instantKml;
+      g_sensorData.averageKml = averageKml;
+      g_sensorData.averageSpeed = averageSpeed;
+      g_sensorData.heading = currentHeading;
+
+      if (systemTimeToLocal(g_sensorData.localHour, g_sensorData.minute,
+                            g_sensorData.day, g_sensorData.month,
+                            g_sensorData.year)) {
         g_sensorData.timeValid = true;
         g_sensorData.dateValid = true;
-        g_sensorData.isGpsSpeedValid = true;
-        g_sensorData.speedSourceMode = 1;
-        g_sensorData.heading = fmodf((float)t * 0.02f, 360.0f); // steady 20°/s rotation
-        ambientLightValue = 500 + (int)(2500.0f * (0.5f + 0.5f * sinf(t / 3000.0f)));
-        g_sensorData.localHour = 10;
-        g_sensorData.minute = (t / 1000) % 60;
-        g_sensorData.day = 16;
-        g_sensorData.month = 7;
-        g_sensorData.year = 26;
       } else {
-        g_sensorData.currentSpeed = currentCachedSpeed;
-        g_sensorData.fuelLiters = fuelLiters;
-        g_sensorData.fuelPercentage = fuelPercentage;
-        g_sensorData.batteryVoltage = batteryVoltage;
-        g_sensorData.engineTemperature = engineTemperature;
-        g_sensorData.satellites = gps.satellites.value();
-        g_sensorData.totalDistanceKm = totalDistanceKm;
-        g_sensorData.accelResultTime = accelResultTime;
-        g_sensorData.accelState = accelState;
-        g_sensorData.instantKml = instantKml;
-        g_sensorData.averageKml = averageKml;
-        g_sensorData.averageSpeed = averageSpeed;
-        g_sensorData.heading = currentHeading;
+        g_sensorData.timeValid = false;
+        g_sensorData.dateValid = false;
+      }
 
-        if (systemTimeToLocal(g_sensorData.localHour, g_sensorData.minute,
-                              g_sensorData.day, g_sensorData.month,
-                              g_sensorData.year)) {
-          g_sensorData.timeValid = true;
-          g_sensorData.dateValid = true;
-        } else {
-          g_sensorData.timeValid = false;
-          g_sensorData.dateValid = false;
-        }
-
-        g_sensorData.isGpsSpeedValid =
-            gps.speed.isValid() && (g_sensorData.satellites >= MIN_SATELLITES);
-        float hallSpeedNow = getHallSpeed();
-        if (GPS_ONLY_MODE && g_sensorData.isGpsSpeedValid) {
-          g_sensorData.speedSourceMode = 1;
-        } else if (g_sensorData.isGpsSpeedValid && hallSpeedNow > 0.0f) {
-          float gpsSpeedNow = (float)gps.speed.kmph();
-          float deltaNow = fabsf(gpsSpeedNow - hallSpeedNow);
-          if (deltaNow > MAX_SPEED_DELTA_KMH)
-            g_sensorData.speedSourceMode = 0;
-          else if (deltaNow < GPS_MIN_DEV_KMH)
-            g_sensorData.speedSourceMode = 1;
-          else
-            g_sensorData.speedSourceMode = 2;
-        } else {
+      g_sensorData.isGpsSpeedValid =
+          gps.speed.isValid() && (g_sensorData.satellites >= MIN_SATELLITES);
+      float hallSpeedNow = getHallSpeed();
+      if (GPS_ONLY_MODE && g_sensorData.isGpsSpeedValid) {
+        g_sensorData.speedSourceMode = 1;
+      } else if (g_sensorData.isGpsSpeedValid && hallSpeedNow > 0.0f) {
+        float gpsSpeedNow = (float)gps.speed.kmph();
+        float deltaNow = fabsf(gpsSpeedNow - hallSpeedNow);
+        if (deltaNow > MAX_SPEED_DELTA_KMH)
           g_sensorData.speedSourceMode = 0;
-        }
+        else if (deltaNow < GPS_MIN_DEV_KMH)
+          g_sensorData.speedSourceMode = 1;
+        else
+          g_sensorData.speedSourceMode = 2;
+      } else {
+        g_sensorData.speedSourceMode = 0;
       }
       xSemaphoreGive(g_stateMutex);
     } else {

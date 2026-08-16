@@ -454,9 +454,6 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   }
 
   int currentSourceState = displaySnap.speedSourceMode;
-  if (ENABLE_DEMO_MODE) {
-    currentSourceState = (millis() / 2000) % 3;
-  }
   if (SHOW_ELEMENT_SPEED_SOURCE &&
       (currentSourceState != lastSpeedSourceState || forceDraw)) {
     lastSpeedSourceState = currentSourceState;
@@ -527,15 +524,6 @@ void updateBigDisplay(const SensorSnapshot &snap) {
 
   unsigned long now = millis();
   unsigned long tClock0 = now;
-  static unsigned long lastTimeUpdate = 0;
-  // Phase-offset the time-row redraw 125ms off the second boundary. The demo
-  // clock ticks once per second (minute = t/1000 in sensors.cpp) and the speed
-  // digits redraw every 250ms from the same absolute boot grid, so without an
-  // offset BOTH redraws land in the same 16ms frame at every second boundary
-  // (~9ms clock + ~18ms speed = ~30ms frame, invisible to the 33ms SLOW FRAME
-  // threshold but plainly visible as a 1Hz hitch). 125ms places the 1Hz
-  // redraw midway between the 250ms speed redraws.
-  constexpr unsigned long TIME_REDRAW_PHASE_MS = 125;
   // Measure DS-DIGIT_28px digit metrics once, before the time/date row uses
   // them for fixed-slot positioning (this also loads the VLW font the row
   // needs).
@@ -558,12 +546,8 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   bool timeRowChanged = displaySnap.localHour != lastHour ||
                         displaySnap.minute != lastMin ||
                         displaySnap.day != lastDay;
-  unsigned long timeRowThrottle =
-      (REFRESH_TIME_MS == 0) ? TIME_REDRAW_PHASE_MS
-                             : (unsigned long)REFRESH_TIME_MS + TIME_REDRAW_PHASE_MS;
   if ((SHOW_ELEMENT_TIME || SHOW_ELEMENT_DATE) &&
-      ((timeRowChanged && now - lastTimeUpdate >= timeRowThrottle) || forceDraw)) {
-    lastTimeUpdate = now;
+      (timeRowChanged || forceDraw)) {
     lastHour = displaySnap.localHour;
     lastMin = displaySnap.minute;
     lastDay = displaySnap.day;
@@ -911,11 +895,9 @@ if (!vlw120Ready) {
   }
 
   // Left Sidebar: Engine Temp
-  static unsigned long lastSideTempUpdate = 0;
   bool tempMoving = (now - easeTempStart) < SIDEBAR_EASE_MS;
   if (SHOW_ELEMENT_SIDEBAR_TEMP && (forceDraw || (IN_BAND_BUDGET &&
-      (((tempSigChanged || tempMoving) && (tempMoving || REFRESH_SIDEBAR_TEMP_MS == 0 || now - lastSideTempUpdate >= (unsigned long)REFRESH_SIDEBAR_TEMP_MS)) || forceDraw)))) {
-    lastSideTempUpdate = now;
+      ((tempSigChanged || tempMoving) || forceDraw)))) {
     if (tempSigChanged) lastEngineTemp = currentTemp;
 
     int barX = SIDEBAR_LEFT_X, barY = SIDEBAR_LEFT_Y, barW = SIDEBAR_BAR_WIDTH, barH = SIDEBAR_BAR_HEIGHT;
@@ -983,11 +965,9 @@ if (!vlw120Ready) {
   }
 
   // Right Sidebar: Fuel
-  static unsigned long lastSideFuelUpdate = 0;
   bool fuelMoving = (now - easeFuelStart) < SIDEBAR_EASE_MS;
   if (SHOW_ELEMENT_SIDEBAR_FUEL && (forceDraw || (IN_BAND_BUDGET &&
-      (((currentFuel != lastFuelPct || fuelMoving) && (fuelMoving || REFRESH_SIDEBAR_FUEL_MS == 0 || now - lastSideFuelUpdate >= (unsigned long)REFRESH_SIDEBAR_FUEL_MS)) || forceDraw)))) {
-    lastSideFuelUpdate = now;
+      ((currentFuel != lastFuelPct || fuelMoving) || forceDraw)))) {
     lastFuelPct = currentFuel;
 
     int barX = SIDEBAR_RIGHT_X, barY = SIDEBAR_RIGHT_Y, barW = SIDEBAR_BAR_WIDTH, barH = SIDEBAR_BAR_HEIGHT;
@@ -1138,10 +1118,8 @@ if (!vlw120Ready) {
 
   // -- Satellite count (icon with the count rendered below in Conthrax 10px,
   // same compact style as the accel badge) --
-  static unsigned long lastSatUpdate = 0;
   if (SHOW_ELEMENT_SAT && (forceDraw || (IN_BAND_BUDGET &&
-      ((displaySat != lastSat && (REFRESH_SAT_MS == 0 || now - lastSatUpdate >= (unsigned long)REFRESH_SAT_MS)) || forceDrawSat)))) {
-    lastSatUpdate = now;
+      (displaySat != lastSat || forceDrawSat)))) {
     lastSat = displaySat;
     componentUpdated = true;
     char satStr[8];
@@ -1160,10 +1138,8 @@ if (!vlw120Ready) {
   }
 
   // -- Accel badge --
-  static unsigned long lastBadgeUpdate = 0;
   if (SHOW_ELEMENT_TMR && (forceDraw || (IN_BAND_BUDGET &&
-      ((displayAccelState != lastState && (REFRESH_TMR_MS == 0 || now - lastBadgeUpdate >= (unsigned long)REFRESH_TMR_MS)) || forceDrawTmr)))) {
-    lastBadgeUpdate = now;
+      (displayAccelState != lastState || forceDrawTmr)))) {
     lastState = displayAccelState;
     componentUpdated = true;
     uint16_t timerColor =
@@ -1195,11 +1171,9 @@ if (!vlw120Ready) {
   snprintf(tmrStr, sizeof(tmrStr), "%.*f", TMR_DEC_DIGITS, displayTmr);
   static char lastTmrStr[12] = "";
   static TimerState lastStateTimer = READY;
-  static unsigned long lastTmrUpdate = 0;
   bool tmrChanged = strcmp(tmrStr, lastTmrStr) != 0 || displayAccelState != lastStateTimer;
   if (SHOW_ELEMENT_TMR && (forceDraw || (IN_BAND_BUDGET &&
-      ((tmrChanged && (REFRESH_TMR_MS == 0 || now - lastTmrUpdate >= (unsigned long)REFRESH_TMR_MS)) || forceDrawTmr)))) {
-    lastTmrUpdate = now;
+      (tmrChanged || forceDrawTmr)))) {
     strcpy(lastTmrStr, tmrStr);
     lastStateTimer = displayAccelState;
     componentUpdated = true;
@@ -1451,11 +1425,9 @@ if (!vlw120Ready) {
   // --- Average KM/L ---
   float displayAvgKml = displaySnap.averageKml;
   static float lastDispAvgKml = -1.0f;
-  static unsigned long lastAvgUpdate = 0;
   bool avgChanged = fabsf(displayAvgKml - lastDispAvgKml) >= 0.1f;
   if (SHOW_ELEMENT_AVG_KML && (forceDraw || (IN_BAND_BUDGET &&
-      ((avgChanged && (REFRESH_AVG_MS == 0 || now - lastAvgUpdate >= (unsigned long)REFRESH_AVG_MS)) || forceDraw)))) {
-    lastAvgUpdate = now;
+      (avgChanged || forceDraw)))) {
     lastDispAvgKml = displayAvgKml;
     componentUpdated = true;
 
@@ -1800,17 +1772,13 @@ if (!vlw120Ready) {
   const float pxPerDeg = 6.0f;
   int tapePix = (int)roundf(displayHeading * pxPerDeg);
 
-  // With the tape sprite active, render EVERY frame the heading moves: the
-  // strip is painted in RAM and pushed in one DMA burst, so the tape rolls
-  // smoothly (1-2 px/frame). The compass polling rate is hardcoded to 0 ms,
-  // so no time throttle applies to the direct-panel fallback either.
-  bool tapeMoved = tapePix != lastTapePix;
-  bool tapeThrottleOk = true;
-  // The tape is the one component that wants a redraw every frame. On frames
-  // that are already over the band budget it drops to every-other-frame
+  // The tape is redrawn every frame the heading moves: the strip is painted in
+  // RAM and pushed in one DMA burst, so the tape rolls smoothly (1-2 px/frame).
+  // On frames that are already over the band budget it drops to every-other-frame
   // (alternation) so it can't stack on top of odo/sidebars/middle-row draws.
+  bool tapeMoved = tapePix != lastTapePix;
   static bool tapeDeferredLast = false;
-  bool tapeWants = SHOW_ELEMENT_COMPASS && ((tapeMoved && tapeThrottleOk) || forceDraw);
+  bool tapeWants = SHOW_ELEMENT_COMPASS && (tapeMoved || forceDraw);
   bool tapeBudgetOk = (millis() - tFrame0) < FRAME_DEFER_MS || !tapeDeferredLast;
   tapeDeferredLast = tapeWants && !tapeBudgetOk;
 
@@ -2319,6 +2287,9 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   int fadeX0 = fadeX1 - 45;
   if (fadeX0 < wx + 48) fadeX0 = wx + 48;
 
+  int nameEnd = wx + 28 + cityW;
+  bool cityTruncated = nameEnd > fadeX1;
+
   if (fadeX1 > wx + 20) {
     display.setClipRect(wx + 20, wy + 2, fadeX1 - (wx + 20), h - 4);
 
@@ -2342,17 +2313,21 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
 
       int cW = display.textWidth(cStr);
 
-      if (curX + cW <= fadeX0) {
-        display.setTextColor(TFT_WHITE, cardBg);
-      } else if (curX < fadeX1) {
-        float f = (float)(fadeX1 - curX) / (float)(fadeX1 - fadeX0);
-        if (f < 0.0f) f = 0.0f;
-        if (f > 1.0f) f = 1.0f;
-        // Square the ratio to create a stronger, more pronounced quadratic fade-out
-        f = f * f;
-        display.setTextColor(blendColor(TFT_WHITE, cardBg, f), cardBg);
+      if (cityTruncated) {
+        if (curX + cW <= fadeX0) {
+          display.setTextColor(TFT_WHITE, cardBg);
+        } else if (curX < fadeX1) {
+          float f = (float)(fadeX1 - curX) / (float)(fadeX1 - fadeX0);
+          if (f < 0.0f) f = 0.0f;
+          if (f > 1.0f) f = 1.0f;
+          // Square the ratio to create a stronger, more pronounced quadratic fade-out
+          f = f * f;
+          display.setTextColor(blendColor(TFT_WHITE, cardBg, f), cardBg);
+        } else {
+          break;
+        }
       } else {
-        break;
+        display.setTextColor(TFT_WHITE, cardBg);
       }
 
       display.setCursor(curX, wy + 20);
