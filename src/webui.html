@@ -49,7 +49,7 @@ body {
 .main-content {
     margin: 0 auto;
     max-width: 920px;
-    padding: 16px 12px 60px 12px;
+    padding: 16px 12px 210px 12px;
 }
 
 @keyframes pageFadeIn {
@@ -167,10 +167,25 @@ h2 {
 
 /* Quick Control Actions Top Toolbar */
 .bottom-toolbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: 14px;
-    margin-top: 14px;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 14px 16px 16px 16px;
+    background: rgba(8, 11, 17, 0.93);
+    backdrop-filter: var(--glass-blur);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    transition: transform 0.25s ease;
+}
+
+.bottom-toolbar.toolbar-hidden {
+    transform: translateY(100%);
 }
 
 /* Row 1: Save Settings, Reboot (same total width as row 2) */
@@ -742,7 +757,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 /* Floating Scroll Top Button */
 #scrollTopBtn {
     position: fixed;
-    bottom: 20px;
+    bottom: 215px;
     right: 20px;
     width: 42px;
     height: 42px;
@@ -861,7 +876,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 
 /* Responsive Tweaks */
 @media (max-width: 600px) {
-    .main-content { padding: 10px 8px 50px 8px; }
+    .main-content { padding: 10px 8px 210px 8px; }
     .perf-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
     .bottom-toolbar { grid-template-columns: repeat(2, 1fr); }
     .bottom-toolbar button:nth-child(-n+4) { grid-column: span 1; }
@@ -1641,6 +1656,25 @@ document.addEventListener('DOMContentLoaded', function() {
     }).catch(() => {});
 });
 
+function initToolbarSelectSync() {
+    const bar = document.querySelector('.bottom-toolbar');
+    if (!bar) return;
+    document.querySelectorAll('select').forEach(sel => {
+        let mouseDown = false;
+        sel.addEventListener('mousedown', () => { mouseDown = true; bar.classList.add('toolbar-hidden'); });
+        sel.addEventListener('touchstart', () => { bar.classList.add('toolbar-hidden'); });
+        sel.addEventListener('click', () => {
+            if (mouseDown) { mouseDown = false; bar.classList.remove('toolbar-hidden'); }
+            else { bar.classList.add('toolbar-hidden'); }
+        });
+        sel.addEventListener('change', () => { bar.classList.remove('toolbar-hidden'); });
+        sel.addEventListener('blur', () => { bar.classList.remove('toolbar-hidden'); });
+        sel.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') bar.classList.add('toolbar-hidden');
+        });
+    });
+}
+
 function renderForm(d) {
     let html = '';
     __baseline = d;
@@ -1831,6 +1865,7 @@ function renderForm(d) {
     protectSliders();
     updateCpuMode();
     bindPowerSense();
+    initToolbarSelectSync();
 }
 
 function initDetailsAnim() {
