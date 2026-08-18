@@ -88,6 +88,15 @@ body {
     gap: 8px;
 }
 
+/* Desktop: bar spans the same width as the config groups
+   (.main-content 920px minus 12px padding each side) */
+@media (min-width: 601px) {
+    .sticky-top {
+        max-width: 896px;
+        margin: 0 auto;
+    }
+}
+
 /* Soft fade below the bar, dissolving into the page content */
 .sticky-top::after {
     content: "";
