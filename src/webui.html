@@ -108,7 +108,7 @@ h2 {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin: 0;
-    font-size: 19px;
+    font-size: 26px;
     font-weight: 800;
     letter-spacing: -0.5px;
 }
@@ -881,6 +881,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     </div>
 </div>
 
+<div id="msg" class="msg-success">Time synced successfully!</div>
+
 <div class="search-wrapper">
     <span class="search-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
     <input type="text" id="searchBar" placeholder="Search configuration parameters..." oninput="filterConfig()" autocomplete="off">
@@ -888,8 +890,6 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 </div><!-- .sticky-top -->
 
 <div class="main-content">
-<div id="msg" class="msg-success">Time synced successfully!</div>
-
 <input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
 
 <div id="form-container"></div>
