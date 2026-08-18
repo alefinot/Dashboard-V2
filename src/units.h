@@ -19,12 +19,13 @@ inline float kmlToMpg(float kml) { return kml * 2.352145833f; }
 inline float cToF(float c) { return c * 1.8f + 32.0f; }
 
 // Unit label strings. Match the existing dashboard label text and casing:
-//   speed/economy/fuel/odo labels are uppercase (MPH / MPG / MI / GAL),
+//   speed/economy/fuel/odo labels are uppercase (MPH / MPG / MI / G),
 //   the engine temp label is lowercase to match the existing "c".
 inline const char *speedUnitLabel(bool imp) { return imp ? "MPH" : "KM/H"; }
 inline const char *odoUnitLabel(bool imp) { return imp ? " MI" : " KM"; }
 inline const char *economyUnitLabel(bool imp) { return imp ? "MPG" : "KM/L"; }
-inline const char *fuelUnitLabel(bool imp) { return imp ? "GAL" : "L"; }
+// "G", not "GAL": the fuel readout is narrow and needs the space savings.
+inline const char *fuelUnitLabel(bool imp) { return imp ? "G" : "L"; }
 inline const char *tempUnitLabel(bool imp) { return imp ? "f" : "c"; }
 
 #endif // UNITS_H

@@ -2270,13 +2270,18 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   snprintf(dispCity, sizeof(dispCity), "%s", citySrc);
 
   char tempStr[16];
-  snprintf(tempStr, sizeof(tempStr), "%.0f", g_weatherData.temperature);
+  // Imperial mode converts to °F for display; the stored value stays °C.
+  snprintf(tempStr, sizeof(tempStr), "%.0f",
+           UNITS_IMPERIAL ? cToF(g_weatherData.temperature)
+                          : g_weatherData.temperature);
   char humStr[16];
   snprintf(humStr, sizeof(humStr), "%d%%", g_weatherData.humidity);
   char windStr[24];
-  float msWind = g_weatherData.windSpeed / 3.6f;
+  // Wind: metric shows m/s (Open-Meteo sends km/h), imperial shows mph.
+  float windVal = UNITS_IMPERIAL ? kmhToMph(g_weatherData.windSpeed)
+                                 : g_weatherData.windSpeed / 3.6f;
   const char* windDir = getWindCardinal(g_weatherData.windDirection);
-  snprintf(windStr, sizeof(windStr), "%.1f %s", msWind, windDir);
+  snprintf(windStr, sizeof(windStr), "%.1f %s", windVal, windDir);
   const char *sunsetStr = g_weatherData.sunsetTime.length() > 0 ? g_weatherData.sunsetTime.c_str() : "--:--";
 
   // Measure every text so the row can be spaced equally at runtime.
@@ -2391,7 +2396,7 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   int degX = iconX1 + 12 + tempNumW + 2;
   display.drawCircle(degX, wy + 20 - 8, 2, display.color565(255, 120, 120));
   display.setCursor(degX + 3, wy + 20);
-  display.print("C");
+  display.print(UNITS_IMPERIAL ? "F" : "C");
   
   // Section 3: Humidity
   int iconY2 = wy + 6;

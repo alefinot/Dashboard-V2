@@ -1148,6 +1148,71 @@ const resetSVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fi
 const REBOOT_REQUIRED_KEYS = ['DISPLAY_ROTATION', 'DISPLAY_WIDTH', 'DISPLAY_HEIGHT',
     'GPS_BAUD', 'WIFI_TX_POWER_DBM', 'NTP_ENABLED', 'NTP_SERVER'];
 
+// Imperial display factors for the settings page. The device always stores
+// metric values (km/h, °C, mm, L, km) - this only converts the numbers that
+// are shown/edited and the unit labels, so toggling UNITS_IMPERIAL never
+// changes what gets stored.
+const KMH_TO_MPH = 0.621371;
+const MM_TO_IN = 1 / 25.4;
+const L_TO_GAL = 0.264172;
+let CURRENT_UNITS_IMPERIAL = false;
+
+// Config fields whose values are unit-dependent, and their unit type.
+const UNIT_FIELD_TYPES = {
+    CPU_THROTTLE_TEMP_WARN: 'temp',
+    CPU_THROTTLE_TEMP_CRIT: 'temp',
+    TEMP_BAR_MIN: 'temp',
+    TEMP_WARN_YEL: 'temp',
+    TEMP_WARN_RED: 'temp',
+    TEMP_BAR_MAX: 'temp',
+    ACCEL_START_SPEED: 'speed',
+    ACCEL_TARGET_SPEED: 'speed',
+    MIN_SPEED_THRESHOLD: 'speed',
+    GPS_START_KMH: 'speed',
+    MAX_SPEED_DELTA_KMH: 'speed',
+    GPS_MIN_DEV_KMH: 'speed',
+    WHEEL_CIRCUMFERENCE_MM: 'length',
+    REFUEL_RESET_LITERS: 'volume'
+};
+
+function displayFromMetric(key, val) {
+    if (!CURRENT_UNITS_IMPERIAL || typeof val !== 'number') return val;
+    switch (UNIT_FIELD_TYPES[key]) {
+        case 'temp': return val * 1.8 + 32;
+        case 'speed': return val * KMH_TO_MPH;
+        case 'length': return val * MM_TO_IN;
+        case 'volume': return val * L_TO_GAL;
+        default: return val;
+    }
+}
+
+function metricFromDisplay(key, val) {
+    if (!CURRENT_UNITS_IMPERIAL || typeof val !== 'number') return val;
+    switch (UNIT_FIELD_TYPES[key]) {
+        case 'temp': return (val - 32) / 1.8;
+        case 'speed': return val / KMH_TO_MPH;
+        case 'length': return val / MM_TO_IN;
+        case 'volume': return val / L_TO_GAL;
+        default: return val;
+    }
+}
+
+// Label for a unit span: swap the displayed unit name when in imperial mode.
+function unitLabel(u) {
+    if (!CURRENT_UNITS_IMPERIAL) return u;
+    const map = {'°C': '°F', 'km/h': 'mph', 'mm': 'in', 'L': 'G', 'km': 'mi'};
+    return map[u] || u;
+}
+
+// Substitutes unit tokens in labels: ODO_UNIT (km/mi), KML (KM/L/MPG),
+// LTRS (Liters/Gallons).
+function trUnitTokens(s) {
+    if (!CURRENT_UNITS_IMPERIAL) {
+        return s.replace(/ODO_UNIT/g, 'km').replace(/KML/g, 'KM/L').replace(/LTRS/g, 'Liters');
+    }
+    return s.replace(/ODO_UNIT/g, 'mi').replace(/KML/g, 'MPG').replace(/LTRS/g, 'Gallons');
+}
+
 let __baseline = null;
 
 // True when at least one boot-only setting actually changed from the values
@@ -1171,6 +1236,7 @@ const configMap = [
         title: "System & General", icon: iconSVG.system,
         items: [
             { type: "card_header", label: "General" },
+            { id: "UNITS_IMPERIAL", label: "Use Imperial Units" },
             { id: "TARGET_FPS", label: "Target Refresh Rate", unit: "FPS" },
             { id: "ENABLE_DEMO_MODE", label: "Enable Sensor Demo Mode" },
             { id: "ENABLE_POWER_SENSE", label: "Enable Power Sensing" },
@@ -1300,8 +1366,6 @@ const configMap = [
     {
         title: "Display & Colors", icon: iconSVG.display,
         items: [
-            { type: "card_header", label: "Units" },
-            { id: "UNITS_IMPERIAL", label: "Use Imperial Units (MPH / MI / MPG / °F / GAL)" },
             { type: "subtitle", label: "Display" },
             { id: "DISPLAY_ROTATION", label: "Screen Rotation (0-3)" },
             { id: "DISPLAY_WIDTH", label: "Display Width", unit: "px" },
@@ -1347,11 +1411,11 @@ const configMap = [
             { id: "ACCEL_MAX_TIME", label: "Timer Max Time (0 = off)", unit: "sec" },
             { id: "ACCEL_BADGE_LINE1", label: "Badge Line 1 (e.g., '0-50')" },
             { id: "ACCEL_BADGE_LINE2", label: "Badge Line 2 (e.g., 'km/h')" },
-            { type: "card_header", label: "Odometer (km)", content: `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        <span style="font-size:12px;color:var(--text-muted);">Current value: <strong id="odo-reading" style="color:#fff;font-family:'JetBrains Mono',monospace;">--</strong> km</span>
+            { type: "card_header", label: "Odometer (ODO_UNIT)", content: `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+        <span style="font-size:12px;color:var(--text-muted);">Current value: <strong id="odo-reading" style="color:#fff;font-family:'JetBrains Mono',monospace;">--</strong> ODO_UNIT</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;">
-        <input type="number" id="ODO_SET" step="0.1" min="0" placeholder="Set odometer (km)" style="flex:1;min-width:0;">
+        <input type="number" id="ODO_SET" step="0.1" min="0" placeholder="Set odometer (ODO_UNIT)" style="flex:1;min-width:0;">
         <button onclick="setOdometer()" class="btn-secondary" style="font-size:11px;padding:5px 10px;white-space:nowrap;">Set Value</button>
     </div>` },
             { id: "WHEEL_CIRCUMFERENCE_MM", label: "Wheel Circumference", unit: "mm" },
@@ -1359,8 +1423,8 @@ const configMap = [
             { type: "subtitle", label: "Polling Rates" },
             { id: "REFRESH_SPEED_MS", label: "Speed", type: "number", unit: "ms" },
             { id: "REFRESH_BAT_MS", label: "Battery Voltage", type: "number", unit: "ms" },
-            { id: "REFRESH_INST_MS", label: "Instant KM/L", type: "number", unit: "ms" },
-            { id: "REFRESH_FUEL_MS", label: "Fuel Liters", type: "number", unit: "ms" },
+            { id: "REFRESH_INST_MS", label: "Instant KML", type: "number", unit: "ms" },
+            { id: "REFRESH_FUEL_MS", label: "Fuel LTRS", type: "number", unit: "ms" },
             { type: "subtitle", label: "GPS" },
             { id: "GPS_BAUD", label: "GNSS Baud Rate", unit: "baud" },
             { id: "MIN_SATELLITES", label: "Minimum Satellites Required" },
@@ -1431,17 +1495,17 @@ const configMap = [
             { id: "ODO_DEC_DIGITS", label: "Decimal Digits" },
             { type: 'xy', idX: "OFFSET_BIG_ODO_X", idY: "OFFSET_BIG_ODO_Y", label: "Position" },
             { type: "card_header", label: "Fuel & Battery" },
-            { type: "section_header", label: "Average KM/L" },
+            { type: "section_header", label: "Average KML" },
             { id: "SHOW_ELEMENT_AVG_KML", label: "Visible" },
             { id: "AVG_INT_DIGITS", label: "Integer Digits" },
             { id: "AVG_DEC_DIGITS", label: "Decimal Digits" },
             { type: 'xy', idX: "OFFSET_AVG_KML_X", idY: "OFFSET_AVG_KML_Y", label: "Position" },
-            { type: "section_header", label: "Instant KM/L" },
+            { type: "section_header", label: "Instant KML" },
             { id: "SHOW_ELEMENT_INST_KML", label: "Visible" },
             { id: "INST_INT_DIGITS", label: "Integer Digits" },
             { id: "INST_DEC_DIGITS", label: "Decimal Digits" },
             { type: 'xy', idX: "OFFSET_INST_KML_X", idY: "OFFSET_INST_KML_Y", label: "Position" },
-            { type: "section_header", label: "Fuel Liters" },
+            { type: "section_header", label: "Fuel LTRS" },
             { id: "SHOW_ELEMENT_FUEL_LTRS", label: "Visible" },
             { id: "FUEL_INT_DIGITS", label: "Integer Digits" },
             { id: "FUEL_DEC_DIGITS", label: "Decimal Digits" },
@@ -1554,6 +1618,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function renderForm(d) {
     let html = '';
     __baseline = d;
+    CURRENT_UNITS_IMPERIAL = !!d.UNITS_IMPERIAL;
     const maxW = d.DISPLAY_WIDTH || 480;
     const maxH = d.DISPLAY_HEIGHT || 320;
 
@@ -1577,22 +1642,22 @@ function renderForm(d) {
             if (iType === 'card_header' || iType === 'subtitle') {
                 hasItems = true;
                 closeSubCard();
-                groupHtml += `<div class="card" style="grid-column:1/-1;"><h4 style="margin:0 0 5px 0;color:var(--accent-cyan);font-size:13px;">${item.label}</h4><div style="display:flex;flex-direction:column;gap:0;">`;
-                if (item.content) groupHtml += item.content;
+                groupHtml += `<div class="card" style="grid-column:1/-1;"><h4 style="margin:0 0 5px 0;color:var(--accent-cyan);font-size:13px;">${trUnitTokens(item.label)}</h4><div style="display:flex;flex-direction:column;gap:0;">`;
+                if (item.content) groupHtml += trUnitTokens(item.content);
                 inCardSubCard = true;
             } else if (iType === 'section_header' || iType === 'heading') {
                 hasItems = true;
-                groupHtml += `</div><div class="section-title">${item.label}</div><div style="display:flex;flex-direction:column;gap:0;">`;
+                groupHtml += `</div><div class="section-title">${trUnitTokens(item.label)}</div><div style="display:flex;flex-direction:column;gap:0;">`;
             } else if (iType === 'select') {
                 if (d.hasOwnProperty(item.id)) {
                     hasItems = true;
                     let val = d[item.id];
                     let opts = item.options.map(o => `<option value="${o.value}" ${o.value == val ? 'selected' : ''}>${o.label}</option>`).join('');
                     if (inCardSubCard) {
-                        groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-controls"><select id="${item.id}" style="width:auto;min-width:120px;flex-shrink:0;">${opts}</select>${resetBtn(item.id)}</div></div>`;
+                        groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls"><select id="${item.id}" style="width:auto;min-width:120px;flex-shrink:0;">${opts}</select>${resetBtn(item.id)}</div></div>`;
                     } else {
                         closeSubCard();
-                        groupHtml += `<div class="card"><div class="cfg-row"><label>${item.label}</label><div class="cfg-controls" style="width:auto;flex:1;justify-content:flex-end;"><select id="${item.id}">${opts}</select>${resetBtn(item.id)}</div></div></div>`;
+                        groupHtml += `<div class="card"><div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls" style="width:auto;flex:1;justify-content:flex-end;"><select id="${item.id}">${opts}</select>${resetBtn(item.id)}</div></div></div>`;
                     }
                 }
             } else if (iType === 'threshold-row') {
@@ -1601,13 +1666,13 @@ function renderForm(d) {
                     let valHtml = '';
                     let resetKeys = item.colorId;
                     if (item.valueId && d.hasOwnProperty(item.valueId)) {
-                        let unitHtml = item.unit ? `<span class="unit">${item.unit}</span>` : '';
-                        valHtml = `${unitHtml}<input type="number" id="${item.valueId}" value="${d[item.valueId]}" step="any" style="width:70px;text-align:center;">`;
+                        let unitHtml = item.unit ? `<span class="unit">${unitLabel(item.unit)}</span>` : '';
+                        valHtml = `${unitHtml}<input type="number" id="${item.valueId}" value="${displayFromMetric(item.valueId, d[item.valueId])}" step="any" style="width:70px;text-align:center;">`;
                         resetKeys = item.colorId + ',' + item.valueId;
                     } else {
                         valHtml = `<span style="display:inline-block;width:90px;"></span>`;
                     }
-                    groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-color-controls">${valHtml}<input type="color" id="${item.colorId}" value="${d[item.colorId]}">${resetBtn(resetKeys)}</div></div>`;
+                    groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-color-controls">${valHtml}<input type="color" id="${item.colorId}" value="${d[item.colorId]}">${resetBtn(resetKeys)}</div></div>`;
                 }
             } else if (iType === 'color') {
                 if (d.hasOwnProperty(item.id)) {
@@ -1618,11 +1683,11 @@ function renderForm(d) {
             } else if (iType === 'range') {
                 if (d.hasOwnProperty(item.id)) {
                     hasItems = true;
-                    let val = d[item.id];
-                    let unitHtml = item.unit ? `<span class="unit">${item.unit}</span>` : '';
+                    let val = displayFromMetric(item.id, d[item.id]);
+                    let unitHtml = item.unit ? `<span class="unit">${unitLabel(item.unit)}</span>` : '';
                     let sliderHtml = `
                     <div style="padding:4px 0;">
-                        <label style="font-size:12px;display:block;margin-bottom:4px;">${item.label}</label>
+                        <label style="font-size:12px;display:block;margin-bottom:4px;">${trUnitTokens(item.label)}</label>
                         <div class="xy-row">
                             <input type="range" id="${item.id}_slider" min="${item.min}" max="${item.max}" step="${item.step}" value="${val}" oninput="document.getElementById('${item.id}').value = this.value">
                             ${unitHtml}<input type="number" id="${item.id}" value="${val}" min="${item.min}" max="${item.max}" step="${item.step}" oninput="document.getElementById('${item.id}_slider').value = this.value">${resetBtn(item.id)}
@@ -1641,7 +1706,7 @@ function renderForm(d) {
 
                     let xyContent = `
                     <div style="padding:4px 0;">
-                        <label style="font-size:12px;display:block;margin-bottom:4px;">${item.label}</label>
+                        <label style="font-size:12px;display:block;margin-bottom:4px;">${trUnitTokens(item.label)}</label>
                         <div class="xy-row">
                             <label>X</label>
                             <input type="range" id="${item.idX}_slider" min="${minX}" max="${maxX}" value="${valX}" oninput="document.getElementById('${item.idX}').value = this.value">
@@ -1657,7 +1722,7 @@ function renderForm(d) {
                 }
             } else if (iType === 'note') {
                 hasItems = true;
-                groupHtml += `<div style="font-size:11px;color:var(--text-dim);padding:2px 2px 8px 2px;">${item.label}</div>`;
+                groupHtml += `<div style="font-size:11px;color:var(--text-dim);padding:2px 2px 8px 2px;">${trUnitTokens(item.label)}</div>`;
             } else if (iType === 'touch-table') {
                 closeSubCard();
                 hasItems = true;
@@ -1679,8 +1744,8 @@ function renderForm(d) {
                 if (item.rows) {
                     item.rows.forEach(row => {
                         if (d.hasOwnProperty(row.id)) {
-                            let val = d[row.id];
-                            tableHtml += `<div class="cfg-row"><label>${row.label}</label><div class="cfg-controls">${row.unit ? `<span class="unit">${row.unit}</span>` : ''}<input type="number" id="${row.id}" value="${val}" autocomplete="off" step="any">${resetBtn(row.id)}</div></div>`;
+                            let val = displayFromMetric(row.id, d[row.id]);
+                            tableHtml += `<div class="cfg-row"><label>${trUnitTokens(row.label)}</label><div class="cfg-controls">${row.unit ? `<span class="unit">${unitLabel(row.unit)}</span>` : ''}<input type="number" id="${row.id}" value="${val}" autocomplete="off" step="any">${resetBtn(row.id)}</div></div>`;
                         }
                     });
                 }
@@ -1689,7 +1754,8 @@ function renderForm(d) {
             } else {
                 if (d.hasOwnProperty(item.id)) {
                     hasItems = true;
-                    let val = (item.id === 'SPI_BUS_SPEED' && typeof d[item.id] === 'number') ? d[item.id] / 1000000 : d[item.id];
+                    let rawVal = (item.id === 'SPI_BUS_SPEED' && typeof d[item.id] === 'number') ? d[item.id] / 1000000 : d[item.id];
+                    let val = displayFromMetric(item.id, rawVal);
                     let isBool = (typeof val === 'boolean');
                     let isPwd = /^WIFI_PASSWORD(_\d+)?$/.test(item.id);
                     let skipReset = isPwd;
@@ -1697,16 +1763,16 @@ function renderForm(d) {
 
                     if (inCardSubCard) {
                         if (isBool) {
-                            groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-controls"><input type="checkbox" id="${item.id}" ${val ? 'checked' : ''}></div></div>`;
+                            groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls"><input type="checkbox" id="${item.id}" ${val ? 'checked' : ''}></div></div>`;
                         } else {
-                            groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-controls">${item.unit ? `<span class="unit">${item.unit}</span>` : ''}<input type="${inputType}" id="${item.id}" value="${isPwd ? '••••••••' : val}" autocomplete="${isPwd ? 'off' : ''}" step="any">${skipReset ? '<span class="reset-spacer"></span>' : resetBtn(item.id)}</div></div>`;
+                            groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls">${item.unit ? `<span class="unit">${unitLabel(item.unit)}</span>` : ''}<input type="${inputType}" id="${item.id}" value="${isPwd ? '••••••••' : val}" autocomplete="${isPwd ? 'off' : ''}" step="any">${skipReset ? '<span class="reset-spacer"></span>' : resetBtn(item.id)}</div></div>`;
                         }
                     } else {
                         closeSubCard();
                         if (isBool) {
-                            groupHtml += `<div class="card checkbox-card"><label>${item.label}</label><div style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="${item.id}" ${val ? 'checked' : ''}></div></div>`;
+                            groupHtml += `<div class="card checkbox-card"><label>${trUnitTokens(item.label)}</label><div style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="${item.id}" ${val ? 'checked' : ''}></div></div>`;
                         } else {
-                            groupHtml += `<div class="card"><div class="cfg-row"><label>${item.label}</label><div class="cfg-controls">${item.unit ? `<span class="unit">${item.unit}</span>` : ''}<input type="${inputType}" id="${item.id}" value="${isPwd ? '••••••••' : val}" autocomplete="${isPwd ? 'off' : ''}" step="any">${skipReset ? '<span class="reset-spacer"></span>' : resetBtn(item.id)}</div></div></div>`;
+                            groupHtml += `<div class="card"><div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls">${item.unit ? `<span class="unit">${unitLabel(item.unit)}</span>` : ''}<input type="${inputType}" id="${item.id}" value="${isPwd ? '••••••••' : val}" autocomplete="${isPwd ? 'off' : ''}" step="any">${skipReset ? '<span class="reset-spacer"></span>' : resetBtn(item.id)}</div></div></div>`;
                         }
                     }
                 }
@@ -1731,6 +1797,10 @@ function renderForm(d) {
     });
 
     document.getElementById('form-container').innerHTML = html;
+    // The units checkbox re-renders the whole form in the new unit system
+    // and persists the toggle.
+    const unitsCb = document.getElementById('UNITS_IMPERIAL');
+    if (unitsCb) unitsCb.addEventListener('change', onUnitsToggle);
     initDetailsAnim();
     protectSliders();
     updateCpuMode();
@@ -1878,13 +1948,10 @@ function filterConfig() {
     });
 }
 
-function save() {
-    // Never overlap POSTs: the ESP's WebServer handles one request at a time
-    // and each full-config save rewrites ~200 NVS keys. A second save during
-    // an in-flight one is queued and re-collected afterwards, so rapid edits
-    // can't time out or be silently lost.
-    if (saveInFlight) { saveQueued = true; return; }
-    saveInFlight = true;
+// Collect the current form state as a metric-canonical config payload.
+// Unit fields are displayed in the active unit system, so their values are
+// converted back to the metric values the device stores.
+function collectConfig() {
     let out = {};
     document.querySelectorAll('input, select').forEach(el => {
         if (el.id.endsWith('_slider') || el.type === 'file') return;
@@ -1903,6 +1970,32 @@ function save() {
             if (el.value !== '' && !/^•+$/.test(el.value)) out[el.id] = el.value;
         } else out[el.id] = el.value;
     });
+    // Unit fields were displayed in the active unit system; convert them
+    // back to metric so the stored value never depends on the display mode.
+    Object.keys(UNIT_FIELD_TYPES).forEach(k => {
+        if (typeof out[k] === 'number') out[k] = metricFromDisplay(k, out[k]);
+    });
+    return out;
+}
+
+// UNITS_IMPERIAL was toggled: convert the whole form back to metric values,
+// re-render so every unit field/value and label shows the new system, and
+// persist the toggle.
+function onUnitsToggle() {
+    clearTimeout(autosaveTimer);
+    let out = collectConfig();
+    renderForm(out);
+    save();
+}
+
+function save() {
+    // Never overlap POSTs: the ESP's WebServer handles one request at a time
+    // and each full-config save rewrites ~200 NVS keys. A second save during
+    // an in-flight one is queued and re-collected afterwards, so rapid edits
+    // can't time out or be silently lost.
+    if (saveInFlight) { saveQueued = true; return; }
+    saveInFlight = true;
+    let out = collectConfig();
     let msgBox = document.getElementById('msg');
     msgBox.className = ''; msgBox.innerText = "Saving settings to device...";
     fetch('/api/config', {method:'POST', body:JSON.stringify(out)})
@@ -1947,6 +2040,7 @@ function applyDefault(keyString) {
         }
         if (!(key in DEFAULTS)) return;
         let def = DEFAULTS[key];
+        if (key in UNIT_FIELD_TYPES) def = displayFromMetric(key, def);
         let base = document.getElementById(key);
         if (!base) return;
         if (base.type === 'checkbox') {
@@ -2125,7 +2219,7 @@ function pollOdo() {
     if (tabHidden) return;
     fetch('/api/odo').then(r => r.json()).then(d => {
         let el = document.getElementById('odo-reading');
-        if (el) el.textContent = d.km.toFixed(1);
+        if (el) el.textContent = (CURRENT_UNITS_IMPERIAL ? d.km * KMH_TO_MPH : d.km).toFixed(1);
     }).catch(() => {});
 }
 
@@ -2135,14 +2229,18 @@ function setOdometer() {
         alert("Enter an odometer value first.");
         return;
     }
+    let val = parseFloat(input.value);
+    let km = CURRENT_UNITS_IMPERIAL ? val / KMH_TO_MPH : val;
     let msgBox = document.getElementById('msg');
     msgBox.className = ''; msgBox.innerText = "Setting odometer...";
     fetch('/api/odo', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({km: parseFloat(input.value)})
+        body: JSON.stringify({km: km})
     }).then(r => r.json()).then(d => {
-        msgBox.className = 'msg-success'; msgBox.innerText = 'Odometer set to ' + d.km.toFixed(1) + ' km';
+        let disp = CURRENT_UNITS_IMPERIAL ? d.km * KMH_TO_MPH : d.km;
+        msgBox.className = 'msg-success';
+        msgBox.innerText = 'Odometer set to ' + disp.toFixed(1) + ' ' + (CURRENT_UNITS_IMPERIAL ? 'mi' : 'km');
         input.value = '';
         pollOdo();
     }).catch(() => {
@@ -2269,7 +2367,7 @@ function updatePerf() {
         function set(id, v) { let el = document.getElementById(id); if (el) el.textContent = v; }
         set('p-cpu-freq', d.cpu_freq + ' MHz');
         set('p-cpu-mode', d.cpu_dynamic ? 'Dynamic' : 'Fixed ' + d.cpu_freq + ' MHz');
-        set('p-cpu-temp', d.cpu_temp.toFixed(1) + ' °C');
+        set('p-cpu-temp', (CURRENT_UNITS_IMPERIAL ? d.cpu_temp * 1.8 + 32 : d.cpu_temp).toFixed(1) + (CURRENT_UNITS_IMPERIAL ? ' °F' : ' °C'));
         let cPct = Math.min(d.cpu_usage, 100);
         let cBar = document.getElementById('cpu-used-bar');
         if (cBar) {
