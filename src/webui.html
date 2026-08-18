@@ -68,6 +68,24 @@ body {
     position: relative;
 }
 
+/* Sticky block: header + search bar stay on screen while scrolling */
+.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    padding: 10px 14px 12px;
+    background: rgba(8, 11, 17, 0.85);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: var(--card-shadow);
+}
+
+.sticky-top .search-wrapper {
+    margin-bottom: 0;
+}
+
 h2 {
     font-family: 'Outfit', sans-serif;
     background: linear-gradient(135deg, #ffffff 30%, #00e5ff 100%);
@@ -846,6 +864,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 </head>
 <body>
 
+<div class="sticky-top">
 <div class="header">
     <h2>Dashboard++ Setup</h2>
     <p class="subtitle">Device Configuration &amp; UI Layout Manager</p>
@@ -862,6 +881,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     <span class="search-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
     <input type="text" id="searchBar" placeholder="Search configuration parameters..." oninput="filterConfig()" autocomplete="off">
 </div>
+</div><!-- .sticky-top -->
 
 <div id="form-container"></div>
 
@@ -1236,11 +1256,11 @@ const configMap = [
         title: "System & General", icon: iconSVG.system,
         items: [
             { type: "card_header", label: "General" },
-            { id: "UNITS_IMPERIAL", label: "Use Imperial Units" },
             { id: "TARGET_FPS", label: "Target Refresh Rate", unit: "FPS" },
             { id: "ENABLE_DEMO_MODE", label: "Enable Sensor Demo Mode" },
             { id: "ENABLE_POWER_SENSE", label: "Enable Power Sensing" },
             { id: "SHOW_ELEMENT_BOUNDS", label: "Show UI Element Bounds (Debug)" },
+            { id: "UNITS_IMPERIAL", label: "Use Imperial Units" },
             { type: "card_header", label: "CPU" },
             { 
                 id: "MANUAL_CPU_FREQ", 
