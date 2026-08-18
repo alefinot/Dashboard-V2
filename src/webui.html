@@ -1685,7 +1685,7 @@ function renderForm(d) {
                     let val = d[item.id];
                     let opts = item.options.map(o => `<option value="${o.value}" ${o.value == val ? 'selected' : ''}>${o.label}</option>`).join('');
                     if (inCardSubCard) {
-                        groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls"><select id="${item.id}" style="width:auto;min-width:120px;flex-shrink:0;">${opts}</select>${resetBtn(item.id)}</div></div>`;
+                        groupHtml += `<div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls" style="flex-wrap:nowrap;"><select id="${item.id}" style="width:auto;min-width:120px;">${opts}</select>${resetBtn(item.id)}</div></div>`;
                     } else {
                         closeSubCard();
                         groupHtml += `<div class="card"><div class="cfg-row"><label>${trUnitTokens(item.label)}</label><div class="cfg-controls" style="width:auto;flex:1;justify-content:flex-end;"><select id="${item.id}">${opts}</select>${resetBtn(item.id)}</div></div></div>`;
