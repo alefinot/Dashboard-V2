@@ -415,6 +415,19 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   unsigned long tClockMs = 0, tSprMs = 0;
   unsigned long tAfterSb = tFrame0, tAfterMid = tFrame0;
 
+  // Detect a units-system toggle (metric <-> imperial). On change, force a
+  // full redraw so every unit label (KM/H, KM/L, MI, GAL, deg F) and the
+  // converted values repaint in one frame. The POST handler already sets
+  // forceFullRedraw on save; this is defense-in-depth for any other path.
+  static int lastUnitsMode = 0;
+  static bool unitsInit = false;
+  int unitsMode = UNITS_IMPERIAL ? 1 : 0;
+  if (unitsInit && unitsMode != lastUnitsMode) {
+    forceFullRedraw = true;
+  }
+  lastUnitsMode = unitsMode;
+  unitsInit = true;
+
   bool forceDraw =
       firstRun || forceFullRedraw;
   bool layoutReset = forceFullRedraw;
@@ -432,11 +445,11 @@ void updateBigDisplay(const SensorSnapshot &snap) {
     if (SHOW_ELEMENT_SPEED_UNIT) {
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_28px.vlw");
       display.setTextColor(TFT_WHITE);
-      display.getTextBounds("KM/H", 0, 0, &x1, &y1, &w, &h);
+      display.getTextBounds(speedUnitLabel(UNITS_IMPERIAL), 0, 0, &x1, &y1, &w, &h);
       int unitX = BIG_CENTER_X + OFFSET_BIG_SPEED_UNIT_X,
           unitY = BIG_CENTER_Y + OFFSET_BIG_SPEED_UNIT_Y;
       display.setCursor(unitX - (w / 2) - x1, unitY - y1);
-      display.print("KM/H");
+      display.print(speedUnitLabel(UNITS_IMPERIAL));
       drawDebugBox(display, unitX - (w / 2) - 2, unitY - 2, w + 4, h + 4);
     }
   }
@@ -664,7 +677,8 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   }
   tClockMs = millis() - tClock0;
 
-  int currentSpeed = (int)displaySnap.currentSpeed;
+  int currentSpeed = (UNITS_IMPERIAL ? (int)(kmhToMph(displaySnap.currentSpeed) + 0.5f)
+                                     : (int)displaySnap.currentSpeed);
   static unsigned long lastSpeedUpdate = 0;
   if (SHOW_ELEMENT_SPEED && ((currentSpeed != lastSpeed &&
       (REFRESH_SPEED_MS == 0 || now - lastSpeedUpdate >= (unsigned long)REFRESH_SPEED_MS)) || forceDraw)) {
@@ -835,6 +849,10 @@ if (!vlw120Ready) {
 
   int currentFuel = displaySnap.fuelPercentage;
   int currentTemp = (int)displaySnap.engineTemperature;
+  // Numeric readout only; color thresholds / bar fill / deadband stay metric.
+  int currentTempDisp = (UNITS_IMPERIAL
+                             ? (int)(cToF(displaySnap.engineTemperature) + 0.5f)
+                             : currentTemp);
 
   float targetTempPct = 0.0f;
   {
@@ -932,14 +950,15 @@ if (!vlw120Ready) {
     }
 
     char tBuf[16];
-    snprintf(tBuf, sizeof(tBuf), "%d", currentTemp);
+    snprintf(tBuf, sizeof(tBuf), "%d", currentTempDisp);
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
     int tempTextW = display.textWidth(tBuf);
 
     int numStartX = barX + barW + 6;
 
     char valBuf[20];
-    snprintf(valBuf, sizeof(valBuf), "%d  c", currentTemp);
+    snprintf(valBuf, sizeof(valBuf), "%d  %s", currentTempDisp,
+             tempUnitLabel(UNITS_IMPERIAL));
     int valW = display.textWidth(valBuf);
     int unitW = valW - tempTextW;   // gap + "c"
     // Redraw the number/unit only when the value changed: repainting it on
@@ -1303,6 +1322,14 @@ if (!vlw120Ready) {
 
   // --- Instant KM/L ---
   float displayInstKml = displaySnap.instantKml;
+  if (UNITS_IMPERIAL) {
+    displayInstKml = kmlToMpg(displaySnap.instantKml);
+    // Imperial economy can exceed the INST_INT_DIGITS cells for high km/L
+    // values (e.g. 45 km/L = 105.8 MPG). Clamp so the formatted string never
+    // overflows its cell count. Metric path is unchanged.
+    float instMax = powf(10.0f, (float)INST_INT_DIGITS) - (INST_DEC_DIGITS > 0 ? 0.5f : 1.0f);
+    if (displayInstKml > instMax) displayInstKml = instMax;
+  }
   static float lastDispInstKml = -1.0f;
   static unsigned long lastInstUpdate = 0;
   bool instChanged = fabsf(displayInstKml - lastDispInstKml) >= 0.1f;
@@ -1318,17 +1345,17 @@ if (!vlw120Ready) {
     static uint16_t badgeW_ist = 0, badgeH_ist = 0;
     static int16_t badgeBx_ist = 0, badgeBy_ist = 0;
     static uint16_t w_kml_unit = 0;
-    static bool instLayoutInit = false;
-
-    if (!instLayoutInit) {
-      instLayoutInit = true;
+    static int instLayoutMode = -1;
+    int instMode = UNITS_IMPERIAL ? 1 : 0;
+    if (instLayoutMode != instMode) {
+      instLayoutMode = instMode;
       int16_t tl1, tl2;
       uint16_t th1, bw, bh;
       display.loadVLWFont("/Fonts/DS-DIGIT_28px.vlw");
       display.getTextBounds("88.8", 0, 0, &tl1, &tl2, &bw, &th1);
       ds15_fontH = th1;
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
-      display.getTextBounds("KM/L", 0, 0, &tl1, &tl2, &w_kml_unit, &th1);
+      display.getTextBounds(economyUnitLabel(UNITS_IMPERIAL), 0, 0, &tl1, &tl2, &w_kml_unit, &th1);
       display.getTextBounds("IST", 0, 0, &badgeBx_ist, &badgeBy_ist, &bw, &bh);
       badgeW_ist = bw + 6;
       badgeH_ist = bh + 4;
@@ -1411,7 +1438,7 @@ if (!vlw120Ready) {
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
       display.setTextColor(TFT_CYAN);
       display.setCursor(kmlInstX, instY - 1);
-      display.print("KM/L");
+      display.print(economyUnitLabel(UNITS_IMPERIAL));
     }
 
     if (SHOW_ELEMENT_BOUNDS) {
@@ -1424,6 +1451,11 @@ if (!vlw120Ready) {
 
   // --- Average KM/L ---
   float displayAvgKml = displaySnap.averageKml;
+  if (UNITS_IMPERIAL) {
+    displayAvgKml = kmlToMpg(displaySnap.averageKml);
+    float avgMax = powf(10.0f, (float)AVG_INT_DIGITS) - (AVG_DEC_DIGITS > 0 ? 0.5f : 1.0f);
+    if (displayAvgKml > avgMax) displayAvgKml = avgMax;
+  }
   static float lastDispAvgKml = -1.0f;
   bool avgChanged = fabsf(displayAvgKml - lastDispAvgKml) >= 0.1f;
   if (SHOW_ELEMENT_AVG_KML && (forceDraw || (IN_BAND_BUDGET &&
@@ -1437,14 +1469,14 @@ if (!vlw120Ready) {
     static uint16_t badgeW_avg = 0, badgeH_avg = 0;
     static int16_t badgeBx_avg = 0, badgeBy_avg = 0;
     static uint16_t w_kml_unit_avg = 0;
-    static bool avgLayoutInit = false;
-
-    if (!avgLayoutInit) {
-      avgLayoutInit = true;
+    static int avgLayoutMode = -1;
+    int avgMode = UNITS_IMPERIAL ? 1 : 0;
+    if (avgLayoutMode != avgMode) {
+      avgLayoutMode = avgMode;
       uint16_t bw, bh;
       int16_t tl1, tl2;
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
-      display.getTextBounds("KM/L", 0, 0, &tl1, &tl2, &w_kml_unit_avg, &bh);
+      display.getTextBounds(economyUnitLabel(UNITS_IMPERIAL), 0, 0, &tl1, &tl2, &w_kml_unit_avg, &bh);
       display.getTextBounds("AVG", 0, 0, &badgeBx_avg, &badgeBy_avg, &bw, &bh);
       badgeW_avg = bw + 6;
       badgeH_avg = bh + 4;
@@ -1526,7 +1558,7 @@ if (!vlw120Ready) {
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
       display.setTextColor(TFT_YELLOW);
       display.setCursor(kmlAvgX, avgY - 1);
-      display.print("KM/L");
+      display.print(economyUnitLabel(UNITS_IMPERIAL));
     }
 
     if (SHOW_ELEMENT_BOUNDS) {
@@ -1539,6 +1571,7 @@ if (!vlw120Ready) {
 
   // --- Average Speed (3 int digits, no decimal) ---
   float displayAvgSpd = displaySnap.averageSpeed;
+  if (UNITS_IMPERIAL) displayAvgSpd = kmhToMph(displaySnap.averageSpeed);
   static float lastDispAvgSpd = -1.0f;
   bool avgSpdChanged = fabsf(displayAvgSpd - lastDispAvgSpd) >= 1.0f;
   if (SHOW_ELEMENT_AVG_SPEED && (forceDraw || (IN_BAND_BUDGET &&
@@ -1552,16 +1585,16 @@ if (!vlw120Ready) {
     static uint16_t w_kmh_unit = 0;
     static uint16_t badgeW_avgSpd = 0, badgeH_avgSpd = 0;
     static int16_t badgeBx_avgSpd = 0, badgeBy_avgSpd = 0;
-    static bool avgSpdLayoutInit = false;
-
-    if (!avgSpdLayoutInit) {
-      avgSpdLayoutInit = true;
+    static int avgSpdLayoutMode = -1;
+    int avgSpdMode = UNITS_IMPERIAL ? 1 : 0;
+    if (avgSpdLayoutMode != avgSpdMode) {
+      avgSpdLayoutMode = avgSpdMode;
       uint16_t bw, bh;
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
       display.getTextBounds("AVG", 0, 0, &badgeBx_avgSpd, &badgeBy_avgSpd, &bw, &bh);
       badgeW_avgSpd = bw + 6;
       badgeH_avgSpd = bh + 4;
-      display.getTextBounds("KM/H", 0, 0, &badgeBx_avgSpd, &badgeBy_avgSpd, &w_kmh_unit, &bh);
+      display.getTextBounds(speedUnitLabel(UNITS_IMPERIAL), 0, 0, &badgeBx_avgSpd, &badgeBy_avgSpd, &w_kmh_unit, &bh);
     }
     static int avgSpdCells[MAX_CELLS] = {0};
     static int avgSpdCellW = 0, avgSpdCellsCount = 0;
@@ -1658,7 +1691,7 @@ if (!vlw120Ready) {
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
       display.setTextColor(TFT_YELLOW);
       display.setCursor(kmhAvgX, avgSpdY - 1);
-      display.print("KM/H");
+      display.print(speedUnitLabel(UNITS_IMPERIAL));
     }
 
     if (SHOW_ELEMENT_BOUNDS) {
@@ -1671,6 +1704,7 @@ if (!vlw120Ready) {
 
   // --- Fuel Liters (4 fixed cells: tens, ones, dot, tenths) ---
   float displayFuelLtrs = displaySnap.fuelLiters;
+  if (UNITS_IMPERIAL) displayFuelLtrs = litersToGal(displaySnap.fuelLiters);
   static float lastDispFuelLtrs = -1.0f;
   static unsigned long lastFuelUpdate = 0;
   if (SHOW_ELEMENT_FUEL_LTRS && (forceDraw || (IN_BAND_BUDGET &&
@@ -1683,13 +1717,14 @@ if (!vlw120Ready) {
     int fuelY = BIG_CENTER_Y + OFFSET_FUEL_LTRS_Y;
 
     static uint16_t w_fuel_unit = 0;
-    static bool fuelLayoutInit = false;
-    if (!fuelLayoutInit) {
-      fuelLayoutInit = true;
+    static int fuelLayoutMode = -1;
+    int fuelMode = UNITS_IMPERIAL ? 1 : 0;
+    if (fuelLayoutMode != fuelMode) {
+      fuelLayoutMode = fuelMode;
       int16_t tfx1, tfx2;
       uint16_t tfth;
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
-      display.getTextBounds("L", 0, 0, &tfx1, &tfx2, &w_fuel_unit, &tfth);
+      display.getTextBounds(fuelUnitLabel(UNITS_IMPERIAL), 0, 0, &tfx1, &tfx2, &w_fuel_unit, &tfth);
     }
     static int fuelCells[MAX_CELLS] = {0};
     static int fuelCellW = 0, fuelCellsCount = 0;
@@ -1749,7 +1784,7 @@ if (!vlw120Ready) {
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
     display.setCursor(unitX, fuelY - 1);
     display.setTextColor(TFT_CYAN, TFT_BLACK);
-    display.print("L");
+    display.print(fuelUnitLabel(UNITS_IMPERIAL));
 
     if (SHOW_ELEMENT_BOUNDS)
       drawDebugBox(display, fuelNumAreaX - 2, fuelY + (int)ds15_refY1 - 2, totalW + 4,
@@ -1992,22 +2027,24 @@ if (!vlw120Ready) {
   }
   tAfterWeather = millis();
 
-  double displayOdo = displaySnap.totalDistanceKm;
+  double displayOdo = (UNITS_IMPERIAL ? kmToMi(displaySnap.totalDistanceKm)
+                                       : displaySnap.totalDistanceKm);
   if (SHOW_ELEMENT_ODO && (forceDraw || (fabs(displayOdo - lastDispOdo) >= 0.1 ||
       weatherPaintedFrame))) {
     lastDispOdo = displayOdo;
     componentUpdated = true;
     static uint16_t w_odo_unit_max = 0, h_odo_max = 0;
-    static bool odoLayoutInit = false;
-    if (!odoLayoutInit) {
-      odoLayoutInit = true;
+    static int odoLayoutMode = -1;
+    int odoMode = UNITS_IMPERIAL ? 1 : 0;
+    if (odoLayoutMode != odoMode) {
+      odoLayoutMode = odoMode;
       int16_t tx1, ty1;
       uint16_t tw1, th1, tw2, th2;
       display.loadVLWFont("/Fonts/DS-DIGIT_28px.vlw");
       display.getTextBounds("999999.9", 0, 0, &tx1, &ty1, &tw1, &th1);
       h_odo_max = th1;
       display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
-      display.getTextBounds(" KM", 0, 0, &tx1, &ty1, &tw2, &th2);
+      display.getTextBounds(odoUnitLabel(UNITS_IMPERIAL), 0, 0, &tx1, &ty1, &tw2, &th2);
       w_odo_unit_max = tw2;
       if (th2 > h_odo_max) h_odo_max = th2;
     }
@@ -2068,7 +2105,7 @@ if (!vlw120Ready) {
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
     display.setTextColor(TFT_WHITE, TFT_BLACK);
     display.setCursor(odoUnitX, odoY);
-    display.print(" KM");
+    display.print(odoUnitLabel(UNITS_IMPERIAL));
     drawDebugBox(display, odoCellX - 2, odoClearY, odoClearW, h_odo_max + 4);
   }
   tAfterOdo = millis();

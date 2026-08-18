@@ -26,6 +26,8 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+#include "units.h"
+
 // ----------------------------------------------------------------------------
 // Forward type definitions (must precede any extern usage below)
 // ----------------------------------------------------------------------------
@@ -105,6 +107,7 @@ constexpr int HALL_SENSOR_PIN = 33;
 // Configuration constants & runtime variables
 // ----------------------------------------------------------------------------
 extern int DISPLAY_ROTATION;
+extern bool UNITS_IMPERIAL;
 extern char SPLASH_SIGNATURE[48];
 extern char REBOOT_SIGNATURE[48];
 extern char DASHBOARD_SIGNATURE[96];

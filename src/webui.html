@@ -210,16 +210,15 @@ button:active {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #00e5ff 0%, #0091ea 100%) !important;
-    color: #050b14 !important;
-    border: none !important;
-    font-weight: 700 !important;
-    box-shadow: 0 4px 14px rgba(0, 229, 255, 0.35) !important;
+    background: linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(0, 145, 234, 0.3));
+    border-color: rgba(0, 229, 255, 0.4);
+    color: #9be8ff;
 }
 
 .btn-primary:hover {
-    background: linear-gradient(135deg, #33ebff 0%, #00a1ff 100%) !important;
-    box-shadow: 0 6px 20px rgba(0, 229, 255, 0.5) !important;
+    background: linear-gradient(135deg, rgba(0, 229, 255, 0.35), rgba(0, 145, 234, 0.5));
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(0, 229, 255, 0.3);
 }
 
 .btn-secondary {
@@ -241,6 +240,7 @@ button:active {
 
 .btn-warning:hover {
     background: linear-gradient(135deg, rgba(255, 145, 0, 0.35), rgba(216, 67, 21, 0.5));
+    border-color: rgba(255, 145, 0, 0.6);
     color: #fff;
     box-shadow: 0 4px 14px rgba(255, 145, 0, 0.3);
 }
@@ -253,8 +253,49 @@ button:active {
 
 .btn-danger:hover {
     background: linear-gradient(135deg, rgba(255, 23, 68, 0.4), rgba(198, 40, 40, 0.6));
+    border-color: rgba(255, 23, 68, 0.6);
     color: #fff;
     box-shadow: 0 4px 14px rgba(255, 23, 68, 0.35);
+}
+
+/* Confirm Dialog (replaces native confirm()) */
+#confirm-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(4, 7, 13, 0.75);
+    backdrop-filter: blur(4px);
+}
+
+#confirm-overlay.open { display: flex; }
+
+.confirm-dialog {
+    background: var(--bg-card);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    width: calc(100% - 48px);
+    max-width: 440px;
+    padding: 22px;
+    animation: pageFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-dialog p {
+    margin: 0 0 16px 0;
+    font-size: 13px;
+    line-height: 1.55;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
 }
 
 /* Search Box */
@@ -599,7 +640,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 /* Performance Dashboard Panel */
 .perf-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: 1fr 1fr;
     gap: 10px;
 }
 
@@ -782,9 +823,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 .cfg-color-controls {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     margin-left: auto;
-    min-width: 165px;
     justify-content: flex-end;
     flex-wrap: wrap;
 }
@@ -794,11 +834,12 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 /* Responsive Tweaks */
 @media (max-width: 600px) {
     body { padding: 10px 8px 50px 8px; }
+    .perf-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
     .bottom-toolbar { grid-template-columns: repeat(2, 1fr); }
     .bottom-toolbar button:nth-child(-n+4) { grid-column: span 1; }
     .bottom-toolbar button:nth-child(5) { grid-row: 3; grid-column: 1 / -1; }
     .details-content { grid-template-columns: 1fr; }
-    .cfg-row > label { min-width: 120px; }
+    .cfg-row > label { min-width: 110px; }
     .cfg-controls { width: auto; min-width: 0; }
 }
 </style>
@@ -896,6 +937,16 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     <button onclick="factoryReset()" class="btn-danger btn-reset-wide"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Factory Reset</button>
 </div>
 
+<div id="confirm-overlay">
+    <div class="confirm-dialog">
+        <p id="confirm-text"></p>
+        <div class="confirm-actions">
+            <button id="confirm-yes">Confirm</button>
+            <button id="confirm-no" class="btn-secondary">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <button id="scrollTopBtn" onclick="window.scrollTo({top:0,behavior:&#39;smooth&#39;})" style="display: none;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
 
 <script>
@@ -913,6 +964,7 @@ const iconSVG = {
 // Factory-default values used by the per-setting reset-to-default icon.
 const DEFAULTS = {
     DISPLAY_ROTATION: 1,
+    UNITS_IMPERIAL: false,
     SPI_BUS_SPEED: 60,
     DISPLAY_WIDTH: 480,
     DISPLAY_HEIGHT: 320,
@@ -1176,6 +1228,31 @@ const configMap = [
                     { value: 14, label: "(GMT+14:00) Kiritimati" }
                 ]
             },
+            { type: "card_header", label: "Weather Widget" },
+            { id: "WEATHER_CITY", label: "City Name" },
+            { id: "WEATHER_LAT", label: "Location Latitude (Fallback)" },
+            { id: "WEATHER_LON", label: "Location Longitude (Fallback)" },
+            { id: "WEATHER_REFRESH_MIN", label: "Refresh Interval", type: "range", min: 1, max: 60, step: 1, unit: "min" },
+            { id: "WEATHER_LOCALE", label: "City Name Language", type: "select",
+                options: [
+                    { value: "it", label: "Italiano (default)" },
+                    { value: "en", label: "English" },
+                    { value: "fr", label: "Français" },
+                    { value: "de", label: "Deutsch" },
+                    { value: "es", label: "Español" },
+                    { value: "pt", label: "Português" },
+                    { value: "nl", label: "Nederlands" },
+                    { value: "pl", label: "Polski" },
+                    { value: "ru", label: "Русский" },
+                    { value: "tr", label: "Türkçe" },
+                    { value: "el", label: "Ελληνικά" },
+                    { value: "ar", label: "العربية" },
+                    { value: "he", label: "עברית" },
+                    { value: "ja", label: "日本語" },
+                    { value: "zh", label: "中文" },
+                    { value: "ko", label: "한국어" }
+                ] },
+            { type: "note", label: "If GPS is active, coordinates are updated automatically from the satellite feed. Otherwise, the fallback coordinates are used to fetch local weather from Open-Meteo." },
             { type: "card_header", label: "Custom Signatures" },
             { id: "SPLASH_SIGNATURE", label: "Boot Screen Signature" },
             { id: "REBOOT_SIGNATURE", label: "Reboot Screen Signature" },
@@ -1223,6 +1300,8 @@ const configMap = [
     {
         title: "Display & Colors", icon: iconSVG.display,
         items: [
+            { type: "card_header", label: "Units" },
+            { id: "UNITS_IMPERIAL", label: "Use Imperial Units (MPH / MI / MPG / °F / GAL)" },
             { type: "subtitle", label: "Display" },
             { id: "DISPLAY_ROTATION", label: "Screen Rotation (0-3)" },
             { id: "DISPLAY_WIDTH", label: "Display Width", unit: "px" },
@@ -1235,7 +1314,7 @@ const configMap = [
             { id: "BACKLIGHT_BRIGHTNESS", label: "Backlight Brightness", type: "range", min: 0, max: 100, step: 1 },
             { id: "FADE_DURATION_MS", label: "Fade Duration", type: "range", min: 100, max: 5000, step: 100, unit: "ms" },
             { id: "ENABLE_AUTO_BRIGHTNESS", label: "Enable Auto Brightness" },
-            { type: "card_header", label: "Auto Brightness Sensor", content: `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            { type: "card_header", label: "Auto Brightness", content: `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
         <span style="font-size:12px;color:var(--text-muted);">Reading: <strong id="ambient-reading" style="color:#fff;font-family:'JetBrains Mono',monospace;">--</strong></span>
         <div style="display:flex;gap:6px;">
             <button onclick="calibrateDark()" class="btn-secondary" style="font-size:11px;padding:5px 10px;">Capture Dark</button>
@@ -1256,7 +1335,7 @@ const configMap = [
         title: "Sensors Tuning", icon: iconSVG.sensors,
         items: [
             { type: "touch-table", label: "Fuel Sensor", pointCount: "FUEL_TOUCH_POINTS", arrayId: "touchTable", rows: [
-                { id: "REFUEL_RESET_LITERS", label: "Refuel Reset Threshold (fuel rise in L resets trip consumption)", unit: "L" },
+                { id: "REFUEL_RESET_LITERS", label: "Refuel Reset Threshold", unit: "L" },
                 { id: "FUEL_FILTER_ALPHA", label: "Smoothing Factor" }
             ] },
             { type: "subtitle", label: "Temperature Sensor" },
@@ -1282,7 +1361,7 @@ const configMap = [
             { id: "REFRESH_BAT_MS", label: "Battery Voltage", type: "number", unit: "ms" },
             { id: "REFRESH_INST_MS", label: "Instant KM/L", type: "number", unit: "ms" },
             { id: "REFRESH_FUEL_MS", label: "Fuel Liters", type: "number", unit: "ms" },
-            { type: "subtitle", label: "GNSS" },
+            { type: "subtitle", label: "GPS" },
             { id: "GPS_BAUD", label: "GNSS Baud Rate", unit: "baud" },
             { id: "MIN_SATELLITES", label: "Minimum Satellites Required" },
             { id: "OPTIMAL_SATELLITES", label: "Optimal Satellites Count" },
@@ -1394,30 +1473,6 @@ const configMap = [
             { type: 'xy', idX: "OFFSET_COMPASS_X", idY: "OFFSET_COMPASS_Y", label: "Position" },
             { type: "card_header", label: "Weather Widget" },
             { id: "SHOW_ELEMENT_WEATHER", label: "Show Weather Widget on Dashboard" },
-            { id: "WEATHER_CITY", label: "City Name" },
-            { id: "WEATHER_LAT", label: "Location Latitude (Fallback)" },
-            { id: "WEATHER_LON", label: "Location Longitude (Fallback)" },
-            { id: "WEATHER_REFRESH_MIN", label: "Refresh Interval", type: "range", min: 1, max: 60, step: 1, unit: "min" },
-            { id: "WEATHER_LOCALE", label: "City Name Language", type: "select",
-                options: [
-                    { value: "it", label: "Italiano (default)" },
-                    { value: "en", label: "English" },
-                    { value: "fr", label: "Français" },
-                    { value: "de", label: "Deutsch" },
-                    { value: "es", label: "Español" },
-                    { value: "pt", label: "Português" },
-                    { value: "nl", label: "Nederlands" },
-                    { value: "pl", label: "Polski" },
-                    { value: "ru", label: "Русский" },
-                    { value: "tr", label: "Türkçe" },
-                    { value: "el", label: "Ελληνικά" },
-                    { value: "ar", label: "العربية" },
-                    { value: "he", label: "עברית" },
-                    { value: "ja", label: "日本語" },
-                    { value: "zh", label: "中文" },
-                    { value: "ko", label: "한국어" }
-                ] },
-            { type: "note", label: "If GPS is active, coordinates are updated automatically from the satellite feed. Otherwise, the fallback coordinates are used to fetch local weather from Open-Meteo." },
             { type: 'xy', idX: "OFFSET_WEATHER_X", idY: "OFFSET_WEATHER_Y", label: "Position" },
             { type: "card_header", label: "Sidebars" },
             { type: "section_header", label: "Left Bar (Engine Temp)" },
@@ -1547,18 +1602,18 @@ function renderForm(d) {
                     let resetKeys = item.colorId;
                     if (item.valueId && d.hasOwnProperty(item.valueId)) {
                         let unitHtml = item.unit ? `<span class="unit">${item.unit}</span>` : '';
-                        valHtml = `${unitHtml}<input type="number" id="${item.valueId}" value="${d[item.valueId]}" step="any" style="width:85px;text-align:center;">`;
+                        valHtml = `${unitHtml}<input type="number" id="${item.valueId}" value="${d[item.valueId]}" step="any" style="width:70px;text-align:center;">`;
                         resetKeys = item.colorId + ',' + item.valueId;
                     } else {
-                        valHtml = `<span style="display:inline-block;width:115px;"></span>`;
+                        valHtml = `<span style="display:inline-block;width:90px;"></span>`;
                     }
-                    groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-color-controls">${valHtml}<input type="color" id="${item.colorId}" value="${d[item.colorId]}"></div>${resetBtn(resetKeys)}</div>`;
+                    groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-color-controls">${valHtml}<input type="color" id="${item.colorId}" value="${d[item.colorId]}">${resetBtn(resetKeys)}</div></div>`;
                 }
             } else if (iType === 'color') {
                 if (d.hasOwnProperty(item.id)) {
                     hasItems = true;
                     let val = d[item.id];
-                    groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-color-controls"><span style="display:inline-block;width:115px;"></span><input type="color" id="${item.id}" value="${val}"></div>${resetBtn(item.id)}</div>`;
+                    groupHtml += `<div class="cfg-row"><label>${item.label}</label><div class="cfg-color-controls"><span style="display:inline-block;width:90px;"></span><input type="color" id="${item.id}" value="${val}">${resetBtn(item.id)}</div></div>`;
                 }
             } else if (iType === 'range') {
                 if (d.hasOwnProperty(item.id)) {
@@ -1721,8 +1776,10 @@ function updateCpuMode() {
 function bindPowerSense() {
     document.getElementById('ENABLE_DYNAMIC_CPU')?.addEventListener('change', updateCpuMode);
     document.getElementById('ENABLE_POWER_SENSE')?.addEventListener('change', function() {
-        if (this.checked && !confirm("Enabling power sensing will start monitoring vehicle power draw. Continue?")) {
-            this.checked = false;
+        if (this.checked) {
+            confirmDialog("Enabling power sensing will start monitoring vehicle power draw. Continue?", null, () => {
+                this.checked = false;
+            });
         }
     });
 }
@@ -1910,16 +1967,36 @@ function applyDefault(keyString) {
     save();
 }
 
+// Styled confirmation dialog (replaces native confirm())
+function confirmDialog(message, onOk, onCancel) {
+    const overlay = document.getElementById('confirm-overlay');
+    const okBtn = document.getElementById('confirm-yes');
+    const cancelBtn = document.getElementById('confirm-no');
+    document.getElementById('confirm-text').textContent = message;
+    function close() {
+        overlay.classList.remove('open');
+        document.removeEventListener('keydown', onEsc);
+    }
+    function onEsc(e) {
+        if (e.key === 'Escape') { close(); if (onCancel) onCancel(); }
+    }
+    okBtn.onclick = function() { close(); if (onOk) onOk(); };
+    cancelBtn.onclick = function() { close(); if (onCancel) onCancel(); };
+    document.addEventListener('keydown', onEsc);
+    overlay.classList.add('open');
+}
+
 function reboot() {
-    if (!confirm("Are you sure you want to reboot the device?")) return;
-    let msgBox = document.getElementById('msg');
-    msgBox.className = ''; msgBox.innerText = "Rebooting device...";
-    fetch('/api/reboot', {method:'POST'}).then(() => {
-        msgBox.className = 'msg-success'; msgBox.innerText = "Reboot command sent. Please refresh shortly.";
-        setTimeout(() => location.reload(), 4000);
-    }).catch(() => {
-        msgBox.className = 'msg-error'; msgBox.innerText = "Connection lost during reboot. Please refresh shortly.";
-        setTimeout(() => location.reload(), 4000);
+    confirmDialog("Are you sure you want to reboot the device?", function() {
+        let msgBox = document.getElementById('msg');
+        msgBox.className = ''; msgBox.innerText = "Rebooting device...";
+        fetch('/api/reboot', {method:'POST'}).then(() => {
+            msgBox.className = 'msg-success'; msgBox.innerText = "Reboot command sent. Please refresh shortly.";
+            setTimeout(() => location.reload(), 4000);
+        }).catch(() => {
+            msgBox.className = 'msg-error'; msgBox.innerText = "Connection lost during reboot. Please refresh shortly.";
+            setTimeout(() => location.reload(), 4000);
+        });
     });
 }
 
@@ -1955,10 +2032,9 @@ function importBackup(event) {
     reader.onload = function(e) {
         try {
             const jsonConfig = JSON.parse(e.target.result);
-            if (!confirm("Are you sure you want to restore these settings? This will overwrite the current configuration.")) {
-                event.target.value = ""; return;
-            }
-            sendConfigToDevice(jsonConfig, "Restoring configuration...", "Backup restored successfully!");
+            confirmDialog("Are you sure you want to restore these settings? This will overwrite the current configuration.", function() {
+                sendConfigToDevice(jsonConfig, "Restoring configuration...", "Backup restored successfully!");
+            });
         } catch(err) {
             alert("Error: Invalid JSON file!");
         }
@@ -2099,14 +2175,15 @@ function pollSerial() {
 }
 
 function factoryReset() {
-    if (!confirm("Are you sure you want to reset to factory settings? All configurations will be lost!")) return;
-    let msgBox = document.getElementById('msg');
-    msgBox.className = ''; msgBox.innerText = "Restoring factory settings...";
-    fetch('/api/reset', {method:'POST'}).then(r => r.json()).then(r => {
-        msgBox.className = 'msg-success'; msgBox.innerText = "Factory reset successful! Device is rebooting...";
-        setTimeout(() => location.reload(), 5000);
-    }).catch(() => {
-        msgBox.className = 'msg-error'; msgBox.innerText = "Connection lost during reboot. Please refresh shortly.";
+    confirmDialog("Are you sure you want to reset to factory settings? All configurations will be lost!", function() {
+        let msgBox = document.getElementById('msg');
+        msgBox.className = ''; msgBox.innerText = "Restoring factory settings...";
+        fetch('/api/reset', {method:'POST'}).then(r => r.json()).then(r => {
+            msgBox.className = 'msg-success'; msgBox.innerText = "Factory reset successful! Device is rebooting...";
+            setTimeout(() => location.reload(), 5000);
+        }).catch(() => {
+            msgBox.className = 'msg-error'; msgBox.innerText = "Connection lost during reboot. Please refresh shortly.";
+        });
     });
 }
 
@@ -2124,20 +2201,21 @@ function doOta() {
         inp.click();
         return;
     }
-    if (!confirm('Upload ' + _otaFile.name + ' and reboot the device?')) return;
-    btn.disabled = true; btn.textContent = 'Uploading...';
-    const fd = new FormData();
-    fd.append('firmware', _otaFile);
-    fetch('/api/ota', {method:'POST', body:fd}).then(r => r.json()).then(d => {
-        if (d.status === 'ok') {
-            btn.textContent = 'Done';
-            setTimeout(() => location.reload(), 10000);
-        } else {
-            btn.disabled = false; btn.textContent = 'Retry';
-        }
-    }).catch(() => {
-        btn.textContent = 'Rebooting...';
-        setTimeout(() => location.reload(), 30000);
+    confirmDialog('Upload ' + _otaFile.name + ' and reboot the device?', function() {
+        btn.disabled = true; btn.textContent = 'Uploading...';
+        const fd = new FormData();
+        fd.append('firmware', _otaFile);
+        fetch('/api/ota', {method:'POST', body:fd}).then(r => r.json()).then(d => {
+            if (d.status === 'ok') {
+                btn.textContent = 'Done';
+                setTimeout(() => location.reload(), 10000);
+            } else {
+                btn.disabled = false; btn.textContent = 'Retry';
+            }
+        }).catch(() => {
+            btn.textContent = 'Rebooting...';
+            setTimeout(() => location.reload(), 30000);
+        });
     });
 }
 

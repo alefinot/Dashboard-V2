@@ -4,6 +4,7 @@
 // Configuration variables (defined here, declared extern elsewhere)
 // ----------------------------------------------------------------------------
 int DISPLAY_ROTATION = 1;
+bool UNITS_IMPERIAL = false;
 
 char SPLASH_SIGNATURE[48] = "by @ale.finot";
 char REBOOT_SIGNATURE[48] = "Dashboard++ by @ale.finot";
@@ -318,6 +319,7 @@ void processConfig(int mode, JsonDocument *doc) {
     pref.begin("cfg", false);
 
   CFG_INT(DISPLAY_ROTATION, "DISP_ROT", 1);
+  CFG_BOOL(UNITS_IMPERIAL, "UNITS_IMP", false);
   CFG_INT(SPI_BUS_SPEED, "SPI_FREQ", 60000000);
   CFG_INT(DISPLAY_WIDTH, "DISP_W", 480);
   CFG_INT(DISPLAY_HEIGHT, "DISP_H", 320);
@@ -587,6 +589,7 @@ void processConfig(int mode, JsonDocument *doc) {
 // config), so every unit starts from exactly these values.
 const char FACTORY_DEFAULT_JSON[] = R"({
   "DISPLAY_ROTATION": 1,
+  "UNITS_IMPERIAL": false,
   "SPI_BUS_SPEED": 60000000,
   "DISPLAY_WIDTH": 480,
   "DISPLAY_HEIGHT": 320,
