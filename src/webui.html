@@ -40,11 +40,16 @@ body {
         radial-gradient(circle at 85% 85%, rgba(168, 85, 247, 0.04) 0%, transparent 40%);
     background-attachment: fixed;
     color: var(--text-main);
-    padding: 16px 12px 60px 12px;
-    margin: 0 auto;
-    max-width: 920px;
+    margin: 0;
     min-height: 100vh;
     animation: pageFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Centered content column; the sticky bar above it spans the full screen width */
+.main-content {
+    margin: 0 auto;
+    max-width: 920px;
+    padding: 16px 12px 60px 12px;
 }
 
 @keyframes pageFadeIn {
@@ -62,24 +67,35 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 14px;
+    gap: 7px;
     text-align: center;
-    margin-bottom: 14px;
+    margin-bottom: 7px;
     position: relative;
 }
 
-/* Sticky block: header + search bar stay on screen while scrolling */
+/* Sticky block: header + search bar stay on screen while scrolling.
+   Flat rectangle spanning the full screen width, soft fade at the bottom edge. */
 .sticky-top {
     position: sticky;
     top: 0;
     z-index: 50;
-    padding: 10px 14px 12px;
-    background: rgba(8, 11, 17, 0.85);
+    width: 100%;
+    padding: 8px 16px;
+    background: rgba(8, 11, 17, 0.93);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    box-shadow: var(--card-shadow);
+}
+
+/* Soft fade below the bar, dissolving into the page content */
+.sticky-top::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -12px;
+    height: 12px;
+    background: linear-gradient(to bottom, rgba(8, 11, 17, 0.93), transparent);
+    pointer-events: none;
 }
 
 .sticky-top .search-wrapper {
@@ -92,28 +108,21 @@ h2 {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin: 0;
-    font-size: 26px;
+    font-size: 19px;
     font-weight: 800;
     letter-spacing: -0.5px;
-}
-
-p.subtitle {
-    color: var(--text-muted);
-    font-size: 13px;
-    margin: 0;
-    font-weight: 500;
 }
 
 .ip-banner {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     background: var(--bg-card);
     backdrop-filter: var(--glass-blur);
-    padding: 6px 16px;
+    padding: 4px 12px;
     border-radius: 30px;
     border: 1px solid var(--border-color);
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
 }
 
@@ -324,7 +333,7 @@ button:active {
 
 #searchBar {
     width: 100%;
-    padding: 11px 16px 11px 40px;
+    padding: 8px 16px 8px 40px;
     background: var(--bg-card);
     backdrop-filter: var(--glass-blur);
     color: var(--text-main);
@@ -851,7 +860,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 
 /* Responsive Tweaks */
 @media (max-width: 600px) {
-    body { padding: 10px 8px 50px 8px; }
+    .main-content { padding: 10px 8px 50px 8px; }
     .perf-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
     .bottom-toolbar { grid-template-columns: repeat(2, 1fr); }
     .bottom-toolbar button:nth-child(-n+4) { grid-column: span 1; }
@@ -867,21 +876,21 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 <div class="sticky-top">
 <div class="header">
     <h2>Dashboard++ Setup</h2>
-    <p class="subtitle">Device Configuration &amp; UI Layout Manager</p>
     <div class="ip-banner">
         <span id="ip-info">LAN: <a href="http://192.168.1.136/" target="_blank">192.168.1.136</a> &nbsp;|&nbsp; AP: <a href="http://192.168.4.1/" target="_blank">192.168.4.1</a></span>
     </div>
 </div>
-
-<div id="msg" class="msg-success">Time synced successfully!</div>
-
-<input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
 
 <div class="search-wrapper">
     <span class="search-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
     <input type="text" id="searchBar" placeholder="Search configuration parameters..." oninput="filterConfig()" autocomplete="off">
 </div>
 </div><!-- .sticky-top -->
+
+<div class="main-content">
+<div id="msg" class="msg-success">Time synced successfully!</div>
+
+<input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
 
 <div id="form-container"></div>
 
@@ -956,6 +965,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     <button onclick="document.getElementById('importFile').click()" class="btn-secondary"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Import</button>
     <button onclick="factoryReset()" class="btn-danger btn-reset-wide"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> Factory Reset</button>
 </div>
+</div><!-- .main-content -->
 
 <div id="confirm-overlay">
     <div class="confirm-dialog">
