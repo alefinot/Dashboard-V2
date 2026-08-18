@@ -635,6 +635,12 @@ void loop() {
   // Disarmed only for the duration of a fast-reboot storm: the permanent
   // disarming let a later web wedge stay dead forever, so re-arm 3 minutes
   // after boot.
+  // The 45s budget must exceed the web task's 30s self-heal (which restarts
+  // the listen socket when handleClient() blocks on a slow AP client): a
+  // weak-RSSI phone receiving the multi-KB config page can legitimately
+  // stall handleClient() for 15-30s, and rebooting on that makes the AP
+  // appear unstable. A genuinely wedged web task is still caught, just
+  // after the self-heal window.
   if (watchdogDisabled && millis() > 180000) {
     watchdogDisabled = false;
     logPrintf("Web watchdog re-armed\n");
@@ -645,7 +651,7 @@ void loop() {
   if (now >= webWatchdogDue) {
     if (webLoopCount != lastWebLoop) {
       lastWebLoop = webLoopCount;
-      webWatchdogDue = now + 15000;
+      webWatchdogDue = now + 45000;
     } else if (!watchdogDisabled) {
       logPrintf("Web task stalled (heartbeat stopped), rebooting\n");
       delay(100);
