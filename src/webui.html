@@ -1354,20 +1354,7 @@ const configMap = [
             { id: "SPLASH_SIGNATURE", label: "Boot Screen Signature" },
             { id: "REBOOT_SIGNATURE", label: "Reboot Screen Signature" },
             { id: "DASHBOARD_SIGNATURE", label: "Main Dashboard Watermark" },
-            { type: "card_header", label: "Firmware Update", content: `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <button id="otaBtn" onclick="doOta()" class="btn-secondary" style="font-size:11px;padding:5px 10px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Firmware OTA</button>
-        <button id="otaPullBtn" onclick="doOtaPull()" class="btn-secondary" style="font-size:11px;padding:5px 10px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Check Updates</button>
-    </div>` },
-            { id: "OTA_PULL_ENABLED", label: "Enable Automatic OTA Pull" },
-            { id: "OTA_PULL_URL", label: "Firmware Manifest URL" },
-            { id: "OTA_PULL_INTERVAL_HOURS", label: "Check Interval", unit: "hours" },
-            { id: "OTA_CURRENT_VERSION", label: "Current Firmware Version" }
-        ]
-    },
-    {
-        title: "Wifi", icon: iconSVG.wifi,
-        items: [
-            { type: "card_header", label: "Network Settings" },
+            { type: "card_header", label: "Wifi" },
             { id: "WIFI_TX_POWER_DBM", label: "TX Power", type: "range", min: -1, max: 20, step: 1, unit: "dBm" },
             { id: "WIFI_RETRY_MODE", label: "WiFi Search Behavior", type: "select",
                 options: [
@@ -1379,7 +1366,7 @@ const configMap = [
             { type: "heading", label: "Primary Network" },
             { id: "WIFI_SSID", label: "Network Name (SSID)" },
             { id: "WIFI_PASSWORD", label: "Password" },
-            { type: "card_header", label: "Fallback Networks" },
+            { type: "heading", label: "Fallback Networks" },
             { type: "section_header", label: "Network 1" },
             { id: "WIFI_SSID_1", label: "Network Name (SSID)" },
             { id: "WIFI_PASSWORD_1", label: "Password" },
@@ -1392,6 +1379,14 @@ const configMap = [
             { type: "section_header", label: "Network 4" },
             { id: "WIFI_SSID_4", label: "Network Name (SSID)" },
             { id: "WIFI_PASSWORD_4", label: "Password" },
+            { type: "card_header", label: "Firmware Update", content: `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <button id="otaBtn" onclick="doOta()" class="btn-secondary" style="font-size:11px;padding:5px 10px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Firmware OTA</button>
+        <button id="otaPullBtn" onclick="doOtaPull()" class="btn-secondary" style="font-size:11px;padding:5px 10px;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:13px;height:13px;vertical-align:-2px;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Check Updates</button>
+    </div>` },
+            { id: "OTA_PULL_ENABLED", label: "Enable Automatic OTA Pull" },
+            { id: "OTA_PULL_URL", label: "Firmware Manifest URL" },
+            { id: "OTA_PULL_INTERVAL_HOURS", label: "Check Interval", unit: "hours" },
+            { id: "OTA_CURRENT_VERSION", label: "Current Firmware Version" }
         ]
     },
     {
