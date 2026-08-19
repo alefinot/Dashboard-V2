@@ -134,9 +134,9 @@ bool SHOW_GHOST_DIGITS = true;
 bool SHOW_ELEMENT_WEATHER = true;
 int OFFSET_WEATHER_X = 0;
 int OFFSET_WEATHER_Y = 146;
-char WEATHER_CITY[48] = """";
-float WEATHER_LAT = 0f;
-float WEATHER_LON = 0f;
+char WEATHER_CITY[48] = "";
+float WEATHER_LAT = 0.0f;
+float WEATHER_LON = 0.0f;
 int WEATHER_REFRESH_MIN = 1;
 char WEATHER_LOCALE[16] = "it";
 WeatherData g_weatherData;
@@ -207,15 +207,15 @@ float ADC_VOLTS_FACTOR;
 bool showFpsCounter = true;
 bool showGpsDebug = false;
 
-char WIFI_SSID[64] = """";
+char WIFI_SSID[64] = "";
 char WIFI_PASSWORD[64] = "";
-char WIFI_SSID_1[64] = """";
-char WIFI_PASSWORD_1[64] = """";
-char WIFI_SSID_2[64] = """";
+char WIFI_SSID_1[64] = "";
+char WIFI_PASSWORD_1[64] = "";
+char WIFI_SSID_2[64] = "";
 char WIFI_PASSWORD_2[64] = "";
-char WIFI_SSID_3[64] = """";
+char WIFI_SSID_3[64] = "";
 char WIFI_PASSWORD_3[64] = "";
-char WIFI_SSID_4[64] = """";
+char WIFI_SSID_4[64] = "";
 char WIFI_PASSWORD_4[64] = "";
 int WIFI_TX_POWER_DBM = 20;
 int WIFI_RETRY_MODE = 1;
@@ -446,9 +446,9 @@ void processConfig(int mode, JsonDocument *doc) {
   CFG_BOOL(SHOW_ELEMENT_WEATHER, "SH_WEATH", true);
   CFG_INT(OFFSET_WEATHER_X, "O_WEATH_X", 0);
   CFG_INT(OFFSET_WEATHER_Y, "O_WEATH_Y", 146);
-  CFG_STR(WEATHER_CITY, "WEATH_CITY", """");
-  CFG_FLT(WEATHER_LAT, "WEATH_LAT", 0f);
-  CFG_FLT(WEATHER_LON, "WEATH_LON", 0f);
+  CFG_STR(WEATHER_CITY, "WEATH_CITY", "");
+  CFG_FLT(WEATHER_LAT, "WEATH_LAT", 0.0f);
+  CFG_FLT(WEATHER_LON, "WEATH_LON", 0.0f);
   CFG_INT(WEATHER_REFRESH_MIN, "WEATH_RFR", 1);
   CFG_STR(WEATHER_LOCALE, "WEATH_LOCALE", "it");
   CFG_BOOL(ENABLE_POWER_SENSE, "PWR_SNS", false);
@@ -493,13 +493,13 @@ void processConfig(int mode, JsonDocument *doc) {
   CFG_INT(ODO_INT_DIGITS, "ODO_INT", 5);
   CFG_INT(ODO_DEC_DIGITS, "ODO_DEC", 1);
 
-  CFG_STR(WIFI_SSID, "WIFI_SSID", """");
+  CFG_STR(WIFI_SSID, "WIFI_SSID", "");
   // WiFi passwords are handled manually (below): never serialized back to the
   // web API, and an empty posted value means "keep the stored one".
-  CFG_STR(WIFI_SSID_1, "WIFI_S1", """");
-  CFG_STR(WIFI_SSID_2, "WIFI_S2", """");
-  CFG_STR(WIFI_SSID_3, "WIFI_S3", """");
-  CFG_STR(WIFI_SSID_4, "WIFI_S4", """");
+  CFG_STR(WIFI_SSID_1, "WIFI_S1", "");
+  CFG_STR(WIFI_SSID_2, "WIFI_S2", "");
+  CFG_STR(WIFI_SSID_3, "WIFI_S3", "");
+  CFG_STR(WIFI_SSID_4, "WIFI_S4", "");
   CFG_INT(WIFI_TX_POWER_DBM, "WIFI_TXP", 20);
   CFG_INT(WIFI_RETRY_MODE, "WIFI_RETRY_M", 1);
   CFG_INT(WIFI_RETRY_SECONDS, "WIFI_RETRY_S", 60);
@@ -523,7 +523,7 @@ void processConfig(int mode, JsonDocument *doc) {
                             "WIFI_PASSWORD_4" };
     const char *nvs[5] = { "WIFI_PWD", "WIFI_P1", "WIFI_P2", "WIFI_P3",
                            "WIFI_P4" };
-    const char *defs[5] = { "", """", "", "", "" };
+    const char *defs[5] = { "", "", "", "", "" };
     for (int i = 0; i < 5; i++) {
       if (mode == 0) {
         size_t cb = pref.getString(nvs[i], pwds[i], 64);
@@ -708,7 +708,7 @@ const char FACTORY_DEFAULT_JSON[] = R"({
   "SHOW_ELEMENT_WEATHER": true,
   "OFFSET_WEATHER_X": 0,
   "OFFSET_WEATHER_Y": 146,
-  "WEATHER_CITY": """",
+  "WEATHER_CITY": "",
   "WEATHER_LAT": 0,
   "WEATHER_LON": 0,
   "WEATHER_REFRESH_MIN": 1,
@@ -752,11 +752,11 @@ const char FACTORY_DEFAULT_JSON[] = R"({
   "FUEL_DEC_DIGITS": 1,
   "ODO_INT_DIGITS": 5,
   "ODO_DEC_DIGITS": 1,
-  "WIFI_SSID": """",
-  "WIFI_SSID_1": """",
-  "WIFI_SSID_2": """",
-  "WIFI_SSID_3": """",
-  "WIFI_SSID_4": """",
+  "WIFI_SSID": "",
+  "WIFI_SSID_1": "",
+  "WIFI_SSID_2": "",
+  "WIFI_SSID_3": "",
+  "WIFI_SSID_4": "",
   "WIFI_TX_POWER_DBM": 20,
   "WIFI_RETRY_MODE": 1,
   "WIFI_RETRY_SECONDS": 60,

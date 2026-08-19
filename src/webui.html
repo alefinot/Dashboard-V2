@@ -773,6 +773,41 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 
 #scrollTopBtn:active { transform: scale(0.95); }
 
+/* Floating pull-to-refresh arrow: shown while pulling down at the top of
+   the page, spins clockwise while the page reloads */
+#pullRefresh {
+    position: fixed;
+    top: 10px;
+    left: 50%;
+    z-index: 900;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, 0px) scale(0.6);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+#pullRefresh.show { transition: none; }
+
+#pullRefresh svg {
+    width: 40px;
+    height: 40px;
+    stroke: var(--accent-cyan);
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 10px rgba(0, 229, 255, 0.7));
+}
+
+#pullRefresh.refreshing svg {
+    animation: refreshSpin 0.8s linear infinite;
+}
+
+@keyframes refreshSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
 /* Reset-to-default icon on each setting row */
 .reset-btn {
     display: inline-flex;
@@ -984,6 +1019,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     </div>
 </div>
 
+<div id="pullRefresh"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
+
 <button id="scrollTopBtn" onclick="window.scrollTo({top:0,behavior:&#39;smooth&#39;})" style="display: none;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
 
 <script>
@@ -1120,7 +1157,7 @@ const DEFAULTS = {
     SHOW_ELEMENT_WEATHER: true,
     OFFSET_WEATHER_X: 0,
     OFFSET_WEATHER_Y: 146,
-    WEATHER_CITY: """",
+    WEATHER_CITY: "",
     WEATHER_LAT: 0,
     WEATHER_LON: 0,
     WEATHER_REFRESH_MIN: 1,
@@ -1905,6 +1942,115 @@ window.addEventListener('scroll', function() {
         document.body.classList.remove('range-scroll-lock');
     }, 120);
 });
+
+// Pull-to-refresh: at the top of the page, pulling down reveals a floating
+// refresh arrow (like Chrome for Android); releasing past the threshold
+// reloads the page and the arrow spins clockwise while it loads.
+// Mouse pulls use pointer events; touch pulls (Android WebView) use touch
+// events so touchmove can be preventDefault'ed - otherwise the WebView
+// takes the drag for native scrolling, fires pointercancel, and the arrow
+// dies mid-pull.
+(function() {
+    var THRESHOLD = 60;  // pull distance (px) that triggers a refresh
+    var MAX_PULL = 56;   // max visual travel of the arrow
+    var ind = document.getElementById('pullRefresh');
+    var pulling = false, refreshing = false;
+    var startX = 0, startY = 0, lastPull = 0;
+
+    function drawArrow() {
+        var t = Math.min(1, lastPull / THRESHOLD);
+        ind.style.opacity = 0.25 + 0.75 * t;
+        ind.style.transform = 'translate(-50%,' + Math.min(lastPull, MAX_PULL) + 'px) scale(' + (0.6 + 0.4 * t) + ')';
+    }
+
+    function hideArrow() {
+        ind.classList.remove('show', 'refreshing');
+        ind.style.opacity = 0;
+        ind.style.transform = 'translate(-50%,0px) scale(0.6)';
+    }
+
+    function triggerRefresh() {
+        refreshing = true;
+        ind.classList.add('refreshing');
+        if (autosaveTimer) {
+            // Flush unsaved edits before the reload (same 500ms wait
+            // the "Refresh Table" button uses).
+            clearTimeout(autosaveTimer);
+            save();
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            location.reload();
+        }
+    }
+
+    function endPull() {
+        if (!pulling || refreshing) { pulling = false; return; }
+        pulling = false;
+        if (lastPull >= THRESHOLD) triggerRefresh();
+        else hideArrow();
+    }
+
+    function movePull(x, y, prevent) {
+        if (!pulling || refreshing) return;
+        var dy = y - startY;
+        if (window.scrollY > 0 || dy < 0) {
+            pulling = false;
+            hideArrow();
+            return;
+        }
+        if (Math.abs(x - startX) > dy * 1.5) return; // mostly horizontal
+        lastPull = dy * 0.4; // rubber-banded pull
+        ind.classList.add('show');
+        drawArrow();
+        if (prevent) prevent();
+    }
+
+    document.addEventListener('pointerdown', function(e) {
+        if (e.pointerType === 'touch') return;  // touch pulls use touch handlers
+        if (refreshing || !e.isPrimary) return;
+        pulling = window.scrollY <= 0;
+        if (pulling) { startX = e.clientX; startY = e.clientY; lastPull = 0; }
+    });
+
+    document.addEventListener('pointermove', function(e) {
+        if (e.pointerType === 'touch') return;  // touch pulls use touch handlers
+        movePull(e.clientX, e.clientY, null);
+    });
+
+    document.addEventListener('pointerup', function(e) {
+        if (e.pointerType === 'touch') return;
+        if (e.isPrimary) endPull();
+    });
+    document.addEventListener('pointercancel', function() { pulling = false; hideArrow(); });
+
+    // Touch pulls (Android WebView / phones): without preventDefault on
+    // touchmove the WebView steals the drag for native scrolling, which
+    // fires pointercancel and hides the arrow mid-pull.
+    document.addEventListener('touchstart', function(e) {
+        if (refreshing || e.touches.length !== 1) return;
+        pulling = window.scrollY <= 0;
+        if (pulling) {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            lastPull = 0;
+        }
+    });
+
+    document.addEventListener('touchmove', function(e) {
+        if (!pulling || refreshing) return;
+        if (e.touches.length !== 1) { pulling = false; hideArrow(); return; }
+        movePull(e.touches[0].clientX, e.touches[0].clientY, function() { e.preventDefault(); });
+    }, {passive: false});
+
+    document.addEventListener('touchend', function() {
+        if (pulling && !refreshing) endPull();
+    });
+    document.addEventListener('touchcancel', function() { pulling = false; hideArrow(); });
+
+    window.addEventListener('scroll', function() {
+        if (window.scrollY > 0) { pulling = false; hideArrow(); }
+    });
+})();
 
 document.addEventListener('touchstart', function(event) {
     const target = event.target;
