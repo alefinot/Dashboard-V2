@@ -66,7 +66,7 @@ static volatile bool otaPullDownloading = false;
 // ----------------------------------------------------------------------------
 // Background Weather Fetch
 // ----------------------------------------------------------------------------
-static bool weatherTaskRunning = false;
+static volatile bool weatherTaskRunning = false;  // guarded by weatherFetchMutex
 static unsigned long weatherTaskStartedMs = 0;
 // Set when a config save changes the weather location/city/interval so the
 // fetch loop re-queries immediately instead of waiting for the next interval.
@@ -208,16 +208,31 @@ void updateWeather() {
 }
 
 static TaskHandle_t weatherTaskHandle = NULL;
+// Guards weatherTaskRunning/weatherTaskHandle: the fetch task cleans up its
+// own flag while the web task starts/deletes fetches, and an unsynchronized
+// stale cleanup can wipe the handle of a fetch started while it was winding
+// down (concurrent fetches + a hung task the guard can no longer find).
+static SemaphoreHandle_t weatherFetchMutex = NULL;
 
 void weatherFetchTask(void *pvParameters) {
   updateWeather();
-  weatherTaskRunning = false;
-  weatherTaskHandle = NULL;
+  // Only clear the flag if this task still owns it: a finishing fetch must
+  // not wipe the flag/handle of a fetch started while it was winding down.
+  xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
+  if (weatherTaskHandle == xTaskGetCurrentTaskHandle()) {
+    weatherTaskRunning = false;
+    weatherTaskHandle = NULL;
+  }
+  xSemaphoreGive(weatherFetchMutex);
   vTaskDelete(NULL);
 }
 
 bool startWeatherFetch() {
-  if (weatherTaskRunning) return true;
+  xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
+  if (weatherTaskRunning) {
+    xSemaphoreGive(weatherFetchMutex);
+    return true;
+  }
   weatherTaskRunning = true;
   weatherTaskStartedMs = millis();
   BaseType_t res = xTaskCreatePinnedToCore(weatherFetchTask, "WeatherFetchTask",
@@ -226,8 +241,10 @@ bool startWeatherFetch() {
     logPrintf("Weather: task creation failed, will retry\n");
     weatherTaskRunning = false;
     weatherTaskHandle = NULL;
+    xSemaphoreGive(weatherFetchMutex);
     return false;
   }
+  xSemaphoreGive(weatherFetchMutex);
   return true;
 }
 
@@ -694,6 +711,7 @@ void performFirmwareUpdate(const char *firmwareUrl, const char *newVersion) {
 
 void webServerTask(void *pvParameters) {
   otaStatusMutex = xSemaphoreCreateMutex();
+  weatherFetchMutex = xSemaphoreCreateMutex();
   WiFi.mode(WIFI_AP_STA);
   int txPower = WIFI_TX_POWER_DBM;
   if (txPower < -1) txPower = -1;
@@ -975,18 +993,95 @@ void webServerTask(void *pvParameters) {
 
   server.on("/api/compass/cal-status", HTTP_GET, []() {
     long remain = compassCalActive ? (long)((compassCalEndTime - millis()) / 1000) : 0;
-    char buf[256];
+    char buf[384];
     snprintf(buf, sizeof(buf),
              "{\"state\":\"%s\",\"remaining\":%ld,\"minX\":%d,\"maxX\":%d,"
              "\"minY\":%d,\"maxY\":%d,\"minZ\":%d,\"maxZ\":%d,"
-             "\"offX\":%d,\"offY\":%d,\"offZ\":%d,\"tX\":%d,\"tY\":%d,\"tZ\":%d,"
-             "\"result\":\"%s\"}",
+             "\"offX\":%d,\"offY\":%d,\"offZ\":%d,"
+             "\"scaleX\":%.3f,\"scaleY\":%.3f,\"scaleZ\":%.3f,"
+             "\"tX\":%d,\"tY\":%d,\"tZ\":%d,\"result\":\"%s\"}",
              compassCalActive ? "capturing" : "idle", remain,
              compassCalMinX, compassCalMaxX, compassCalMinY, compassCalMaxY,
              compassCalMinZ, compassCalMaxZ, COMPASS_CAL_X, COMPASS_CAL_Y,
-             COMPASS_CAL_Z, COMPASS_CAL_TX, COMPASS_CAL_TY, COMPASS_CAL_TZ,
+             COMPASS_CAL_Z,
+             (double)COMPASS_CAL_SCALE_X, (double)COMPASS_CAL_SCALE_Y,
+             (double)COMPASS_CAL_SCALE_Z,
+             COMPASS_CAL_TX, COMPASS_CAL_TY, COMPASS_CAL_TZ,
              compassCalResult);
     server.send(200, "application/json", buf);
+  });
+
+  // Current raw magnetometer sample. The webui polls this during a capture
+  // to build its own sample cloud in the browser (no ESP32 RAM cost).
+  server.on("/api/compass/raw", HTTP_GET, []() {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "{\"x\":%d,\"y\":%d,\"z\":%d}",
+             compassRawX, compassRawY, compassRawZ);
+    server.send(200, "application/json", buf);
+  });
+
+  // Apply browser-computed calibration values (outlier-trimmed offsets +
+  // soft-iron scale + tilt axis). Range-checked before touching NVS.
+  server.on("/api/compass/cal-apply", HTTP_POST, []() {
+    if (!server.hasArg("plain")) {
+      server.send(400, "application/json", "{\"status\":\"error\",\"error\":\"no body\"}");
+      return;
+    }
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, server.arg("plain"));
+    if (err) {
+      logPrintf("Compass: cal-apply parse error\n");
+      server.send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"parse\"}");
+      return;
+    }
+    int offX = doc["offX"] | 0;
+    int offY = doc["offY"] | 0;
+    int offZ = doc["offZ"] | 0;
+    float sX = doc["sX"] | 1.0f;
+    float sY = doc["sY"] | 1.0f;
+    float sZ = doc["sZ"] | 1.0f;
+    if (offX < -30000 || offX > 30000 || offY < -30000 || offY > 30000 ||
+        offZ < -30000 || offZ > 30000 || sX < 0.2f || sX > 5.0f ||
+        sY < 0.2f || sY > 5.0f || sZ < 0.2f || sZ > 5.0f) {
+      server.send(400, "application/json",
+                  "{\"status\":\"error\",\"error\":\"out of range\"}");
+      return;
+    }
+    COMPASS_CAL_X = (int16_t)offX;
+    COMPASS_CAL_Y = (int16_t)offY;
+    COMPASS_CAL_Z = (int16_t)offZ;
+    COMPASS_CAL_SCALE_X = sX;
+    COMPASS_CAL_SCALE_Y = sY;
+    COMPASS_CAL_SCALE_Z = sZ;
+    bool tiltOk = false;
+    int tX = 0, tY = 0, tZ = 0;
+    if (!doc["tX"].isNull()) {
+      tX = doc["tX"] | 0;
+      tY = doc["tY"] | 0;
+      tZ = doc["tZ"] | 0;
+      float tl = (float)sqrt((double)tX * tX + (double)tY * tY + (double)tZ * tZ);
+      tiltOk = (tl > 26200.0f && tl < 39300.0f);
+    }
+    { Preferences p; p.begin("cfg", false);
+      p.putInt("CMP_CAL_X", COMPASS_CAL_X);
+      p.putInt("CMP_CAL_Y", COMPASS_CAL_Y);
+      p.putInt("CMP_CAL_Z", COMPASS_CAL_Z);
+      p.putFloat("CMP_SCALE_X", COMPASS_CAL_SCALE_X);
+      p.putFloat("CMP_SCALE_Y", COMPASS_CAL_SCALE_Y);
+      p.putFloat("CMP_SCALE_Z", COMPASS_CAL_SCALE_Z);
+      if (tiltOk) {
+        COMPASS_CAL_TX = (int16_t)tX;
+        COMPASS_CAL_TY = (int16_t)tY;
+        COMPASS_CAL_TZ = (int16_t)tZ;
+        p.putInt("CMP_TILT_X", COMPASS_CAL_TX);
+        p.putInt("CMP_TILT_Y", COMPASS_CAL_TY);
+        p.putInt("CMP_TILT_Z", COMPASS_CAL_TZ);
+      }
+      p.end(); }
+    logPrintf("Compass: applied from webui: X=%d Y=%d Z=%d S=%.3f/%.3f/%.3f %s\n",
+              offX, offY, offZ, sX, sY, sZ, tiltOk ? "tilt set" : "tilt kept");
+    server.send(200, "application/json", "{\"status\":\"ok\"}");
   });
 
   server.on("/api/ota", HTTP_POST, []() {
@@ -1401,14 +1496,16 @@ void webServerTask(void *pvParameters) {
       // Hung-fetch guard: if the HTTP request ever sticks longer than 30s,
       // abandon the task so the interval and future refreshes can retry
       // instead of the weather widget dying permanently.
+      xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
       if (weatherTaskRunning && millis() - weatherTaskStartedMs > 30000) {
         logPrintf("Weather: fetch task hung >30s, terminating task\n");
         if (weatherTaskHandle != NULL) {
           vTaskDelete(weatherTaskHandle);
-          weatherTaskHandle = NULL;
         }
         weatherTaskRunning = false;
+        weatherTaskHandle = NULL;
       }
+      xSemaphoreGive(weatherFetchMutex);
       if (lastWeatherCheck == 0) {
         lastWeatherCheck = millis();
       }

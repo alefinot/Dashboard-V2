@@ -232,7 +232,9 @@ int OTA_PULL_INTERVAL_HOURS = 24;
 char OTA_CURRENT_VERSION[32] = "1.2.6";
 
 int FUEL_TOUCH_POINTS = 8;
-int touchTable[MAX_TOUCH_POINTS] = {950, 840, 750, 670, 600, 530, 460, 400};
+int touchTable[MAX_TOUCH_POINTS] = {950, 840, 750, 670, 600, 530, 460, 400,
+                                     350, 310, 275, 245, 220, 195, 170, 145,
+                                     120, 95, 70, 45};
 
 // ----------------------------------------------------------------------------
 // NVS config macros
@@ -420,6 +422,9 @@ void processConfig(int mode, JsonDocument *doc) {
   CFG_INT(COMPASS_CAL_TX, "CMP_TILT_X", -15193);
   CFG_INT(COMPASS_CAL_TY, "CMP_TILT_Y", -26464);
   CFG_INT(COMPASS_CAL_TZ, "CMP_TILT_Z", 11935);
+  CFG_FLT(COMPASS_CAL_SCALE_X, "CMP_SCALE_X", 1.0f);
+  CFG_FLT(COMPASS_CAL_SCALE_Y, "CMP_SCALE_Y", 1.0f);
+  CFG_FLT(COMPASS_CAL_SCALE_Z, "CMP_SCALE_Z", 1.0f);
 
   CFG_INT(SIDEBAR_BAR_WIDTH, "SBAR_W", 8);
   CFG_INT(SIDEBAR_BAR_HEIGHT, "SBAR_H", 190);
@@ -566,11 +571,24 @@ void processConfig(int mode, JsonDocument *doc) {
     JsonArray arr = (*doc)["touchTable"].to<JsonArray>();
     for (int i = 0; i < FUEL_TOUCH_POINTS; i++)
       arr.add(touchTable[i]);
-  } else if (mode == 2 && !(*doc)["touchTable"].isNull()) {
-    JsonArray arr = (*doc)["touchTable"].as<JsonArray>();
+  } else if (mode == 2) {
     char key[8];
-    for (int i = 0; i < FUEL_TOUCH_POINTS && i < (int)arr.size(); i++) {
-      touchTable[i] = arr[i].as<int>();
+    int written = 0;
+    if (!(*doc)["touchTable"].isNull()) {
+      JsonArray arr = (*doc)["touchTable"].as<JsonArray>();
+      written = (int)arr.size();
+      if (written > FUEL_TOUCH_POINTS) written = FUEL_TOUCH_POINTS;
+      for (int i = 0; i < written; i++) {
+        touchTable[i] = arr[i].as<int>();
+        snprintf(key, sizeof(key), "TCH_%d", i);
+        pref.putInt(key, touchTable[i]);
+      }
+    }
+    // Points beyond the uploaded array (or a missing array) keep their
+    // previous values; write them to NVS so FUEL_TOUCH_POINTS above the
+    // array length never leaves missing keys (a missing key loads as 0
+    // and breaks the fuel gauge).
+    for (int i = written; i < FUEL_TOUCH_POINTS; i++) {
       snprintf(key, sizeof(key), "TCH_%d", i);
       pref.putInt(key, touchTable[i]);
     }
@@ -793,6 +811,13 @@ void seedNVSWithFactoryDefaults() {
   Preferences pref;
   pref.begin("cfg", false);
   pref.putInt("CFG_VER", 5);
+  // Seed every touch-table key so FUEL_TOUCH_POINTS can be raised above 8
+  // without missing NVS entries (a missing key loads as 0).
+  char key[8];
+  for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+    snprintf(key, sizeof(key), "TCH_%d", i);
+    pref.putInt(key, touchTable[i]);
+  }
   pref.end();
   logPrintf("Config v5: NVS seeded with factory defaults (dashboard_backup.json)\n");
 }
