@@ -425,6 +425,9 @@ void processConfig(int mode, JsonDocument *doc) {
   CFG_FLT(COMPASS_CAL_SCALE_X, "CMP_SCALE_X", 1.0f);
   CFG_FLT(COMPASS_CAL_SCALE_Y, "CMP_SCALE_Y", 1.0f);
   CFG_FLT(COMPASS_CAL_SCALE_Z, "CMP_SCALE_Z", 1.0f);
+  // 0 = flat assumption (robust to a changing tilt); 1 = use the calibrated
+  // tilt axis (only correct while the mounting tilt is constant).
+  CFG_INT(COMPASS_TILT_COMP, "CMP_TILT_COMP", 0);
 
   CFG_INT(SIDEBAR_BAR_WIDTH, "SBAR_W", 8);
   CFG_INT(SIDEBAR_BAR_HEIGHT, "SBAR_H", 190);

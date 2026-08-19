@@ -1136,6 +1136,7 @@ const DEFAULTS = {
     COMPASS_CAL_SCALE_X: 1.0,
     COMPASS_CAL_SCALE_Y: 1.0,
     COMPASS_CAL_SCALE_Z: 1.0,
+    COMPASS_TILT_COMP: 0,
     SIDEBAR_BAR_WIDTH: 8,
     SIDEBAR_BAR_HEIGHT: 190,
     SHOW_ELEMENT_BOUNDS: false,
@@ -1532,6 +1533,7 @@ const configMap = [
             { id: "COMPASS_CAL_SCALE_X", label: "Cal Scale X", unit: "x" },
             { id: "COMPASS_CAL_SCALE_Y", label: "Cal Scale Y", unit: "x" },
             { id: "COMPASS_CAL_SCALE_Z", label: "Cal Scale Z", unit: "x" },
+            { id: "COMPASS_TILT_COMP", label: "Tilt Compensation (0=robust flat, 1=fixed tilt axis)", type: "number" },
             { id: "COMPASS_CAL_TX", label: "Tilt Axis X", unit: "raw" },
             { id: "COMPASS_CAL_TY", label: "Tilt Axis Y", unit: "raw" },
             { id: "COMPASS_CAL_TZ", label: "Tilt Axis Z", unit: "raw" }

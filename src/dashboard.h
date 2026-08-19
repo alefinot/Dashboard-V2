@@ -404,6 +404,10 @@ extern int16_t COMPASS_CAL_TZ;
 extern float COMPASS_CAL_SCALE_X;
 extern float COMPASS_CAL_SCALE_Y;
 extern float COMPASS_CAL_SCALE_Z;
+// COMPASS_TILT_COMP: 0 = flat assumption (robust to a changing tilt, default
+// for a handlebar-mounted dashboard); 1 = use the calibrated tilt axis (only
+// correct while the mounting tilt is constant).
+extern int COMPASS_TILT_COMP;
 extern volatile bool compassCalActive;
 extern unsigned long compassCalEndTime;
 extern int16_t compassCalMinX;

@@ -333,6 +333,10 @@ int16_t COMPASS_CAL_TX = 0, COMPASS_CAL_TY = 0, COMPASS_CAL_TZ = 32767;
 // Default 1.0 = no correction.
 float COMPASS_CAL_SCALE_X = 1.0f, COMPASS_CAL_SCALE_Y = 1.0f,
       COMPASS_CAL_SCALE_Z = 1.0f;
+// COMPASS_TILT_COMP: 0 = flat assumption (robust to a changing tilt, default
+// for a handlebar-mounted dashboard); 1 = use the calibrated tilt axis (only
+// correct while the mounting tilt is constant).
+int COMPASS_TILT_COMP = 0;
 volatile bool compassCalActive = false;
 unsigned long compassCalEndTime = 0;
 int16_t compassCalMinX = 0, compassCalMaxX = 0;
@@ -553,19 +557,34 @@ void processCompassSensor() {
     if (nowMs >= compassCalEndTime) compassCalFinish();
   }
 
-  // Tilt-compensated heading: offset- and scale-correct the field, project
-  // it onto the plane perpendicular to the calibrated "up" axis, then
-  // atan2. Flat mount (0,0,1) degenerates to the plain atan2(y - oy, x - ox).
+  // Heading: offset- and scale-correct the field, then take the angle of the
+  // horizontal component.
+  //
+  // COMPASS_TILT_COMP selects the plane the corrected field is projected
+  // onto:
+  //   1 = plane perpendicular to the calibrated "up" axis (COMPASS_CAL_TX/Y/Z).
+  //     Only correct while the mounting tilt is constant - a 3-axis
+  //     magnetometer cannot sense the current tilt, so if the mounting tilt
+  //     changes (handlebars tilting while riding) the projection swings
+  //     wildly.
+  //   0 = default: plane perpendicular to the sensor Z axis (flat-mount
+  //     assumption), h = atan2(py, px). The error is bounded by the tilt
+  //     angle, so it degrades gracefully instead of going crazy.
   float px = ((float)x - (float)COMPASS_CAL_X) * COMPASS_CAL_SCALE_X;
   float py = ((float)y - (float)COMPASS_CAL_Y) * COMPASS_CAL_SCALE_Y;
   float pz = ((float)z - (float)COMPASS_CAL_Z) * COMPASS_CAL_SCALE_Z;
-  float ux = (float)COMPASS_CAL_TX / 32767.0f;
-  float uy = (float)COMPASS_CAL_TY / 32767.0f;
-  float uz = (float)COMPASS_CAL_TZ / 32767.0f;
-  float ulen = sqrtf(ux * ux + uy * uy + uz * uz);
-  if (ulen > 0.001f) { ux /= ulen; uy /= ulen; uz /= ulen; }
-  float dot = px * ux + py * uy + pz * uz;
-  float h = atan2f(py - dot * uy, px - dot * ux) * (180.0f / M_PI);
+  float h;
+  if (COMPASS_TILT_COMP) {
+    float ux = (float)COMPASS_CAL_TX / 32767.0f;
+    float uy = (float)COMPASS_CAL_TY / 32767.0f;
+    float uz = (float)COMPASS_CAL_TZ / 32767.0f;
+    float ulen = sqrtf(ux * ux + uy * uy + uz * uz);
+    if (ulen > 0.001f) { ux /= ulen; uy /= ulen; uz /= ulen; }
+    float dot = px * ux + py * uy + pz * uz;
+    h = atan2f(py - dot * uy, px - dot * ux) * (180.0f / M_PI);
+  } else {
+    h = atan2f(py, px) * (180.0f / M_PI);
+  }
   if (h < 0) h += 360.0f;
   h += COMPASS_DECLINATION_DEG;
   if (h < 0.0f) h += 360.0f;
