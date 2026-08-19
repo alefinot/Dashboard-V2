@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- slider icon: three tracks with knobs -->
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M4,5 h16 v1.5 h-16 z M4,11 h16 v1.5 h-16 z M4,17 h16 v1.5 h-16 z" />
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M7,3 h3 v4 h-3 z M14,9 h3 v4 h-3 z M9,15 h3 v4 h-3 z" />
+</vector>

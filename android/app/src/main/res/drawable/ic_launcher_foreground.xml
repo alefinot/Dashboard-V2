@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal speed gauge: 240-degree arc (gap at bottom), center tick, needle, hub -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Gauge arc: 240-degree sweep from 8 o'clock to 4 o'clock -->
+    <path
+        android:strokeColor="#22D3EE"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M34.95,65 A22,22 0 1 1 73.05,65" />
+    <!-- 12 o'clock scale tick -->
+    <path
+        android:strokeColor="#22D3EE"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,39 L54,35.5" />
+    <!-- Needle pointing at 2 o'clock -->
+    <path
+        android:strokeColor="#22D3EE"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,54 L68.72,45.5" />
+    <!-- Hub -->
+    <path
+        android:fillColor="#22D3EE"
+        android:pathData="M54,50.5 A3.5,3.5 0 1 0 54,57.5 A3.5,3.5 0 1 0 54,50.5 Z" />
+</vector>

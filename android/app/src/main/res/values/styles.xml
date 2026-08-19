@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme: dark HUD, no action bar. The Compose UI owns all drawing;
+         windowBackground paints the splash color so no flash on cold start. -->
+    <style name="Theme.Dashboardpp" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/hud_bg</item>
+        <item name="android:colorAccent">@color/hud_cyan</item>
+        <item name="android:statusBarColor">@color/hud_bg</item>
+        <item name="android:navigationBarColor">@color/hud_bg</item>
+    </style>
+</resources>
