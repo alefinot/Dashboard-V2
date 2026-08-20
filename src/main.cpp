@@ -28,6 +28,20 @@ int currentBrightnessTarget = 0;
 // so a watchdog can't brick the device by restarting it forever.
 static bool watchdogDisabled = false;
 
+// CPU busy probes: one task per core. Each probe increments its counter once
+// per 1 ms tick slot in which its core ran nothing higher-priority, so
+// (1 - ticks/elapsedMs) is the fraction of time the core was busy. (ccount
+// cannot measure this: it ticks at the fixed XTAL rate regardless of load.)
+static volatile uint32_t cpuProbeTicks[2] = {0, 0};
+
+static void cpuProbeTask(void *pv) {
+  int core = (int)(intptr_t)pv;
+  for (;;) {
+    cpuProbeTicks[core]++;
+    vTaskDelay(1);
+  }
+}
+
 void logPrintf(const char *fmt, ...) {
   char tmp[256];
   va_list args;
@@ -243,6 +257,8 @@ void setup() {
   xTaskCreatePinnedToCore(gpsTask, "GpsTaskCore0", 4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(webServerTask, "WebTaskCore0", 6144, NULL, 1, NULL,
                            0);
+  xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe0", 2048, (void *)0, 1, NULL, 0);
+  xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe1", 2048, (void *)1, 1, NULL, 1);
 
   logPrintf("Setup done\n");
 }
@@ -548,22 +564,26 @@ void loop() {
   }
 #endif // telemetry disabled
   static unsigned long lastCpuScaleCheck = 0;
-    static uint32_t lastCpuCycleCount = 0;
-    static unsigned long lastCpuUsageCheck = 0;
-    if (now - lastCpuUsageCheck >= 1000) {
-      if (lastCpuUsageCheck == 0) {
-        lastCpuCycleCount = 0;
-        lastCpuUsageCheck = now;
-      } else {
-        uint32_t endCount;
-        __asm__ volatile("rsr %0, ccount" : "=a"(endCount));
-        uint32_t cycles = endCount - lastCpuCycleCount;
-        // ccount ticks at APB_CLK (80 MHz on ESP32), normalize to 240 MHz baseline
-        cpuUsagePct = (float)cycles / (240.0f * 1000000.0f) * 100.0f;
-        lastCpuCycleCount = endCount;
-        lastCpuUsageCheck = now;
-      }
+  // CPU busy: probe tasks (one per core) tick once per 1 ms slot in which
+  // their core ran nothing higher-priority, so busy = 1 - ticks/elapsed.
+  static uint32_t lastProbeTicks[2] = {0, 0};
+  static unsigned long lastCpuProbeCheck = 0;
+  if (now - lastCpuProbeCheck >= 1000) {
+    if (lastCpuProbeCheck == 0) {
+      lastProbeTicks[0] = cpuProbeTicks[0];
+      lastProbeTicks[1] = cpuProbeTicks[1];
+      lastCpuProbeCheck = now;
+    } else {
+      unsigned long win = now - lastCpuProbeCheck;
+      float busy = 1.0f -
+                   ((float)((cpuProbeTicks[0] - lastProbeTicks[0]) +
+                             (cpuProbeTicks[1] - lastProbeTicks[1])) / (float)(win * 2UL));
+      cpuUsagePct = constrain(busy * 100.0f, 0.0f, 100.0f);
+      lastProbeTicks[0] = cpuProbeTicks[0];
+      lastProbeTicks[1] = cpuProbeTicks[1];
+      lastCpuProbeCheck = now;
     }
+  }
   if (now - lastCpuScaleCheck >= 1000) {
     lastCpuScaleCheck = now;
     uint32_t targetFreq;

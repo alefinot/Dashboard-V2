@@ -1037,7 +1037,19 @@ if (!vlw120Ready) {
 
   int displaySat = displaySnap.satellites;
   float displayBat = displaySnap.batteryVoltage;
-  float displayTmr = displaySnap.accelResultTime;
+  // The accel timer value is computed at full precision by the sensors;
+  // the display only samples it every 0.05s (20Hz) so the digit area
+  // redraws at 20Hz instead of every sensor tick (less flicker).
+  static float tmrShown = 0.0f;
+  static unsigned long lastTmrShownAt = 0;
+  {
+    unsigned long tNow = millis();
+    if (displaySnap.accelState != RUNNING || tNow - lastTmrShownAt >= 50) {
+      tmrShown = displaySnap.accelResultTime;
+      lastTmrShownAt = tNow;
+    }
+  }
+  float displayTmr = tmrShown;
   TimerState displayAccelState = displaySnap.accelState;
   static int w_sat_max = 0, w_bat_max = 0, w_badge_max = 0, w_tmr_max = 0;
   static uint16_t h_sat_max = 0, h_bat_max = 0, h_tmr_max = 0,
@@ -1137,6 +1149,8 @@ if (!vlw120Ready) {
 
   // -- Satellite count (icon with the count rendered below in Conthrax 10px,
   // same compact style as the accel badge) --
+  static int satIconX = -1, satIconY = -1; // where the icon currently is
+  bool satIconRedraw = (satIconX != satX || satIconY != satY);
   if (SHOW_ELEMENT_SAT && (forceDraw || (IN_BAND_BUDGET &&
       (displaySat != lastSat || forceDrawSat)))) {
     lastSat = displaySat;
@@ -1148,10 +1162,29 @@ if (!vlw120Ready) {
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
     display.getTextBounds(satStr, 0, 0, &bx1_s, &by1_s, &bw1_s, &bh1_s);
     int iconX = satX + (w_sat_max - 16) / 2;
-    display.fillRect(satX - 1, satY - 1, w_sat_max + 2, h_sat_max + 2, TFT_BLACK);
-    drawSatelliteIcon(iconX, satY + 1, TFT_WHITE);
+    int drawX = satX + (w_sat_max - bw1_s) / 2 - bx1_s;
+    int drawY = satY + 19 - by1_s;
+    if (forceDraw || satIconRedraw) {
+      // The icon is static; repaint it only when first drawn or when its
+      // position changes (full-screen redraws / layout changes).
+      display.fillRect(satX - 1, satY - 1, w_sat_max + 2, h_sat_max + 2,
+                        TFT_BLACK);
+      drawSatelliteIcon(iconX, satY + 1, TFT_WHITE);
+      satIconX = satX;
+      satIconY = satY;
+    } else {
+      // Value change only: clear a box that covers the widest possible 1-2
+      // digit value ("44", 20px advance) plus 2px padding. by1_s is negative
+      // (-baseline), so the text cell starts at drawY + by1_s; anchoring the
+      // box there (instead of below the glyphs) prevents a narrower value from
+      // leaving residue from a wider one. The icon is left alone.
+      int satBoxW = display.textWidth("44") + 2;  // 20 + 2 = 22
+      display.fillRect(satX + (w_sat_max - satBoxW) / 2,
+                        drawY + by1_s - 1,
+                        satBoxW, bh1_s + 2, TFT_BLACK);
+    }
     display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.setCursor(satX + (w_sat_max - bw1_s) / 2 - bx1_s, satY + 19 - by1_s);
+    display.setCursor(drawX, drawY);
     display.print(satStr);
     drawDebugBox(display, satX - 1, satY - 1, w_sat_max + 2, h_sat_max + 2);
   }
@@ -2054,8 +2087,9 @@ if (!vlw120Ready) {
       odoCellsCount = ODO_INT_DIGITS + 1 + ODO_DEC_DIGITS;
       measureDs15Cells(odoCells, odoCellW, odoCellsCount, ODO_INT_DIGITS);
     }
-    int odoCellX = BIG_CENTER_X + OFFSET_BIG_ODO_X - ((odoCellW + 4 + w_odo_unit_max) / 2);
-    int odoUnitX = odoCellX + odoCellW + 4;
+    int odoUnitGap = 1;
+    int odoCellX = BIG_CENTER_X + OFFSET_BIG_ODO_X - ((odoCellW + odoUnitGap + w_odo_unit_max) / 2);
+    int odoUnitX = odoCellX + odoCellW + odoUnitGap;
 
     char odoNumStr[20];
     snprintf(odoNumStr, sizeof(odoNumStr), "%.*f", ODO_DEC_DIGITS, displayOdo);
@@ -2063,7 +2097,7 @@ if (!vlw120Ready) {
 
     int16_t odoY = (BIG_CENTER_Y + OFFSET_BIG_ODO_Y) - h_odo_max - ds15_refY1;
     int odoClearY = odoY + ds15_refY1 - 2;
-    int odoClearW = odoCellW + 4 + w_odo_unit_max + 4;
+    int odoClearW = odoCellW + odoUnitGap + w_odo_unit_max + 4;
 
     display.loadVLWFont("/Fonts/DS-DIGIT_28px.vlw");
     if (SHOW_GHOST_DIGITS) {
