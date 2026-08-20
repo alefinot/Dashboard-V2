@@ -4,3 +4,4 @@ test/
 nul
 chips/
 compile_commands.json
+.pi/
