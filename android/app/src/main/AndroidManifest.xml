@@ -6,6 +6,16 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- BLE (the Dashboard++ GATT central). 12+ uses BLUETOOTH_SCAN/CONNECT;
+         ≤31 uses the legacy BLUETOOTH. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <!-- The NotificationListenerService (the bar's source). 34+ needs
+         POST_NOTIFICATIONS; ACCESS_NOTIFICATIONS is the legacy (≤33) gate. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATIONS" />
+
     <application
         android:name=".DashboardApp"
         android:label="@string/app_name"
@@ -24,5 +34,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The §6.1 NotificationListenerService — the bar's source. The
+             user grants it from Settings → Apps → Notification access;
+             NotifOutbox then pushes the (deduped) alerts / media / nav over
+             BLE to the ESP's persistent bar. -->
+        <service
+            android:name=".notify.NotificationReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.ACTION_NOTIFICATION_LISTENER" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

@@ -549,9 +549,15 @@ extern float WEATHER_LAT;
 extern float WEATHER_LON;
 extern int WEATHER_REFRESH_MIN;
 extern char WEATHER_LOCALE[16];
-
-bool startWeatherFetch();
-void updateWeather();
+// BLE / phone companion (see Implementation plans/...-plan.md).
+// BLE_ENABLED: advertise the BLE GATT + accept phone frames. BAR_ENABLED:
+// draw the top notification bar. BAR_TIMEOUT_MS: how long an alert holds
+// the bar while a song plays (0/absent = song never holds an alert). BAR_SHOW_APP:
+// show the app monogram in the bar.
+extern bool BLE_ENABLED;
+extern bool BAR_ENABLED;
+extern int BAR_TIMEOUT_MS;
+extern bool BAR_SHOW_APP;
 
 // ----------------------------------------------------------------------------
 // UI API

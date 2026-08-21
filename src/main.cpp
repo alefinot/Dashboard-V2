@@ -1,4 +1,7 @@
 #include "dashboard.h"
+#include "bar.h"
+#include "nav.h"
+#include "ble.h"
 #include <stdarg.h>
 
 char logBuf[LOG_BUF_SIZE];
@@ -257,6 +260,8 @@ void setup() {
                            0);
   xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe0", 2048, (void *)0, 1, NULL, 0);
   xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe1", 2048, (void *)1, 1, NULL, 1);
+  if (BLE_ENABLED)
+    xTaskCreatePinnedToCore(bleTask, "BleTask", 8192, NULL, 1, NULL, 0);
 
   logPrintf("Setup done\n");
 }
@@ -464,6 +469,9 @@ void loop() {
       // ensureSpeedSprite) and the components fall back to direct-panel
       // drawing for its duration, so the screen keeps animating.
       updateBigDisplay(snap);
+      barTick(now);
+      drawNotificationBar(display);
+      drawNavWidget(display);
       drawFpsOverlay();
       drawGpsDebugOverlay();
       checkNightMode(snap);

@@ -63,191 +63,6 @@ static bool otaPullManualFlag = false;
 // 11 write-fail spam) and fragments RAM below what the mbedTLS handshake needs.
 static volatile bool otaPullDownloading = false;
 
-// ----------------------------------------------------------------------------
-// Background Weather Fetch
-// ----------------------------------------------------------------------------
-static volatile bool weatherTaskRunning = false;  // guarded by weatherFetchMutex
-static unsigned long weatherTaskStartedMs = 0;
-// Set when a config save changes the weather location/city/interval so the
-// fetch loop re-queries immediately instead of waiting for the next interval.
-static volatile bool weatherRefreshRequested = false;
-
-// Reverse-geocode a coordinate into a short display name (city/locality/region).
-// Free keyless BigDataCloud lookup; returns true and fills `out` on success.
-static bool reverseGeocode(double lat, double lon, String &out) {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  char url[192];
-  if (WEATHER_LOCALE[0] != 0) {
-    snprintf(url, sizeof(url),
-             "http://api.bigdatacloud.net/data/reverse-geocode-client?latitude=%.6f&longitude=%.6f&localityLanguage=%s",
-             lat, lon, WEATHER_LOCALE);
-  } else {
-    snprintf(url, sizeof(url),
-             "http://api.bigdatacloud.net/data/reverse-geocode-client?latitude=%.6f&longitude=%.6f",
-             lat, lon);
-  }
-
-  HTTPClient http;
-  if (!http.begin(url)) return false;
-  int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_OK) {
-    logPrintf("Weather: geocode HTTP error %d\n", httpCode);
-    http.end();
-    return false;
-  }
-  String payload = http.getString();
-  http.end();
-
-  JsonDocument doc;
-  if (deserializeJson(doc, payload)) return false;
-  const char *city     = doc["city"] | "";
-  const char *locality = doc["locality"] | "";
-  const char *region   = doc["principalSubdivision"] | "";
-  const char *country  = doc["countryName"] | "";
-  String name;
-  if (strlen(city) > 0)       name = city;
-  else if (strlen(locality) > 0) name = locality;
-  else if (strlen(region) > 0)   name = region;
-  else if (strlen(country) > 0)  name = country;
-  if (name.length() == 0) return false;
-  out = name;
-  logPrintf("Weather: geocoded to \"%s\"\n", out.c_str());
-  return true;
-}
-
-void updateWeather() {
-  if (WiFi.status() != WL_CONNECTED) {
-    return;
-  }
-  HTTPClient http;
-  
-  double lat = WEATHER_LAT;
-  double lon = WEATHER_LON;
-  bool gpsFix = gps.location.isValid();
-  if (gpsFix) {
-    lat = gps.location.lat();
-    lon = gps.location.lng();
-  }
-
-  // City name follows the coordinates: only reverse-geocode a live GPS fix,
-  // otherwise fall back to the saved WEATHER_CITY derived from WEATHER_LAT/LON.
-  String resolvedCity;
-  if (gpsFix) reverseGeocode(lat, lon, resolvedCity);
-  
-  char url[256];
-  snprintf(url, sizeof(url),
-           "http://api.open-meteo.com/v1/forecast?latitude=%.6f&longitude=%.6f&current=temperature_2m,relative_humidity_2m,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m&daily=sunrise,sunset&timezone=auto&forecast_days=1",
-           lat, lon);
-           
-  logPrintf("Weather: fetching from %s\n", url);
-
-  // https endpoints (a future weather provider, or a user pointing the URL at
-  // an https host) must not negotiate TLS while the big UI buffers fragment
-  // the heap: ask the display task to drop the sprites first, exactly like the
-  // OTA pull does. Plain http (open-meteo) skips this.
-  if (strncmp(url, "https://", 8) == 0) {
-    otaMemReleaseRequested = true;
-    otaMemReleased = false;
-    unsigned long t0 = millis();
-    while (!otaMemReleased && (millis() - t0) < 3000)
-      vTaskDelay(pdMS_TO_TICKS(1));
-    otaMemReleaseRequested = false;
-    logPrintf("Weather: UI mem released for TLS heap=%lu max=%lu\n",
-              (unsigned long)ESP.getFreeHeap(),
-              (unsigned long)ESP.getMaxAllocHeap());
-  }
-  http.begin(url);
-  int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    if (!error) {
-      if (xSemaphoreTake(g_stateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        g_weatherData.temperature = doc["current"]["temperature_2m"] | 0.0f;
-        g_weatherData.humidity = doc["current"]["relative_humidity_2m"] | 0;
-        g_weatherData.weatherCode = doc["current"]["weather_code"] | 0;
-        g_weatherData.cloudCover = doc["current"]["cloud_cover"] | 0;
-        g_weatherData.windSpeed = doc["current"]["wind_speed_10m"] | 0.0f;
-        g_weatherData.windDirection = doc["current"]["wind_direction_10m"] | 0.0f;
-        
-        if (doc["daily"]["sunrise"].is<JsonArray>()) {
-          const char* sunrise = doc["daily"]["sunrise"][0] | "";
-          if (strlen(sunrise) >= 16) {
-            g_weatherData.sunriseTime = String(sunrise).substring(11);
-          } else {
-            g_weatherData.sunriseTime = "--:--";
-          }
-        } else {
-          g_weatherData.sunriseTime = "--:--";
-        }
-        if (doc["daily"]["sunset"].is<JsonArray>()) {
-          const char* sunset = doc["daily"]["sunset"][0] | "";
-          if (strlen(sunset) >= 16) {
-            g_weatherData.sunsetTime = String(sunset).substring(11);
-          } else {
-            g_weatherData.sunsetTime = "--:--";
-          }
-        } else {
-          g_weatherData.sunsetTime = "--:--";
-        }
-        g_weatherData.valid = true;
-        g_weatherData.lastUpdated = millis();
-        g_weatherData.cityName = (resolvedCity.length() > 0) ? resolvedCity : String(WEATHER_CITY);
-        xSemaphoreGive(g_stateMutex);
-      }
-      logPrintf("Weather: success! Temp=%.1fC, Hum=%d%%\n", 
-                g_weatherData.temperature, g_weatherData.humidity);
-    } else {
-      logPrintf("Weather JSON error: %s\n", error.c_str());
-    }
-  } else {
-    logPrintf("Weather HTTP error: %d\n", httpCode);
-  }
-  http.end();
-}
-
-static TaskHandle_t weatherTaskHandle = NULL;
-// Guards weatherTaskRunning/weatherTaskHandle: the fetch task cleans up its
-// own flag while the web task starts/deletes fetches, and an unsynchronized
-// stale cleanup can wipe the handle of a fetch started while it was winding
-// down (concurrent fetches + a hung task the guard can no longer find).
-static SemaphoreHandle_t weatherFetchMutex = NULL;
-
-void weatherFetchTask(void *pvParameters) {
-  updateWeather();
-  // Only clear the flag if this task still owns it: a finishing fetch must
-  // not wipe the flag/handle of a fetch started while it was winding down.
-  xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
-  if (weatherTaskHandle == xTaskGetCurrentTaskHandle()) {
-    weatherTaskRunning = false;
-    weatherTaskHandle = NULL;
-  }
-  xSemaphoreGive(weatherFetchMutex);
-  vTaskDelete(NULL);
-}
-
-bool startWeatherFetch() {
-  xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
-  if (weatherTaskRunning) {
-    xSemaphoreGive(weatherFetchMutex);
-    return true;
-  }
-  weatherTaskRunning = true;
-  weatherTaskStartedMs = millis();
-  BaseType_t res = xTaskCreatePinnedToCore(weatherFetchTask, "WeatherFetchTask",
-                                           8192, NULL, 1, &weatherTaskHandle, 0);
-  if (res != pdPASS) {
-    logPrintf("Weather: task creation failed, will retry\n");
-    weatherTaskRunning = false;
-    weatherTaskHandle = NULL;
-    xSemaphoreGive(weatherFetchMutex);
-    return false;
-  }
-  xSemaphoreGive(weatherFetchMutex);
-  return true;
-}
-
 void setOtaPullStatus(const char *status) {
   if (otaStatusMutex) xSemaphoreTake(otaStatusMutex, portMAX_DELAY);
   strncpy(otaPullStatus, status, sizeof(otaPullStatus) - 1);
@@ -716,7 +531,6 @@ void performFirmwareUpdate(const char *firmwareUrl, const char *newVersion) {
 
 void webServerTask(void *pvParameters) {
   otaStatusMutex = xSemaphoreCreateMutex();
-  weatherFetchMutex = xSemaphoreCreateMutex();
   WiFi.mode(WIFI_AP_STA);
   int txPower = WIFI_TX_POWER_DBM;
   if (txPower < -1) txPower = -1;
@@ -872,14 +686,6 @@ void webServerTask(void *pvParameters) {
     processConfig(2, &doc);
     recalculateDerivedParams();
     display.applyBusConfig();
-    // If the save touched the weather location/city/locale/interval, ask the
-    // fetch loop to refresh right away so the widget shows the new city's
-    // weather immediately instead of after the next scheduled interval.
-    if (!doc["WEATHER_CITY"].isNull() || !doc["WEATHER_LAT"].isNull() ||
-        !doc["WEATHER_LON"].isNull() || !doc["WEATHER_REFRESH_MIN"].isNull() ||
-        !doc["WEATHER_LOCALE"].isNull()) {
-      weatherRefreshRequested = true;
-    }
     // Apply CPU frequency immediately
     {
       uint32_t freq = ENABLE_DYNAMIC_CPU ? 240 : MANUAL_CPU_FREQ;
@@ -1320,11 +1126,10 @@ void webServerTask(void *pvParameters) {
 
     if (staDone && staConnected && !staFinalized) {
       staFinalized = true;
-      startWeatherFetch();
       // mDNS/NTP are one-shot services: running them again on every reconnect
       // would block this loop (NTP wait) or fail (MDNS.begin() double start).
-      // On reconnects only the weather fetch is re-armed; mDNS is re-bound so
-      // it advertises the freshly-assigned IP instead of a stale one.
+      // mDNS is re-bound so it advertises the freshly-assigned IP instead of
+      // a stale one.
       if (MDNS.begin("dashboard-pp")) {
         MDNS.addService("http", "tcp", 80);
         logPrintf("mDNS: http://dashboard-pp.local\n");
@@ -1369,44 +1174,9 @@ void webServerTask(void *pvParameters) {
       startOtaPull(false, true);
     }
 
-    static unsigned long lastWeatherCheck = 0;
-    static unsigned long lastWeatherAttemptMs = 0;
-    if (WiFi.status() == WL_CONNECTED && !otaPullDownloading) {
-      // Config save changed the weather settings: fetch now. If the task
-      // could not be created (low heap), retry with a 2s backoff so a
-      // failing fetch can never spin xTaskCreate every loop tick; the flag
-      // is dropped only once a fetch actually starts, and a fetch already
-      // in flight is left alone.
-      if (weatherRefreshRequested) {
-        lastWeatherCheck = millis();
-        if (!weatherTaskRunning && millis() - lastWeatherAttemptMs >= 2000) {
-          lastWeatherAttemptMs = millis();
-          if (startWeatherFetch())
-            weatherRefreshRequested = false;
-        }
-      }
-      // Hung-fetch guard: if the HTTP request ever sticks longer than 30s,
-      // abandon the task so the interval and future refreshes can retry
-      // instead of the weather widget dying permanently.
-      xSemaphoreTake(weatherFetchMutex, portMAX_DELAY);
-      if (weatherTaskRunning && millis() - weatherTaskStartedMs > 30000) {
-        logPrintf("Weather: fetch task hung >30s, terminating task\n");
-        if (weatherTaskHandle != NULL) {
-          vTaskDelete(weatherTaskHandle);
-        }
-        weatherTaskRunning = false;
-        weatherTaskHandle = NULL;
-      }
-      xSemaphoreGive(weatherFetchMutex);
-      if (lastWeatherCheck == 0) {
-        lastWeatherCheck = millis();
-      }
-      unsigned long weatherIntervalMs = (unsigned long)WEATHER_REFRESH_MIN * 60000UL;
-      if (millis() - lastWeatherCheck >= weatherIntervalMs) {
-        lastWeatherCheck = millis();
-        startWeatherFetch();
-      }
-    }
+    // Weather is now phone-side (BLE): the companion app pushes the normalized
+    // forecast over the BLE link (src/ble.cpp) and the ESP no longer fetches
+    // from Open-Meteo over Wi-Fi.
 
     // Low-heap watchdog: the display keeps speed sprite + the
     // 120px VLW buffer, which can starve /api/config (~30-45KB

@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeTitle
+import com.alefinot.dashboardpp.viewmodel.CompanionViewModel
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.webview.createDashboardWebView
 
@@ -22,6 +23,7 @@ fun DashboardWebScreen(
     activity: Activity,
     vm: ConnectionViewModel,
     ip: String,
+    companion: CompanionViewModel,
     onSettings: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
@@ -36,6 +38,27 @@ fun DashboardWebScreen(
                 .clickable { onSettings() },
         ) {
             Text("⚙", color = HudColors.Cyan, style = HudeTitle)
+        }
+        // The BLE link chip (the ESP is the GATT server; the app is the
+        // central). Shows the current link state + a "push weather now" action.
+        Box(
+            Modifier
+                .padding(12.dp)
+                .align(Alignment.TopStart)
+                .clickable { companion.pushWeatherNow() },
+        ) {
+            val linkState = companion.state()
+            Text(
+                when (linkState) {
+                    is CompanionViewModel.LinkUiState.Idle -> "BLE: idle"
+                    is CompanionViewModel.LinkUiState.Scanning -> "BLE: scanning…"
+                    is CompanionViewModel.LinkUiState.Connecting -> "BLE: connecting…"
+                    is CompanionViewModel.LinkUiState.Connected -> "BLE: linked (${linkState.status.ver})"
+                    is CompanionViewModel.LinkUiState.Failed -> "BLE: failed"
+                },
+                color = HudColors.Cyan,
+                style = HudeTitle,
+            )
         }
     }
 }

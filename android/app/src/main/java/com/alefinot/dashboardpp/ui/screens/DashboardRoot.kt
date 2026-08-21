@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +27,7 @@ import com.alefinot.dashboardpp.ui.theme.HudeDisplayLarge
 import com.alefinot.dashboardpp.ui.theme.HudeLabel
 import com.alefinot.dashboardpp.ui.theme.HudeSmall
 import com.alefinot.dashboardpp.ui.theme.HudeTitle
+import com.alefinot.dashboardpp.viewmodel.CompanionViewModel
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 
@@ -36,6 +39,15 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // Keep content inside the safe area: with targetSdk 35 edge-to-edge is
     // enforced, so without these insets the HUD chrome draws behind the
     // system bars and overlaps the status bar / nav bar.
+    // The BLE companion (the ESP is the GATT server; the app is the central).
+    // Created once (remember); boots when the connection is established.
+    val companion = remember { CompanionViewModel(activity.application) }
+    LaunchedEffect(s) {
+        if (s is ConnectionUiState.Connected) {
+            companion.setIp(s.ip)
+            companion.boot()
+        }
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -55,6 +67,7 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
                 activity,
                 vm,
                 s.ip,
+                companion,
                 onSettings = { showSettings.value = true },
             )
         }

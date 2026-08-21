@@ -41,6 +41,12 @@ android {
 }
 
 dependencies {
+    // Compile-only shim for the BLE / notification APIs the environment's
+    // reduced android.jar is missing or has with wrong signatures (see
+    // shim/ — the real API shape, kept off the packaged classpath so a real
+    // device runs against the framework's own classes).
+    compileOnly(files("../shim/dashboardpp-shim.jar"))
+
     // Compose (pinned via BOM → ui 1.7.5, material3 1.3.1)
     implementation(platform("androidx.compose:compose-bom:2024.11.00"))
     implementation("androidx.compose.ui:ui")
