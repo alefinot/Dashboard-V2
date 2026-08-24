@@ -1,5 +1,7 @@
 package com.alefinot.dashboardpp.weather
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -28,35 +30,45 @@ object OpenMeteoClient {
      * [city] is the ESP's `WEATHER_CITY` (read from `/api/config`) — it becomes
      * the widget's city label (the ESP keeps `WEATHER_CITY` as the location
      * of record; the phone reads it).
-     * @throws Exception on a non-2xx response or a malformed body (the
-     * caller catches and simply keeps the last-pushed value).
+     * @throws Exception on unset (0,0) coords, a non-2xx response, or a
+     * malformed body (the caller catches and simply keeps the last-pushed
+     * value).
      */
     suspend fun fetch(lat: Double, lon: Double, city: String): WeatherDto {
-        val url = "$BASE?latitude=$lat&longitude=$lon" +
-            "&current=temperature_2m,relative_humidity_2m,weather_code" +
-            ",cloud_cover,wind_speed_10m,wind_direction_10m" +
-            "&daily=sunrise,sunset&timezone=auto&forecast_days=1"
-        val response = client.newCall(
-            Request.Builder().url(url).build(),
-        ).execute()
-        val body = response.body?.string() ?: ""
-        response.close()
-        if (response.code !in 200..299) throw IllegalStateException("HTTP ${response.code}")
-        val json = org.json.JSONObject(body)
-        val current = json.getJSONObject("current")
-        val daily = json.optJSONObject("daily")
-        val sunrise = daily?.optJSONArray("sunrise")?.optString(0) ?: ""
-        val sunset = daily?.optJSONArray("sunset")?.optString(0) ?: ""
-        return WeatherDto(
-            temperature = current.getDouble("temperature_2m").toFloat(),
-            humidity = current.getInt("relative_humidity_2m"),
-            windSpeed = current.getDouble("wind_speed_10m").toFloat(),
-            windDirection = current.getDouble("wind_direction_10m").toFloat(),
-            weatherCode = current.getInt("weather_code"),
-            cloudCover = current.getInt("cloud_cover"),
-            sunriseTime = sunrise,
-            sunsetTime = sunset,
-            cityName = city,
-        )
+        // (0,0) is the factory default ("unset"): a fetch there would return
+        // the mid-Atlantic forecast, so skip it (no HTTP at all). The caller
+        // keeps the last-pushed value and re-reads the config next cycle.
+        if (lat == 0.0 && lon == 0.0) throw IllegalStateException("coords unset")
+        // The blocking OkHttp call must not hold a shared-pool thread for
+        // the whole 4 s + 8 s timeout window (the callers sit on
+        // Dispatchers.Default): hop to IO for the network part.
+        return withContext(Dispatchers.IO) {
+            val url = "$BASE?latitude=$lat&longitude=$lon" +
+                "&current=temperature_2m,relative_humidity_2m,weather_code" +
+                ",cloud_cover,wind_speed_10m,wind_direction_10m" +
+                "&daily=sunrise,sunset&timezone=auto&forecast_days=1"
+            val response = client.newCall(
+                Request.Builder().url(url).build(),
+            ).execute()
+            val body = response.body?.string() ?: ""
+            response.close()
+            if (response.code !in 200..299) throw IllegalStateException("HTTP ${response.code}")
+            val json = org.json.JSONObject(body)
+            val current = json.getJSONObject("current")
+            val daily = json.optJSONObject("daily")
+            val sunrise = daily?.optJSONArray("sunrise")?.optString(0) ?: ""
+            val sunset = daily?.optJSONArray("sunset")?.optString(0) ?: ""
+            WeatherDto(
+                temperature = current.getDouble("temperature_2m").toFloat(),
+                humidity = current.getInt("relative_humidity_2m"),
+                windSpeed = current.getDouble("wind_speed_10m").toFloat(),
+                windDirection = current.getDouble("wind_direction_10m").toFloat(),
+                weatherCode = current.getInt("weather_code"),
+                cloudCover = current.getInt("cloud_cover"),
+                sunriseTime = sunrise,
+                sunsetTime = sunset,
+                cityName = city,
+            )
+        }
     }
 }
