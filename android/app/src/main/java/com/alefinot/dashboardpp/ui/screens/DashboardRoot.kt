@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,9 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // The BLE companion (the ESP is the GATT server; the app is the central).
     // Created once (remember); boots when the connection is established.
     val companion = remember { CompanionViewModel(activity.application) }
+    // The app root is rare to leave, but the BleLink + weather timer must
+    // not outlive the screen: dispose on leave.
+    DisposableEffect(Unit) { onDispose { companion.dispose() } }
     LaunchedEffect(s) {
         if (s is ConnectionUiState.Connected) {
             companion.setIp(s.ip)

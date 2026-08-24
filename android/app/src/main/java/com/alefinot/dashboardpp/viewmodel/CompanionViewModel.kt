@@ -29,7 +29,8 @@ import java.util.concurrent.TimeUnit
  * a fetch failure keeps the last-pushed value (it is never cleared).
  */
 class CompanionViewModel(private val app: Application) {
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val supervisor = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + supervisor)
     private val ble = BleLink(app)
     private val http = OkHttpClient.Builder()
         .connectTimeout(4, TimeUnit.SECONDS)
@@ -165,6 +166,8 @@ class CompanionViewModel(private val app: Application) {
     fun dispose() {
         weatherJob?.cancel()
         ble.close()
-        scope.coroutineContext[Job]?.cancel()
+        // Actually cancel the scope (and its children: the weather timer,
+        // the boot coroutine, any launch still running).
+        supervisor.cancel()
     }
 }
