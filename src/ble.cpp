@@ -47,7 +47,7 @@ static void rxAppend(const uint8_t *data, uint16_t len) {
   while (rxAccumLen >= 3) {
     uint8_t type = rxAccum[0];
     uint16_t plen = (uint16_t)(rxAccum[1] | (rxAccum[2] << 8));
-    if (type > BLE_TYPE_MEDIA || plen > 512) {
+    if (type < 0x01 || type > BLE_TYPE_MEDIA || plen > 512) {
       // Bad header: drop the first byte and resync.
       memmove(&rxAccum[0], &rxAccum[1], rxAccumLen - 1);
       rxAccumLen--;
