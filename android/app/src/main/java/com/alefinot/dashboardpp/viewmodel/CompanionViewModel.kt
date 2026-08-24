@@ -101,21 +101,28 @@ class CompanionViewModel(private val app: Application) {
      * every `WEATHER_REFRESH_MIN`; a fetch failure keeps the last-pushed
      * value (it is never cleared). If BLE is not linked, the phone does not
      * fetch.
+     *
+     * Re-enters on reconnect: the outer loop waits for a connect, pushes
+     * while connected, and - when the link drops - waits for the next
+     * connect and resumes (previously the coroutine terminated after the
+     * first disconnect and the timer was gone for good).
      */
     private fun startWeatherTimer() {
         weatherJob?.cancel()
         weatherJob = scope.launch {
-            // wait for the link (poll — the BleLink is the central; the
-            // connect is not a push event here).
-            while (!ble.isConnected()) delay(1000)
-            while (ble.isConnected()) {
-                try {
-                    val dto = OpenMeteoClient.fetch(lat, lon, city)
-                    ble.sendFrame(Protocol.encode(Protocol.T_WEATHER, dto.toJson()))
-                } catch (e: Exception) {
-                    // keep the last-pushed value (never cleared)
+            while (true) {
+                // wait for the link (poll — the BleLink is the central; the
+                // connect is not a push event here).
+                while (!ble.isConnected()) delay(1000)
+                while (ble.isConnected()) {
+                    try {
+                        val dto = OpenMeteoClient.fetch(lat, lon, city)
+                        ble.sendFrame(Protocol.encode(Protocol.T_WEATHER, dto.toJson()))
+                    } catch (e: Exception) {
+                        // keep the last-pushed value (never cleared)
+                    }
+                    delay(refreshMin.toLong() * 60_000L)
                 }
-                delay(refreshMin.toLong() * 60_000L)
             }
         }
     }
