@@ -111,7 +111,14 @@ class BleLink(private val context: Context) {
         scanning = false
     }
 
-    /** Connect the (matched) [device], then request the MTU + discover. */
+    /**
+     * Connect the (matched) [device]. The GATT connect is async — `connectGatt`
+     * returns before the link is up — so the MTU request + service discovery
+     * are driven from [gattCallback] once `STATE_CONNECTED` lands (issuing
+     * them while the GATT is still connecting is INVALID_STATE: both
+     * silently fail, `onServicesDiscovered` never fires, and rx/tx stay
+     * null so every [sendFrame] bails).
+     */
     private fun connect(device: BluetoothDevice) {
         stopScan()
         gatt?.close()
@@ -121,15 +128,6 @@ class BleLink(private val context: Context) {
         // autoConnect=false: we drive the connect ourselves (the ESP is the
         // peripheral; we want to control discovery + the MTU).
         gatt = device.connectGatt(appContext, false, gattCallback)
-        // A 512-byte payload + 3-byte header needs a large MTU to move fast;
-        // the GATT stack still chunks the value by the negotiated MTU either
-        // way, so a single writeCharacteristic is enough (the ESP reassembles).
-        try {
-            gatt?.requestMtu(512)
-        } catch (e: Exception) {
-            // MTU request is best-effort.
-        }
-        gatt?.discoverServices()
     }
 
     /** Enable notifications on the TX characteristic (the ESP STATUS stream). */
@@ -201,6 +199,18 @@ class BleLink(private val context: Context) {
                 scheduleReconnect()
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
                 connected = true
+                // The GATT is up now: negotiate the MTU, then drive service
+                // discovery (which populates rx/tx + subscribes TX). A 512-byte
+                // payload + 3-byte header needs a large MTU to move fast; the
+                // GATT stack still chunks the value by the negotiated MTU
+                // either way, so a single writeCharacteristic is enough (the
+                // ESP reassembles).
+                try {
+                    gatt?.requestMtu(512)
+                } catch (e: Exception) {
+                    // MTU request is best-effort.
+                }
+                gatt?.discoverServices()
             }
         }
 
