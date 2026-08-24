@@ -48,6 +48,19 @@ class CompanionViewModel(private val app: Application) {
     // the ESP draws it in the persistent bar.
     init {
         NotifOutbox.ble = ble
+        // The §5.4 chip: map the link events to the LinkUiState. CONNECTED
+        // needs a good STATUS (the ESP streams it on connect + PING); if
+        // the last one was malformed / absent, stay on Connecting until a
+        // good one lands.
+        ble.onLinkEvent = { event, reason ->
+            uiState.value = when (event) {
+                BleLink.LinkEvent.CONNECTING -> LinkUiState.Connecting
+                BleLink.LinkEvent.CONNECTED -> lastStatus?.let { LinkUiState.Connected(it) }
+                    ?: LinkUiState.Connecting
+                BleLink.LinkEvent.DROPPED -> LinkUiState.Scanning
+                BleLink.LinkEvent.FAILED -> LinkUiState.Failed(reason)
+            }
+        }
     }
 
     val link: BleLink

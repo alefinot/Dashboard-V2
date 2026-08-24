@@ -51,12 +51,28 @@ class BleLink(private val context: Context) {
     private var scanning = false
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
+    // True while a connectGatt() handshake is in flight: a DISCONNECTED
+    // that lands here is a failed connect, not a mid-session drop.
+    @Volatile
+    private var handshakePending = false
 
     // The latest ESP STATUS payload (the health chip / "BLE is carrying the
     // dashboard" indicator). Kept as a raw JSONObject; null until received.
     @Volatile
     var lastStatus: JSONObject? = null
         private set
+
+    /**
+     * The link-state hook (the §5.4 chip): the owning ViewModel maps
+     * these to its LinkUiState. [CONNECTING] - the GATT handshake starts;
+     * [CONNECTED] - a STATUS arrived over the TX notify (the link is
+     * streaming); [DROPPED] - a mid-session disconnect (the auto re-scan
+     * is pending); [FAILED] - the link could not be established (the
+     * second callback arg carries the why). Called from the GATT binder
+     * thread / the scan path.
+     */
+    enum class LinkEvent { CONNECTING, CONNECTED, DROPPED, FAILED }
+    var onLinkEvent: ((LinkEvent, String) -> Unit)? = null
 
     val isBleOn: Boolean
         get() {
@@ -81,10 +97,16 @@ class BleLink(private val context: Context) {
      * reconnect is just a re-scan).
      */
     fun startScan() {
-        if (!isBleOn) return
+        if (!isBleOn) {
+            onLinkEvent?.invoke(LinkEvent.FAILED, "Bluetooth is off")
+            return
+        }
         if (scanning) return
         val scanner = adapter?.bluetoothLeScanner
-        if (scanner == null) return
+        if (scanner == null) {
+            onLinkEvent?.invoke(LinkEvent.FAILED, "No BLE scanner")
+            return
+        }
         scanCallback = object : ScanCallback() {
             override fun onScanResult(
                 callbackType: Int,
@@ -134,6 +156,8 @@ class BleLink(private val context: Context) {
         gatt = null
         rxChar = null
         txChar = null
+        handshakePending = true
+        onLinkEvent?.invoke(LinkEvent.CONNECTING, "")
         // autoConnect=false: we drive the connect ourselves (the ESP is the
         // peripheral; we want to control discovery + the MTU).
         gatt = device.connectGatt(appContext, false, gattCallback)
@@ -205,9 +229,16 @@ class BleLink(private val context: Context) {
                 gatt = null
                 rxChar = null
                 txChar = null
+                if (handshakePending) {
+                    handshakePending = false
+                    onLinkEvent?.invoke(LinkEvent.FAILED, "GATT connect failed")
+                } else {
+                    onLinkEvent?.invoke(LinkEvent.DROPPED, "")
+                }
                 scheduleReconnect()
             } else if (newState == BluetoothProfile.STATE_CONNECTED) {
                 connected = true
+                handshakePending = false
                 // The GATT is up now: negotiate the MTU, then drive service
                 // discovery (which populates rx/tx + subscribes TX). A 512-byte
                 // payload + 3-byte header needs a large MTU to move fast; the
@@ -267,6 +298,9 @@ class BleLink(private val context: Context) {
                     } catch (e: Exception) {
                         // malformed: ignore (keep the last good one)
                     }
+                    // The link is streaming (a good or a malformed STATUS -
+                    // the mapper decides from lastStatus).
+                    onLinkEvent?.invoke(LinkEvent.CONNECTED, "")
                 }
             }
         }
