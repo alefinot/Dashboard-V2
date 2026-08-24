@@ -55,6 +55,9 @@ class BleLink(private val context: Context) {
     // that lands here is a failed connect, not a mid-session drop.
     @Volatile
     private var handshakePending = false
+    // Serializes sendFrame: the weather timer and NotifOutbox both write
+    // from their own threads, and the shared rxChar must not interleave.
+    private val sendLock = Any()
 
     // The latest ESP STATUS payload (the health chip / "BLE is carrying the
     // dashboard" indicator). Kept as a raw JSONObject; null until received.
@@ -182,15 +185,26 @@ class BleLink(private val context: Context) {
      * Write one framed payload to RX (write-without-response). The ESP
      * reassembles the byte stream (§4.2); a mid-frame disconnect is harmless
      * (the partial is dropped; the next frame — or a reconnect — re-sends).
+     * Serialized on [sendLock]: an interleaved setValue/writeCharacteristic
+     * from a second thread would drop one frame (the other thread's value
+     * written twice). The gatt/characteristic references are copied to
+     * locals under the lock, so a binder-thread teardown mid-send is a
+     * dropped frame, not a crash.
      * @return false when not linked (the caller keeps the last value).
      */
-    fun sendFrame(frame: ByteArray): Boolean {
+    fun sendFrame(frame: ByteArray): Boolean = synchronized(sendLock) {
         val g = gatt
         val c = rxChar
         if (g == null || c == null || !connected) return false
-        c.setValue(frame)
-        c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        return g.writeCharacteristic(c)
+        try {
+            c.setValue(frame)
+            c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            g.writeCharacteristic(c)
+        } catch (e: Exception) {
+            // The gatt closed between the read and the write (the binder
+            // thread owns teardown): treat it as a dropped frame.
+            false
+        }
     }
 
     /** Ask the ESP for a fresh STATUS (it responds on the TX notify). */
