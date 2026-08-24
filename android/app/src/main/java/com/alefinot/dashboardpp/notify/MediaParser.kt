@@ -23,7 +23,14 @@ object MediaParser {
         return MEDIA_PACKAGES.any { pkg.contains(it) }
     }
 
-    /** Parse a media notification into a [MediaDto] (§4.3 MEDIA). */
+    /**
+     * Parse a media notification into a [MediaDto] (§4.3 MEDIA).
+     *
+     * `active` is the play-state extra: honored when the media app sets
+     * it (`android.media.PLAYBACK_STATE`); a key-less extras bundle can't
+     * say, so it defaults to playing (the bar's song state stays on for
+     * an unknown state - the previous behavior).
+     */
     fun parse(n: StatusBarNotification): MediaDto {
         val title = n.extras.getCharSequence("title")?.toString()
             ?: n.extras.getCharSequence("android.title")?.toString()
@@ -33,11 +40,12 @@ object MediaParser {
             ?: ""
         val pkg = n.packageName ?: ""
         val icon = if (pkg.isNotEmpty()) pkg.first().uppercaseChar().toString() else ""
+        val active = n.extras.getBoolean("android.media.PLAYBACK_STATE", true)
         return MediaDto(
             artist = title,
             song = song,
             icon = icon,
-            active = true,
+            active = active,
         )
     }
 }

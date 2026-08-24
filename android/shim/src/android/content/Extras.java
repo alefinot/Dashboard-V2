@@ -13,4 +13,5 @@ public final class Extras {
     public int getInt(String name) { return 0; }
     public long getLong(String name) { return 0L; }
     public boolean getBoolean(String name) { return false; }
+    public boolean getBoolean(String name, boolean value) { return value; }
 }
