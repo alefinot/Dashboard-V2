@@ -235,16 +235,16 @@ static void drawDsDigitPair(LGFX_ST7789_4 &g, const char *str, int baseX, int y)
 // Weather day/night state. Uses the fetched sunrise/sunset times when
 // available, otherwise falls back to the fixed NIGHT_MODE window.
 // ----------------------------------------------------------------------------
-static bool weatherIsNight(const SensorSnapshot &snap) {
+static bool weatherIsNight(const SensorSnapshot &snap, const WeatherData &data) {
   int sunriseMin = -1, sunsetMin = -1;
-  if (g_weatherData.sunriseTime.length() >= 5) {
+  if (data.sunriseTime.length() >= 5) {
     int h, m;
-    if (sscanf(g_weatherData.sunriseTime.c_str(), "%d:%d", &h, &m) == 2)
+    if (sscanf(data.sunriseTime.c_str(), "%d:%d", &h, &m) == 2)
       sunriseMin = h * 60 + m;
   }
-  if (g_weatherData.sunsetTime.length() >= 5) {
+  if (data.sunsetTime.length() >= 5) {
     int h, m;
-    if (sscanf(g_weatherData.sunsetTime.c_str(), "%d:%d", &h, &m) == 2)
+    if (sscanf(data.sunsetTime.c_str(), "%d:%d", &h, &m) == 2)
       sunsetMin = h * 60 + m;
   }
   if (sunriseMin >= 0 && sunsetMin >= 0) {
@@ -252,6 +252,25 @@ static bool weatherIsNight(const SensorSnapshot &snap) {
     return (nowMin >= sunsetMin || nowMin < sunriseMin);
   }
   return (snap.localHour >= NIGHT_MODE_START_HOUR || snap.localHour < NIGHT_MODE_END_HOUR);
+}
+
+// Snapshot g_weatherData under g_stateMutex. The BLE ingest (ble.cpp)
+// writes the struct - heap-backed String fields included - under that
+// mutex, so the widget reads a copy taken under the lock: a lock-free
+// read racing the write can hand it a torn String (dangling pointer /
+// garbage / crash).
+static WeatherData weatherSnapshot() {
+  WeatherData w;
+  if (g_stateMutex != NULL &&
+      xSemaphoreTake(g_stateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+    w = g_weatherData;
+    xSemaphoreGive(g_stateMutex);
+  } else {
+    // Lock timed out: fall back to a lock-free copy (the old exposure)
+    // rather than dropping the frame to "offline".
+    w = g_weatherData;
+  }
+  return w;
 }
 
 // ----------------------------------------------------------------------------
@@ -1723,30 +1742,33 @@ if (!vlw120Ready) {
   int wy = BIG_CENTER_Y + OFFSET_WEATHER_Y - 14;
   bool showWeather = SHOW_ELEMENT_WEATHER;
 
-  bool weatherNight = weatherIsNight(displaySnap);
+  // Read the weather state from a snapshot taken under g_stateMutex.
+  WeatherData wxData = weatherSnapshot();
+
+  bool weatherNight = weatherIsNight(displaySnap, wxData);
   bool weatherNightChanged = (weatherNight != lastWeatherNight);
 
-  const char *dispCitySrc = (g_weatherData.cityName.length() > 0) ? g_weatherData.cityName.c_str() : WEATHER_CITY;
+  const char *dispCitySrc = (wxData.cityName.length() > 0) ? wxData.cityName.c_str() : WEATHER_CITY;
 
   if ((lastWx != wx || lastWy != wy || lastWeatherShow != showWeather || forceDraw) && lastWeatherShow) {
     display.fillRect(lastWx - 2, lastWy - 2, 480 + 4, 28 + 4, TFT_BLACK);
   }
 
-  bool weatherChanged = (g_weatherData.temperature != lastTemp ||
-                         g_weatherData.humidity != lastHum ||
-                         g_weatherData.weatherCode != lastCode ||
-                         g_weatherData.sunsetTime != lastSunset ||
-                         g_weatherData.sunriseTime != lastSunrise ||
+  bool weatherChanged = (wxData.temperature != lastTemp ||
+                         wxData.humidity != lastHum ||
+                         wxData.weatherCode != lastCode ||
+                         wxData.sunsetTime != lastSunset ||
+                         wxData.sunriseTime != lastSunrise ||
                          strcmp(dispCitySrc, lastCity) != 0) ||
                         weatherNightChanged;
 
   if (showWeather) {
     if (weatherChanged || lastWx != wx || lastWy != wy || lastWeatherShow != showWeather || forceDraw) {
-      lastTemp = g_weatherData.temperature;
-      lastHum = g_weatherData.humidity;
-      lastCode = g_weatherData.weatherCode;
-      lastSunset = g_weatherData.sunsetTime;
-      lastSunrise = g_weatherData.sunriseTime;
+      lastTemp = wxData.temperature;
+      lastHum = wxData.humidity;
+      lastCode = wxData.weatherCode;
+      lastSunset = wxData.sunsetTime;
+      lastSunrise = wxData.sunriseTime;
       strncpy(lastCity, dispCitySrc, sizeof(lastCity) - 1);
       lastCity[sizeof(lastCity) - 1] = 0;
       lastWx = wx;
@@ -1754,8 +1776,9 @@ if (!vlw120Ready) {
       lastWeatherShow = showWeather;
       lastWeatherNight = weatherNight;
       
-      void drawWeatherWidget(int x, int y, const SensorSnapshot &snap, bool forceDraw);
-      drawWeatherWidget(wx, wy, displaySnap, forceDraw);
+      void drawWeatherWidget(int x, int y, const SensorSnapshot &snap, bool forceDraw,
+                             const WeatherData &data);
+      drawWeatherWidget(wx, wy, displaySnap, forceDraw, wxData);
       weatherPaintedFrame = true;
     }
   } else {
@@ -1981,7 +2004,8 @@ void drawWeatherIcon(int cx, int cy, int size, int weatherCode, bool isNight) {
   }
 }
 
-void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDraw) {
+void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDraw,
+                        const WeatherData &data) {
   int w = 480;
   int h = 28;
   
@@ -1991,7 +2015,7 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   fillAARoundRect(display, wx, wy, w, h, 4, cardBg);
   drawAARoundRect(display, wx, wy, w, h, 4, borderCol);
   
-  if (!g_weatherData.valid) {
+  if (!data.valid) {
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
     display.setTextColor(display.color565(150, 150, 150));
     display.setCursor(wx + 20, wy + 20);
@@ -1999,27 +2023,27 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
     return;
   }
   
-  bool isNight = weatherIsNight(snap);
+  bool isNight = weatherIsNight(snap, data);
   display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
 
   char dispCity[48];
-  const char *citySrc = (g_weatherData.cityName.length() > 0) ? g_weatherData.cityName.c_str() : WEATHER_CITY;
+  const char *citySrc = (data.cityName.length() > 0) ? data.cityName.c_str() : WEATHER_CITY;
   snprintf(dispCity, sizeof(dispCity), "%s", citySrc);
 
   char tempStr[16];
   // Imperial mode converts to °F for display; the stored value stays °C.
   snprintf(tempStr, sizeof(tempStr), "%.0f",
-           UNITS_IMPERIAL ? cToF(g_weatherData.temperature)
-                          : g_weatherData.temperature);
+           UNITS_IMPERIAL ? cToF(data.temperature)
+                          : data.temperature);
   char humStr[16];
-  snprintf(humStr, sizeof(humStr), "%d%%", g_weatherData.humidity);
+  snprintf(humStr, sizeof(humStr), "%d%%", data.humidity);
   char windStr[24];
   // Wind: metric shows m/s (Open-Meteo sends km/h), imperial shows mph.
-  float windVal = UNITS_IMPERIAL ? kmhToMph(g_weatherData.windSpeed)
-                                 : g_weatherData.windSpeed / 3.6f;
-  const char* windDir = getWindCardinal(g_weatherData.windDirection);
+  float windVal = UNITS_IMPERIAL ? kmhToMph(data.windSpeed)
+                                 : data.windSpeed / 3.6f;
+  const char* windDir = getWindCardinal(data.windDirection);
   snprintf(windStr, sizeof(windStr), "%.1f %s", windVal, windDir);
-  const char *sunsetStr = g_weatherData.sunsetTime.length() > 0 ? g_weatherData.sunsetTime.c_str() : "--:--";
+  const char *sunsetStr = data.sunsetTime.length() > 0 ? data.sunsetTime.c_str() : "--:--";
 
   // Measure every text so the row can be spaced equally at runtime.
   int16_t bx1, by1; uint16_t tw, th;
@@ -2060,7 +2084,7 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   int iconX1 = iconX2 - gInt - (tempIconW + 12 + tempW);
 
   // Section 1: Weather Icon and City Name (fades out gracefully before temperature section)
-  drawWeatherIcon(wx + 16, wy + 14, 16, g_weatherData.weatherCode, isNight);
+  drawWeatherIcon(wx + 16, wy + 14, 16, data.weatherCode, isNight);
 
   int fadeX1 = iconX1 - 6;
   int fadeX0 = fadeX1 - 45;
