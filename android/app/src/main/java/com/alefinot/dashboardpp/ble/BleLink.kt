@@ -59,7 +59,16 @@ class BleLink(private val context: Context) {
         private set
 
     val isBleOn: Boolean
-        get() = adapter?.isEnabled ?: false
+        get() {
+            val a = adapter ?: return false
+            return try {
+                a.isEnabled
+            } catch (e: SecurityException) {
+                // 12+: the BLUETOOTH_CONNECT/SCAN request was denied -
+                // treat the adapter as off (no crash in boot()/startScan).
+                false
+            }
+        }
 
     fun isConnected(): Boolean = connected
 

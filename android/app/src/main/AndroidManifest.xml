@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
+    <!-- 14+: the Wi-Fi (NSD) device discovery; never used for location.
+         Requested at runtime (MainActivity) like the BLE/POST_NOTIFICATIONS
+         grants. -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
     <!-- The NotificationListenerService (the bar's source). 34+ needs
          POST_NOTIFICATIONS; ACCESS_NOTIFICATIONS is the legacy (≤33) gate. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
