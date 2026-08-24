@@ -32,6 +32,12 @@ void navPush(const NavDto &dto) {
 }
 
 void drawNavWidget(LGFX_ST7789_4 &d) {
+  // Heap gate (nav.h / plan §9): the nav widget only exists while the steady-
+  // state free heap stays green (>= ~20 KB). If it is not, skip the draw
+  // (the widget is hidden, not drawn); a later show draws fresh.
+  if (ESP.getFreeHeap() < 20000) {
+    return;
+  }
   navLock();
   bool on = navValid && nav.on;
   bool changed = navChanged;
