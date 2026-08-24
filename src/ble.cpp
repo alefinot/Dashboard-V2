@@ -102,7 +102,11 @@ static void bleDispatch(uint8_t type, const uint8_t *payload, uint16_t len) {
         g_weatherData.sunriseTime = doc["sun"] | "--:--";
         g_weatherData.sunsetTime = doc["sunset"] | "--:--";
         g_weatherData.cityName = doc["city"] | "";
-        g_weatherData.valid = true;
+        // A malformed frame ({} / key-less) must not mark the widget
+        // valid: require the identifying keys (temp + city). With valid
+        // false the widget shows the offline state instead of 0 C / an
+        // empty city.
+        g_weatherData.valid = doc.containsKey("temp") && doc.containsKey("city");
         g_weatherData.lastUpdated = millis();
         xSemaphoreGive(g_stateMutex);
       }
