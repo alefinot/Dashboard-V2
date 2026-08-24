@@ -10,7 +10,7 @@
 static SemaphoreHandle_t navMutex = NULL;
 static NavDto nav;
 static bool navValid = false;   // have we received a NAV frame?
-static volatile bool navChanged = true;  // dirty flag (draw once)
+static volatile bool navChanged = false;  // dirty flag: set by navPush (a NAV frame)
 
 static portMUX_TYPE navInitMux = portMUX_INITIALIZER_UNLOCKED;
 static void navLock() {
