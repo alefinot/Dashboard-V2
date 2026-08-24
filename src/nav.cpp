@@ -61,40 +61,54 @@ void drawNavWidget(LGFX_ST7789_4 &d) {
   fillAARoundRect(d, x, y, w, h, 6, bg);
   drawAARoundRect(d, x, y, w, h, 6, border);
 
-  d.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
   uint16_t white = d.color565(240, 240, 240);
   uint16_t dim = d.color565(150, 150, 150);
 
-  // Arrow glyph: a small upward triangle at the top-left.
-  int ax = x + 14, ay = y + 14;
+  // Arrow glyph: a small upward triangle at the top-left, beside the act row.
+  int ax = x + 14, ay = y + 10;
   d.fillTriangle(ax, ay - 6, ax - 5, ay + 4, ax + 5, ay + 4, accent);
 
-  // Distance (row 1).
+  // Act (row 1): the maneuver instruction (e.g. "Turn right") - the
+  // headline, next to the arrow, clipped to the width.
+  d.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
+  d.setTextColor(white, bg);
+  int tx = x + 26;
+  const int actMaxX = x + w - 8;
+  for (unsigned i = 0; n.act[i] && tx < actMaxX; i++) {
+    char c[2] = {n.act[i], 0};
+    int cw = d.textWidth(c);
+    if (tx + cw > actMaxX) break;
+    d.setTextColor(white, bg);
+    d.setCursor(tx, y + 10);
+    d.print(c);
+    tx += cw;
+  }
+
+  d.loadVLWFont("/Fonts/Conthrax_SemiBold_10px.vlw");
+
+  // Distance (row 2).
   char dist[24];
   snprintf(dist, sizeof(dist), "%.1f%s", n.d, n.u);
   d.setTextColor(white, bg);
-  d.setCursor(x + 26, y + 18);
+  d.setCursor(x + 10, y + 24);
   d.print(dist);
 
-  // Road (row 2), clipped to the width.
-  const int roadX = x + 10;
+  // Road (row 3), clipped to the width.
   const int roadMaxX = x + w - 8;
-  const char *road = n.road;
-  d.setTextColor(dim, bg);
-  int rx = roadX;
-  for (unsigned i = 0; road[i] && rx < roadMaxX; i++) {
-    char c[2] = {road[i], 0};
+  int rx = x + 10;
+  for (unsigned i = 0; n.road[i] && rx < roadMaxX; i++) {
+    char c[2] = {n.road[i], 0};
     int cw = d.textWidth(c);
     if (rx + cw > roadMaxX) break;
     d.setTextColor(dim, bg);
-    d.setCursor(rx, y + 34);
+    d.setCursor(rx, y + 36);
     d.print(c);
     rx += cw;
   }
 
-  // ETA / arrival (row 3).
+  // ETA / arrival (row 4).
   d.setTextColor(accent, bg);
-  d.setCursor(x + 10, y + 50);
+  d.setCursor(x + 10, y + 49);
   if (n.arrival)
     d.print("ARRIVING");
   else if (n.eta[0] != 0)
