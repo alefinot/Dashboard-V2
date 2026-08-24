@@ -260,6 +260,10 @@ void setup() {
                            0);
   xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe0", 2048, (void *)0, 1, NULL, 0);
   xTaskCreatePinnedToCore(cpuProbeTask, "CPUProbe1", 2048, (void *)1, 1, NULL, 1);
+  // BLE_ENABLED is a boot-time gate: the bleTask (and with it the BLE
+  // GATT + phone-frame ingest) is created or skipped here, once. The web
+  // card toggle is not applied live - a change takes effect on the next
+  // reboot (see the webui note under the toggle).
   if (BLE_ENABLED)
     xTaskCreatePinnedToCore(bleTask, "BleTask", 8192, NULL, 1, NULL, 0);
 

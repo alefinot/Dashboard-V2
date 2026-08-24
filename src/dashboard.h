@@ -550,7 +550,9 @@ extern float WEATHER_LON;
 extern int WEATHER_REFRESH_MIN;
 extern char WEATHER_LOCALE[16];
 // BLE / phone companion (see Implementation plans/...-plan.md).
-// BLE_ENABLED: advertise the BLE GATT + accept phone frames. BAR_ENABLED:
+// BLE_ENABLED: advertise the BLE GATT + accept phone frames (boot-time
+// only: the bleTask is created at setup, so a change needs a reboot).
+// BAR_ENABLED:
 // draw the top notification bar. BAR_TIMEOUT_MS: how long an alert holds
 // the bar while a song plays (0/absent = song never holds an alert). BAR_SHOW_APP:
 // show the app monogram in the bar.
