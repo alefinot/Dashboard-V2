@@ -27,10 +27,14 @@ object NotifOutbox {
      * (a) media → the bar's `barSetSong`; (b) nav → the `navPush`; (c)
      * alert (the bar's own rule) → the `barPush` (the 8-deep alert FIFO,
      * drop-oldest).
+     *
+     * The 30 s (package, title) dedupe applies to ALERTS only: a media /
+     * nav frame is a STATE UPDATE (pause/stop, a fresh maneuver), not a
+     * duplicate - dropping it would leave the ESP's song/nav state stale.
      */
     fun enqueue(n: StatusBarNotification) {
         val kind = classify(n)
-        if (!shouldSend(n)) return
+        if (kind == Kind.ALERT && !shouldSend(n)) return
         val (type, json) = when (kind) {
             Kind.ALERT -> {
                 val dto = parseNotification(n)
@@ -56,9 +60,11 @@ object NotifOutbox {
     }
 
     /**
-     * The 24 h / 30 s dedupe (the §6.4 "last-24-h hash, 30 s window"). A
-     * notification whose (package, title) was already pushed within 30 s is
-     * dropped; the cache is pruned to 24 h so the map stays bounded.
+     * The 24 h / 30 s dedupe (the §6.4 "last-24-h hash, 30 s window") -
+     * alerts only (media/nav frames are state updates and bypass it, see
+     * [enqueue]). A notification whose (package, title) was already pushed
+     * within 30 s is dropped; the cache is pruned to 24 h so the map
+     * stays bounded.
      */
     private fun shouldSend(n: StatusBarNotification): Boolean {
         val title = n.extras.getCharSequence("title")?.toString() ?: ""
