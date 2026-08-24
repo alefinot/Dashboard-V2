@@ -101,6 +101,16 @@ void drawNotificationBar(LGFX_ST7789_4 &d) {
   if (!dirty) return;  // event-driven: nothing new, skip
 
   const int x = 0, y = 0, w = 480, h = 32;
+
+  if (!BAR_ENABLED) {
+    // The webui "Show Notification Bar" toggle is off: the bar is
+    // disabled. Clear the strip so a previous alert / song does not
+    // linger (the dashboard's topmost content sits at y >= ~49, so
+    // this is a no-op visually).
+    d.fillRect(x, y, w, h, TFT_BLACK);
+    return;
+  }
+
   bool any = hasAlert || songOn;
   if (!any) {
     // Nothing is active: no visible bar (bar.h contract: no-op when
@@ -143,15 +153,19 @@ void drawNotificationBar(LGFX_ST7789_4 &d) {
     copyStr(line2, s.song, sizeof(line2));
   }
 
-  // Icon
+  // Icon: the filled circle; the monogram letter (the app identity)
+  // only when BAR_SHOW_APP is on (the webui "Show App Name in Bar"
+  // toggle).
   if (iconChar >= 0) {
     d.fillCircle(iconCx, iconCy, 9, d.color565(30, 60, 90));
-    char monogram[8];
-    monogram[0] = (char)iconChar;
-    monogram[1] = 0;
-    d.setTextColor(accent, bg);
-    d.setCursor(iconCx - 4, iconCy + 3);
-    d.print(monogram);
+    if (BAR_SHOW_APP) {
+      char monogram[8];
+      monogram[0] = (char)iconChar;
+      monogram[1] = 0;
+      d.setTextColor(accent, bg);
+      d.setCursor(iconCx - 4, iconCy + 3);
+      d.print(monogram);
+    }
   } else {
     // Music note glyph (head + stem + flag).
     d.fillCircle(iconCx - 2, iconCy + 4, 4, white);
