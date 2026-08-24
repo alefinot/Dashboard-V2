@@ -98,6 +98,17 @@ void drawNotificationBar(LGFX_ST7789_4 &d) {
   if (!dirty) return;  // event-driven: nothing new, skip
 
   const int x = 0, y = 0, w = 480, h = 32;
+  bool any = hasAlert || songOn;
+  if (!any) {
+    // Nothing is active: no visible bar (bar.h contract: no-op when
+    // nothing is active). Clear the strip so a previous alert / song does
+    // not linger. The bar owns y 0..32 (the dashboard's topmost element
+    // sits at BIG_CENTER_Y + OFFSET_* >= ~216), so this is a no-op
+    // visually.
+    d.fillRect(x, y, w, h, TFT_BLACK);
+    return;
+  }
+
   uint16_t bg = d.color565(15, 15, 15);
   uint16_t border = d.color565(45, 45, 45);
   uint16_t accent = d.color565(0, 220, 220);
@@ -107,9 +118,6 @@ void drawNotificationBar(LGFX_ST7789_4 &d) {
   // Flat dark strip across the top; 1px underline marks it as a bar.
   d.fillRect(x, y, w, h, bg);
   d.fillRect(x, y + h - 1, w, 1, border);
-
-  bool any = hasAlert || songOn;
-  if (!any) return;  // empty strip only
 
   d.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
   const int textY = y + 20;  // baseline for the 16px font
