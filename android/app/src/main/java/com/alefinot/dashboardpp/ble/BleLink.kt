@@ -159,8 +159,11 @@ class BleLink(private val context: Context) {
         handshakePending = true
         onLinkEvent?.invoke(LinkEvent.CONNECTING, "")
         // autoConnect=false: we drive the connect ourselves (the ESP is the
-        // peripheral; we want to control discovery + the MTU).
-        gatt = device.connectGatt(appContext, false, gattCallback)
+        // peripheral; we want to control discovery + the MTU). A fresh
+        // callback per gatt (the stale-gatt guard, see gattCallbackFor).
+        val cb = gattCallbackFor()
+        gatt = device.connectGatt(appContext, false, cb)
+        cb.myGatt = gatt
     }
 
     /** Enable notifications on the TX characteristic (the ESP STATUS stream). */
@@ -214,16 +217,30 @@ class BleLink(private val context: Context) {
     // The GATT callbacks arrive on a binder thread; they only mutate the
     // small link state above (there is no shared ESP state to touch — the app
     // has none of its own).
-    private val gattCallback = object : BluetoothGattCallback() {
-        // The *real* BluetoothGattCallback signature (device, status, newState)
-        // — the environment's reduced android.jar has a different one, so the
-        // shim (compileOnly) supplies the real shape; see shim/.
-        override fun onConnectionStateChange(
-            device: BluetoothDevice,
-            status: Int,
-            newState: Int,
-        ) {
-            if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+    /**
+     * A [BluetoothGattCallback] for ONE gatt. It holds the gatt it was made
+     * for ([myGatt], set right after `connectGatt` returns — before any of
+     * its callbacks can fire) and bails if the link has moved on: a stale
+     * gatt's late `DISCONNECTED` must not tear down the new link (the
+     * reconnect race — the old gatt's async disconnect can land after the
+     * new gatt is already in place, and the unguarded handler would close
+     * the *new* gatt, null it, and re-scan, killing a healthy link).
+     */
+    private fun gattCallbackFor() =
+        object : BluetoothGattCallback() {
+            // Set in connect() after connectGatt returns.
+            var myGatt: BluetoothGatt? = null
+
+            // The *real* BluetoothGattCallback signature (device, status, newState)
+            // — the environment's reduced android.jar has a different one, so the
+            // shim (compileOnly) supplies the real shape; see shim/.
+            override fun onConnectionStateChange(
+                device: BluetoothDevice,
+                status: Int,
+                newState: Int,
+            ) {
+                if (gatt !== myGatt) return  // stale gatt: a newer connect owns the link
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connected = false
                 gatt?.close()
                 gatt = null
@@ -260,6 +277,7 @@ class BleLink(private val context: Context) {
             device: BluetoothDevice,
             status: Int,
         ) {
+            if (gatt !== myGatt) return
             val g = gatt ?: return
             for (s in g.services) {
                 if (s.uuid == Protocol.SVC_UUID) {
@@ -290,6 +308,7 @@ class BleLink(private val context: Context) {
             status: Int,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            if (gatt !== myGatt) return
             if (characteristic.uuid == Protocol.TX_UUID) {
                 val bytes = characteristic.value // read via the (real) BluetoothGattCharacteristic.value
                 if (bytes != null) {
