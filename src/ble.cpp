@@ -113,7 +113,6 @@ static void bleDispatch(uint8_t type, const uint8_t *payload, uint16_t len) {
       copyDtoStr(dto.app, doc["app"] | "", (int)sizeof(dto.app));
       copyDtoStr(dto.title, doc["title"] | "", (int)sizeof(dto.title));
       copyDtoStr(dto.body, doc["body"] | "", (int)sizeof(dto.body));
-      dto.epoch = (unsigned long)(doc["epoch"] | 0);
       copyDtoStr(dto.icon, doc["icon"] | "", (int)sizeof(dto.icon));
       barPush(dto);
       break;

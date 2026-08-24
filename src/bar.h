@@ -16,7 +16,6 @@ struct NtfDto {
   char app[64];     // app / package name (display token)
   char title[128];  // headline
   char body[128];   // secondary line (sms / call detail)
-  unsigned long epoch;  // ms since epoch (dedupe key)
   char icon[8];    // short monogram / emoji token (1-3 chars)
 };
 
