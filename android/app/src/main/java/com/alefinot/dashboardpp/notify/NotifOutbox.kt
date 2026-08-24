@@ -65,22 +65,28 @@ object NotifOutbox {
      * [enqueue]). A notification whose (package, title) was already pushed
      * within 30 s is dropped; the cache is pruned to 24 h so the map
      * stays bounded.
+     *
+     * The check-and-record sequence runs on the map's monitor: NLS
+     * callbacks can arrive on multiple binder threads during a burst, and
+     * an unsynchronized HashMap would corrupt under a concurrent
+     * put / iterator-remove.
      */
-    private fun shouldSend(n: StatusBarNotification): Boolean {
-        val title = n.extras.getCharSequence("title")?.toString() ?: ""
-        val hash = (n.packageName ?: "") + "|" + title
-        val now = System.currentTimeMillis()
-        val last = lastSend[hash]
-        if (last != null && now - last < DEDUPE_WINDOW_MS) return false
-        lastSend[hash] = now
-        // Prune to 24 h.
-        val it = lastSend.iterator()
-        while (it.hasNext()) {
-            val e = it.next()
-            if (now - e.value > DEDUPE_PRUNE_MS) it.remove()
+    private fun shouldSend(n: StatusBarNotification): Boolean =
+        synchronized(lastSend) {
+            val title = n.extras.getCharSequence("title")?.toString() ?: ""
+            val hash = (n.packageName ?: "") + "|" + title
+            val now = System.currentTimeMillis()
+            val last = lastSend[hash]
+            if (last != null && now - last < DEDUPE_WINDOW_MS) return@synchronized false
+            lastSend[hash] = now
+            // Prune to 24 h.
+            val it = lastSend.iterator()
+            while (it.hasNext()) {
+                val e = it.next()
+                if (now - e.value > DEDUPE_PRUNE_MS) it.remove()
+            }
+            true
         }
-        return true
-    }
 
     private enum class Kind { ALERT, MEDIA, NAV }
 }
