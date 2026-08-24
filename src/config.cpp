@@ -541,7 +541,9 @@ void processConfig(int mode, JsonDocument *doc) {
     if (FUEL_TOUCH_POINTS > MAX_TOUCH_POINTS) FUEL_TOUCH_POINTS = MAX_TOUCH_POINTS;
     if (WEATHER_REFRESH_MIN < 1) WEATHER_REFRESH_MIN = 1;
     if (WEATHER_REFRESH_MIN > 1440) WEATHER_REFRESH_MIN = 1440;
-    if (BAR_TIMEOUT_MS < 1000) BAR_TIMEOUT_MS = 1000;
+    // 0 is a valid value: "the song never holds an alert" (bar.cpp /
+    // dashboard.h). Only negative input is rejected.
+    if (BAR_TIMEOUT_MS < 0) BAR_TIMEOUT_MS = 0;
     if (BAR_TIMEOUT_MS > 30000) BAR_TIMEOUT_MS = 30000;
     if (WIFI_RETRY_MODE < 0) WIFI_RETRY_MODE = 0;
     if (WIFI_RETRY_MODE > 2) WIFI_RETRY_MODE = 2;
