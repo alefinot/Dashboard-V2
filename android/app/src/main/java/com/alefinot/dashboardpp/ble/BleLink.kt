@@ -115,7 +115,12 @@ class BleLink(private val context: Context) {
                 callbackType: Int,
                 result: ScanResult,
             ) {
-                val name = result.scanRecord?.deviceName ?: result.device.name
+                // The advertised name comes from the scan record only: on
+                // 12+ result.device.name triggers an implicit connection
+                // (~10 s block) whenever the record is null. A missing
+                // record is rare (the ESP always advertises the name); the
+                // next scan event re-matches.
+                val name = result.scanRecord?.deviceName ?: return
                 if (name == Protocol.ADVERTISE_NAME) {
                     stopScan()
                     connect(result.device)
