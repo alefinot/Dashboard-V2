@@ -38,6 +38,8 @@ fun createDashboardWebView(
     val settings = webView.settings
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
+    // The WebUI never loads local files; file:// access is disabled.
+    settings.allowFileAccess = false
     webView.setBackgroundColor(android.graphics.Color.parseColor("#05080D"))
 
     val handler = Handler(Looper.getMainLooper())
