@@ -56,13 +56,16 @@ void barTick(unsigned long nowMs) {
   barLock();
   // An alert only falls back to the song while a song is playing: the
   // conditional 7s timeout. With no song, the alert stays (no timer).
-  if (alertCount > 0 && songActive &&
+  // BAR_TIMEOUT_MS == 0 means "the song never holds an alert": the alert
+  // stays, so there is nothing to expire. Guard the timer on it.
+  if (BAR_TIMEOUT_MS > 0 && alertCount > 0 && songActive &&
       (nowMs - alertHoldMs) >= (unsigned long)BAR_TIMEOUT_MS) {
-    // Expire the front alert: shift the FIFO up, drop the newest.
-    memmove(&alerts[0], &alerts[1], sizeof(NtfDto) * (alertCount - 1));
+    // Expire the FRONT (visible) alert: it is the newest (index
+    // alertCount-1), so dropping it is just alertCount-- (no memmove).
+    // The next (older) alert becomes the front and starts a fresh window.
     alertCount--;
     if (alertCount > 0)
-      alertHoldMs = nowMs;  // next alert starts a fresh 7s window
+      alertHoldMs = nowMs;  // the new front alert starts a fresh 7s window
     barDirty = true;  // the bar content changed
   }
   barUnlock();
