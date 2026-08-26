@@ -80,9 +80,11 @@ void LGFX_ST7789_4::loadVLWFont(const char *path) {
   bool is120  = (path[7] == 'D' && path[16] == '1');
   bool isDs28 = (path[7] == 'D' && path[16] == '2');
   bool isCon28 = (path[7] == 'C' && path[25] == '2');
-  bool isCon16 = (path[7] == 'C' && path[26] == '6');
+  // "Conthrax_SemiBold_1<6|0>px": path[25]/[26] disambiguate 16px from 10px.
+  bool isCon16 = (path[7] == 'C' && path[25] == '1' && path[26] == '6');
+  bool isCon10 = (path[7] == 'C' && path[25] == '1' && path[26] == '0');
 
-  int cur = is120 ? 0 : isDs28 ? 1 : isCon28 ? 2 : isCon16 ? 3 : 4;
+  int cur = is120 ? 0 : isDs28 ? 1 : isCon28 ? 2 : isCon16 ? 3 : isCon10 ? 4 : 5;
   if (cur == g_lastVLWFont) return;
   g_lastVLWFont = cur;
 
@@ -94,6 +96,8 @@ void LGFX_ST7789_4::loadVLWFont(const char *path) {
     loadFont(Conthrax_SemiBold_28px_vlw, lgfx::v1::IFont::font_type_t::ft_vlw);
   } else if (isCon16) {
     loadFont(Conthrax_SemiBold_16px_vlw, lgfx::v1::IFont::font_type_t::ft_vlw);
+  } else if (isCon10) {
+    loadFont(Conthrax_SemiBold_10px_vlw, lgfx::v1::IFont::font_type_t::ft_vlw);
   } else {
     setFont(&Conthrax_SemiBold4pt7b);
   }
