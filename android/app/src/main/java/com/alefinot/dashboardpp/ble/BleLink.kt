@@ -332,6 +332,21 @@ class BleLink(private val context: Context) {
             status: Int,
         ) {
             if (gatt !== myGatt) return
+            if (status != 0) {
+                // Discovery failed: rx/tx stay null and every sendFrame
+                // bails — a connected-but-deaf link. Treat it like a drop
+                // and re-scan (the ESP re-advertises on disconnect).
+                stopPings()
+                connected = false
+                gatt?.cancelIfStarted()
+                gatt?.close()
+                gatt = null
+                rxChar = null
+                txChar = null
+                onLinkEvent?.invoke(LinkEvent.DROPPED, "service discovery failed")
+                scheduleReconnect()
+                return
+            }
             val g = gatt ?: return
             for (s in g.services) {
                 if (s.uuid == Protocol.SVC_UUID) {
