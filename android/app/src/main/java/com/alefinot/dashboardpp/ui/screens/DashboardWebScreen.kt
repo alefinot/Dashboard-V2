@@ -1,6 +1,8 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -16,19 +18,32 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeTitle
 import com.alefinot.dashboardpp.viewmodel.CompanionViewModel
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
+import com.alefinot.dashboardpp.webview.FileChooser
 import com.alefinot.dashboardpp.webview.createDashboardWebView
+import com.alefinot.dashboardpp.webview.deliverFilePick
 
 @Composable
 fun DashboardWebScreen(
-    activity: Activity,
     vm: ConnectionViewModel,
     ip: String,
     companion: CompanionViewModel,
     onSettings: () -> Unit,
 ) {
+    // The ESP UI backup-import file chooser: the launcher is registered in
+    // the composition (a WebView can't get the picker result itself), and
+    // deliverFilePick hands it to the pending ValueCallback.
+    val fileChooserLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { res ->
+        val uri =
+            if (res.resultCode == Activity.RESULT_OK) res.data?.data else null
+        deliverFilePick(uri)
+    }
+    FileChooser.launcher = fileChooserLauncher
+
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         AndroidView(
-            factory = { ctx -> createDashboardWebView(ctx, activity, ip, vm) },
+            factory = { ctx -> createDashboardWebView(ctx, ip, vm) },
             modifier = Modifier.fillMaxSize(),
         )
         Box(

@@ -16,8 +16,22 @@ import android.webkit.WebViewClient
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 
 object FileChooser {
-    const val REQUEST_CODE = 42
+    // The launcher is registered by the composition that hosts the WebView
+    // (DashboardWebScreen); onShowFileChooser stashes the callback and
+    // launches it. The result is delivered via deliverFilePick.
+    var launcher: androidx.activity.result.ActivityResultLauncher<Intent>? = null
     var pendingCallback: ValueCallback<Array<Uri>>? = null
+}
+
+/**
+ * Resolve the pending file-chooser callback (exactly once). A null uri is
+ * a cancel / failure; the WebUI input gets a definitive answer instead of
+ * hanging.
+ */
+fun deliverFilePick(uri: Uri?) {
+    val cb = FileChooser.pendingCallback
+    FileChooser.pendingCallback = null
+    cb?.onReceiveValue(if (uri == null) null else arrayOf(uri))
 }
 
 /**
@@ -30,7 +44,6 @@ object FileChooser {
 @SuppressLint("SetJavaScriptEnabled")
 fun createDashboardWebView(
     context: Context,
-    activity: Activity,
     ip: String,
     vm: ConnectionViewModel,
 ): WebView {
@@ -76,11 +89,20 @@ fun createDashboardWebView(
             fileChooserParams: WebChromeClient.FileChooserParams?
         ): Boolean {
             FileChooser.pendingCallback = filePathCallback
+            // The picker is launched through the composition-registered
+            // launcher; a missing launcher or a failed launch resolves the
+            // callback with null (the WebUI input gets a definitive answer).
+            val launcher = FileChooser.launcher
+            if (launcher == null) {
+                deliverFilePick(null)
+                return true
+            }
             try {
-                val intent = Intent(Intent.ACTION_GET_CONTENT)
-                intent.type = "application/json"
-                activity.startActivity(intent)
+                launcher.launch(
+                    Intent(Intent.ACTION_GET_CONTENT).apply { type = "application/json" },
+                )
             } catch (e: Exception) {
+                deliverFilePick(null)
             }
             return true
         }

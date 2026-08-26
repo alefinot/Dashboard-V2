@@ -83,7 +83,6 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
             is ConnectionUiState.ConnectionLost -> ConnectionLostScreen(vm, s.reason)
             is ConnectionUiState.NoWifi -> NoWifiScreen(vm, s.detail)
             is ConnectionUiState.Connected -> DashboardWebScreen(
-                activity,
                 vm,
                 s.ip,
                 companion,
