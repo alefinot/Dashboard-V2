@@ -14,6 +14,8 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,6 +71,17 @@ class BleLink(private val context: Context) {
         private const val PING_INTERVAL_MS = 15_000L
     }
 
+    // True while the 8-11 location ask is pending (see [startScan]).
+    private var locationPrompted = false
+
+    /**
+     * The location-permission result landed (granted). Re-enter the scan:
+     * the live check in [startScan] passes now.
+     */
+    fun onLocationPermissionGranted() {
+        startScan()
+    }
+
     // The latest ESP STATUS payload (the health chip / "BLE is carrying the
     // dashboard" indicator). Kept as a raw JSONObject; null until received.
     @Volatile
@@ -86,6 +99,12 @@ class BleLink(private val context: Context) {
      */
     enum class LinkEvent { CONNECTING, CONNECTED, DROPPED, FAILED }
     var onLinkEvent: ((LinkEvent, String) -> Unit)? = null
+
+    /**
+     * The UI hook for asking the 8-11 location permission (see
+     * [needsLocationForScan]). Set by the screen that owns the link.
+     */
+    var onRequestLocation: (() -> Unit)? = null
 
     val isBleOn: Boolean
         get() {
@@ -109,9 +128,32 @@ class BleLink(private val context: Context) {
      * stops and the link connects (the ESP re-advertises on disconnect, so a
      * reconnect is just a re-scan).
      */
+    /**
+     * 8-11: the BLE scan needs ACCESS_FINE_LOCATION (12+ uses BLUETOOTH_SCAN,
+     * requested at launch in MainActivity). The manifest declares it
+     * (maxSdk 30); the UI asks for it (see [onRequestLocation]).
+     */
+    private fun needsLocationForScan(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            appContext.checkSelfPermission(
+                "android.permission.ACCESS_FINE_LOCATION",
+            ) != PackageManager.PERMISSION_GRANTED
+
     fun startScan() {
         if (!isBleOn) {
             onLinkEvent?.invoke(LinkEvent.FAILED, "Bluetooth is off")
+            return
+        }
+        if (needsLocationForScan()) {
+            onLinkEvent?.invoke(LinkEvent.FAILED, "Location permission required for BLE scan")
+            if (!locationPrompted) {
+                // One ask per session: a denial must not re-prompt on
+                // every auto-reconnect (the 2 s backoff loop would
+                // spam the dialog). A later grant (here or in Settings)
+                // is picked up by the live check on the next attempt.
+                locationPrompted = true
+                onRequestLocation?.invoke()
+            }
             return
         }
         if (scanning) return

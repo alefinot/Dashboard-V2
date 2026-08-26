@@ -1,5 +1,7 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,19 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // The BLE companion (the ESP is the GATT server; the app is the central).
     // Created once (remember); boots when the connection is established.
     val companion = remember { CompanionViewModel(activity.application) }
+    // 8-11: the BLE scan needs ACCESS_FINE_LOCATION (12+ uses BLUETOOTH_SCAN,
+    // requested at launch in MainActivity). One ask per session; on grant
+    // the scan re-enters from the BleLink.
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) companion.link.onLocationPermissionGranted()
+    }
+    companion.link.onRequestLocation = {
+        activity.runOnUiThread {
+            locationLauncher.launch("android.permission.ACCESS_FINE_LOCATION")
+        }
+    }
     // The app root is rare to leave, but the BleLink + weather timer must
     // not outlive the screen: dispose on leave.
     DisposableEffect(Unit) { onDispose { companion.dispose() } }

@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
+    <!-- 8-11: the BLE scan needs location (12+ uses BLUETOOTH_SCAN). -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
     <!-- 14+: the Wi-Fi (NSD) device discovery; never used for location.
          Requested at runtime (MainActivity) like the BLE/POST_NOTIFICATIONS
          grants. -->
