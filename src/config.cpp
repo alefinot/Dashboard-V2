@@ -501,6 +501,11 @@ void processConfig(int mode, JsonDocument *doc) {
       if (d < 0) d = 0;
       if (d > room) d = (room > 0) ? room : 0;
     };
+    // Wheel circumference: WHEEL_DIST_PER_PULSE_KM derives from it and the
+    // pulse counter divides by it; 0 / negative / huge values break the
+    // odometry and odometer. Plausible wheel: 100..20000 mm.
+    if (WHEEL_CIRCUMFERENCE_MM < 100.0f) WHEEL_CIRCUMFERENCE_MM = 100.0f;
+    if (WHEEL_CIRCUMFERENCE_MM > 20000.0f) WHEEL_CIRCUMFERENCE_MM = 20000.0f;
     // Satellite thresholds: the GPS weight formula divides by
     // (OPTIMAL - MIN + 1); a zero or negative denominator would turn
     // the sensor blend into nan. Keep MIN in 0..16 and OPTIMAL at or
