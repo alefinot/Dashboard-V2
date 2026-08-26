@@ -11,6 +11,7 @@ public final class Extras {
     public CharSequence getCharSequence(String name) { return null; }
     public String getString(String name) { return null; }
     public int getInt(String name) { return 0; }
+    public int getInt(String name, int value) { return value; }
     public long getLong(String name) { return 0L; }
     public boolean getBoolean(String name) { return false; }
     public boolean getBoolean(String name, boolean value) { return value; }

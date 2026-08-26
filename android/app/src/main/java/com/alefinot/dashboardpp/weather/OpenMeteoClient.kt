@@ -17,6 +17,17 @@ import java.util.concurrent.TimeUnit
  * the ESP).
  */
 object OpenMeteoClient {
+    /**
+     * The ESP parses sunrise/sunset as `HH:MM` (sscanf "%d:%d"); Open-Meteo
+     * answers ISO 8601 (`2026-08-26T06:12`), on which that parse fails and
+     * the day/night logic falls back to the fixed NIGHT_MODE window. Trim
+     * to the time-of-day part before pushing; empty when unparseable.
+     */
+    private fun toHhmm(iso: String): String {
+        val t = iso.indexOf('T')
+        return if (t >= 0 && iso.length >= t + 6) iso.substring(t + 1, t + 6) else ""
+    }
+
     private const val BASE =
         "https://api.open-meteo.com/v1/forecast"
 
@@ -56,8 +67,8 @@ object OpenMeteoClient {
             val json = org.json.JSONObject(body)
             val current = json.getJSONObject("current")
             val daily = json.optJSONObject("daily")
-            val sunrise = daily?.optJSONArray("sunrise")?.optString(0) ?: ""
-            val sunset = daily?.optJSONArray("sunset")?.optString(0) ?: ""
+            val sunrise = toHhmm(daily?.optJSONArray("sunrise")?.optString(0) ?: "")
+            val sunset = toHhmm(daily?.optJSONArray("sunset")?.optString(0) ?: "")
             WeatherDto(
                 temperature = current.getDouble("temperature_2m").toFloat(),
                 humidity = current.getInt("relative_humidity_2m"),

@@ -26,10 +26,14 @@ object MediaParser {
     /**
      * Parse a media notification into a [MediaDto] (§4.3 MEDIA).
      *
-     * `active` is the play-state extra: honored when the media app sets
-     * it (`android.media.PLAYBACK_STATE`); a key-less extras bundle can't
-     * say, so it defaults to playing (the bar's song state stays on for
-     * an unknown state - the previous behavior).
+     * `active` is the play-state extra `android.media.PLAYBACK_STATE`,
+     * which is an INTEGER (MediaPlayer.PLAY_STATE_*: 0=NONE 1=PAUSED
+     * 2=PLAYING 3=BUFFERING 4=ERROR ...), not a Boolean - reading it with
+     * getBoolean always returned the default. Only PLAYING/BUFFERING
+     * keep the bar's song state on; PAUSED/stop clear it. When the extras
+     * bundle carries no state at all (some Android versions strip media
+     * extras), assume playing - the previous behavior for an unknown
+     * state.
      */
     fun parse(n: StatusBarNotification): MediaDto {
         val title = n.extras.getCharSequence("title")?.toString()
@@ -39,8 +43,9 @@ object MediaParser {
             ?: n.extras.getCharSequence("bigText")?.toString()
             ?: ""
         val pkg = n.packageName ?: ""
-        val icon = if (pkg.isNotEmpty()) pkg.first().uppercaseChar().toString() else ""
-        val active = n.extras.getBoolean("android.media.PLAYBACK_STATE", true)
+        val icon = AppMonogram.forPackage(pkg)
+        val state = n.extras.getInt("android.media.PLAYBACK_STATE", 2)
+        val active = state == 2 || state == 3
         return MediaDto(
             artist = title,
             song = song,

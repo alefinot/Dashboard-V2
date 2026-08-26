@@ -44,6 +44,17 @@ fun DashboardWebScreen(
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         AndroidView(
             factory = { ctx -> createDashboardWebView(ctx, ip, vm) },
+            onRelease = { wv ->
+                // Per the Android WebView destruction docs: stop loading,
+                // navigate to about:blank, drop the download listener, then
+                // destroy - otherwise each exit from the Connected state
+                // leaks a live renderer (Chromium process, JS heap, cookies).
+                wv.stopLoading()
+                wv.loadUrl("about:blank")
+                wv.setDownloadListener(null)
+                wv.removeAllViews()
+                wv.destroy()
+            },
             modifier = Modifier.fillMaxSize(),
         )
         Box(

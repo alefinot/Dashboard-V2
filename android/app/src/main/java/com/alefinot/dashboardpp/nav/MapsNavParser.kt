@@ -23,10 +23,22 @@ object MapsNavParser {
     }
 
     /**
+     * Maps' arrival/summary notifications ("You've arrived", "Arrived at
+     * …") reuse the Maps package: parsed as a live maneuver they would
+     * re-arm the widget after the trip is over. They carry no maneuver, so
+     * they count as trip end: `on=false`.
+     */
+    private fun isArrival(act: String, road: String): Boolean {
+        val hay = (act + " " + road).lowercase()
+        return hay.contains("arrived") || hay.contains("arrival")
+    }
+
+    /**
      * Parse a Google Maps nav notification into a [NavDto]. The `act` is the
      * maneuver (the `title`), the `road` is the road name (the `text`), the
      * `eta` is the arrival time (the `bigText`); `d`/`u` are a heuristic
      * default (`0.0`/`""`) — the full nav extras are app-specific.
+     * Arrival/summary notifications parse to `on=false` (trip end).
      */
     fun parse(n: StatusBarNotification): NavDto {
         val act = n.extras.getCharSequence("title")?.toString()
@@ -38,6 +50,17 @@ object MapsNavParser {
         val eta = n.extras.getCharSequence("bigText")?.toString()
             ?: n.extras.getCharSequence("text")?.toString()
             ?: ""
+        if (isArrival(act, road)) {
+            return NavDto(
+                on = false,
+                act = "",
+                d = 0.0,
+                u = "",
+                road = "",
+                eta = "",
+                arrival = false,
+            )
+        }
         return NavDto(
             on = true,
             act = act,

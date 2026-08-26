@@ -4,6 +4,7 @@ import android.service.notification.StatusBarNotification
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.Protocol
 import com.alefinot.dashboardpp.nav.MapsNavParser
+import com.alefinot.dashboardpp.nav.NavDto
 
 /**
  * The §6.1 outbox — the single place notifications are classified, deduped,
@@ -50,6 +51,26 @@ object NotifOutbox {
             }
         }
         ble?.sendFrame(Protocol.encode(type, json))
+    }
+
+    /**
+     * [NotificationReceiver.onNotificationRemoved] path: when a Maps nav
+     * notification goes away (trip ended / navigation dismissed), the bar
+     * must clear - the ESP has no expiry timer, so the phone has to say
+     * `on=false`. Non-Maps notifications are ignored.
+     */
+    fun onRemoved(n: StatusBarNotification) {
+        if (classify(n) != Kind.NAV) return
+        val dto = NavDto(
+            on = false,
+            act = "",
+            d = 0.0,
+            u = "",
+            road = "",
+            eta = "",
+            arrival = false,
+        )
+        ble?.sendFrame(Protocol.encode(Protocol.T_NAV, dto.toJson()))
     }
 
     /** The §6.4 classifier. */

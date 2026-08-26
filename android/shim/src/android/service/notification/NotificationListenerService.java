@@ -12,6 +12,7 @@ import android.app.Service;
  */
 public class NotificationListenerService extends Service {
     public void onNotificationStatusChanged(StatusBarNotification pn) { }
+    public void onNotificationRemoved(StatusBarNotification pn) { }
 
     // Service's single abstract method — the real framework provides the
     // real binder; this shim body is never executed (compile-only).
