@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -91,7 +92,9 @@ class CompanionViewModel(private val app: Application) {
     fun boot() {
         scope.launch {
             try {
-                val config = fetchConfig()
+                // The config fetch is a blocking OkHttp call (4 s connect
+                // + 8 s read); keep it off the CPU-sized Default pool.
+                val config = withContext(Dispatchers.IO) { fetchConfig() }
                 city = config.optString("WEATHER_CITY")
                 lat = config.optDouble("WEATHER_LAT", 0.0)
                 lon = config.optDouble("WEATHER_LON", 0.0)

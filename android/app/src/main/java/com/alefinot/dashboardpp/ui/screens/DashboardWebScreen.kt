@@ -49,6 +49,10 @@ fun DashboardWebScreen(
                 // navigate to about:blank, drop the download listener, then
                 // destroy - otherwise each exit from the Connected state
                 // leaks a live renderer (Chromium process, JS heap, cookies).
+                // A pending file-chooser pick must not outlive the WebView:
+                // the static would hold the dead renderer until the next
+                // pick (or process death).
+                FileChooser.release()
                 wv.stopLoading()
                 wv.loadUrl("about:blank")
                 wv.setDownloadListener(null)

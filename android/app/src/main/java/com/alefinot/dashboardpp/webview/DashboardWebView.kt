@@ -15,22 +15,37 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 
+// The file-chooser callbacks are FIFO: a second onShowFileChooser before
+// the first result arrives must not orphan the first input's callback, and
+// the static must not hold a destroyed activity's WebView (renderer).
 object FileChooser {
     // The launcher is registered by the composition that hosts the WebView
-    // (DashboardWebScreen); onShowFileChooser stashes the callback and
-    // launches it. The result is delivered via deliverFilePick.
+    // (DashboardWebScreen); onShowFileChooser enqueues the callback and
+    // launches it. Results are delivered via deliverFilePick.
     var launcher: androidx.activity.result.ActivityResultLauncher<Intent>? = null
-    var pendingCallback: ValueCallback<Array<Uri>>? = null
+    val pendingCallbacks = ArrayDeque<ValueCallback<Array<Uri>>>()
+
+    fun enqueue(cb: ValueCallback<Array<Uri>>?) {
+        if (cb != null) synchronized(pendingCallbacks) { pendingCallbacks.addLast(cb) }
+    }
+
+    /** Drop any in-flight pick (the WebView is going away anyway). */
+    fun release() {
+        launcher = null
+        synchronized(pendingCallbacks) { pendingCallbacks.clear() }
+    }
 }
 
 /**
- * Resolve the pending file-chooser callback (exactly once). A null uri is
- * a cancel / failure; the WebUI input gets a definitive answer instead of
- * hanging.
+ * Resolve the oldest pending file-chooser callback (exactly once). A null
+ * uri is a cancel / failure; the WebUI input gets a definitive answer
+ * instead of hanging.
  */
 fun deliverFilePick(uri: Uri?) {
-    val cb = FileChooser.pendingCallback
-    FileChooser.pendingCallback = null
+    var cb: ValueCallback<Array<Uri>>? = null
+    synchronized(FileChooser.pendingCallbacks) {
+        cb = FileChooser.pendingCallbacks.removeFirstOrNull()
+    }
     cb?.onReceiveValue(if (uri == null) null else arrayOf(uri))
 }
 
@@ -88,7 +103,7 @@ fun createDashboardWebView(
             filePathCallback: ValueCallback<Array<Uri>>?,
             fileChooserParams: WebChromeClient.FileChooserParams?
         ): Boolean {
-            FileChooser.pendingCallback = filePathCallback
+            FileChooser.enqueue(filePathCallback)
             // The picker is launched through the composition-registered
             // launcher; a missing launcher or a failed launch resolves the
             // callback with null (the WebUI input gets a definitive answer).

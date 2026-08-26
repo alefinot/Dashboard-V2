@@ -51,6 +51,9 @@ class NsdDiscoverer(context: Context) {
             override fun onDiscoveryStopped(serviceType: String?) {}
 
             override fun onServiceFound(info: NsdServiceInfo) {
+                // A queued callback can outlive stop() on some OEM stacks;
+                // resolving a stopped session throws on those stacks.
+                if (listener == null) return
                 // Some stacks already carry the address — use it directly.
                 val direct = info.host?.hostAddress
                 if (direct != null) {
@@ -59,15 +62,20 @@ class NsdDiscoverer(context: Context) {
                     return
                 }
                 // Normal path: resolve to get the host address.
-                nsdManager?.resolveService(info, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(info: NsdServiceInfo?, error: Int) {}
+                try {
+                    nsdManager?.resolveService(info, object : NsdManager.ResolveListener {
+                        override fun onResolveFailed(info: NsdServiceInfo?, error: Int) {}
 
-                    override fun onServiceResolved(resolved: NsdServiceInfo) {
-                        val ip = resolved.host?.hostAddress ?: return
-                        stop()
-                        onFound(ip, resolved.port)
-                    }
-                })
+                        override fun onServiceResolved(resolved: NsdServiceInfo) {
+                            if (listener == null) return // stopped mid-resolve
+                            val ip = resolved.host?.hostAddress ?: return
+                            stop()
+                            onFound(ip, resolved.port)
+                        }
+                    })
+                } catch (e: Exception) {
+                    stop()
+                }
             }
 
             override fun onServiceLost(info: NsdServiceInfo) {}
