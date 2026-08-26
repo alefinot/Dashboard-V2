@@ -51,6 +51,8 @@ class BleLink(private val context: Context) {
     private var scanning = false
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
+    // The STATUS keepalive loop (see [startPings]).
+    private var pingJob: Job? = null
     // True while a connectGatt() handshake is in flight: a DISCONNECTED
     // that lands here is a failed connect, not a mid-session drop.
     @Volatile
@@ -58,6 +60,11 @@ class BleLink(private val context: Context) {
     // Serializes sendFrame: the weather timer and NotifOutbox both write
     // from their own threads, and the shared rxChar must not interleave.
     private val sendLock = Any()
+
+    companion object {
+        /** The STATUS keepalive cadence (see [startPings]). */
+        private const val PING_INTERVAL_MS = 15_000L
+    }
 
     // The latest ESP STATUS payload (the health chip / "BLE is carrying the
     // dashboard" indicator). Kept as a raw JSONObject; null until received.
@@ -160,6 +167,7 @@ class BleLink(private val context: Context) {
      */
     private fun connect(device: BluetoothDevice) {
         stopScan()
+        stopPings()
         gatt?.close()
         gatt = null
         rxChar = null
@@ -215,8 +223,34 @@ class BleLink(private val context: Context) {
     /** Ask the ESP for a fresh STATUS (it responds on the TX notify). */
     fun sendPing(): Boolean = sendFrame(Protocol.encode(Protocol.T_PING, "{}"))
 
+    /**
+     * Keep the STATUS flowing: while the link is up, poll the ESP for a
+     * fresh STATUS (it answers PING on the TX notify). The connect-time
+     * STATUS lands before this app has subscribed to TX and is dropped, so
+     * without this poll `lastStatus` would stay null and the chip stuck on
+     * "connecting" forever. The first ping goes out immediately, then
+     * every 15 s. Started from service discovery; see [stopPings].
+     */
+    private fun startPings() {
+        stopPings()
+        pingJob = scope.launch {
+            while (true) {
+                if (!connected) break
+                sendPing()
+                delay(PING_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stop the [startPings] loop (a drop, a fresh connect, or [close]). */
+    private fun stopPings() {
+        pingJob?.cancel()
+        pingJob = null
+    }
+
     fun close() {
         stopScan()
+        stopPings()
         reconnectJob?.cancel()
         gatt?.cancelIfStarted()
         gatt?.close()
@@ -260,6 +294,7 @@ class BleLink(private val context: Context) {
             ) {
                 if (gatt !== myGatt) return  // stale gatt: a newer connect owns the link
                 if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                stopPings()
                 connected = false
                 gatt?.close()
                 gatt = null
@@ -305,6 +340,7 @@ class BleLink(private val context: Context) {
                     subscribeTx()
                 }
             }
+            if (rxChar != null && txChar != null) startPings()
         }
 
         /**
