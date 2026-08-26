@@ -34,6 +34,12 @@ object Protocol {
     val RX_UUID: BluetoothUuid = BluetoothUuid.fromString("0000D101-0000-1000-8000-00805F9B34FB")
     val TX_UUID: BluetoothUuid = BluetoothUuid.fromString("0000D102-0000-1000-8000-00805F9B34FB")
 
+    // The max payload bytes: the frame is 3 header bytes + payload, and a
+    // single write must move at most 509 bytes (512 MTU − 3, the max ATT
+    // value at the negotiated 512 MTU). 506 + 3 = 509 — anything larger
+    // could not be written.
+    const val MAX_PAYLOAD = 506
+
     // §4.2 frame type bytes.
     const val T_WEATHER: Byte = 0x01.toByte()
     const val T_NOTIFICATION: Byte = 0x02.toByte()
@@ -48,12 +54,13 @@ object Protocol {
 
     /**
      * Encode one frame: 1-byte type + 2-byte LE length + UTF-8 JSON.
-     * @throws IllegalArgumentException if the payload exceeds the 512-byte
-     * payload cap (the ESP RX characteristic max value).
+     * @throws IllegalArgumentException if the payload exceeds [MAX_PAYLOAD]
+     * (so the framed value fits the 509-byte max ATT value at the
+     * negotiated 512 MTU and is always writable).
      */
     fun encode(type: Byte, json: String): ByteArray {
         val payload = json.toByteArray(Charsets.UTF_8)
-        require(payload.size <= 512) { "frame payload too large: ${payload.size}" }
+        require(payload.size <= MAX_PAYLOAD) { "frame payload too large: ${payload.size}" }
         val out = ByteArray(3 + payload.size)
         out[0] = type
         out[1] = (payload.size and 0xFF).toByte()
