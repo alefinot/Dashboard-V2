@@ -48,6 +48,9 @@ class BleLink(private val context: Context) {
     private var txChar: BluetoothGattCharacteristic? = null
     @Volatile
     private var connected = false
+    // Written from the main / scan path, read from the binder callback
+    // threads — @Volatile (see [connected]).
+    @Volatile
     private var scanning = false
     private var scanCallback: ScanCallback? = null
     private var reconnectJob: Job? = null
