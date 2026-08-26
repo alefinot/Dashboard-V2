@@ -506,6 +506,10 @@ void processConfig(int mode, JsonDocument *doc) {
     // odometry and odometer. Plausible wheel: 100..20000 mm.
     if (WHEEL_CIRCUMFERENCE_MM < 100.0f) WHEEL_CIRCUMFERENCE_MM = 100.0f;
     if (WHEEL_CIRCUMFERENCE_MM > 20000.0f) WHEEL_CIRCUMFERENCE_MM = 20000.0f;
+    // Fuel EMA: y = a*x + (1-a)*y_prev is stable only for a in 0..1;
+    // a >= 1 or negative makes the gauge diverge / oscillate.
+    if (FUEL_FILTER_ALPHA < 0.0f) FUEL_FILTER_ALPHA = 0.0f;
+    if (FUEL_FILTER_ALPHA > 1.0f) FUEL_FILTER_ALPHA = 1.0f;
     // Satellite thresholds: the GPS weight formula divides by
     // (OPTIMAL - MIN + 1); a zero or negative denominator would turn
     // the sensor blend into nan. Keep MIN in 0..16 and OPTIMAL at or
