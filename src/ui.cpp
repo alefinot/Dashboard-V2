@@ -41,6 +41,9 @@ volatile bool otaMemReleased = false;
 // re-parses the VLW font on the display or re-measures every digit.
 static bool spdMetricsReady = false;
 static int spdCountCached = 0;
+// max(SPEED_DIGITS, 3) capped at MAX_CELLS — the real cell count (see
+// ensureSpeedMetrics).
+static int spdCellCountCached = 0;
 static uint16_t w_speed3_max = 0, h_speed_max = 0;
 static int16_t refY1 = 0;
 static int digitWidth[10] = {0}, digitXOff[10] = {0}, digitRightOff[10] = {0};
@@ -50,6 +53,14 @@ static void ensureSpeedMetrics() {
   if (spdMetricsReady && spdCountCached == SPEED_DIGITS) return;
   spdMetricsReady = true;
   spdCountCached = SPEED_DIGITS;
+  // The speed is at most 3 digits (999 km/h / 621 mph). Reserve a cell for
+  // every possible digit even when the configured count is smaller, so a
+  // 100+ readout can never index below the cell table (it used to read
+  // spdCellR[-1]); cap at the table size so a bad config value can't
+  // overflow it.
+  int cellCount = spdCountCached > 3 ? spdCountCached : 3;
+  if (cellCount > MAX_CELLS) cellCount = MAX_CELLS;
+  spdCellCountCached = cellCount;
   // The 120px VLW gets parsed on the display here, once per boot (cheap when
   // the font cache survives). The sprite build below parses it a second time
   // into the sprite's own glyph tables.
@@ -72,7 +83,7 @@ static void ensureSpeedMetrics() {
     }
     constexpr int SG = -3;
     int cumX = 0;
-    for (int i = 0; i < spdCountCached; i++) {
+    for (int i = 0; i < cellCount; i++) {
       char cb[2] = {'8', 0};
       display.getTextBounds(cb, cumX, 0, &sx1, &sy1, &tw, &th);
       spdCellR[i] = cumX + sx1 + tw;
@@ -586,11 +597,12 @@ void updateBigDisplay(const SensorSnapshot &snap) {
     // is (re)built by ensureSpeedSprite() at a safe point in loop(), never
     // mid-frame, so a post-OTA rebuild can't stall this frame.
     ensureSpeedMetrics();
-    int spdCount = spdCountCached;
+    int cellCount = spdCellCountCached;
 
     char speedStr[12];
     snprintf(speedStr, sizeof(speedStr), "%d", currentSpeed);
     int len = strlen(speedStr);
+    if (len > cellCount) len = cellCount; // >999 km/h: drop leading digits
     int boxLeft = applyAlign(speedNumX, w_speed3_max, ALIGN_BIG_SPEED_NUM);
 
     // The direct-panel fallback below can skip frames (throttle); only commit
@@ -602,7 +614,7 @@ void updateBigDisplay(const SensorSnapshot &snap) {
       sp.fillSprite(TFT_BLACK);
       if (SHOW_GHOST_DIGITS) {
         sp.setTextColor(ghost_color);
-        for (int ci = 0; ci < spdCount; ci++) {
+        for (int ci = 0; ci < cellCount; ci++) {
           int cx = spdCellR[ci] + 4 - digitXOff[8] - digitWidth[8];
           sp.setCursor(cx, 2 - refY1);
           sp.print('8');
@@ -611,7 +623,7 @@ void updateBigDisplay(const SensorSnapshot &snap) {
       sp.setTextColor(TFT_WHITE);
       for (int i = 0; i < len; i++) {
         int d = speedStr[i] - '0';
-        int cellIdx = (spdCount - len) + i;
+        int cellIdx = (cellCount - len) + i;
         int cx = spdCellR[cellIdx] + 4 - digitXOff[d] - digitWidth[d] + digitRightOff[d];
         sp.setCursor(cx, 2 - refY1);
         sp.print(speedStr[i]);
@@ -643,7 +655,7 @@ if (!vlw120Ready) {
         if (vlw120Ready) {
           if (SHOW_GHOST_DIGITS) {
             display.setTextColor(ghost_color, TFT_BLACK);
-            for (int ci = 0; ci < spdCount; ci++) {
+            for (int ci = 0; ci < cellCount; ci++) {
               int cx = boxLeft + spdCellR[ci] - 2 - digitXOff[8] - digitWidth[8];
               display.setCursor(cx, speedNumY - refY1);
               display.print('8');
@@ -652,7 +664,7 @@ if (!vlw120Ready) {
             // No ghosts: erase every cell with an invisible black '8' so a
             // narrow digit never leaves residue from a wider one.
             display.setTextColor(TFT_BLACK);
-            for (int ci = 0; ci < spdCount; ci++) {
+            for (int ci = 0; ci < cellCount; ci++) {
               int cx = boxLeft + spdCellR[ci] - 2 - digitXOff[8] - digitWidth[8];
               display.setCursor(cx, speedNumY - refY1);
               display.print('8');
@@ -664,7 +676,7 @@ if (!vlw120Ready) {
             display.setTextColor(TFT_WHITE, TFT_BLACK);
           for (int i = 0; i < len; i++) {
             int d = speedStr[i] - '0';
-            int cellIdx = (spdCount - len) + i;
+            int cellIdx = (cellCount - len) + i;
             int cellRight = boxLeft + spdCellR[cellIdx];
             int cx = cellRight - 2 - digitXOff[d] - digitWidth[d] + digitRightOff[d];
             display.setCursor(cx, speedNumY - refY1);
