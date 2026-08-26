@@ -109,20 +109,6 @@ class ConnectionViewModel(context: Context) {
         }
     }
 
-    fun reconnect(ip: String) {
-        scope.launch {
-            val r = verifier.verify(ip)
-            when (r) {
-                is VerifyResult.Verified -> connect(r)
-                is VerifyResult.Failed -> {
-                    uiState.value = ConnectionUiState.ConnectionLost(
-                        "Cannot reach $ip. The device may be off, or on a different network."
-                    )
-                }
-            }
-        }
-    }
-
     fun forgetDevice(ip: String) {
         cache.clear()
         lastKnownIp.value = null
