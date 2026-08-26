@@ -317,6 +317,10 @@ extern bool NTP_ENABLED;
 extern char NTP_SERVER[64];
 extern int TZ_OFFSET_HOURS;
 extern bool TZ_DST_ENABLED;
+// US DST rule: second Sunday of March -> first Sunday of November,
+// 02:00 local standard time (02:00 - TZ_OFFSET_HOURS in UTC). Used
+// when TZ_OFFSET_HOURS < 0 (see getUSOffset in gfx.cpp).
+int getUSOffset(int year, int month, int day, int hour);
 
 extern bool OTA_PULL_ENABLED;
 extern char OTA_PULL_URL[192];
@@ -356,6 +360,8 @@ extern volatile int otaProgressTarget;
 
 extern bool pendingInvertDisplay;
 extern int pendingBacklightValue;
+extern bool pendingBusConfig;
+void utf8ToAsciiInPlace(char *s);
 
 extern LGFX_ST7789_4 display;
 extern TinyGPSPlus gps;
@@ -419,6 +425,8 @@ extern unsigned long accelStartTime;
 extern float accelResultTime;
 
 extern SemaphoreHandle_t g_stateMutex;
+extern SemaphoreHandle_t logRingMutex;
+extern SemaphoreHandle_t gpsDebugMutex;
 extern SensorSnapshot g_sensorData;
 
 // ----------------------------------------------------------------------------

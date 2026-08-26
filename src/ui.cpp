@@ -270,13 +270,15 @@ static bool weatherIsNight(const SensorSnapshot &snap, const WeatherData &data) 
 // garbage / crash).
 static WeatherData weatherSnapshot() {
   WeatherData w;
-  if (g_stateMutex != NULL &&
-      xSemaphoreTake(g_stateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+  if (g_stateMutex != NULL) {
+    // The BLE writer's critical section is a small struct write, so a
+    // bounded retry is safe; a lock-free copy would expose a torn String
+    // if taken while the writer is mid-assign.
+    if (xSemaphoreTake(g_stateMutex, pdMS_TO_TICKS(10)) != pdTRUE)
+      xSemaphoreTake(g_stateMutex, portMAX_DELAY);
     w = g_weatherData;
     xSemaphoreGive(g_stateMutex);
   } else {
-    // Lock timed out: fall back to a lock-free copy (the old exposure)
-    // rather than dropping the frame to "offline".
     w = g_weatherData;
   }
   return w;
@@ -1857,9 +1859,19 @@ if (!vlw120Ready) {
       display.setTextColor(TFT_WHITE);
     else
       display.setTextColor(TFT_WHITE, TFT_BLACK);
+    // If the formatted value overflows the cell count (odometer past
+    // 99999.9), keep the least-significant cells and drop the leading
+    // overflow digits; the decimal point alignment is preserved because
+    // whole leading digits are skipped.
+    int odoSkip = (len > odoCellsCount) ? (len - odoCellsCount) : 0;
     for (int i = 0; i < len; i++) {
-      char c = odoNumStr[i];
-      int cellIdx = (odoCellsCount - len) + i;
+      char c = odoNumStr[odoSkip + i];
+      if (i >= odoCellsCount) break;
+      // Defend against "inf"/"nan" formatting: only digits and '.' have a
+      // cell slot; anything else leaves the ghost row in place.
+      if (c != '.' && (c < '0' || c > '9'))
+        continue;
+      int cellIdx = i;
       int cellRight = odoCellX + odoCells[cellIdx];
       int cx;
       if (c == '.') {

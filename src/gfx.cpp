@@ -266,6 +266,16 @@ void drawAACornerArc(T &disp, int cx, int cy, int r, uint8_t corner,
                      uint16_t color) {
   if (r <= 0)
     return;
+  // r == 1 degenerates: the midpoint loop replots the two axis endpoints
+  // (a 1px overdraw that visibly smears the corner). A radius-1 arc is
+  // exactly the two pixels adjacent to the cut corner.
+  if (r == 1) {
+    int sx = (corner == 0 || corner == 1) ? 1 : -1;
+    int sy = (corner == 1 || corner == 2) ? 1 : -1;
+    disp.drawPixel(cx + sx, cy, color);
+    disp.drawPixel(cx, cy + sy, color);
+    return;
+  }
   const float aaSh = AA_SHARPNESS;
   int x = r, y = 0;
   int signX = (corner == 0 || corner == 1) ? 1 : -1;
@@ -422,6 +432,38 @@ int getEuropeanOffset(int year, int month, int day, int hour) {
     if (day < lastSunday)
       return 2;
     return (hour >= 1) ? 1 : 2;
+  }
+  return 1;
+}
+
+// US DST rules, in UTC: starts second Sunday of March at 02:00 local
+// standard time, ends first Sunday of November at 02:00 local standard
+// time. Local standard = UTC + TZ_OFFSET_HOURS, so the UTC switch hour is
+// (2 - TZ_OFFSET_HOURS). (Hour granularity, same approximation as the EU
+// version; Hawaii/Alaska don't observe DST - disable TZ_DST there.)
+int getUSOffset(int year, int month, int day, int hour) {
+  if (month < 3 || month > 11)
+    return 1;
+  if (month > 3 && month < 11)
+    return 2;
+  int thr = 2 - TZ_OFFSET_HOURS;
+  if (month == 3) {
+    int d1 = getDayOfWeek(year, 3, 1);
+    int secondSunday = 8 + ((7 - d1) % 7);
+    if (day > secondSunday)
+      return 2;
+    if (day < secondSunday)
+      return 1;
+    return (hour >= thr) ? 2 : 1;
+  }
+  if (month == 11) {
+    int d1 = getDayOfWeek(year, 11, 1);
+    int firstSunday = 1 + ((7 - d1) % 7);
+    if (day > firstSunday)
+      return 1;
+    if (day < firstSunday)
+      return 2;
+    return (hour >= thr) ? 1 : 2;
   }
   return 1;
 }
@@ -864,6 +906,15 @@ void drawGpsDebugOverlay() {
   lastGpsDrawTime = now;
   lastGpsBytes = gpsRxBytes;
 
+  // Read the lat/lon pair under gpsDebugMutex: the GPS task writes both
+  // doubles and a 64-bit write is not atomic on this core pair.
+  double dbgLat = ubxLastLat, dbgLon = ubxLastLon;
+  if (gpsDebugMutex) {
+    xSemaphoreTake(gpsDebugMutex, portMAX_DELAY);
+    dbgLat = ubxLastLat;
+    dbgLon = ubxLastLon;
+    xSemaphoreGive(gpsDebugMutex);
+  }
   char gpsBuf[128];
   snprintf(gpsBuf, sizeof(gpsBuf),
            "RX %lu @%luB/s | SYNC %lu | CKFAIL %lu | %dbaud\n"
@@ -871,7 +922,7 @@ void drawGpsDebugOverlay() {
            (unsigned long)gpsRxBytes, (unsigned long)rate,
            (unsigned long)ubxSyncSeen, (unsigned long)ubxCkFail, GPS_BAUD,
            (unsigned long)ubxFramesParsed, (unsigned long)ubxOversize,
-           (int)ubxLastFixType, (int)ubxLastNumSv, ubxLastLat, ubxLastLon);
+           (int)ubxLastFixType, (int)ubxLastNumSv, dbgLat, dbgLon);
   if (strcmp(gpsBuf, lastGpsStr) == 0)
     return;
 

@@ -63,14 +63,84 @@ static void rxAppend(const uint8_t *data, uint16_t len) {
 }
 
 // ----------------------------------------------------------------------------
+// UTF-8 -> ASCII sanitizer. The VLW/Conthrax fonts are pure ASCII; every
+// non-ASCII byte the phone can send (multi-byte continuation bytes) used to
+// reach the renderer raw and draw as the font's default glyph (tofu).
+// Maps Latin-1 and the punctuation that actually reaches this dashboard
+// (dashes, quotes, ellipsis, copyright/registered) to ASCII look-alikes and
+// drops the rest, in place.
+// ----------------------------------------------------------------------------
+static const char *const asciiSubLatin1[128] = {
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+    "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+    " ", "", "", "", "", "", "", "", "", "", "", "<", "-", "", "", "?",
+    "", "", "2", "3", "", "u", "", ".", "", "1", "", ">", "", "", "", "?",
+    "A", "A", "A", "A", "A", "A", "AE", "C", "E", "E", "E", "E", "I", "I", "I", "I",
+    "D", "N", "O", "O", "O", "O", "O", "O", "U", "U", "U", "U", "Y", "Th", "ss", "d",
+    "a", "a", "a", "a", "a", "a", "ae", "c", "e", "e", "e", "e", "i", "i", "i", "i",
+    "d", "n", "o", "o", "o", "o", "o", "o", "u", "u", "u", "u", "u", "th", "y", "y",
+};
+
+void utf8ToAsciiInPlace(char *s) {
+  char *w = s;
+  while (*s) {
+    unsigned char c = (unsigned char)*s;
+    if (c < 0x80) {
+      if (c >= 0x20) *w++ = (char)c;
+      s++;
+      continue;
+    }
+    int extra = (c < 0xE0) ? 1 : (c < 0xF0) ? 2 : 3;
+    if (c < 0xC0) extra = 0; // stray continuation byte: drop
+    unsigned cp = 0;
+    switch (extra) {
+    case 1: cp = (c & 0x1F) << 6; break;
+    case 2: cp = (c & 0x0F) << 12; break;
+    case 3: cp = (c & 0x07) << 18; break;
+    }
+    int got = 0;
+    for (int i = 0; i < extra; i++) {
+      if ((unsigned char)s[1 + i] >= 0x80 && (unsigned char)s[1 + i] < 0xC0)
+        cp |= (unsigned)(unsigned char)s[1 + i] & 0x3F;
+      got++;
+    }
+    cp <<= (6 * (extra - got));
+    if (cp < 0x100) {
+      // Latin-1: map to ASCII (or drop).
+      const char *sub = asciiSubLatin1[cp];
+      for (const char *p = sub; *p; p++)
+        *w++ = *p;
+    } else if (cp >= 0x2010 && cp <= 0x2015) {
+      *w++ = '-'; // dashes
+    } else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201A) {
+      *w++ = '\'';
+    } else if (cp == 0x201C || cp == 0x201D || cp == 0x201E) {
+      *w++ = '"';
+    } else if (cp == 0x2026) {
+      *w++ = '.';
+      *w++ = '.';
+    }
+    // drop everything else
+    s += 1 + (got > 0 ? got : 0);
+  }
+  *w = 0;
+}
+
+// ----------------------------------------------------------------------------
 // Copy a JSON string field (or its default) into a fixed char[] (NUL-safe).
-// dst is a char[N] field; cap = its element count.
+// dst is a char[N] field; cap = its element count. The source is sanitized
+// to ASCII first: these strings are the only text that reaches the renderer
+// from the phone.
 // ----------------------------------------------------------------------------
 static inline void copyDtoStr(char *dst, const char *src, int cap) {
-  int n = (int)strlen(src);
+  char tmp[160];
+  strncpy(tmp, src, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = 0;
+  utf8ToAsciiInPlace(tmp);
+  int n = (int)strlen(tmp);
   if (n > cap - 1) n = cap - 1;
   if (n < 0) n = 0;
-  memcpy(dst, src, n);
+  memcpy(dst, tmp, n);
   dst[n] = 0;
 }
 

@@ -493,6 +493,14 @@ void processTemperatureSensor() {
     engineTemperature = 0.0f;
     return;
   }
+  // A non-positive NTC_R_ROOM / NTC_R_BALANCE would feed inf/NaN into the
+  // Steinhart curve (resistance/0, log of inf): report the same "sensor
+  // fault" state the ADC-range check above uses.
+  if (!(NTC_R_ROOM > 0.0f) || !(NTC_R_BALANCE > 0.0f)) {
+    filteredEngineTemp = -1000.0f;
+    engineTemperature = 0.0f;
+    return;
+  }
   float vOut = (float)rawADC * ADC_VOLTS_FACTOR;
   float resistance = NTC_R_BALANCE * (vOut / (3.3f - vOut));
   float instantTemp = (1.0f / (logf(resistance / NTC_R_ROOM) / NTC_BETA +
@@ -773,6 +781,10 @@ volatile uint8_t ubxLastFixType = 0;
 volatile uint8_t ubxLastNumSv = 0;
 volatile double ubxLastLat = 0.0;
 volatile double ubxLastLon = 0.0;
+// A 64-bit double is not written atomically on the dual-core ESP32; the
+// GPS task writes and the display task reads (debug overlay) on different
+// cores, so both sides take gpsDebugMutex (created in setup()).
+SemaphoreHandle_t gpsDebugMutex = NULL;
 volatile uint32_t ubxSyncSeen = 0;   // 0xB5 sync bytes seen
 volatile uint32_t ubxCkFail = 0;     // frames whose checksum failed
 volatile uint32_t ubxOversize = 0;   // frames rejected (payload > 92)
@@ -825,8 +837,10 @@ static void ubxNavPvtToNmea() {
   ubxFramesParsed++;
   ubxLastFixType = fixType;
   ubxLastNumSv = numSV;
+  if (gpsDebugMutex) xSemaphoreTake(gpsDebugMutex, portMAX_DELAY);
   ubxLastLat = lat;
   ubxLastLon = lon;
+  if (gpsDebugMutex) xSemaphoreGive(gpsDebugMutex);
 
   char alat[20], alon[20];
   double aLat = fabs(lat);
@@ -917,9 +931,14 @@ bool systemTimeToLocal(int &hour, int &minute, int &day, int &month,
   struct tm *loc_tm = gmtime(&local);
   int dst = 0;
   if (TZ_DST_ENABLED) {
-    int euroOff = getEuropeanOffset(loc_tm->tm_year + 1900, loc_tm->tm_mon + 1,
-                                    loc_tm->tm_mday, loc_tm->tm_hour);
-    dst = euroOff - 1;
+    // Pick the DST rule set by the zone offset: negative (US) zones follow
+    // the US schedule, everything else (EU/UK, ...) the European one.
+    int off = ((TZ_OFFSET_HOURS < 0) ?
+               getUSOffset(loc_tm->tm_year + 1900, loc_tm->tm_mon + 1,
+                          loc_tm->tm_mday, loc_tm->tm_hour) :
+               getEuropeanOffset(loc_tm->tm_year + 1900, loc_tm->tm_mon + 1,
+                                loc_tm->tm_mday, loc_tm->tm_hour));
+    dst = off - 1;
   }
   local += ((TZ_OFFSET_HOURS + dst) * 3600);
   loc_tm = gmtime(&local);

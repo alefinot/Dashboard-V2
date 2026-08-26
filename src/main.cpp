@@ -7,6 +7,9 @@
 char logBuf[LOG_BUF_SIZE];
 volatile int logHead = 0;
 volatile int logTail = 0;
+// Serializes logBuf/logHead/logTail between logPrintf (every task) and the
+// /api/serial consumer (web task). Created in setup().
+SemaphoreHandle_t logRingMutex = NULL;
 volatile unsigned long logSequence = 0;
 
 unsigned long g_startupTime = 0;
@@ -25,6 +28,9 @@ volatile bool pendingOtaScreen = false;
 
 bool pendingInvertDisplay = false;
 int pendingBacklightValue = -1;
+// The web task stages a bus reconfig; the display loop applies it at a
+// frame boundary so the SPI clock never changes mid-transfer.
+bool pendingBusConfig = false;
 int currentBrightnessTarget = 0;
 
 // Web-task watchdog state: disarmed when the device shows a fast-reboot loop
@@ -52,6 +58,9 @@ void logPrintf(const char *fmt, ...) {
   int len = vsnprintf(tmp, sizeof(tmp), fmt, args);
   va_end(args);
   if (len > 0) {
+    // The /api/serial consumer (web task) copies this ring on another core;
+    // serialize producer/consumer with logRingMutex.
+    if (logRingMutex) xSemaphoreTake(logRingMutex, portMAX_DELAY);
     for (int i = 0; i < len && i < 256; i++) {
       logBuf[logHead] = tmp[i];
       logHead = (logHead + 1) % LOG_BUF_SIZE;
@@ -59,6 +68,7 @@ void logPrintf(const char *fmt, ...) {
         logTail = (logTail + 1) % LOG_BUF_SIZE;
     }
     logSequence++;
+    if (logRingMutex) xSemaphoreGive(logRingMutex);
     Serial.print(tmp);
   }
 }
@@ -137,6 +147,8 @@ void setup() {
   logPrintf("Starting Dashboard++\n");
 
   g_stateMutex = xSemaphoreCreateMutex();
+  logRingMutex = xSemaphoreCreateMutex();
+  gpsDebugMutex = xSemaphoreCreateMutex();
   pinMode(CS_DISPLAY, OUTPUT);
   digitalWrite(CS_DISPLAY, HIGH);
   uint32_t _lc = ledcSetup(BACKLIGHT_CHANNEL, 1000, 8);
@@ -279,6 +291,12 @@ void loop() {
   if (pendingInvertDisplay) {
     display.invertDisplay(DISPLAY_INVERT_COLORS);
     pendingInvertDisplay = false;
+  }
+  if (pendingBusConfig) {
+    // Apply the staged SPI bus reconfig here (frame boundary, no transfer in
+    // flight) instead of from the web task mid-frame.
+    display.applyBusConfig();
+    pendingBusConfig = false;
   }
   if (pendingBacklightValue >= 0) {
     currentBrightnessTarget = (pendingBacklightValue * 255) / 100;

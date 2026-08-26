@@ -277,6 +277,7 @@ int touchTable[MAX_TOUCH_POINTS] = {950, 840, 750, 670, 600, 530, 460, 400,
     (*doc)[#var] = var;                                                        \
   } else if (mode == 2 && (*doc)[#var].is<const char *>()) {                   \
     snprintf(var, sizeof(var), "%s", (*doc)[#var].as<const char *>());         \
+    utf8ToAsciiInPlace(var); /* stay ASCII, see ble.cpp */ \
     pref.putString(nvsKey, var);                                               \
   }
 
@@ -519,6 +520,14 @@ void processConfig(int mode, JsonDocument *doc) {
     if (OPTIMAL_SATELLITES < MIN_SATELLITES)
       OPTIMAL_SATELLITES = MIN_SATELLITES;
     if (OPTIMAL_SATELLITES > 16) OPTIMAL_SATELLITES = 16;
+    // Backlight: a 0..100 percentage (WebUI range and the (v*255)/100 PWM
+    // math); negative values produced a negative duty cycle.
+    if (BACKLIGHT_BRIGHTNESS < 0) BACKLIGHT_BRIGHTNESS = 0;
+    if (BACKLIGHT_BRIGHTNESS > 100) BACKLIGHT_BRIGHTNESS = 100;
+    // NTC balance resistor: the divider math divides by it (and by
+    // NTC_R_ROOM); keep it in a plausible 100..1e6 ohm window.
+    if (NTC_R_BALANCE < 100.0f) NTC_R_BALANCE = 100.0f;
+    if (NTC_R_BALANCE > 1000000.0f) NTC_R_BALANCE = 1000000.0f;
     fitPair(TMR_INT_DIGITS, TMR_DEC_DIGITS);
     fitPair(BAT_INT_DIGITS, BAT_DEC_DIGITS);
     fitPair(INST_INT_DIGITS, INST_DEC_DIGITS);

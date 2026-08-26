@@ -882,7 +882,9 @@ void webServerTask(void *pvParameters) {
 
     processConfig(2, &doc);
     recalculateDerivedParams();
-    display.applyBusConfig();
+    // Stage the bus reconfig for the display loop (frame boundary) instead
+    // of reconfiguring the SPI clock under an in-flight transfer.
+    pendingBusConfig = true;
     // Apply CPU frequency immediately
     {
       uint32_t freq = ENABLE_DYNAMIC_CPU ? 240 : MANUAL_CPU_FREQ;
@@ -1076,6 +1078,9 @@ void webServerTask(void *pvParameters) {
     // Copy the echo ring window into a static scratch buffer (LOG_BUF_SIZE
     // max, plus NUL) so this frequently-polled endpoint never allocates heap.
     static char out[LOG_BUF_SIZE + 1];
+    // Read/copy/advance as one critical section: logPrintf runs on every
+    // task; without the lock the window could tear mid-copy.
+    if (logRingMutex) xSemaphoreTake(logRingMutex, portMAX_DELAY);
     int tail = logTail;
     int head = logHead;
     int len = (head >= tail) ? (head - tail) : (LOG_BUF_SIZE - tail + head);
@@ -1090,6 +1095,7 @@ void webServerTask(void *pvParameters) {
       }
       logTail = head;
     }
+    if (logRingMutex) xSemaphoreGive(logRingMutex);
     out[len] = 0;
     server.send(200, "text/plain", out);
   });
