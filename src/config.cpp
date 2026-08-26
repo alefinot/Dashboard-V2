@@ -484,6 +484,31 @@ void processConfig(int mode, JsonDocument *doc) {
   CFG_INT(FUEL_DEC_DIGITS, "FUEL_DEC", 1);
   CFG_INT(ODO_INT_DIGITS, "ODO_INT", 5);
   CFG_INT(ODO_DEC_DIGITS, "ODO_DEC", 1);
+  // The per-widget cell buffers in ui.cpp are MAX_CELLS ints wide and are
+  // filled with INT + '.' + DEC digit counts; a saved or posted value
+  // beyond that would walk the buffer off the end. Clamp here (load AND
+  // post paths), not at every consumer: INT clamps to 0..MAX_CELLS, DEC
+  // gets what's left (one cell is reserved for the decimal point).
+  if (mode != 1) {
+    if (SPEED_DIGITS < 0) SPEED_DIGITS = 0;
+    if (SPEED_DIGITS > MAX_CELLS) SPEED_DIGITS = MAX_CELLS;
+    if (SAT_DIGITS < 0) SAT_DIGITS = 0;
+    if (SAT_DIGITS > MAX_CELLS) SAT_DIGITS = MAX_CELLS;
+    auto fitPair = [](int &i, int &d) {
+      if (i < 0) i = 0;
+      if (i > MAX_CELLS) i = MAX_CELLS;
+      const int room = MAX_CELLS - 1 - i; // 1 = the decimal point
+      if (d < 0) d = 0;
+      if (d > room) d = (room > 0) ? room : 0;
+    };
+    fitPair(TMR_INT_DIGITS, TMR_DEC_DIGITS);
+    fitPair(BAT_INT_DIGITS, BAT_DEC_DIGITS);
+    fitPair(INST_INT_DIGITS, INST_DEC_DIGITS);
+    fitPair(AVG_INT_DIGITS, AVG_DEC_DIGITS);
+    fitPair(AVG_SPEED_INT_DIGITS, AVG_SPEED_DEC_DIGITS);
+    fitPair(FUEL_INT_DIGITS, FUEL_DEC_DIGITS);
+    fitPair(ODO_INT_DIGITS, ODO_DEC_DIGITS);
+  }
 
   CFG_STR(WIFI_SSID, "WIFI_SSID", "");
   // WiFi passwords are handled manually (below): never serialized back to the

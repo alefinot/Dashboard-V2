@@ -258,6 +258,10 @@ extern float filteredAmbientValue;
 extern int FADE_DURATION_MS;
 extern int currentBrightnessTarget;
 
+// Max digit cells in any of the per-widget cell buffers in ui.cpp. The
+// *_DIGITS config values must never exceed it (clamped in processConfig).
+#define MAX_CELLS 16
+
 extern int REFRESH_SPEED_MS;
 extern int REFRESH_BAT_MS;
 extern int REFRESH_INST_MS;

@@ -4,8 +4,6 @@
 #include "Conthrax_SemiBold_10px_vlw.h"
 #include "Conthrax_SemiBold_16px_vlw.h"
 
-#define MAX_CELLS 16
-
 static constexpr unsigned long STARTUP_RAMP_DURATION_MS = 3000;
 
 // Frame-budget gate for updateBigDisplay(). A 60 FPS slot is 16.6ms, but the
