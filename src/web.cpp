@@ -529,6 +529,203 @@ void performFirmwareUpdate(const char *firmwareUrl, const char *newVersion) {
 // from the raw literal that used to live here).
 #include "webui_html_gz.h"
 
+// ---------------------------------------------------------------------------
+// Web-upload OTA integrity.
+//
+// The browser upload streams a raw ESP32 image straight into the OTA
+// partition. The pull path (performFirmwareUpdate) enforces the server's
+// Content-Length, but the upload used to open the flash with
+// UPDATE_SIZE_UNKNOWN and let Update.end(true) re-size the image to exactly
+// the bytes that arrived - so a truncated .bin (flaky Wi-Fi, an interrupted
+// upload) was marked bootable and the device rebooted into a broken image.
+//
+// The image is verified as it streams:
+//   * header: magic 0xE9 + file_size (offset 12) -> Update.begin(exact)
+//   * each segment: CRC32 over (9-byte descriptor + data), compared to the
+//     4 bytes stored after the data
+//   * Update.begin(exact size) rejects a truncated stream at end
+// Signed images (80-byte signature after the last segment) are rejected:
+// this project's images are unsigned.
+// ---------------------------------------------------------------------------
+enum OtaUploadSt {
+  OTA_ST_HEADER = 0, // collecting the 32-byte image header
+  OTA_ST_SEGDESC,   // collecting a 9-byte segment descriptor
+  OTA_ST_SEGDATA,   // streaming segment data into the flash
+  OTA_ST_SEGCRC,    // collecting the 4-byte segment CRC
+  OTA_ST_DONE,      // all segments verified
+  OTA_ST_REJECTED,  // a check failed; swallow the rest of the body
+};
+
+struct OtaUploadVerify {
+  int st;
+  uint8_t stage[40]; // header (32) / descriptor (9) / CRC (4) staging
+  size_t stageLen;
+  int numSegs;
+  int segIdx;
+  uint32_t segRemain;
+  uint32_t crc;      // running CRC32 of the current segment
+  bool flashOpen;   // Update.begin succeeded (exact file size)
+};
+
+static OtaUploadVerify otaVerify;
+static uint32_t otaCrcTable[256];
+static bool otaCrcTableReady = false;
+
+static void otaCrcTableInit() {
+  const uint32_t poly = 0xEDB88320UL; // standard CRC-32, as in esptool
+  for (uint32_t i = 0; i < 256; i++) {
+    uint32_t c = i;
+    for (int k = 0; k < 8; k++)
+      c = (c & 1) ? (poly ^ (c >> 1)) : (c >> 1);
+    otaCrcTable[i] = c;
+  }
+}
+
+static inline uint32_t otaCrcStep(uint32_t crc, uint8_t b) {
+  return otaCrcTable[(uint8_t)(crc ^ b)] ^ (crc >> 8);
+}
+
+static uint32_t rd32le(const uint8_t *p) {
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+static void otaVerifyReject(const char *why) {
+  otaVerify.st = OTA_ST_REJECTED;
+  logPrintf("OTA web: integrity check failed: %s\n", why);
+}
+
+static void otaVerifyReset() {
+  otaVerify.st = OTA_ST_HEADER;
+  otaVerify.stageLen = 0;
+  otaVerify.numSegs = 0;
+  otaVerify.segIdx = 0;
+  otaVerify.segRemain = 0;
+  otaVerify.crc = 0;
+  otaVerify.flashOpen = false;
+}
+
+static void otaVerifyFeed(uint8_t *buf, size_t len) {
+  if (!otaCrcTableReady) {
+    otaCrcTableInit();
+    otaCrcTableReady = true;
+  }
+  if (otaVerify.st == OTA_ST_REJECTED) return;
+  size_t i = 0;
+  while (i < len) {
+    switch (otaVerify.st) {
+      case OTA_ST_HEADER: {
+        size_t take = len - i;
+        if (take > 32 - otaVerify.stageLen) take = 32 - otaVerify.stageLen;
+        memcpy(&otaVerify.stage[otaVerify.stageLen], &buf[i], take);
+        otaVerify.stageLen += take;
+        i += take;
+        if (otaVerify.stageLen < 32) return;
+        if (otaVerify.stage[0] != 0xE9) {
+          otaVerifyReject("bad image magic");
+          return;
+        }
+        otaVerify.numSegs = otaVerify.stage[2];
+        const uint32_t fileTotal = rd32le(&otaVerify.stage[12]);
+        if (otaVerify.numSegs <= 0 || otaVerify.numSegs > 4 ||
+            fileTotal < 32 + 9 + 4 || fileTotal > 4UL * 1024 * 1024) {
+          otaVerifyReject("bad image header");
+          return;
+        }
+        // Open the flash at the EXACT image size: a truncated stream then
+        // cannot reach Update.end() with a bootable mark on it.
+        if (!Update.begin(fileTotal)) {
+          Update.printError(Serial);
+          otaVerifyReject("Update.begin failed");
+          return;
+        }
+        otaVerify.flashOpen = true;
+        if (Update.write(otaVerify.stage, 32) != 32) {
+          otaVerifyReject("Update.write failed");
+          return;
+        }
+        otaVerify.st = OTA_ST_SEGDESC;
+        otaVerify.stageLen = 0;
+        break;
+      }
+      case OTA_ST_SEGDESC: {
+        size_t take = len - i;
+        if (take > 9 - otaVerify.stageLen) take = 9 - otaVerify.stageLen;
+        memcpy(&otaVerify.stage[otaVerify.stageLen], &buf[i], take);
+        otaVerify.stageLen += take;
+        i += take;
+        if (otaVerify.stageLen < 9) return;
+        // The segment CRC covers descriptor + data: start it here.
+        otaVerify.crc = 0xFFFFFFFFUL;
+        for (int k = 0; k < 9; k++)
+          otaVerify.crc = otaCrcStep(otaVerify.crc, otaVerify.stage[k]);
+        otaVerify.segRemain = rd32le(&otaVerify.stage[5]);
+        // The descriptor is part of the image: flash it (it is already
+        // covered by the segment CRC started above).
+        if (Update.write(otaVerify.stage, 9) != 9) {
+          otaVerifyReject("Update.write failed");
+          return;
+        }
+        otaVerify.st = OTA_ST_SEGDATA;
+        break;
+      }
+      case OTA_ST_SEGDATA: {
+        size_t take = len - i;
+        if (take > otaVerify.segRemain)
+          take = (size_t)otaVerify.segRemain;
+        if (take > 0) {
+          if (Update.write(&buf[i], take) != take) {
+            otaVerifyReject("Update.write failed");
+            return;
+          }
+          for (size_t k = 0; k < take; k++)
+            otaVerify.crc = otaCrcStep(otaVerify.crc, buf[i + k]);
+          otaVerify.segRemain -= take;
+          i += take;
+        }
+        if (otaVerify.segRemain == 0) {
+          otaVerify.st = OTA_ST_SEGCRC;
+          otaVerify.stageLen = 0;
+        }
+        break;
+      }
+      case OTA_ST_SEGCRC: {
+        size_t take = len - i;
+        if (take > 4 - otaVerify.stageLen) take = 4 - otaVerify.stageLen;
+        memcpy(&otaVerify.stage[otaVerify.stageLen], &buf[i], take);
+        otaVerify.stageLen += take;
+        i += take;
+        if (otaVerify.stageLen < 4) return;
+        const uint32_t calc = otaVerify.crc ^ 0xFFFFFFFFUL;
+        if (rd32le(otaVerify.stage) != calc) {
+          otaVerifyReject("segment CRC mismatch");
+          return;
+        }
+        // The trailing 4 CRC bytes are part of the image: flash them.
+        if (Update.write(otaVerify.stage, 4) != 4) {
+          otaVerifyReject("Update.write failed");
+          return;
+        }
+        otaVerify.segIdx++;
+        otaVerify.stageLen = 0;
+        if (otaVerify.segIdx >= otaVerify.numSegs) {
+          otaVerify.st = OTA_ST_DONE;
+        } else {
+          otaVerify.st = OTA_ST_SEGDESC;
+        }
+        break;
+      }
+      case OTA_ST_DONE:
+        // No bytes may follow the last segment (signed images would carry
+        // an 80-byte signature here; this project's images are unsigned).
+        otaVerifyReject("trailing data after last segment");
+        return;
+      case OTA_ST_REJECTED:
+        return;
+    }
+  }
+}
+
 void webServerTask(void *pvParameters) {
   otaStatusMutex = xSemaphoreCreateMutex();
   WiFi.mode(WIFI_AP_STA);
@@ -803,14 +1000,14 @@ void webServerTask(void *pvParameters) {
       otaUpdateSuccess = false;
       otaUpdateInProgress = true;
       pendingOtaScreen = true;
+      // The flash write opens after the 32-byte image header has streamed
+      // (otaVerifyFeed): Update.begin(exact file size) so a truncated
+      // upload cannot be marked bootable, and the per-segment CRC32s are
+      // checked as the data streams.
+      otaVerifyReset();
       logPrintf("OTA web: start %s\n", upload.filename.c_str());
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-        Update.printError(Serial);
-      }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
-      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        Update.printError(Serial);
-      }
+      otaVerifyFeed(upload.buf, (size_t)upload.currentSize);
       // upload.totalSize is cumulative bytes received so far during upload.
       // Scaling target progress up to max 240 during writing prevents
       // premature reboot (fillW >= 258) before Update.end(true) runs.
@@ -819,14 +1016,24 @@ void webServerTask(void *pvParameters) {
       if (targetW > 240) targetW = 240;
       if (targetW > otaProgressTarget) otaProgressTarget = targetW;
     } else if (upload.status == UPLOAD_FILE_END) {
-      if (Update.end(true)) {
-        logPrintf("OTA web: success %u bytes\n", upload.totalSize);
-        otaUpdateSuccess = true;
-        otaProgressTarget = 258;
+      if (otaVerify.st == OTA_ST_DONE && otaVerify.flashOpen) {
+        if (Update.end(true)) {
+          logPrintf("OTA web: success %u bytes\n", upload.totalSize);
+          otaUpdateSuccess = true;
+          otaProgressTarget = 258;
+        } else {
+          Update.printError(Serial);
+          otaUpdateInProgress = false;
+          forceFullRedraw = true;
+        }
       } else {
-        Update.printError(Serial);
+        // Rejected (bad magic / header / CRC / write error) or a stream that
+        // cut out before the last segment (truncation): tear down the
+        // in-progress flash write and keep the running image.
+        Update.abort();
         otaUpdateInProgress = false;
         forceFullRedraw = true;
+        logPrintf("OTA web: upload discarded, keeping running image\n");
       }
     }
   });
