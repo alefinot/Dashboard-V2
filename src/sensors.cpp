@@ -410,8 +410,17 @@ void updateFilteredSpeed() {
       raw = gpsSpeed; // agreement zone: trust GPS
       mode = 1;
     } else {
-      float gpsWeight = (float)(sats - MIN_SATELLITES + 1) /
-                        (float)(OPTIMAL_SATELLITES - MIN_SATELLITES + 1);
+      // Weight rises linearly from 0 at MIN_SATELLITES to 1 at
+      // OPTIMAL_SATELLITES. A misconfigured pair (OPTIMAL <= MIN) makes
+      // the denominator zero/negative and >OPTIMAL sats push the
+      // weight past 1 — clamp the result to 0..1.
+      const float denom = (float)(OPTIMAL_SATELLITES - MIN_SATELLITES + 1);
+      float gpsWeight = (denom <= 1.0f)
+                                  ? 1.0f
+                                  : (float)(sats - MIN_SATELLITES + 1) /
+                                        denom;
+      if (gpsWeight < 0.0f) gpsWeight = 0.0f;
+      if (gpsWeight > 1.0f) gpsWeight = 1.0f;
       raw = gpsSpeed * gpsWeight + hallSpeed * (1.0f - gpsWeight);
       mode = 2;
     }

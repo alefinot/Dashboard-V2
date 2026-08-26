@@ -501,6 +501,15 @@ void processConfig(int mode, JsonDocument *doc) {
       if (d < 0) d = 0;
       if (d > room) d = (room > 0) ? room : 0;
     };
+    // Satellite thresholds: the GPS weight formula divides by
+    // (OPTIMAL - MIN + 1); a zero or negative denominator would turn
+    // the sensor blend into nan. Keep MIN in 0..16 and OPTIMAL at or
+    // above it.
+    if (MIN_SATELLITES < 0) MIN_SATELLITES = 0;
+    if (MIN_SATELLITES > 16) MIN_SATELLITES = 16;
+    if (OPTIMAL_SATELLITES < MIN_SATELLITES)
+      OPTIMAL_SATELLITES = MIN_SATELLITES;
+    if (OPTIMAL_SATELLITES > 16) OPTIMAL_SATELLITES = 16;
     fitPair(TMR_INT_DIGITS, TMR_DEC_DIGITS);
     fitPair(BAT_INT_DIGITS, BAT_DEC_DIGITS);
     fitPair(INST_INT_DIGITS, INST_DEC_DIGITS);
