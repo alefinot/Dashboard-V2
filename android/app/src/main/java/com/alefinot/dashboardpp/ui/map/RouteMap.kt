@@ -34,7 +34,7 @@ object OsmdroidSetup {
     private var done = false
 
     const val USER_AGENT =
-        "Dashboard++forESP32/1.1.0 (Android; https://github.com/alefinot/Dashboard-for-ESP32)"
+        "Dashboard++forESP32/1.1.0 (Android; https://github.com/alefinot/Dashboard-V2)"
 
     fun ensure(context: Context) {
         if (done) return

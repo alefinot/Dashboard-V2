@@ -842,8 +842,8 @@ Web UI → Performance panel → **Memory & Storage** shows `Settings storage (N
 
 ```bash
 # Clone the repository
-git clone https://github.com/alefinot/Dashboard-for-ESP32.git
-cd Dashboard-for-ESP32
+git clone https://github.com/alefinot/Dashboard-V2.git
+cd Dashboard-V2
 
 # Compile project source code
 platformio run
