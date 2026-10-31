@@ -197,11 +197,10 @@ void logPrintf(const char *fmt, ...) {
   }
 }
 
-// Task handles, kept for one purpose only: /api/perf reports the FreeRTOS stack
-// high-water mark of each task (issue #27). Nothing else uses them.
+// Task handles, kept for one purpose only: the perf report shows the FreeRTOS
+// stack high-water mark of each task (issue #27). Nothing else uses them.
 TaskHandle_t sensorTaskHandle = NULL;
 TaskHandle_t gpsTaskHandle = NULL;
-TaskHandle_t webTaskHandle = NULL;
 
 // Issue #25: xTaskCreatePinnedToCore returns errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY
 // when the heap is tight, and that result used to be thrown away. A task that never
@@ -493,7 +492,9 @@ void setup() {
 // then sleeping, so rendering keeps its ~62.5fps while values stay live.
   startTask("SensorTaskCore1", sensorTask, 4096, 2, 1, NULL, &sensorTaskHandle, 0);
   startTask("GpsTaskCore0", gpsTask, 4096, 2, 0, NULL, &gpsTaskHandle, 1);
-  startTask("WebTaskCore0", webServerTask, 6144, 1, 0, NULL, &webTaskHandle, 2);
+  // The phone link replaces the web task on core 0. It owns the GATT server and
+  // the 1 Hz telemetry pump; the display keeps core 1 untouched.
+  btInit();
   startTask("CPUProbe0", cpuProbeTask, 2048, 1, 0, (void *)0, NULL, 3);
   startTask("CPUProbe1", cpuProbeTask, 2048, 1, 1, (void *)1, NULL, 4);
   if (failedTasksMask)
@@ -598,16 +599,14 @@ void loop() {
   static unsigned long lastDiagHeartbeat = 0;
   if (now - lastDiagHeartbeat >= 10000) {
     lastDiagHeartbeat = now;
-    logPrintf("HB: up=%lus fps=%.1f freq=%uMHz tgtFps=%d heap=%lu min=%lu maxAlloc=%lu sp=%d fallback=%d otaReq=%d memAct=%d wifi=%d rssi=%d sta=%d/%d/%u apClients=%u temp=%.1f maxFrame=%lums over24=%lu sMaxGap=%lums\n",
+    logPrintf("HB: up=%lus fps=%.1f freq=%uMHz tgtFps=%d heap=%lu min=%lu maxAlloc=%lu sp=%d fallback=%d otaReq=%d memAct=%d bt=%d pair=%06lu temp=%.1f maxFrame=%lums over24=%lu sMaxGap=%lums\n",
               millis() / 1000UL, (double)currentMeasuredFps,
               (unsigned)getCpuFrequencyMhz(), TARGET_FPS,
               (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
               (unsigned long)ESP.getMaxAllocHeap(), (int)speedSpriteValid(),
               (int)isSpeedFallback(),
               (int)otaMemReleaseRequested, (int)memSaverActive,
-              (int)WiFi.status(), (int)WiFi.RSSI(),
-              (int)staDbgPhase, staDbgNetIdx, (unsigned)staDbgReason,
-              (unsigned)WiFi.softAPgetStationNum(), (double)temperatureRead(),
+              btLinkState(), (unsigned long)btPairingPasskey(), (double)temperatureRead(),
               (unsigned long)g_diagMaxFrameMs, (unsigned long)g_diagOver24Ms,
               (unsigned long)g_diagMaxSensorGapMs);
     g_diagMaxFrameMs = 0;
@@ -635,10 +634,10 @@ void loop() {
   if (lastLoopEntryMs != 0) {
     unsigned long loopGap = now - lastLoopEntryMs;
     if (loopGap > 50)
-      logPrintf("STALL: loop gap %lums heap=%lu otaReq=%d memAct=%d webCount=%lu rssi=%d\n",
+      logPrintf("STALL: loop gap %lums heap=%lu otaReq=%d memAct=%d btCount=%lu bt=%d\n",
                 (unsigned long)loopGap, (unsigned long)ESP.getFreeHeap(),
                 (int)otaMemReleaseRequested, (int)memSaverActive,
-                (unsigned long)webLoopCount, (int)WiFi.RSSI());
+                (unsigned long)btLoopCount, btLinkState());
   }
   lastLoopEntryMs = now;
 
@@ -998,34 +997,29 @@ void loop() {
     }
   }
 
-  // Web-task heartbeat watchdog: if the web server task stops advancing its
-  // counter, the config page would be unreachable forever. Reboot to recover.
+  // BLE-task heartbeat watchdog: if the telemetry pump stops advancing its
+  // counter, the phone can no longer reach the unit. Reboot to recover.
   // Disarmed only for the duration of a fast-reboot storm: the permanent
-  // disarming let a later web wedge stay dead forever, so re-arm 3 minutes
-  // after boot.
-  // The 45s budget must exceed the web task's 30s self-heal (which restarts
-  // the listen socket when handleClient() blocks on a slow AP client): a
-  // weak-RSSI phone receiving the multi-KB config page can legitimately
-  // stall handleClient() for 15-30s, and rebooting on that makes the AP
-  // appear unstable. A genuinely wedged web task is still caught, just
-  // after the self-heal window.
+  // disarming let a later wedge stay dead forever, so re-arm 3 minutes after
+  // boot. The 45s budget is the old web-task figure, kept because the pump is
+  // a 1 Hz loop and a 45 s gap means it is genuinely stuck, not slow.
   if (watchdogDisabled && millis() > 180000) {
     watchdogDisabled = false;
-    logPrintf("Web watchdog re-armed\n");
+    logPrintf("BLE watchdog re-armed\n");
   }
   // Seed from the live counter (not 0) so the first check is a real
   // "did it advance since arming?" test, not a 0==0 comparison.
-  static unsigned long lastWebLoop = (unsigned long)webLoopCount;
-  static unsigned long webWatchdogDue = 0;
-  if (webWatchdogDue == 0) webWatchdogDue = millis() + 60000;
-  if (now >= webWatchdogDue) {
-    if (webLoopCount != lastWebLoop) {
-      lastWebLoop = webLoopCount;
-      webWatchdogDue = now + 45000;
+  static unsigned long lastBtLoop = (unsigned long)btLoopCount;
+  static unsigned long btWatchdogDue = 0;
+  if (btWatchdogDue == 0) btWatchdogDue = millis() + 60000;
+  if (now >= btWatchdogDue) {
+    if (btLoopCount != lastBtLoop) {
+      lastBtLoop = btLoopCount;
+      btWatchdogDue = now + 45000;
     } else if (!watchdogDisabled) {
-      logPrintf("Web task stalled (heartbeat stopped), rebooting\n");
+      logPrintf("BLE task stalled (heartbeat stopped), rebooting\n");
       delay(100);
-      bootinfo_tag_reboot("web-watchdog");
+      bootinfo_tag_reboot("ble-watchdog");
       ESP.restart();
     }
   }

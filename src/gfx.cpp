@@ -616,6 +616,22 @@ void drawWifiIcon(int x, int y, uint16_t color, bool filled) {
   }
 }
 
+// Bluetooth rune: a vertical stem crossed by the two diagonals. Same 16x16
+// footprint as the Wi-Fi glyph it replaces, so stored icon offsets still land.
+void drawBleIcon(int x, int y, uint16_t color, bool filled) {
+  int cx = x + 8, cy = y + 8;
+  drawAALine(display, (float)cx, (float)(cy - 7), (float)cx, (float)(cy + 7), color);
+  drawAALine(display, (float)cx, (float)(cy - 7), (float)(cx + 5), (float)(cy - 3), color);
+  drawAALine(display, (float)(cx + 5), (float)(cy - 3), (float)(cx - 5), (float)(cy + 3), color);
+  drawAALine(display, (float)cx, (float)(cy + 7), (float)(cx + 5), (float)(cy + 3), color);
+  drawAALine(display, (float)(cx + 5), (float)(cy + 3), (float)(cx - 5), (float)(cy - 3), color);
+  if (filled) {
+    // Connected: a second stem line thickens the rune the way the filled Wi-Fi
+    // icon marked a joined network.
+    drawAALine(display, (float)(cx + 1), (float)(cy - 7), (float)(cx + 1), (float)(cy + 7), color);
+  }
+}
+
 void drawBadge(const char *text, int offsetX, int offsetY, uint16_t color, int fixedW) {
   int16_t tx1, ty1;
   uint16_t w, h;
@@ -1012,7 +1028,8 @@ void showOtaErrorScreen(const char *reason, const char *detail, long bytesDone,
     snprintf(buf, sizeof(buf), "bytes %ld  heap %lu/%lu", bytesDone,
              (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
   otaCenteredText(buf, 246);
-  snprintf(buf, sizeof(buf), "rssi %d dBm  reason %s", WiFi.RSSI(),
+  snprintf(buf, sizeof(buf), "ble %s  reason %s",
+           btLinkState() == 2 ? "linked" : "idle",
            (reason && reason[0]) ? reason : "failed");
   otaCenteredText(buf, 264);
 

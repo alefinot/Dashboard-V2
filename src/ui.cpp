@@ -564,41 +564,31 @@ void updateBigDisplay(const SensorSnapshot &snap) {
     drawBadge(label, OFFSET_HALL_ICON_X, OFFSET_HALL_ICON_Y, color, srcBadgeW);
   }
 
-  static int lastWifiState = -1;
-  static bool lastShowPlus = false;
-  static int cachedWifiState = -1;
-  static bool cachedShowPlus = false;
-  static unsigned long lastWifiPoll = 0;
-  unsigned long wifiNow = millis();
-  if (cachedWifiState < 0 || wifiNow - lastWifiPoll >= 1000) {
-    lastWifiPoll = wifiNow;
-    int hasClients = WiFi.softAPgetStationNum() > 0;
-    bool isStation = WiFi.status() == WL_CONNECTED;
-    bool isAP = WiFi.getMode() != WIFI_OFF;
-    cachedWifiState = isAP ? (hasClients ? 2 : 1) : 0;
-    cachedShowPlus = isStation;
+  // Phone link indicator: 0 = radio idle, 1 = advertising, 2 = phone connected.
+  // Polled at 1 Hz because the BLE callbacks run on the stack's own task and the
+  // display must not touch the GATT state directly.
+  static int lastBleState = -1;
+  static int cachedBleState = -1;
+  static unsigned long lastBlePoll = 0;
+  unsigned long bleNow = millis();
+  if (cachedBleState < 0 || bleNow - lastBlePoll >= 1000) {
+    lastBlePoll = bleNow;
+    cachedBleState = btLinkState();
   }
-  int currentWifiState = (cachedWifiState < 0) ? 0 : cachedWifiState;
-  bool showPlus = cachedShowPlus;
+  int currentBleState = (cachedBleState < 0) ? 0 : cachedBleState;
 
   if (SHOW_ELEMENT_WIFI &&
-      (currentWifiState != lastWifiState || showPlus != lastShowPlus || forceDraw)) {
-    lastWifiState = currentWifiState;
-    lastShowPlus = showPlus;
-    int wifiX = BIG_CENTER_X + OFFSET_WIFI_ICON_X;
-    int wifiY = BIG_CENTER_Y + OFFSET_WIFI_ICON_Y;
-    display.fillRect(wifiX, wifiY - 3, 21, 18, TFT_BLACK);
-    if (currentWifiState == 1) {
-      drawWifiIcon(wifiX, wifiY, TFT_WHITE, false);
-    } else if (currentWifiState == 2) {
-      drawWifiIcon(wifiX, wifiY, TFT_WHITE, true);
+      (currentBleState != lastBleState || forceDraw)) {
+    lastBleState = currentBleState;
+    int bleX = BIG_CENTER_X + OFFSET_WIFI_ICON_X;
+    int bleY = BIG_CENTER_Y + OFFSET_WIFI_ICON_Y;
+    display.fillRect(bleX, bleY - 3, 21, 18, TFT_BLACK);
+    if (currentBleState == 1) {
+      drawBleIcon(bleX, bleY, TFT_WHITE, false);
+    } else if (currentBleState == 2) {
+      drawBleIcon(bleX, bleY, TFT_WHITE, true);
     }
-    if (showPlus) {
-      int px = wifiX + 16, py = wifiY + 1;
-      drawAALine(display, (float)(px - 3), (float)py, (float)(px + 3), (float)py, TFT_WHITE);
-      drawAALine(display, (float)px, (float)(py - 3), (float)px, (float)(py + 3), TFT_WHITE);
-    }
-    drawDebugBox(display, wifiX, wifiY - 3, 21, 18);
+    drawDebugBox(display, bleX, bleY - 3, 21, 18);
   }
 
   unsigned long now = millis();
@@ -2391,7 +2381,7 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
     display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
     display.setTextColor(display.color565(150, 150, 150));
     display.setCursor(wx + 20, wy + h / 2 + 6);
-    display.print("Weather Offline (Syncing with WiFi...)");
+    display.print("Weather Offline (waiting for phone...)");
     return;
   }
   

@@ -21,8 +21,6 @@
 #include <sys/time.h>
 
 #include <ArduinoJson.h>
-#include <WebServer.h>
-#include <WiFi.h>
 
 #include "units.h"
 
@@ -375,14 +373,6 @@ extern char AP_PASSWORD[64];
 // the module maximum - see webServerTask() in web.cpp.
 extern int WIFI_ATTEMPT_SECONDS;
 
-// WiFi STA search diagnostics, written by the web task's search state machine
-// and read by the diagnostic heartbeat: phase (0=init 1=backoff 2=try
-// 3=attempt 4=gap 5=up 6=give-up), last STA disconnect reason, and the index of
-// the network currently being tried (0 = primary).
-extern volatile uint8_t staDbgPhase;
-extern volatile uint8_t staDbgReason;
-extern volatile int staDbgNetIdx;
-
 extern bool NTP_ENABLED;
 extern char NTP_SERVER[64];
 extern int TZ_OFFSET_HOURS;
@@ -599,7 +589,6 @@ bool gpsFixSnapshot(double &lat, double &lon);
 // Thread-safe copy of the whole GPS snapshot (fix + satellites/speed/hdop/
 // altitude). The only supported way to read GPS state outside gpsTask.
 bool gpsSnapshotCopy(GpsFixSnapshot &out);
-extern WebServer server;
 
 extern bool forceFullRedraw;
 extern volatile bool pendingSleep;
@@ -735,10 +724,9 @@ extern unsigned long movingTimeMs;
 extern volatile unsigned long tripResetNoticeMs;
 // Set by the Web UI reset endpoint, consumed by the sensor task.
 extern volatile bool pendingTripReset;
-// Task handles for the /api/perf stack headroom report (issue #27).
+// Task handles for the perf stack headroom report (issue #27).
 extern TaskHandle_t sensorTaskHandle;
 extern TaskHandle_t gpsTaskHandle;
-extern TaskHandle_t webTaskHandle;
 extern float instantKml;
 extern float averageKml;
 extern float averageSpeed;
@@ -810,6 +798,7 @@ void drawStopwatchIcon(int x, int y, uint16_t color);
 void drawSatelliteIcon(int x, int y, uint16_t color);
 void drawLocationIcon(int x, int y, uint16_t color);
 void drawWifiIcon(int x, int y, uint16_t color, bool filled = false);
+void drawBleIcon(int x, int y, uint16_t color, bool filled = false);
 void drawBadge(const char *text, int offsetX, int offsetY, uint16_t color, int fixedW = 0);
 
 inline int applyAlign(int anchorX, int elementW, int align) {
@@ -876,9 +865,19 @@ void gpsTask(void *pvParameters);
 void sensorTask(void *pvParameters);
 
 // ----------------------------------------------------------------------------
-// Web API
+// Phone link (BLE)
 // ----------------------------------------------------------------------------
-void webServerTask(void *pvParameters);
+// Brings up the GATT server, advertising and the 1 Hz telemetry pump. Called
+// once from setup(), after the display is up so the pairing overlay can draw.
+void btInit();
+// 0 = radio idle, 1 = advertising, 2 = a phone is connected.
+int btLinkState();
+int btLinkRssi();
+// Non-zero while the stack is asking the user to type this passkey on the
+// phone. Cleared by btClearPairingPasskey() once the overlay has timed out.
+bool btPairingActive();
+uint32_t btPairingPasskey();
+void btClearPairingPasskey();
 void processOtaMemRelease();
 extern volatile bool otaMemReleaseRequested;
 extern volatile bool otaMemReleased;
@@ -914,14 +913,10 @@ extern volatile bool memSaverActive;
 void ensureSpeedSprite();
 bool speedSpriteValid();
 bool isSpeedFallback();
-extern volatile unsigned long webLoopCount;
-// How long the web task's serve step (handleClient + OTA handle) actually
-// costs, and how many of its iterations ran long. The WebUI prints these next
-// to its own round-trip measurement, so "it skipped a second" becomes a
-// number from both ends instead of a report.
-extern volatile unsigned long webServeMsMax;
-extern volatile unsigned long webServeMsLast;
-extern volatile unsigned long webSlowIterCount;
+// BLE pump heartbeat: bumped once per pass of btTask, watched by loop() the
+// same way the web task used to be. A wedged BLE task means the phone can no
+// longer reach the unit, so it reboots just like a wedged web server did.
+extern volatile unsigned long btLoopCount;
 void factoryResetConfig();
 
 // ----------------------------------------------------------------------------
@@ -959,8 +954,6 @@ extern float WEATHER_LON;
 extern int WEATHER_REFRESH_MIN;
 extern char WEATHER_LOCALE[16];
 
-bool startWeatherFetch();
-void updateWeather();
 // Bounded, UTF-8-safe text copy for the weather strings (defined in web.cpp):
 // truncation never splits a multi-byte character, so the display never sees a
 // dangling continuation byte where a glyph should be.

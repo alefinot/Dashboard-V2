@@ -1,6 +1,24 @@
 #include "dashboard.h"
 #include <nvs.h>  // nvs_get_stats: the partition's entry budget, for failed writes
 
+// One Preferences handle shared by the odometer users (main, gfx, sensors).
+// The config table runs its own locked NvsSession; this handle only ever opens
+// the `dashboard` namespace, which holds the odometer.
+Preferences preferences;
+
+// Bounded text copy: always leaves a NUL inside dst, so a display task that
+// samples shared text mid-copy still sees a terminated string (issue #8). The
+// copy is UTF-8 aware: a localized city name is cut on a character boundary,
+// never through the middle of a multi-byte sequence.
+void copyFixed(char *dst, size_t n, const char *src) {
+  size_t len = strlen(src);
+  if (len > n - 1) len = n - 1;
+  while (len > 0 && ((unsigned char)src[len - 1] & 0xC0) == 0x80) len--;
+  if (len > 0 && (unsigned char)src[len - 1] >= 0xC0) len--;
+  memcpy(dst, src, len);
+  dst[len] = 0;
+}
+
 // ----------------------------------------------------------------------------
 // Configuration variables (defined here, declared extern elsewhere)
 // ----------------------------------------------------------------------------
@@ -1655,4 +1673,22 @@ void recalculateDerivedParams() {
   ADC_VOLTS_FACTOR = 3.3f / 4095.0f;
   showFpsCounter = SHOW_FPS_COUNTER_DEFAULT;
   showGpsDebug = GPS_DEBUG_DEFAULT;
+}
+
+// Wipes the configuration NVS namespace. Used by the physical recovery gesture
+// (hold BOOT 4 s, release, hold 4 s again) and, from phase 2, by the app.
+//
+// The odometer (namespace `dashboard`) and the boot forensics (`bootinfo`)
+// survive: recovering from a lost phone gives no claim on lifetime mileage. The
+// old version also rewrote the WiFi credentials so a reset could not strand the
+// unit in AP-only mode; with no Wi-Fi there is nothing to strand, and the BLE
+// bonds are cleared here once the bond store helper lands with phase 2b.
+void factoryResetConfig() {
+  bool cleared = false;
+  NvsSession session("cfg", false);
+  if (session.opened()) {
+    nvsWriteFailed("cfg clear", session.nvs.clear());
+    cleared = true;
+  }
+  logPrintf("Factory reset %s (odometer preserved)\n", cleared ? "done" : "failed");
 }
