@@ -1692,3 +1692,253 @@ void factoryResetConfig() {
   }
   logPrintf("Factory reset %s (odometer preserved)\n", cleared ? "done" : "failed");
 }
+
+// ----------------------------------------------------------------------------
+// The config over the BLE link (bt_rpc.cpp)
+//
+// GET /api/config used to build one JsonDocument with all ~200 keys and then
+// serialize a 30-40 KB string out of it. That needed a heap headroom the unit
+// only has when the display has dropped its sprites, which is why the handler
+// asked for memory-saver mode and then waited up to a second for it to take
+// effect (CONFIG_WAIT_MS) - and why an ESP_ERR_NVS_NO_FREE_PAGES on top of it
+// read as "config read failed". Over BLE the same keys travel in table order,
+// a few rows per frame, into one fixed buffer: no JsonDocument, no heap spike,
+// and the gating loop disappears with them.
+//
+// Row order is CFG_TABLE order. The app groups by prefix when it renders, so it
+// does not need a second sort, and a chunk boundary can never split a value.
+// ----------------------------------------------------------------------------
+
+// Rows in the config table. The app mirrors until the last chunk arrives; this
+// is what it compares the key count against to report a complete mirror.
+int cfgTableRowCount() { return (int)(sizeof(CFG_TABLE) / sizeof(CfgParam)); }
+
+// The name of one row, in table order. A client checking that its mirror is
+// complete needs the names, not just a count - that is how the bench driver in
+// bt_rpc.cpp proves no key was dropped between the table and the link.
+const char *cfgRowKey(int index) {
+  if (index < 0 || index >= cfgTableRowCount()) return nullptr;
+  return CFG_TABLE[index].name;
+}
+
+// Shortest decimal that reads back as the same float. %.9g would print 0.1f as
+// 0.100000001; the old JsonDocument path printed 0.1, and a settings screen
+// that shows 0.100000001 in a text field reads as a bug even when it round-
+// trips. Six digits is what these values were chosen with, so the loop almost
+// always ends on the first pass.
+static void cfgFormatFloat(char *dst, size_t cap, float v) {
+  for (int digits = 6; digits <= 9; digits++) {
+    snprintf(dst, cap, "%.*g", digits, (double)v);
+    if (strtof(dst, nullptr) == v) return;
+  }
+}
+
+// Writes src as a JSON string literal, quotes included, and returns its length
+// (0 when it would not fit in cap). Only the characters JSON requires escaping
+// are escaped: UTF-8 in a city name travels as-is, which is what the WebUI got
+// before and what a JSON parser expects.
+static size_t cfgJsonString(char *dst, size_t cap, const char *src) {
+  if (cap < 2) return 0;
+  size_t n = 0;
+  dst[n++] = '"';
+  for (const unsigned char *p = reinterpret_cast<const unsigned char *>(src); *p; p++) {
+    char esc[7];
+    const char *e = nullptr;
+    size_t el = 0;
+    switch (*p) {
+    case '"':  e = "\\\""; el = 2; break;
+    case '\\': e = "\\\\"; el = 2; break;
+    case '\n': e = "\\n";  el = 2; break;
+    case '\r': e = "\\r";  el = 2; break;
+    case '\t': e = "\\t";  el = 2; break;
+    case '\b': e = "\\b";  el = 2; break;
+    case '\f': e = "\\f";  el = 2; break;
+    default:
+      if (*p < 0x20) {
+        snprintf(esc, sizeof(esc), "\\u%04x", *p);
+        e = esc;
+        el = 6;
+      }
+      break;
+    }
+    if (n + el > cap) return 0;
+    if (e) {
+      memcpy(dst + n, e, el);
+      n += el;
+    } else {
+      dst[n++] = (char)*p;
+    }
+  }
+  if (n + 1 > cap) return 0;
+  dst[n++] = '"';
+  return n;
+}
+
+// Worst case JSON bytes one row can emit, counted as `"NAME":value`.
+// A string escapes to at most six bytes per character (\u00XX), so the
+// bound is exact without serializing the row twice.
+static size_t cfgRowMaxJson(const CfgParam &p) {
+  size_t name = strlen(p.name) + 3;  // quotes and the colon
+  switch (p.kind) {
+  case CK_STR:
+  case CK_SECRET:  // passphrases are never sent, but the bound stays honest
+    return name + 6 * (size_t)p.size + 2;
+  case CK_FLT:
+    return name + 24;
+  default:
+    return name + 16;
+  }
+}
+
+// Appends `"NAME":value` for one row. Refuses (writing nothing) when the value
+// would pass `cap`; the caller has already left room using cfgRowMaxJson, so a
+// refusal here means the bound and the writer disagree.
+static bool cfgAppendRow(char *buf, size_t cap, size_t *used, const CfgParam &p) {
+  const size_t at = *used;
+  int n = snprintf(buf + at, cap - at, "\"%s\":", p.name);
+  if (n <= 0) return false;
+  size_t w = at + (size_t)n;
+  switch (p.kind) {
+  case CK_INT:
+    w += snprintf(buf + w, cap - w, "%d", *static_cast<int *>(p.ptr));
+    break;
+  case CK_UINT:
+    w += snprintf(buf + w, cap - w, "%u", (unsigned)*static_cast<uint32_t *>(p.ptr));
+    break;
+  case CK_BOOL: {
+    const char *s = *static_cast<bool *>(p.ptr) ? "true" : "false";
+    const size_t l = strlen(s);
+    memcpy(buf + w, s, l);
+    w += l;
+    break;
+  }
+  case CK_FLT: {
+    char f[24];
+    cfgFormatFloat(f, sizeof(f), *static_cast<float *>(p.ptr));
+    const size_t l = strlen(f);
+    memcpy(buf + w, f, l);
+    w += l;
+    break;
+  }
+  case CK_STR: {
+    const size_t l = cfgJsonString(buf + w, cap - w, static_cast<const char *>(p.ptr));
+    if (!l) return false;
+    w += l;
+    break;
+  }
+  case CK_SECRET: {
+    // The five Wi-Fi passphrases leave the unit as empty strings, exactly as
+    // GET /api config sent them. Nothing on the settings side needs to see a
+    // stored passphrase; it only ever writes one.
+    const size_t l = cfgJsonString(buf + w, cap - w, "");
+    if (!l) return false;
+    w += l;
+    break;
+  }
+  }
+  if (w >= cap) return false;
+  *used = w;
+  return true;
+}
+
+// Serializes config rows into `buf` as one complete JSON object, starting at row
+// `first`, at most `maxRows` of them, stopping early at the last row that still
+// fits. Returns the number of rows written (0 only when a single row cannot fit
+// in cap at all - the caller then advances anyway rather than looping) and sets
+// *lenOut to the serialized length.
+int cfgSerializeChunk(char *buf, size_t cap, int first, int maxRows, size_t *lenOut) {
+  const int total = cfgTableRowCount();
+  *lenOut = 0;
+  if (first < 0 || first >= total || cap < 16) return -1;
+  size_t used = 0;
+  buf[used++] = '{';
+  int rows = 0;
+  int count = total - first;
+  if (count > maxRows) count = maxRows;
+  for (int i = 0; i < count; i++) {
+    const CfgParam &p = CFG_TABLE[first + i];
+    // -1 keeps a byte free for the closing brace, +1 for the comma.
+    if (rows > 0 && used + 1 + cfgRowMaxJson(p) > cap - 1) break;
+    if (rows > 0) buf[used++] = ',';
+    if (!cfgAppendRow(buf, cap - 1, &used, p)) {
+      logPrintf("Config chunk: row %s exceeds the %u byte window - skipped\n", p.name,
+                (unsigned)(cap - 1));
+      if (rows > 0) used--;  // drop the comma that was going to separate them
+      break;
+    }
+    rows++;
+  }
+  buf[used++] = '}';
+  *lenOut = used;
+  return rows;
+}
+
+// Appends printf-formatted text into buf[cap] at *used; on overflow nothing is
+// written and false is returned, so a caller can chain appends and check once.
+static bool cfgCatf(char *buf, size_t cap, size_t *used, const char *fmt, ...) {
+  if (*used >= cap) return false;
+  va_list ap;
+  va_start(ap, fmt);
+  const int n = vsnprintf(buf + *used, cap - *used, fmt, ap);
+  va_end(ap);
+  if (n < 0 || (size_t)n >= cap - *used) return false;
+  *used += (size_t)n;
+  return true;
+}
+
+// The keys the old GET /api/config appended by hand, outside CFG_TABLE: the fuel
+// sender calibration table plus the ambient reading and the two version strings.
+// Emitted as one more chunk after the table so a mirror over BLE ends up with
+// exactly the key set the WebUI had, no more and no less.
+bool cfgSerializeExtras(char *buf, size_t cap, size_t *lenOut) {
+  size_t used = 0;
+  bool ok = cfgCatf(buf, cap, &used, "{\"fuelCalOhms\":[");
+  const int nf = constrain(FUEL_TOUCH_POINTS, 2, MAX_TOUCH_POINTS);
+  for (int i = 0; i < nf && ok; i++) {
+    char f[24];
+    // Rounded to 0.1 ohm exactly as the JsonArray path did: the calibration
+    // editor shows one decimal, and a full-precision echo of a value the user
+    // typed as "34.3" reads as drift.
+    cfgFormatFloat(f, sizeof(f), roundf(fuelCalOhms[i] * 10.0f) / 10.0f);
+    ok = cfgCatf(buf, cap, &used, "%s%s", i ? "," : "", f);
+  }
+  ok = ok && cfgCatf(buf, cap, &used,
+                     "],\"ambientLightValue\":%d,\"core_version\":\"%s\",\"build_version\":\"%s\"}",
+                     ambientLightValue, ESP_ARDUINO_VERSION_STR, FW_VERSION);
+  *lenOut = ok ? used : 0;
+  return ok;
+}
+
+// Index of a config row by its JSON key name, or -1.
+int cfgFindRow(const char *name) {
+  if (!name) return -1;
+  for (int i = 0; i < cfgTableRowCount(); i++)
+    if (strcmp(CFG_TABLE[i].name, name) == 0) return i;
+  return -1;
+}
+
+// Puts one key back to its compiled default: the global is rewritten now so the
+// dashboard changes in this boot, and the NVS key is removed so the next boot
+// loads the same value the app just showed the user. Cross-parameter fixes and
+// the colour parse run afterwards for the same reason the save path runs them -
+// a reset of one half of a pair has to leave the pair consistent.
+bool cfgResetRow(int index) {
+  if (index < 0 || index >= cfgTableRowCount()) return false;
+  const CfgParam &p = CFG_TABLE[index];
+  switch (p.kind) {
+  case CK_INT:  *static_cast<int *>(p.ptr) = p.di; break;
+  case CK_UINT: *static_cast<uint32_t *>(p.ptr) = static_cast<uint32_t>(p.di); break;
+  case CK_FLT:  *static_cast<float *>(p.ptr) = p.df; break;
+  case CK_BOOL: *static_cast<bool *>(p.ptr) = (p.di != 0); break;
+  case CK_STR:
+  case CK_SECRET: snprintf(static_cast<char *>(p.ptr), p.size, "%s", p.dstr); break;
+  }
+  NvsSession session("cfg", false);
+  if (session.opened() && !session.nvs.remove(p.nvsKey))
+    logPrintf("Config reset: NVS key %s not removed - the default may not survive reboot\n",
+              p.nvsKey);
+  sanitizeDigitCounts();
+  sanitizeConfigPairs();
+  applyColors();
+  return true;
+}

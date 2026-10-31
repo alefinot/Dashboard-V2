@@ -748,6 +748,28 @@ void seedNVSWithFactoryDefaults();
 void recalculateDerivedParams();
 uint16_t hexToRGB565(const char *hex);
 
+// Streaming access for the BLE RPC layer (bt_rpc.cpp). The old
+// GET /api/config built one JsonDocument of every key and serialized a 30-40 KB
+// string; over GATT the same keys go out in table order, a few rows per frame,
+// through one fixed buffer - so no heap spike and no memory-saver wait.
+//
+//   cfgTableRowCount()            rows in CFG_TABLE (the app's "is the mirror
+//                                 complete" reference)
+//   cfgRowKey(...)                the name of one row, for that check
+//   cfgSerializeChunk(...)        one object's worth of rows, at most maxRows
+//                                 from row `first`; returns rows written and
+//                                 sets *lenOut, 0 rows meaning "this window is
+//                                 too small for even one row"
+//   cfgSerializeExtras(...)       the read-only tail the handler used to append
+//                                 by hand (fuel ramp, ambient, version strings)
+//   cfgFindRow / cfgResetRow      one key back to its compiled default
+int cfgTableRowCount();
+const char *cfgRowKey(int index);
+int cfgSerializeChunk(char *buf, size_t cap, int first, int maxRows, size_t *lenOut);
+bool cfgSerializeExtras(char *buf, size_t cap, size_t *lenOut);
+int cfgFindRow(const char *name);
+bool cfgResetRow(int index);
+
 // ----------------------------------------------------------------------------
 // GFX / drawing API
 // ----------------------------------------------------------------------------
