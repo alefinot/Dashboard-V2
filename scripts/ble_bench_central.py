@@ -69,7 +69,19 @@ class EspLog:
             self._note("(pyserial missing - no USB log, passkey must be typed)")
             return
         try:
-            with serial.Serial(self.port, 115200, timeout=0.5) as s:
+            # DTR and RTS are held low before the port is opened. Opening with the
+            # pyserial defaults pulses them, and on this board that pulse goes
+            # straight into the USB-UART auto-reset circuit: the unit rebooted in
+            # the middle of a run, the 1 Hz stream stalled for seconds, and the
+            # fragments of a telemetry frame landed without their FIRST.
+            s = serial.Serial()
+            s.port = self.port
+            s.baudrate = 115200
+            s.timeout = 0.5
+            s.dtr = False
+            s.rts = False
+            s.open()
+            try:
                 self.ok = True
                 buf = b""
                 while not self._stop.is_set():
@@ -80,6 +92,8 @@ class EspLog:
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
                         self._note(line.decode("utf-8", "replace").rstrip())
+            finally:
+                s.close()
         except Exception as e:  # a monitor holding COM7 is the usual cause
             self._note(f"(serial {self.port} unavailable: {e})")
 
