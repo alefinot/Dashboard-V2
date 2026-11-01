@@ -120,6 +120,16 @@ class BleLink(context: Context) {
     private val _logs = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val logs: SharedFlow<String> = _logs.asSharedFlow()
 
+    /**
+     * The index of each streamed `config.get` chunk as it lands, so a settings
+     * screen can say "reading your settings, chunk 4" instead of showing a spinner
+     * for eight seconds. Hot, not sticky: a chunk nobody is watching is a chunk
+     * nobody needed to see, and a collector started before the request is issued
+     * sees every one.
+     */
+    private val _syncChunks = MutableSharedFlow<Int>(extraBufferCapacity = 32)
+    val syncChunks: SharedFlow<Int> = _syncChunks.asSharedFlow()
+
     private val connectMutex = Mutex()
     private val requestMutex = Mutex()
     private val writeMutex = Mutex()
@@ -559,6 +569,7 @@ class BleLink(context: Context) {
         synchronized(reply) {
             reply.chunks.putAll(body)
         }
+        BleJson.int(obj, "i")?.let { _syncChunks.tryEmit(it) }
     }
 
     private fun onNotify(uuid: UUID, value: ByteArray) {

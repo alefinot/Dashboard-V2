@@ -6,9 +6,9 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudIcons
 
 /**
- * The modes of the shell: the vehicle page, the native live view, the ESP's own
- * configuration (its Web UI, labelled for what it configures), recorded trips, and
- * this app's own settings.
+ * The modes of the shell: the vehicle page, the native live view, the unit's own
+ * configuration (its settings page, labelled for what it configures), recorded trips,
+ * and this app's own settings.
  *
  * The vehicle page is first-class now because it is where a connection is made. Before
  * it existed, every page assumed a device was already there and the app opened on the
@@ -66,7 +66,7 @@ object BarLayout {
         AppTab.VEHICLES -> Glyph("Vehicle", 30.dp, 52.dp, 1.4f, true)
         AppTab.LIVE -> Glyph("Live", 22.dp, 48.dp, 1f, false)
         AppTab.TRIPS -> Glyph("Trips", 22.dp, 48.dp, 1f, false)
-        AppTab.WEB -> Glyph("ESP settings", 22.dp, 48.dp, 1f, false)
+        AppTab.WEB -> Glyph("Dashboard settings", 22.dp, 48.dp, 1f, false)
         AppTab.SETTINGS -> Glyph("App settings", 22.dp, 48.dp, 1f, false)
     }
 

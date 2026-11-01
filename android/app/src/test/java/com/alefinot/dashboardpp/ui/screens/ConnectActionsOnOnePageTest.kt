@@ -84,7 +84,7 @@ class ConnectActionsOnOnePageTest {
         assertFalse("App Settings may not raise the address panel", src.contains("onEnterIp"))
     }
 
-    /** The address panel is raised from one place, and both covers get the way to the garage. */
+    /** The address panel is raised from one place, and every cover gets the way to the garage. */
     @Test
     fun manualAddressPanelIsRaisedOnlyFromTheVehiclePage() {
         val src = moduleSource("ConnectedTabs.kt")
@@ -93,10 +93,17 @@ class ConnectActionsOnOnePageTest {
             1,
             Regex("onEnterIp = \\{ manualOpen = true \\}").findAll(src).count(),
         )
+        // Counted against the covers that exist rather than a number kept by hand: the
+        // ESP slot used to be one of them (a WebView with nothing to load), and it is a
+        // settings page now, with a Bluetooth link header of its own. The live page's
+        // cover is left, and a guard that pinned "2" would have failed for the right
+        // reason but said the wrong thing about it.
+        val covers = Regex("OfflineCover\\(").findAll(codeOnly(src)).count()
+        assertTrue("the shell is expected to still have a cover", covers >= 1)
         assertEquals(
-            "both covers must be handed the way to the vehicle page",
-            2,
-            Regex("onOpenVehicles = openGarage").findAll(src).count(),
+            "every cover in the shell must be handed the way to the vehicle page",
+            covers,
+            Regex("onOpenVehicles = openGarage").findAll(codeOnly(src)).count(),
         )
     }
 

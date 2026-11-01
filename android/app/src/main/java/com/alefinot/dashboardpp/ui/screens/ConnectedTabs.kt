@@ -50,11 +50,11 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.alefinot.dashboardpp.api.EspApiLane
+import com.alefinot.dashboardpp.ble.BleApi
+import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripsEnabled
@@ -62,8 +62,10 @@ import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.PageFade
-import com.alefinot.dashboardpp.webview.WebUiHolder
-import com.alefinot.dashboardpp.webview.WebUiStage
+import com.alefinot.dashboardpp.ui.screens.settings.BleConfigGateway
+import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
+import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
+import com.alefinot.dashboardpp.ui.screens.settings.loadConfigSchema
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripRow
@@ -73,8 +75,13 @@ import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.hudGlass
 import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The app's only screen once it is up: the five-slot bar and the pages it swipes
@@ -89,10 +96,11 @@ import kotlinx.coroutines.launch
  * now. See [ShellRouting] for how a state becomes a line on that page and [ShellRules]
  * for what the bar and the recorder do about it.
  *
- * The ESP page is kept per connection rather than per visit, so re-entering it is a
- * paint rather than the 1.55 s reload measured before (see [WebUiHolder]). The WebView
- * itself is built lazily: someone who never opens the slot never costs the ESP a page
- * fetch, and with no device at all there is nothing to host.
+ * The ESP slot is a page like the others now: the unit's own configuration, drawn in
+ * Compose and read over Bluetooth (`ConfigStore` here, `BleRuntime` for the link). The
+ * WebView it replaced, the holder that used to keep its page per connection, and the
+ * gesture mirror that fed touches to that View are out of this shell. The classes stay
+ * until the WebView itself is deleted (the plan's Phase 2c); nothing here reaches them.
  */
 @Composable
 fun AppShell(
@@ -102,16 +110,28 @@ fun AppShell(
     trips: TripsViewModel,
 ) {
     val context = LocalContext.current
-    val activity = context as? android.app.Activity
     val connected = conn != null
     val ip = conn?.ip
-    val webUi = remember(ip) {
-        if (ip == null || activity == null) null else WebUiHolder(activity, ip, connection)
+
+    // The unit's configuration lives on the unit, and a V2 unit reaches this phone over
+    // Bluetooth and nothing else. The link is the process-wide one (`BleRuntime`),
+    // because a GATT connection belongs to the phone rather than to a page: swiping away
+    // from the settings tab must not drop a pairing the user spent a minute setting up.
+    // The store hangs off that link and lives as long as this shell, so a write in flight
+    // outlives a tab switch. The schema is read off the UI thread — 198 rows parsed on
+    // the frame that carries a tab switch is the same mistake this file has already been
+    // taught twice (see the pager's beat below).
+    val link = remember { BleRuntime.link(context) }
+    val storeScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
+    DisposableEffect(storeScope) { onDispose { storeScope.cancel() } }
+    var schema by remember { mutableStateOf<ConfigSchema?>(null) }
+    LaunchedEffect(Unit) {
+        schema = withContext(Dispatchers.Default) { loadConfigSchema(context) }
     }
-    // Has the page been opened at all this connection? After that it stays
-    // composed behind the other pages instead of being torn down, which is what
-    // makes coming back to it instant.
-    var webSeen by remember(ip) { mutableStateOf(false) }
+    val store = remember(link, schema) {
+        schema?.let { ConfigStore(BleConfigGateway(BleApi(link), link), it, storeScope) }
+    }
+
     var openTrip by remember { mutableStateOf<TripRow?>(null) }
     // Typing an address by hand is a panel over the shell. It is raised from the vehicle
     // page and nowhere else, and it closes by itself the moment a device turns up.
@@ -197,104 +217,32 @@ fun AppShell(
         }
     }
 
-    // The Web UI page fetches /api/live itself; while it is on screen it is the only
-    // HTTP client and the recorder stands down (plan §4.3). Since the page now stays
-    // alive between tabs, its own 1 Hz tick must be stopped while it is hidden -
-    // otherwise two pollers would hit the dashboard at once. Counted at the socket
-    // layer with `ss`: with the page hidden the app opens no connection to the ESP at
-    // all, while the page on screen opens about two per second (it fetches more than
-    // one endpoint per tick).
     // Two different questions, and collapsing them is what made the app sluggish.
     // "Is the page inside the pager's viewport" decides whether it may paint and take
     // touches; a swipe uncovers it long before the pager commits, so waiting for the
-    // settled page shows a half-drawn page sliding in. "Is it the settled page"
-    // decides who owns the HTTP lane and whether the page's own 1 s tick runs - that
-    // one has to wait for the settle, or two clients would poll the dashboard at once.
-    // The viewport answer is derived: recomputed as the pager moves, but it only
-    // changes the moment it flips, so a swipe does not recompose this screen.
-    val webInView by remember(webUi) {
-        derivedStateOf {
-            PagerFocus.inViewport(
-                pager.currentPage,
-                pager.currentPageOffsetFraction,
-                BarLayout.pageOf(AppTab.WEB),
-            )
-        }
-    }
-    LaunchedEffect(webInView) {
-        if (webInView) webSeen = true
-        webUi?.setDrawn(webInView)
-    }
-    LaunchedEffect(page) {
-        val visible = page == AppTab.WEB
-        EspApiLane.webUiVisible = visible
-        if (visible) webUi?.onShow() else webUi?.onHide()
-    }
-    // Warming the ESP slot. The View has been kept alive between visits since app 21, so
-    // the fetch of the page is the one thing that can still be running underneath the
-    // frame that carries the tab switch. It happens while the app is idle: one frame of
-    // quiet first so the shell paints before Chromium is spent on a page nobody is
-    // looking at, then one second without the pager moving. The keys are the cancelling:
-    // a swipe restarts the wait (and the shell re-keys the holder when a connection
-    // drops), and once the user has opened the slot there is nothing left to warm.
-    var warmed by remember(ip) { mutableStateOf(false) }
-    LaunchedEffect(ip, webSeen, page, pager.isScrollInProgress) {
-        val holder = webUi ?: return@LaunchedEffect
-        if (!ShellRules.shouldWarm(connected = ip != null, seen = webSeen, warmed = warmed)) {
-            return@LaunchedEffect
-        }
-        withFrameNanos { }
-        delay(1_000)
-        if (webSeen) return@LaunchedEffect   // the user reached the slot on their own
-        holder.warm(context)
-        warmed = true
-    }
-    // A warmed page is fetched but not seen, so its own 1 Hz tick has to be stopped once
-    // the fetch lands: parked on Live, the app must still hold exactly one HTTP client
-    // (plan §4.3), and pausing any earlier would pause the fetch itself.
-    LaunchedEffect(warmed, webSeen, ip) {
-        if (warmed && !webSeen) webUi?.quiesceWhenSettled()
-    }
-    DisposableEffect(webUi) {
-        onDispose {
-            EspApiLane.webUiVisible = false
-            webUi?.release()
-        }
-    }
-
+    // settled page shows a half-drawn page sliding in. "Is it the settled page" decides
+    // who owns the HTTP lane and which page's own 1 s tick runs - that one has to wait
+    // for the settle, or two clients would poll the dashboard at once (the recorder
+    // stands down while the live page samples, see `EspApiLane`). The viewport answer is
+    // derived: recomputed as the pager moves, but it only changes the moment it flips,
+    // so a swipe does not recompose this screen.
     // The bar: the selected slot's glass sheet is measured from the icons, and it
     // follows the pager rather than a separate selection - which is what makes it
     // slide during a swipe instead of only after one.
     // The sheet's composable reads this map and the pager; the screen body does not,
     // so a swipe recomposes the sheet and nothing else.
     val bounds = remember { mutableStateMapOf<AppTab, Rect>() }
-    // One mirror for the screen: a gesture's state has to survive between the events
-    // that make it up.
-    val touchSlop = LocalViewConfiguration.current.touchSlop
-    val mirror = remember(webUi) { GestureMirror({ webUi?.peek() }, touchSlop) }
 
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                // Composed once it has been opened, and kept that way: the native
-                // pages above are opaque, so this is invisible while they are up.
-                // Letting Compose remove it is what costs the user time - the View
-                // leaves the hierarchy, Chromium drops its rendering surface, and the
-                // tab then opens as a black hole until a new surface and a first frame
-                // arrive: 0.6-1.1 s measured, even with the page still loaded. Covered
-                // instead of removed, its last frame stays warm and the tab is simply
-                // there again - filmed at 10 fps, the frame that carries the tab switch
-                // already shows the finished page.
-                if (webSeen && webUi != null) {
-                    DashboardWebScreen(webUi)
-                }
-                // The pages slide over that retained view. The ESP page is a hole in
-                // them on purpose: once the page is up, the view underneath is the
-                // content, and the swipe is what uncovers it.
-                // A pager claims every gesture that starts inside it, so a page kept
-                // underneath would never be touched - the ESP slot mirrors its gesture
-                // stream onto that View (see [GestureMirror]), which gives the web page
-                // its taps and scrolls back without giving up the swipe.
+                // Nothing is retained underneath the pages any more. The ESP slot used
+                // to be a hole in them: a WebView kept composed behind the pager and
+                // uncovered by a swipe, because letting Compose remove that View cost
+                // the user 0.6-1.1 s while Chromium rebuilt its rendering surface. The
+                // slot is a page now, so there is no surface to keep warm, no gesture
+                // stream to mirror onto a View under the pager, and no opaque page to
+                // hide a second copy of the same settings.
                 // Pages beyond the visible one are composed as well, so arriving is a
                 // paint and not a build: a cold page used to be composed while the
                 // pager was already moving, and the Trips page costs ~650 ms of UI
@@ -303,10 +251,9 @@ fun AppShell(
                 //
                 // It is only affordable because everything a page *does* is keyed to
                 // the viewport flag computed below rather than to its composition: the
-                // HTTP lane, the web view's paint, the record chip's breath, the trips
-                // list's reveal and the page's own drawing all wait for the page to be
-                // on screen, and the trip list re-reads itself on arrival instead of on
-                // composition.
+                // HTTP lane, the record chip's breath, the trips list's reveal and the
+                // page's own drawing all wait for the page to be on screen, and the trip
+                // list re-reads itself on arrival instead of on composition.
                 //
                 // And the building is timed so it does not land on the user: the pages
                 // are composed a beat after the shell has drawn and animated in, one
@@ -384,39 +331,31 @@ fun AppShell(
                                 LiveTab(ip = conn.ip, active = page == AppTab.LIVE)
                             }
                         }
-                        AppTab.WEB -> Box(
-                            Modifier
-                                .fillMaxSize()
-                                .webUiGestureMirror(mirror) {
-                                    // Only the settled ESP page mirrors, and only when
-                                    // there is a page to touch: while the cover is up it
-                                    // is the cover that takes the taps.
-                                    page == AppTab.WEB &&
-                                        webUi?.stage?.value == WebUiStage.READY
-                                },
-                        ) {
-                            CompositionLocalProvider(LocalEnterActive provides inView) {
-                                if (webUi != null) {
-                                    val stage by webUi.stage.collectAsStateWithLifecycle()
-                                    if (stage != WebUiStage.READY) {
-                                        // Exactly one fetch per connection has nothing drawn
-                                        // behind the page: the first one. It gets the page's
-                                        // overlay treatment instead of a black rectangle, and
-                                        // a RETRY that re-issues the fetch.
-                                        WebUiCover(stage, conn?.ip ?: "") { webUi.retry() }
-                                    }
-                                } else {
-                                    // No holder, because no device: the slot has no view to
-                                    // show, so it paints its own page and says what it is
-                                    // waiting for. Opaque, for the reason in [OfflineCover].
-                                    OfflineCover(
-                                        title = "NO DEVICE CONNECTED",
-                                        reason = reason,
-                                        note = "The dashboard's own configuration lives on the " +
-                                            "device. This slot becomes its Web UI once the " +
-                                            "vehicle page has connected one.",
-                                        vehicleName = coverVehicleName,
-                                        onOpenVehicles = openGarage,
+                        AppTab.WEB -> NativePage(inView) {
+                            // Block fade, like App settings: this is a stack of cards, and
+                            // the page it sits beside fades its body in as one piece.
+                            PageFade(Modifier.fillMaxSize()) {
+                                val unit = store
+                                when {
+                                    unit == null && schema == null -> Text(
+                                        "reading the settings schema from the app…",
+                                        style = HudeFormLabel(),
+                                        color = HudColors.TextDim,
+                                        modifier = Modifier.padding(16.dp),
+                                    )
+                                    unit == null -> Text(
+                                        "The settings schema is missing from the app package. " +
+                                            "It is generated from the firmware's own tables " +
+                                            "(scripts/gen_config_schema.py); without it this " +
+                                            "page has no idea what the unit's settings are.",
+                                        style = HudeFormLabel(),
+                                        color = HudColors.Amber,
+                                        modifier = Modifier.padding(16.dp),
+                                    )
+                                    else -> DashboardSettingsScreen(
+                                        store = unit,
+                                        schema = schema,
+                                        link = link,
                                     )
                                 }
                             }
