@@ -114,6 +114,13 @@ def _num(token, consts, key, field):
                      f"generator's constant scan")
 
 
+def firmware_version(path=CONFIG_CPP):
+    """The compiled-in FW_VERSION this asset describes, or "" if the define moved."""
+    src = open(path, encoding="utf-8").read()
+    m = re.search(r'#define\s+FW_VERSION_STR\s+"([^"]+)"', src)
+    return m.group(1) if m else ""
+
+
 def parse_cfg_table(path=CONFIG_CPP):
     src = open(path, encoding="utf-8").read()
     sizes = {n: int(s) for n, s in ARRAY_RE.findall(src)}
@@ -383,6 +390,10 @@ def js_hidden_keys(path=WEBUI_HTML):
 # Cards the WebUI drives with hand-written widget markup instead of plain rows.
 # The native app needs a hand-written screen for each one, and it is the
 # `widget` tag in the JSON, not a key name, that tells it which.
+# The layout this loader understands. The app refuses an asset that does not
+# match rather than rendering a shape it has to guess at.
+SCHEMA_VERSION = 1
+
 # The master switch for the tab's own "Show advanced" - the row the WebUI carries
 # inside General, and the one row that is not a row here.
 ADVANCE_KEY = "ADV_MODE"
@@ -561,6 +572,10 @@ def build(rows, groups_js, js_hidden):
     schema = {
         "_generated": "scripts/gen_config_schema.py - do not edit. Sources: "
                       "src/config.cpp (CFG_TABLE) and src/webui.html (configMap).",
+        # The app shows the firmware version beside the unit's own, so a schema that
+        # was regenerated against the wrong tree is visible instead of silently wrong.
+        "schemaVersion": SCHEMA_VERSION,
+        "firmware": firmware_version(),
         "rows": len(rows),
         "groups": out_groups,
         "hidden": by_state["hidden"],
@@ -727,6 +742,13 @@ def verify(schema, rows, by_state):
         problems.append(f"{len(missing)} CFG_TABLE rows are unreachable in the app: {missing}")
     if extra:
         problems.append(f"{len(extra)} keys in the schema are not in CFG_TABLE: {extra}")
+    if schema.get("schemaVersion") != SCHEMA_VERSION:
+        problems.append(f"asset schemaVersion {schema.get('schemaVersion')!r} "
+                        f"!= {SCHEMA_VERSION}")
+    fw = firmware_version()
+    if fw and schema.get("firmware") != fw:
+        problems.append(f"asset describes firmware {schema.get('firmware')!r}, "
+                        f"config.cpp says {fw!r}")
     if schema["rows"] != len(keys):
         problems.append(f"row count {schema['rows']} != {len(keys)} table rows")
     # Every table row lands in exactly one of three places: a control on the tab,

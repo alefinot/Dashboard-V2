@@ -1,5 +1,7 @@
 {
  "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and src/webui.html (configMap).",
+ "schemaVersion": 1,
+ "firmware": "1.5.1",
  "rows": 198,
  "groups": [
   {
