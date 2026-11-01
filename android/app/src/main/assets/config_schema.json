@@ -1,0 +1,2041 @@
+{
+ "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and src/webui.html (configMap).",
+ "rows": 198,
+ "groups": [
+  {
+   "id": "system_general",
+   "title": "System & General",
+   "cards": [
+    {
+     "title": "General",
+     "items": [
+      {
+       "key": "TARGET_FPS",
+       "kind": "int",
+       "default": 60,
+       "label": "Target Refresh Rate",
+       "min": 5,
+       "max": 120,
+       "unit": "FPS"
+      },
+      {
+       "key": "ENABLE_DEMO_MODE",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Sensor Demo Mode"
+      },
+      {
+       "key": "ENABLE_POWER_SENSE",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Power Sensing"
+      },
+      {
+       "key": "POWER_SENSE_OFF_MS",
+       "kind": "int",
+       "default": 10000,
+       "label": "Sleep After Power Loss",
+       "min": 500,
+       "max": 120000,
+       "unit": "s",
+       "unitScale": 1000.0,
+       "uiStep": 500.0
+      },
+      {
+       "key": "SHOW_ELEMENT_BOUNDS",
+       "kind": "bool",
+       "default": 0,
+       "label": "Show UI Element Bounds (Debug)"
+      },
+      {
+       "key": "UNITS_IMPERIAL",
+       "kind": "bool",
+       "default": 0,
+       "label": "Use Imperial Units"
+      }
+     ]
+    },
+    {
+     "title": "Trip Reset",
+     "items": [
+      {
+       "key": "TRIP_RESET_HOLD_MS",
+       "kind": "int",
+       "default": 1500,
+       "label": "Button Hold Time",
+       "min": 200,
+       "max": 10000,
+       "unit": "ms"
+      }
+     ],
+     "widget": "tripReset"
+    },
+    {
+     "title": "CPU",
+     "items": [
+      {
+       "key": "MANUAL_CPU_FREQ",
+       "kind": "int",
+       "default": 240,
+       "label": "Manual CPU Frequency",
+       "min": 80,
+       "max": 240,
+       "options": [
+        {
+         "value": 80,
+         "label": "80 MHz"
+        },
+        {
+         "value": 160,
+         "label": "160 MHz"
+        },
+        {
+         "value": 240,
+         "label": "240 MHz"
+        }
+       ]
+      },
+      {
+       "key": "ENABLE_DYNAMIC_CPU",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Dynamic CPU Frequency"
+      },
+      {
+       "key": "ENABLE_CPU_THROTTLE",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Thermal Throttling"
+      },
+      {
+       "key": "CPU_THROTTLE_TEMP_WARN",
+       "kind": "int",
+       "default": 50,
+       "label": "Throttle to 160 MHz At",
+       "min": -50,
+       "max": 150,
+       "unit": "°C",
+       "unitType": "temp"
+      },
+      {
+       "key": "CPU_THROTTLE_TEMP_CRIT",
+       "kind": "int",
+       "default": 60,
+       "label": "Throttle to 80 MHz At",
+       "min": -50,
+       "max": 150,
+       "unit": "°C",
+       "unitType": "temp"
+      }
+     ],
+     "advanced": true
+    },
+    {
+     "title": "Time Settings",
+     "items": [
+      {
+       "key": "TZ_DST_ENABLED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Enable Automatic DST"
+      },
+      {
+       "key": "TZ_DST_RULE",
+       "kind": "int",
+       "default": 1,
+       "label": "DST Rule",
+       "min": 0,
+       "max": 2,
+       "options": [
+        {
+         "value": 0,
+         "label": "None (fixed offset all year)"
+        },
+        {
+         "value": 1,
+         "label": "EU / EEA u2014 last Sunday of Mar & Oct, 01:00 UTC"
+        },
+        {
+         "value": 2,
+         "label": "US / Canada u2014 2nd Sun Mar, 1st Sun Nov, 02:00 local"
+        }
+       ]
+      },
+      {
+       "key": "TZ_OFFSET_HOURS",
+       "kind": "int",
+       "default": 1,
+       "label": "Time Zone (standard / winter offset)",
+       "min": -14,
+       "max": 14,
+       "options": [
+        {
+         "value": -12,
+         "label": "(GMT-12:00) Baker Island"
+        },
+        {
+         "value": -11,
+         "label": "(GMT-11:00) American Samoa, Niue"
+        },
+        {
+         "value": -10,
+         "label": "(GMT-10:00) Honolulu, Papeete"
+        },
+        {
+         "value": -9,
+         "label": "(GMT-09:00) Anchorage"
+        },
+        {
+         "value": -8,
+         "label": "(GMT-08:00) Los Angeles, Vancouver, Tijuana"
+        },
+        {
+         "value": -7,
+         "label": "(GMT-07:00) Denver, Calgary, Phoenix"
+        },
+        {
+         "value": -6,
+         "label": "(GMT-06:00) Chicago, Mexico City, Winnipeg"
+        },
+        {
+         "value": -5,
+         "label": "(GMT-05:00) New York, Toronto, Bogota"
+        },
+        {
+         "value": -4,
+         "label": "(GMT-04:00) Santiago, Caracas, Halifax"
+        },
+        {
+         "value": -3,
+         "label": "(GMT-03:00) Buenos Aires, Sao Paulo, Montevideo"
+        },
+        {
+         "value": -2,
+         "label": "(GMT-02:00) Fernando de Noronha"
+        },
+        {
+         "value": -1,
+         "label": "(GMT-01:00) Azores, Cape Verde"
+        },
+        {
+         "value": 0,
+         "label": "(GMT+00:00) London, Dublin, Lisbon, Accra"
+        },
+        {
+         "value": 1,
+         "label": "(GMT+01:00) Paris, Berlin, Rome, Madrid, Lagos"
+        },
+        {
+         "value": 2,
+         "label": "(GMT+02:00) Cairo, Athens, Helsinki, Kyiv"
+        },
+        {
+         "value": 3,
+         "label": "(GMT+03:00) Moscow, Istanbul, Nairobi, Baghdad"
+        },
+        {
+         "value": 4,
+         "label": "(GMT+04:00) Dubai, Baku, Muscat"
+        },
+        {
+         "value": 5,
+         "label": "(GMT+05:00) Karachi, Tashkent, Yekaterinburg"
+        },
+        {
+         "value": 6,
+         "label": "(GMT+06:00) Dhaka, Almaty, Omsk"
+        },
+        {
+         "value": 7,
+         "label": "(GMT+07:00) Bangkok, Jakarta, Ho Chi Minh"
+        },
+        {
+         "value": 8,
+         "label": "(GMT+08:00) Beijing, Singapore, Perth, Taipei"
+        },
+        {
+         "value": 9,
+         "label": "(GMT+09:00) Tokyo, Seoul, Pyongyang"
+        },
+        {
+         "value": 10,
+         "label": "(GMT+10:00) Sydney, Melbourne, Guam"
+        },
+        {
+         "value": 11,
+         "label": "(GMT+11:00) Solomon Islands, Noumea"
+        },
+        {
+         "value": 12,
+         "label": "(GMT+12:00) Auckland, Fiji, Kamchatka"
+        },
+        {
+         "value": 13,
+         "label": "(GMT+13:00) Apia, Nuku'alofa"
+        },
+        {
+         "value": 14,
+         "label": "(GMT+14:00) Kiritimati"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "title": "Weather Widget",
+     "items": [
+      {
+       "key": "WEATHER_CITY",
+       "kind": "text",
+       "default": "",
+       "label": "City Name",
+       "maxLength": 48
+      },
+      {
+       "key": "WEATHER_LAT",
+       "kind": "float",
+       "default": 0.0,
+       "label": "Location Latitude (Fallback)",
+       "min": -90.0,
+       "max": 90.0
+      },
+      {
+       "key": "WEATHER_LON",
+       "kind": "float",
+       "default": 0.0,
+       "label": "Location Longitude (Fallback)",
+       "min": -180.0,
+       "max": 180.0
+      },
+      {
+       "key": "WEATHER_REFRESH_MIN",
+       "kind": "int",
+       "default": 1,
+       "label": "Refresh Interval",
+       "min": 1,
+       "max": 1440,
+       "unit": "min",
+       "slider": true,
+       "uiMin": 1,
+       "uiMax": 60,
+       "step": 1
+      },
+      {
+       "key": "WEATHER_LOCALE",
+       "kind": "text",
+       "default": "it",
+       "label": "City Name Language",
+       "maxLength": 16,
+       "options": [
+        {
+         "value": "it",
+         "label": "Italiano"
+        },
+        {
+         "value": "en",
+         "label": "English"
+        },
+        {
+         "value": "fr",
+         "label": "Français"
+        },
+        {
+         "value": "de",
+         "label": "Deutsch"
+        },
+        {
+         "value": "es",
+         "label": "Español"
+        },
+        {
+         "value": "pt",
+         "label": "Português"
+        },
+        {
+         "value": "nl",
+         "label": "Nederlands"
+        },
+        {
+         "value": "pl",
+         "label": "Polski"
+        },
+        {
+         "value": "ru",
+         "label": "Русский"
+        },
+        {
+         "value": "tr",
+         "label": "Türkçe"
+        },
+        {
+         "value": "el",
+         "label": "Ελληνικά"
+        },
+        {
+         "value": "ar",
+         "label": "العربية"
+        },
+        {
+         "value": "he",
+         "label": "עברית"
+        },
+        {
+         "value": "ja",
+         "label": "日本語"
+        },
+        {
+         "value": "zh",
+         "label": "中文"
+        },
+        {
+         "value": "ko",
+         "label": "한국어"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "title": "Custom Signatures",
+     "items": [
+      {
+       "key": "SPLASH_SIGNATURE",
+       "kind": "text",
+       "default": "by @ale.finot",
+       "label": "Boot Screen Signature",
+       "maxLength": 48
+      },
+      {
+       "key": "REBOOT_SIGNATURE",
+       "kind": "text",
+       "default": "Dashboard++ by @ale.finot",
+       "label": "Reboot Screen Signature",
+       "maxLength": 48
+      },
+      {
+       "key": "DASHBOARD_SIGNATURE",
+       "kind": "text",
+       "default": "<<<<<<    Dashboard++ by @ale.finot    >>>>>>",
+       "label": "Main Dashboard Watermark",
+       "maxLength": 96
+      }
+     ]
+    },
+    {
+     "title": "Firmware Update",
+     "items": [],
+     "widget": "firmwareUpdate"
+    }
+   ]
+  },
+  {
+   "id": "display",
+   "title": "Display",
+   "cards": [
+    {
+     "title": "Display",
+     "items": [
+      {
+       "key": "DISPLAY_ROTATION",
+       "kind": "int",
+       "default": 1,
+       "label": "Screen Rotation (0-3)",
+       "min": 0,
+       "max": 3,
+       "reboot": true
+      },
+      {
+       "key": "DISPLAY_WIDTH",
+       "kind": "int",
+       "default": 480,
+       "label": "Display Width",
+       "min": 16,
+       "max": 2048,
+       "unit": "px",
+       "advanced": true,
+       "reboot": true
+      },
+      {
+       "key": "DISPLAY_HEIGHT",
+       "kind": "int",
+       "default": 320,
+       "label": "Display Height",
+       "min": 16,
+       "max": 2048,
+       "unit": "px",
+       "advanced": true,
+       "reboot": true
+      },
+      {
+       "key": "SPI_BUS_SPEED",
+       "kind": "int",
+       "default": 60000000,
+       "label": "SPI Bus Frequency",
+       "min": 1000000,
+       "max": 80000000,
+       "unit": "MHz",
+       "advanced": true,
+       "unitScale": 1000000.0,
+       "uiMin": 1000000.0,
+       "uiMax": 80000000.0,
+       "uiStep": 1000000.0
+      },
+      {
+       "key": "BL_PWM_HZ",
+       "kind": "int",
+       "default": 12000,
+       "label": "Backlight PWM Frequency",
+       "min": 1000,
+       "max": 40000,
+       "unit": "kHz",
+       "advanced": true,
+       "unitScale": 1000.0,
+       "uiMin": 1000.0,
+       "uiMax": 40000.0,
+       "uiStep": 1000.0
+      },
+      {
+       "key": "TFT_DRIVE",
+       "kind": "int",
+       "default": 0,
+       "label": "Display Drive Strength (0=default, 1=weakest, 3=20 mA)",
+       "min": 0,
+       "max": 3,
+       "advanced": true,
+       "uiMin": 0,
+       "uiMax": 3,
+       "uiStep": 1
+      },
+      {
+       "key": "DISPLAY_INVERT_COLORS",
+       "kind": "bool",
+       "default": 0,
+       "label": "Invert Display Colors",
+       "advanced": true
+      },
+      {
+       "key": "ENABLE_ANTIALIASING",
+       "kind": "bool",
+       "default": 1,
+       "label": "Enable Anti-Aliased Rendering",
+       "advanced": true
+      },
+      {
+       "key": "AA_SHARPNESS",
+       "kind": "float",
+       "default": 0.2,
+       "label": "AA Sharpness",
+       "min": 0.0,
+       "max": 1.0,
+       "advanced": true,
+       "slider": true,
+       "uiMin": 0.2,
+       "uiMax": 1.0,
+       "step": 0.1
+      },
+      {
+       "key": "BACKLIGHT_BRIGHTNESS",
+       "kind": "int",
+       "default": 100,
+       "label": "Backlight Brightness",
+       "min": 0,
+       "max": 100,
+       "section": "Brightness Control",
+       "slider": true,
+       "uiMin": 0,
+       "uiMax": 100,
+       "step": 1
+      },
+      {
+       "key": "FADE_DURATION_MS",
+       "kind": "int",
+       "default": 700,
+       "label": "Fade Duration",
+       "min": 0,
+       "max": 10000,
+       "unit": "ms",
+       "section": "Brightness Control",
+       "slider": true,
+       "uiMin": 100,
+       "uiMax": 5000,
+       "step": 100
+      }
+     ]
+    },
+    {
+     "title": "Auto Brightness",
+     "items": [
+      {
+       "key": "ENABLE_AUTO_BRIGHTNESS",
+       "kind": "bool",
+       "default": 1,
+       "label": "Enable Auto Brightness"
+      },
+      {
+       "key": "LIGHT_SENSOR_DARK_VAL",
+       "kind": "int",
+       "default": 432,
+       "label": "Dark Value (ADC)",
+       "min": 0,
+       "max": 4095
+      },
+      {
+       "key": "LIGHT_SENSOR_BRIGHT_VAL",
+       "kind": "int",
+       "default": 2851,
+       "label": "Bright Value (ADC)",
+       "min": 0,
+       "max": 4095
+      },
+      {
+       "key": "AUTO_BRIGHT_DARK",
+       "kind": "int",
+       "default": 13,
+       "label": "Brightness When Dark",
+       "min": 0,
+       "max": 100,
+       "slider": true,
+       "uiMin": 0,
+       "uiMax": 100,
+       "step": 1
+      },
+      {
+       "key": "AUTO_BRIGHT_LIGHT",
+       "kind": "int",
+       "default": 100,
+       "label": "Brightness When Bright",
+       "min": 0,
+       "max": 100,
+       "slider": true,
+       "uiMin": 0,
+       "uiMax": 100,
+       "step": 1
+      },
+      {
+       "key": "AUTO_BRIGHT_FADE_MS",
+       "kind": "int",
+       "default": 4000,
+       "label": "Transition Speed",
+       "min": 0,
+       "max": 60000,
+       "unit": "ms",
+       "slider": true,
+       "uiMin": 100,
+       "uiMax": 5000,
+       "step": 100
+      },
+      {
+       "key": "ENABLE_NIGHT_MODE",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Night Mode"
+      },
+      {
+       "key": "NIGHT_MODE_START_HOUR",
+       "kind": "int",
+       "default": 23,
+       "label": "Start Time",
+       "min": 0,
+       "max": 23,
+       "unit": "Hour"
+      },
+      {
+       "key": "NIGHT_MODE_END_HOUR",
+       "kind": "int",
+       "default": 0,
+       "label": "End Time",
+       "min": 0,
+       "max": 23,
+       "unit": "Hour"
+      },
+      {
+       "key": "NIGHT_BACKLIGHT",
+       "kind": "int",
+       "default": 29,
+       "label": "Night Backlight",
+       "min": 0,
+       "max": 100,
+       "slider": true,
+       "uiMin": 0,
+       "uiMax": 100,
+       "step": 1
+      }
+     ],
+     "widget": "ambientCalibrate"
+    }
+   ]
+  },
+  {
+   "id": "sensors_tuning",
+   "title": "Sensors Tuning",
+   "cards": [
+    {
+     "title": "Fuel level Sensor",
+     "items": [
+      {
+       "key": "FUEL_INPUT_ENABLED",
+       "kind": "bool",
+       "default": 0,
+       "label": "Sender connected - read the fuel level"
+      },
+      {
+       "key": "FUEL_OHM_EMPTY",
+       "kind": "float",
+       "default": 10.0,
+       "label": "Sender resistance when EMPTY (ohm)",
+       "min": 0.0,
+       "max": 100000.0
+      },
+      {
+       "key": "FUEL_OHM_FULL",
+       "kind": "float",
+       "default": 180.0,
+       "label": "Sender resistance when FULL (ohm)",
+       "min": 0.0,
+       "max": 100000.0
+      },
+      {
+       "key": "FUEL_EXC_RES_OHM",
+       "kind": "int",
+       "default": 220,
+       "label": "Excitation resistor from 3V3 (ohm)",
+       "min": 10,
+       "max": 100000
+      },
+      {
+       "key": "FUEL_OVERSAMPLE",
+       "kind": "int",
+       "default": 16,
+       "label": "ADC samples averaged per reading",
+       "min": 1,
+       "max": 64,
+       "advanced": true
+      },
+      {
+       "key": "FUEL_TOUCH_POINTS",
+       "kind": "int",
+       "default": 8,
+       "label": "Fuel Touch Points",
+       "min": 2,
+       "max": 20,
+       "widget": "pointCount"
+      },
+      {
+       "key": "fuelCalOhms",
+       "kind": "fuelTable",
+       "label": "Fuel Tank Calibration",
+       "countKey": "FUEL_TOUCH_POINTS",
+       "liveId": "fuel-reading"
+      },
+      {
+       "key": "FUEL_FILTER_ALPHA",
+       "kind": "float",
+       "default": 0.08,
+       "label": "Smoothing Factor",
+       "min": 0.001,
+       "max": 1.0
+      }
+     ]
+    },
+    {
+     "title": "Engine Temperature",
+     "items": [
+      {
+       "key": "NTC_TEMP_OFFSET",
+       "kind": "float",
+       "default": 0.0,
+       "label": "Offset",
+       "min": -50.0,
+       "max": 50.0,
+       "unit": "°C",
+       "advanced": true
+      },
+      {
+       "key": "NTC_R25",
+       "kind": "float",
+       "default": 10000.0,
+       "label": "R25",
+       "min": 100.0,
+       "max": 10000000.0,
+       "unit": "Ω",
+       "advanced": true
+      },
+      {
+       "key": "NTC_R_BALANCE",
+       "kind": "float",
+       "default": 10000.0,
+       "label": "Balance",
+       "min": 100.0,
+       "max": 10000000.0,
+       "unit": "Ω",
+       "advanced": true
+      },
+      {
+       "key": "NTC_BETA",
+       "kind": "float",
+       "default": 3950.0,
+       "label": "Beta",
+       "min": 1000.0,
+       "max": 20000.0,
+       "advanced": true
+      }
+     ],
+     "widget": "tempCalibrate"
+    },
+    {
+     "title": "Battery Voltage",
+     "items": [
+      {
+       "key": "BATTERY_OFFSET",
+       "kind": "float",
+       "default": 0.2,
+       "label": "Offset",
+       "min": -50.0,
+       "max": 50.0,
+       "unit": "V",
+       "advanced": true
+      },
+      {
+       "key": "BATTERY_SCALE",
+       "kind": "float",
+       "default": 5.7,
+       "label": "Scale",
+       "min": 0.01,
+       "max": 1000.0,
+       "unit": "×",
+       "advanced": true
+      }
+     ],
+     "widget": "batteryCalibrate"
+    },
+    {
+     "title": "Acceleration Timer",
+     "items": [
+      {
+       "key": "ACCEL_START_SPEED",
+       "kind": "float",
+       "default": 1.0,
+       "label": "Timer Start Speed",
+       "min": 0.0,
+       "max": 200.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "ACCEL_TARGET_SPEED",
+       "kind": "float",
+       "default": 50.0,
+       "label": "Timer Target Speed",
+       "min": 1.0,
+       "max": 400.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "ACCEL_MAX_TIME",
+       "kind": "float",
+       "default": 9.99,
+       "label": "Timer Max Time (0 = off)",
+       "min": 0.1,
+       "max": 999.99,
+       "unit": "sec"
+      },
+      {
+       "key": "ACCEL_BADGE_LINE1",
+       "kind": "text",
+       "default": "0-50",
+       "label": "Badge Line 1 (e.g., '0-50')",
+       "maxLength": 16
+      },
+      {
+       "key": "ACCEL_BADGE_LINE2",
+       "kind": "text",
+       "default": "km/h",
+       "label": "Badge Line 2 (e.g., 'km/h')",
+       "maxLength": 16
+      }
+     ]
+    },
+    {
+     "title": "Odometer",
+     "items": [
+      {
+       "key": "WHEEL_CIRCUMFERENCE_MM",
+       "kind": "float",
+       "default": 1650.0,
+       "label": "Wheel Circumference",
+       "min": 50.0,
+       "max": 10000.0,
+       "unit": "mm",
+       "unitType": "length"
+      },
+      {
+       "key": "MIN_SPEED_THRESHOLD",
+       "kind": "float",
+       "default": 1.0,
+       "label": "Minimum Speed Threshold",
+       "min": 0.0,
+       "max": 50.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "REFRESH_SPEED_MS",
+       "kind": "int",
+       "default": 250,
+       "label": "Speed",
+       "min": 10,
+       "max": 60000,
+       "unit": "ms",
+       "section": "Polling Rates"
+      },
+      {
+       "key": "REFRESH_BAT_MS",
+       "kind": "int",
+       "default": 2500,
+       "label": "Battery Voltage",
+       "min": 10,
+       "max": 600000,
+       "unit": "ms",
+       "section": "Polling Rates"
+      },
+      {
+       "key": "REFRESH_INST_MS",
+       "kind": "int",
+       "default": 500,
+       "label": "Instant KML",
+       "min": 10,
+       "max": 60000,
+       "unit": "ms",
+       "section": "Polling Rates"
+      },
+      {
+       "key": "REFRESH_MAX_SPEED_MS",
+       "kind": "int",
+       "default": 500,
+       "label": "Max Speed",
+       "min": 10,
+       "max": 60000,
+       "unit": "ms",
+       "section": "Polling Rates"
+      },
+      {
+       "key": "REFRESH_FUEL_MS",
+       "kind": "int",
+       "default": 1000,
+       "label": "Fuel LTRS",
+       "min": 10,
+       "max": 60000,
+       "unit": "ms",
+       "section": "Polling Rates"
+      },
+      {
+       "key": "GPS_BAUD",
+       "kind": "int",
+       "default": 115200,
+       "label": "GNSS Baud Rate",
+       "min": 1200,
+       "max": 921600,
+       "unit": "baud",
+       "section": "GPS",
+       "reboot": true
+      },
+      {
+       "key": "MIN_SATELLITES",
+       "kind": "int",
+       "default": 8,
+       "label": "Minimum Satellites Required",
+       "min": 1,
+       "max": 32,
+       "section": "GPS"
+      },
+      {
+       "key": "OPTIMAL_SATELLITES",
+       "kind": "int",
+       "default": 12,
+       "label": "Optimal Satellites Count",
+       "min": 1,
+       "max": 32,
+       "section": "GPS"
+      }
+     ],
+     "widget": "odometerSet"
+    },
+    {
+     "title": "Speedometer",
+     "items": [
+      {
+       "key": "SPEED_SOURCE_MODE",
+       "kind": "int",
+       "default": 2,
+       "label": "Speed Source",
+       "min": 0,
+       "max": 2,
+       "options": [
+        {
+         "value": 0,
+         "label": "Hall only"
+        },
+        {
+         "value": 1,
+         "label": "GPS only"
+        },
+        {
+         "value": 2,
+         "label": "Sensor Fusion (default)"
+        }
+       ]
+      },
+      {
+       "key": "SPEED_SOURCE_HOLD_MS",
+       "kind": "int",
+       "default": 500,
+       "label": "Speed Source Hold Time",
+       "min": 0,
+       "max": 10000,
+       "unit": "ms"
+      },
+      {
+       "key": "GPS_MIN_DEV_KMH",
+       "kind": "float",
+       "default": 1.0,
+       "label": "Min Deviation Hall vs GPS",
+       "min": 0.0,
+       "max": 50.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "MAX_SPEED_DELTA_KMH",
+       "kind": "float",
+       "default": 5.0,
+       "label": "Max Deviation Hall vs GPS",
+       "min": 0.01,
+       "max": 100.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "GPS_START_KMH",
+       "kind": "float",
+       "default": 3.0,
+       "label": "GPS Start Speed",
+       "min": 0.0,
+       "max": 200.0,
+       "unit": "km/h",
+       "unitType": "speed"
+      },
+      {
+       "key": "GPS_STOP_SETTLE_MS",
+       "kind": "int",
+       "default": 1500,
+       "label": "GPS Stop Settle Time",
+       "min": 0,
+       "max": 60000,
+       "unit": "ms"
+      },
+      {
+       "key": "HALL_MEDIAN_SAMPLES",
+       "kind": "int",
+       "default": 3,
+       "label": "Hall Speed Window (samples, 1 = raw)",
+       "min": 1,
+       "max": 31
+      },
+      {
+       "key": "HALL_PERIOD_GUARD",
+       "kind": "int",
+       "default": 8,
+       "label": "Hall Period Guard (1 = off)",
+       "min": 1,
+       "max": 100
+      },
+      {
+       "key": "HALL_PULSE_MIN_US",
+       "kind": "int",
+       "default": 150,
+       "label": "Hall Min Pulse Width (10-1000)",
+       "min": 10,
+       "max": 1000,
+       "unit": "us"
+      },
+      {
+       "key": "GPS_DEBUG_DEFAULT",
+       "kind": "bool",
+       "default": 0,
+       "label": "Show GPS Debug Overlay",
+       "advanced": true
+      }
+     ]
+    },
+    {
+     "title": "Noise Bench",
+     "items": [],
+     "widget": "noiseBench"
+    }
+   ]
+  },
+  {
+   "id": "ui_layout",
+   "title": "UI Layout",
+   "cards": [
+    {
+     "title": "System",
+     "items": [
+      {
+       "key": "BIG_CENTER_X",
+       "keyY": "BIG_CENTER_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": 0,
+       "max": 4095,
+       "minY": 0,
+       "maxY": 4095,
+       "default": [
+        240,
+        160
+       ],
+       "section": "Viewport Center"
+      },
+      {
+       "key": "SHOW_GHOST_DIGITS",
+       "kind": "bool",
+       "default": 1,
+       "label": "Show Ghost Digits",
+       "section": "Ghost Digits"
+      },
+      {
+       "key": "GHOST_COLOR_STR",
+       "kind": "color",
+       "default": "#474747",
+       "label": "Ghost Digit Color",
+       "maxLength": 8,
+       "section": "Ghost Digits"
+      },
+      {
+       "key": "SHOW_FPS_COUNTER_DEFAULT",
+       "kind": "bool",
+       "default": 0,
+       "label": "Visible",
+       "section": "FPS Counter"
+      },
+      {
+       "key": "OFFSET_BIG_FPS_X",
+       "keyY": "OFFSET_BIG_FPS_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -9,
+        -7
+       ],
+       "section": "FPS Counter"
+      },
+      {
+       "key": "SHOW_ELEMENT_SIGNATURE",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Signature"
+      },
+      {
+       "key": "OFFSET_BIG_SIGNATURE_X",
+       "keyY": "OFFSET_BIG_SIGNATURE_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        0,
+        -75
+       ],
+       "section": "Signature"
+      }
+     ]
+    },
+    {
+     "title": "Speed & Odometer",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_TMR",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Acceleration Timer"
+      },
+      {
+       "key": "TMR_INT_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Acceleration Timer",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "TMR_DEC_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Acceleration Timer",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_TMR_X",
+       "keyY": "OFFSET_BIG_TMR_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -53,
+        -46
+       ],
+       "section": "Acceleration Timer"
+      },
+      {
+       "key": "SHOW_ELEMENT_SPEED_SOURCE",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Speed Source Icon"
+      },
+      {
+       "key": "OFFSET_HALL_ICON_X",
+       "keyY": "OFFSET_HALL_ICON_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        0,
+        -100
+       ],
+       "section": "Speed Source Icon"
+      },
+      {
+       "key": "SHOW_ELEMENT_SPEED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Main Speed Number"
+      },
+      {
+       "key": "SPEED_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Digits",
+       "min": 1,
+       "max": 4,
+       "section": "Main Speed Number",
+       "uiMin": 1,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_SPEED_NUM_X",
+       "keyY": "OFFSET_BIG_SPEED_NUM_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        0,
+        -3
+       ],
+       "section": "Main Speed Number"
+      },
+      {
+       "key": "SHOW_ELEMENT_SPEED_UNIT",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Speed Unit"
+      },
+      {
+       "key": "OFFSET_BIG_SPEED_UNIT_X",
+       "keyY": "OFFSET_BIG_SPEED_UNIT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        106,
+        56
+       ],
+       "section": "Speed Unit"
+      },
+      {
+       "key": "SHOW_ELEMENT_AVG_SPEED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Average Speed"
+      },
+      {
+       "key": "AVG_SPEED_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Average Speed",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "AVG_SPEED_DEC_DIGITS",
+       "kind": "int",
+       "default": 0,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Average Speed",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_AVG_SPEED_X",
+       "keyY": "OFFSET_AVG_SPEED_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -163,
+        -25
+       ],
+       "section": "Average Speed"
+      },
+      {
+       "key": "SHOW_ELEMENT_MAX_SPEED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Max Speed"
+      },
+      {
+       "key": "MAX_SPEED_INT_DIGITS",
+       "kind": "int",
+       "default": 3,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Max Speed",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "MAX_SPEED_DEC_DIGITS",
+       "kind": "int",
+       "default": 0,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Max Speed",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_MAX_SPEED_X",
+       "keyY": "OFFSET_MAX_SPEED_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -60,
+        -25
+       ],
+       "section": "Max Speed"
+      },
+      {
+       "key": "SHOW_ELEMENT_ODO",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Odometer"
+      },
+      {
+       "key": "ODO_INT_DIGITS",
+       "kind": "int",
+       "default": 5,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Odometer",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "ODO_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Odometer",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_ODO_X",
+       "keyY": "OFFSET_BIG_ODO_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        22,
+        126
+       ],
+       "section": "Odometer"
+      }
+     ]
+    },
+    {
+     "title": "Fuel & Battery",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_AVG_KML",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Average KML"
+      },
+      {
+       "key": "AVG_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Average KML",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "AVG_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Average KML",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_AVG_KML_X",
+       "keyY": "OFFSET_AVG_KML_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        160,
+        -25
+       ],
+       "section": "Average KML"
+      },
+      {
+       "key": "SHOW_ELEMENT_INST_KML",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Instant KML"
+      },
+      {
+       "key": "INST_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Instant KML",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "INST_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Instant KML",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_INST_KML_X",
+       "keyY": "OFFSET_INST_KML_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        60,
+        -25
+       ],
+       "section": "Instant KML"
+      },
+      {
+       "key": "SHOW_ELEMENT_FUEL_LTRS",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Fuel LTRS"
+      },
+      {
+       "key": "FUEL_INT_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Fuel LTRS",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "FUEL_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Fuel LTRS",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_FUEL_LTRS_X",
+       "keyY": "OFFSET_FUEL_LTRS_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        132,
+        123
+       ],
+       "section": "Fuel LTRS"
+      },
+      {
+       "key": "SHOW_ELEMENT_BAT",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Battery"
+      },
+      {
+       "key": "BAT_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Battery",
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "BAT_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Battery",
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_BAT_X",
+       "keyY": "OFFSET_BIG_BAT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -112,
+        123
+       ],
+       "section": "Battery"
+      }
+     ]
+    },
+    {
+     "title": "Clock & Date",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_TIME",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Clock"
+      },
+      {
+       "key": "OFFSET_BIG_TIME_X",
+       "keyY": "OFFSET_BIG_TIME_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        107,
+        -91
+       ],
+       "section": "Clock"
+      },
+      {
+       "key": "SHOW_ELEMENT_DATE",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Date"
+      },
+      {
+       "key": "OFFSET_BIG_DATE_X",
+       "keyY": "OFFSET_BIG_DATE_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -131,
+        -91
+       ],
+       "section": "Date"
+      }
+     ]
+    },
+    {
+     "title": "WiFi & Satellites",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_SAT",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Satellites"
+      },
+      {
+       "key": "SAT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Digits",
+       "min": 1,
+       "max": 3,
+       "section": "Satellites",
+       "uiMin": 1,
+       "uiMax": 3
+      },
+      {
+       "key": "OFFSET_BIG_SAT_X",
+       "keyY": "OFFSET_BIG_SAT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        179,
+        -114
+       ],
+       "section": "Satellites"
+      },
+      {
+       "key": "SHOW_ELEMENT_WIFI",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "WiFi Icon"
+      },
+      {
+       "key": "OFFSET_WIFI_ICON_X",
+       "keyY": "OFFSET_WIFI_ICON_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        204,
+        -108
+       ],
+       "section": "WiFi Icon"
+      }
+     ]
+    },
+    {
+     "title": "Weather Widget",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_WEATHER",
+       "kind": "bool",
+       "default": 1,
+       "label": "Show Weather Widget on Dashboard"
+      },
+      {
+       "key": "OFFSET_WEATHER_X",
+       "keyY": "OFFSET_WEATHER_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        0,
+        146
+       ]
+      },
+      {
+       "key": "WEATHER_WIDTH",
+       "kind": "int",
+       "default": 480,
+       "label": "Width",
+       "min": 160,
+       "max": 480,
+       "unit": "px",
+       "section": "Widget Size",
+       "slider": true,
+       "uiMin": 160,
+       "uiMax": 480,
+       "step": 1
+      },
+      {
+       "key": "WEATHER_HEIGHT",
+       "kind": "int",
+       "default": 28,
+       "label": "Height",
+       "min": 20,
+       "max": 120,
+       "unit": "px",
+       "section": "Widget Size",
+       "slider": true,
+       "uiMin": 20,
+       "uiMax": 120,
+       "step": 1
+      }
+     ]
+    },
+    {
+     "title": "Sidebars",
+     "items": [
+      {
+       "key": "SHOW_ELEMENT_SIDEBAR_TEMP",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Left Bar (Engine Temp)"
+      },
+      {
+       "key": "SIDEBAR_LEFT_X",
+       "keyY": "SIDEBAR_LEFT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        10,
+        95
+       ],
+       "section": "Left Bar (Engine Temp)"
+      },
+      {
+       "key": "TEMP_BAR_MIN",
+       "kind": "int",
+       "default": 10,
+       "label": "Bar min (scale)",
+       "min": -40,
+       "max": 300,
+       "unit": "°C",
+       "section": "Engine Temperature Color Ramp",
+       "unitType": "temp"
+      },
+      {
+       "key": "COLOR_TEMP_NORM",
+       "kind": "color",
+       "default": "#00ff00",
+       "label": "Color fade point 1",
+       "maxLength": 8,
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "TEMP_WARN_LOW",
+       "kind": "int",
+       "default": 20,
+       "label": "Color fade point 1 (value)",
+       "min": -40,
+       "max": 300,
+       "unit": "°C",
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "COLOR_TEMP_WARN",
+       "kind": "color",
+       "default": "#ffff00",
+       "label": "Color fade point 2",
+       "maxLength": 8,
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "TEMP_WARN_YEL",
+       "kind": "int",
+       "default": 45,
+       "label": "Color fade point 2 (value)",
+       "min": -40,
+       "max": 300,
+       "unit": "°C",
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "COLOR_TEMP_CRIT",
+       "kind": "color",
+       "default": "#ff0000",
+       "label": "Color fade point 3",
+       "maxLength": 8,
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "TEMP_WARN_RED",
+       "kind": "int",
+       "default": 90,
+       "label": "Color fade point 3 (value)",
+       "min": -40,
+       "max": 300,
+       "unit": "°C",
+       "section": "Engine Temperature Color Ramp"
+      },
+      {
+       "key": "TEMP_BAR_MAX",
+       "kind": "int",
+       "default": 110,
+       "label": "Bar max (scale)",
+       "min": -40,
+       "max": 300,
+       "unit": "°C",
+       "section": "Engine Temperature Color Ramp",
+       "unitType": "temp"
+      },
+      {
+       "key": "SHOW_ELEMENT_SIDEBAR_FUEL",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Right Bar (Fuel)"
+      },
+      {
+       "key": "SIDEBAR_RIGHT_X",
+       "keyY": "SIDEBAR_RIGHT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        462,
+        95
+       ],
+       "section": "Right Bar (Fuel)"
+      },
+      {
+       "key": "COLOR_FUEL_NORM",
+       "kind": "color",
+       "default": "#00ff00",
+       "label": "Full (color at 100%)",
+       "maxLength": 8,
+       "section": "Fuel Level Color Ramp"
+      },
+      {
+       "key": "COLOR_FUEL_WARN",
+       "kind": "color",
+       "default": "#ffff00",
+       "label": "Color fade point 1",
+       "maxLength": 8,
+       "section": "Fuel Level Color Ramp"
+      },
+      {
+       "key": "FUEL_WARN_YEL",
+       "kind": "int",
+       "default": 45,
+       "label": "Color fade point 1 (value)",
+       "min": 0,
+       "max": 100,
+       "unit": "%",
+       "section": "Fuel Level Color Ramp"
+      },
+      {
+       "key": "COLOR_FUEL_CRIT",
+       "kind": "color",
+       "default": "#ff0000",
+       "label": "Color fade point 2",
+       "maxLength": 8,
+       "section": "Fuel Level Color Ramp"
+      },
+      {
+       "key": "FUEL_WARN_RED",
+       "kind": "int",
+       "default": 20,
+       "label": "Color fade point 2 (value)",
+       "min": 0,
+       "max": 100,
+       "unit": "%",
+       "section": "Fuel Level Color Ramp"
+      },
+      {
+       "key": "SIDEBAR_BAR_WIDTH",
+       "kind": "int",
+       "default": 8,
+       "label": "Width",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions"
+      },
+      {
+       "key": "SIDEBAR_BAR_HEIGHT",
+       "kind": "int",
+       "default": 190,
+       "label": "Height",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "more",
+   "title": "More settings",
+   "cards": [
+    {
+     "title": "More settings",
+     "items": [
+      {
+       "key": "ENABLE_CIRCLE_TEST",
+       "kind": "bool",
+       "default": 0,
+       "label": "Enable Circle Test",
+       "generated": true
+      },
+      {
+       "key": "FUEL_ADC_VREF",
+       "kind": "float",
+       "default": 3.3,
+       "label": "Fuel Adc Vref",
+       "generated": true,
+       "min": 2.5,
+       "max": 4.2
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "hidden": [
+  "AP_PASSWORD",
+  "NTP_ENABLED",
+  "NTP_SERVER",
+  "WIFI_ATTEMPT_SECONDS",
+  "WIFI_PASSWORD",
+  "WIFI_PASSWORD_1",
+  "WIFI_PASSWORD_2",
+  "WIFI_PASSWORD_3",
+  "WIFI_PASSWORD_4",
+  "WIFI_SSID",
+  "WIFI_SSID_1",
+  "WIFI_SSID_2",
+  "WIFI_SSID_3",
+  "WIFI_SSID_4"
+ ],
+ "advancedKey": "ADV_MODE",
+ "extras": {
+  "fuelCalOhms": {
+   "kind": "floatArray",
+   "label": "Fuel sender calibration (ohm)",
+   "countKey": "FUEL_TOUCH_POINTS"
+  },
+  "ambientLightValue": {
+   "kind": "int",
+   "label": "Ambient light reading (ADC)",
+   "live": true
+  },
+  "core_version": {
+   "kind": "text",
+   "label": "ESP core version",
+   "readOnly": true
+  },
+  "build_version": {
+   "kind": "text",
+   "label": "Firmware build (compiled in)",
+   "readOnly": true
+  }
+ },
+ "imperial": {
+  "speed": 0.621371,
+  "length": 0.03937007874015748,
+  "volume": 0.264172,
+  "temp": "c_to_f",
+  "labelSwap": {
+   "°C": "°F",
+   "km/h": "mph",
+   "mm": "in",
+   "L": "G",
+   "km": "mi"
+  }
+ },
+ "rebootKeys": [
+  "DISPLAY_ROTATION",
+  "DISPLAY_WIDTH",
+  "DISPLAY_HEIGHT",
+  "GPS_BAUD",
+  "NTP_ENABLED",
+  "NTP_SERVER"
+ ]
+}
