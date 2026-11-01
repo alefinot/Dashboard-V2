@@ -808,14 +808,16 @@ void loop() {
       // full redraw because this panel painted over all of it.
       static bool pairingShown = false;
       static uint32_t pairingShownCode = 0xFFFFFFFF;
+      // s_pairing turns true in onPassKeyNotify at the same moment the code is
+      // stored, so "pairing is live" already implies "the code is known" - and a
+      // code of 000000 is a code. The panel follows the flag, nothing else.
       bool pairingNow = btPairingActive();
       uint32_t pairingCode = pairingNow ? btPairingPasskey() : 0;
-      if (pairingNow && pairingCode != 0 &&
-          (!pairingShown || pairingCode != pairingShownCode)) {
+      if (pairingNow && (!pairingShown || pairingCode != pairingShownCode)) {
         showPairingScreen(pairingCode);
         pairingShown = true;
         pairingShownCode = pairingCode;
-      } else if (pairingShown && (!pairingNow || pairingCode == 0)) {
+      } else if (pairingShown && !pairingNow) {
         pairingShown = false;
         pairingShownCode = 0xFFFFFFFF;
         forceFullRedraw = true;
