@@ -74,6 +74,7 @@ fun SettingsScreen(
     val recording by TripRuntime.state.collectAsStateWithLifecycle()
     var storageLine by remember { mutableStateOf("") }
     var showConfirmClear by remember { mutableStateOf(false) }
+    var showBle by remember { mutableStateOf(false) }
     val settings = remember { RecorderSettings(context) }
     val scope = rememberCoroutineScope()
     val recordingEnabled by settings.recordingEnabled
@@ -87,6 +88,11 @@ fun SettingsScreen(
             "?"
         }
     }
+    if (showBle) {
+        BleScreen(onBack = { showBle = false })
+        return
+    }
+
     Box(
         Modifier.fillMaxSize()
             .background(HudColors.Bg),
@@ -140,6 +146,21 @@ fun SettingsScreen(
                     )
                 }
             }
+            Spacer(Modifier.height(24.dp))
+
+            // ── BLE link ─────────────────────────────────────────────────────
+            // The unit's own settings no longer have a Web UI: they are read and
+            // written over Bluetooth from this phone. The panel behind this button
+            // is the transport's proof - scan, pair, 1 Hz snapshot, config mirror.
+            HudButton("DASHBOARD LINK (BLE)") { showBle = true }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Scan for the dashboard, pair with the code it shows, then read its " +
+                    "settings over Bluetooth. This works with nothing but the radio: " +
+                    "no Wi-Fi and no network.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
             Spacer(Modifier.height(24.dp))
 
             // ── Trip recording ───────────────────────────────────────────────

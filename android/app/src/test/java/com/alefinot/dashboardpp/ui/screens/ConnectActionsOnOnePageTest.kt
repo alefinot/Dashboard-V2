@@ -32,8 +32,13 @@ class ConnectActionsOnOnePageTest {
     /**
      * The vehicle page, plus [ManualEntryPanel], which the vehicle page raises and nothing
      * else does - which [manualAddressPanelIsRaisedOnlyFromTheVehiclePage] is what keeps true.
+     *
+     * [BleScreen] is the third entry and it is temporary: it is the bench panel that proves
+     * the BLE transport (scan, pair, snapshot, config mirror) while the vehicle page still
+     * only knows HTTP. Phase 2c moves BLE into the connection ladder and deletes the panel;
+     * until then its DISCONNECT is the only way to drop a link without killing the app.
      */
-    private val allowed = listOf("ManualEntryPanel.kt", "VehicleScreen.kt")
+    private val allowed = listOf("BleScreen.kt", "ManualEntryPanel.kt", "VehicleScreen.kt")
 
     @Test
     fun connectionActionsAreCalledFromTwoScreenFilesOnly() {

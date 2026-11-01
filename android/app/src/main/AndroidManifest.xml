@@ -6,6 +6,26 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- Bluetooth LE. The firmware V2.0.0 units have no Wi-Fi at all: the phone is
+         their only client, and this radio is the transport for settings, telemetry,
+         weather, time and firmware. `neverForLocation` is the assertion Android 12+
+         wants - the scan is filtered by our own service UUID and is never used to
+         derive a position - so the app does not have to ask for location on 31+.
+         On Android 11 and below a BLE scan is a location scan as far as the
+         platform is concerned, which is why ACCESS_FINE_LOCATION is capped there. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- The app still talks to pre-2.0 units over Wi-Fi, but a phone without a BLE
+         radio can no longer do the important half. Not `required=true` yet: the
+         HTTP path is kept for one release cycle (plan §8). -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
     <!-- Trip recording (see the trip recording plan). A foreground service with
          a permanent notification is the only way Android lets a companion app
          keep polling the car while the phone is doing its own thing; the wake
