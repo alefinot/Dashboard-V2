@@ -131,7 +131,7 @@ object ConnectionCore {
         // nothing-to-reach answer as never having one; there is no card to probe.
         if (selectedId != null && card == null) return CoreResult(NextAction.Idle(NO_VEHICLE_SELECTED))
 
-        val untried = card?.ips?.firstOrNull { it !in tried }
+        val untried = card?.bleAddress?.takeIf { it.isNotEmpty() && it !in tried }
         if (untried != null) return CoreResult(NextAction.Probe(card!!.id, untried))
 
         return when (mode) {
@@ -140,13 +140,13 @@ object ConnectionCore {
             // touched — none of which belongs at launch or on a network callback.
             ConnectMode.SILENT, ConnectMode.PROBE -> when {
                 card == null -> CoreResult(NextAction.Idle(NO_VEHICLE_SELECTED))
-                card.ips.isEmpty() -> CoreResult(NextAction.Idle(NO_ADDRESS))
-                // Everything remembered was dialed and nobody answered. That is a
+                !card.hasPairing -> CoreResult(NextAction.Idle(NO_ADDRESS))
+                // The address on file was dialed and nobody answered. That is a
                 // failure, not a wait: the vehicle page shows it under that card.
                 else -> CoreResult(
                     NextAction.Failed(
                         "No Dashboard++ answered for ${card.name.ifEmpty { card.id }} " +
-                            "at its remembered addresses.",
+                            "at its remembered address.",
                     ),
                 )
             }
@@ -174,7 +174,7 @@ object ConnectionCore {
         // unambiguous on its own. See the class note for why this does not go through
         // VehicleMatch.resolve's first-claimant tie-break.
         if (mac == null) {
-            val owners = vehicles.filter { it.ips.contains(answer.ip) }
+            val owners = vehicles.filter { it.bleAddress != null && it.bleAddress == answer.ip }
             return when (owners.size) {
                 1 -> toConnect(owners.first(), answer, selectedId, vehicles, nowMs)
                 0 -> CoreResult(NextAction.Failed(UNCLAIMED))
@@ -213,10 +213,10 @@ object ConnectionCore {
         vehicles: List<Vehicle>,
         nowMs: Long,
     ): CoreResult {
-        // Rule 5 — the answering address goes to the front of the list (the next cold
-        // start probes in that order), the identity is adopted when one was reported
-        // and kept when it was not, and the firmware version rides along because the
-        // verify step already fetched it and the trips page needs it for the trip store.
+        // Rule 5 — the pairing that answered becomes the card's address to dial next
+        // time, the identity is adopted when one was reported and kept when it was not,
+        // and the firmware version rides along because the verify step already fetched it
+        // and the trips page needs it for the trip store.
         val bound = VehicleMatch.bindConnect(card, answer.ip, answer.mac, nowMs)
         val version = answer.version ?: bound.firmwareVersion
         return CoreResult(

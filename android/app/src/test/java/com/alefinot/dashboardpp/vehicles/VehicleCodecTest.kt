@@ -33,7 +33,7 @@ class VehicleCodecTest {
         model = "Golf III",
         year = "c. 1998",
         notes = "second carb\nneeds the idle jet,\ttwice",
-        ips = listOf("192.168.1.42", "10.0.0.9", "172.16.4.8"),
+        bleAddress = "AA:BB:CC:DD:EE:01",
         lastConnectedAtMs = 1_700_000_000_000L,
         firmwareVersion = "V1.3.3",
         createdAtMs = 1_690_000_000_000L,
@@ -65,7 +65,7 @@ class VehicleCodecTest {
         assertNull(decoded.lastConnectedAtMs)
         assertNull(decoded.firmwareVersion)
         assertEquals(0L, decoded.createdAtMs)
-        assertEquals(emptyList<String>(), decoded.ips)
+        assertNull(decoded.bleAddress)
     }
 
     @Test
@@ -81,7 +81,7 @@ class VehicleCodecTest {
             model = "tab\there",
             year = "",
             notes = "line1\nline2\r\nline3\ttail ",
-            ips = listOf("192.168.1.42"),
+            bleAddress = "AA:BB:CC:DD:EE:01",
         )
 
         val back = VehicleCodec.decode(VehicleCodec.encode(nasty))
@@ -120,19 +120,26 @@ class VehicleCodecTest {
     }
 
     @Test
-    fun `an ips list longer than the cap keeps the first three, which are the newest`() {
-        // Rule 5 stores newest-first, so truncation from the front is the only
-        // correct truncation: keeping "any three" would throw away the addresses the
-        // launch reconnect actually tries and keep four-deep-old ones.
-        val many = full.copy(
-            ips = listOf("1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4", "5.5.5.5"),
+    fun `a record from the Wi-Fi era keeps its row and loses its address book`() {
+        // `ips` is no longer a field this app has. It must not make the row unreadable -
+        // the cost of that is the card itself, with the user's name on it - and the
+        // array must not smuggle itself into the one address field that remains, because
+        // a network number is not a Bluetooth address and dialling one is not possible.
+        val foreign = """{"v":"v1","id":"v15","name":"Van","ips":["10.0.0.9","10.0.0.8","10.0.0.7","10.0.0.6"]}"""
+        val row = VehicleCodec.decode(foreign) ?: error("the old row must still decode")
+
+        assertEquals("Van", row.name)
+        assertNull(row.mac)
+        assertNull(row.bleAddress)
+
+        // The card is still useful: the first BLE link that answers for it binds, and the
+        // pairing is the only address it keeps.
+        val healed = VehicleMatch.bindConnect(row, "3F:38:00:11:22:33", null, 1_700_000_000_000L)
+
+        assertEquals(
+            "3F:38:00:11:22:33",
+            VehicleCodec.decode(VehicleCodec.encode(healed))?.bleAddress,
         )
-
-        val back = VehicleCodec.decode(VehicleCodec.encode(many))
-
-        assertEquals(listOf("1.1.1.1", "2.2.2.2", "3.3.3.3"), back?.ips)
-        // The cap here is the one the identity rules use (rule 5), not a copy of it.
-        assertEquals(VehicleMatch.MAX_IPS, back?.ips?.size)
     }
 
     @Test
@@ -151,7 +158,7 @@ class VehicleCodecTest {
         assertEquals("Van", back?.name)
         assertEquals(1_690_000_000_000L, back?.createdAtMs)
         // A value this build has no field for does not leak into another one.
-        assertEquals(emptyList<String>(), back?.ips)
+        assertNull(back?.bleAddress)
     }
 
     @Test
@@ -177,7 +184,7 @@ class VehicleCodecTest {
         assertEquals("Broken", back?.name)
         assertEquals(0L, back?.createdAtMs)
         assertNull(back?.lastConnectedAtMs)
-        assertEquals(emptyList<String>(), back?.ips)
+        assertNull(back?.bleAddress)
     }
 
     @Test
@@ -241,7 +248,7 @@ class VehicleCodecTest {
         assertEquals("not-a-mac", back?.mac)
         // The seam, pinned: the codec keeps it, VehicleMatch rejects it.
         assertNull(VehicleMatch.normalizeMac(back?.mac))
-        assertTrue(VehicleMatch.resolve(listOf(back!!), "192.168.1.42", junk.mac)
+        assertTrue(VehicleMatch.resolve(listOf(back!!), "3F:38:00:11:22:33", junk.mac)
             is MatchDecision.Unknown)
     }
 
@@ -305,22 +312,17 @@ class VehicleCodecTest {
     }
 
     @Test
-    fun `a foreign ips order is truncated, and the next connect puts it right`() {
-        // Rule 5 says a card's ips list is newest-first and at most three long. Our own
-        // writer always satisfies that; a foreign or torn row might not. Decode keeps
-        // the first three as stored (it cannot tell the order from the list alone), and
-        // VehicleMatch.bindConnect re-derives the order on the next connect - so the
-        // worst case from a foreign row is probing a staler address first, once.
-        val foreign = """{"v":"v1","id":"v15","ips":["10.0.0.9","10.0.0.8","10.0.0.7","10.0.0.6"]}"""
-        val row = VehicleCodec.decode(foreign) ?: error("the foreign row must decode")
-        assertEquals(listOf("10.0.0.9", "10.0.0.8", "10.0.0.7"), row.ips)
+    fun `a connect never invents an identity from the address it dialled`() {
+        // The migration's whole reason for this field split: a Bluetooth address names a
+        // link, not a unit, so bindConnect may replace it and may not manufacture a mac
+        // from it. The old code derived one (`02:` + reversed ip); that habit has to stay
+        // dead, so pin it.
+        val row = Vehicle(id = "v16", bleAddress = "3F:38:00:11:22:33")
 
-        val healed = VehicleMatch.bindConnect(row, "192.168.1.50", null, 1_700_000_000_000L)
+        val healed = VehicleMatch.bindConnect(row, "AA:BB:CC:DD:EE:02", null, 1_700_000_000_000L)
 
-        assertEquals(
-            listOf("192.168.1.50", "10.0.0.9", "10.0.0.8"),
-            VehicleCodec.decode(VehicleCodec.encode(healed))?.ips,
-        )
+        assertEquals("AA:BB:CC:DD:EE:02", healed.bleAddress)
+        assertNull(healed.mac)
     }
 
     @Test

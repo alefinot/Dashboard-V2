@@ -254,14 +254,23 @@ fun VehicleEditorScreen(
                 // The evidence half, read-only. A blank identity is stated rather than left
                 // out: it is the reason this card cannot be recognised when it answers, and
                 // hiding that would leave the user guessing why the other card exists.
+                // The two lines are not interchangeable. The MAC is the dashboard's own claim
+                // about itself and survives anything; the paired address is this phone's link to
+                // that radio, and it changes if the pairing is redone — which is why it is
+                // labelled as a pairing and never offered as an identity.
                 Field(
                     "IDENTITY (FROM THE DASHBOARD)",
                     draft.mac ?: "not reported by this dashboard",
                 )
                 Spacer(Modifier.height(10.dp))
                 Field(
-                    "ADDRESSES THE APP DIALS",
-                    if (draft.ips.isEmpty()) "none yet" else draft.ips.joinToString(", "),
+                    "PAIRED BY THIS PHONE",
+                    draft.bleAddress ?: "no pairing yet — search for it from the vehicle page",
+                )
+                Spacer(Modifier.height(10.dp))
+                Field(
+                    "FIRMWARE LAST SEEN",
+                    draft.firmwareVersion ?: "unknown",
                 )
                 Spacer(Modifier.height(16.dp))
 

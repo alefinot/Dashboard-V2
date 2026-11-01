@@ -178,7 +178,6 @@ fun VehicleScreen(
                         photo = cardPhoto(connection, v.id),
                         onClick = { connection.selectVehicle(v.id) },
                         onConnect = { connection.connectVehicle(v.id, ConnectMode.SEARCH) },
-                        onRetrySaved = { connection.connectVehicle(v.id, ConnectMode.PROBE) },
                         onDisconnect = { connection.disconnect() },
                         onEdit = { onEdit(v.id) },
                     )
@@ -315,8 +314,7 @@ private fun CardCover(
  *
  * What a card offers depends on what the card *is*, not on what the page is doing: the
  * connected card always offers DISCONNECT (even if the selection has moved on, because
- * that is the card with a session to end), and any other selected card offers CONNECT —
- * the whole ladder — plus, when it has an address on file, the short two-address try.
+ * that is the card with a session to end), and any other selected card offers CONNECT.
  * Every card offers EDIT, including a card nobody is standing on: a card is a record about
  * a vehicle, and records are edited whether or not they are the one being reached for. A
  * card that is neither selected nor connected offers *only* that, because a wall of
@@ -333,7 +331,6 @@ private fun VehicleCard(
     photo: Bitmap?,
     onClick: () -> Unit,
     onConnect: () -> Unit,
-    onRetrySaved: () -> Unit,
     onDisconnect: () -> Unit,
     onEdit: () -> Unit,
 ) {
@@ -377,11 +374,13 @@ private fun VehicleCard(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // The address is reference, not headline: it is what the app dialed last,
-                // and it changes when the car moves. A card that leads with an address is a
-                // card that is still thinking of itself as a bookmark.
+                // The unit's identity is reference, not headline: it is what the app knows it
+                // reached, and it is the string to check the card against at the bench. A card
+                // that leads with a radio handle is a card that is still thinking of itself as a
+                // bookmark - the MAC is shown because it is burnt into the dashboard, and the
+                // pairing is only ever a label next to it.
                 if (!connected) {
-                    vehicle.ips.firstOrNull()?.let {
+                    vehicle.identityLabel().takeIf { it.isNotEmpty() }?.let {
                         Spacer(Modifier.height(4.dp))
                         Text(it, color = HudColors.TextDim, style = HudePerfValue())
                     }
@@ -403,13 +402,6 @@ private fun VehicleCard(
                     modifier = Modifier.widthIn(min = 108.dp),
                     style = HudButtonStyle.PRIMARY,
                 ) { onConnect() }
-                if (vehicle.ips.isNotEmpty()) {
-                    HudButton(
-                        "RETRY AT ${vehicle.ips.first()}",
-                        modifier = Modifier.weight(1f),
-                        style = HudButtonStyle.SECONDARY,
-                    ) { onRetrySaved() }
-                }
             }
             HudButton(
                 "EDIT",

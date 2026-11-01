@@ -10,19 +10,21 @@ import java.util.Locale
  * Hand-rolled on purpose, for the reason [com.alefinot.dashboardpp.api.FlatJson]
  * states in its own doc: the org.json classes in the unit-test android.jar are
  * stubs that throw, so a codec written against them could not be tested off-device.
- * FlatJson cannot take over here either - it reads flat top-level key/value pairs
- * only, and a vehicle record nests its `ips` array. A self-contained reader and
- * writer of the format written here is a few dozen lines, keeps rule 13 (no new
- * dependencies) intact, and makes the format's tolerance rules testable.
+ * The reader still has to speak the whole JSON grammar even though a current record
+ * is flat, because a row written by an older build carries an `ips` array that has to
+ * be parsed in order to be skipped. A self-contained reader and writer of the format
+ * written here is a few dozen lines, keeps rule 13 (no new dependencies) intact, and
+ * makes the format's tolerance rules testable.
  *
  * [decode] is deliberately forgiving, because losing a card the user named is the
  * expensive failure and a garbled field is not:
  *
  * - unknown keys are skipped (a newer build's record must not be wrecked by an
- *   older app reading it back),
+ *   older app reading it back, and this is how a record from the Wi-Fi era - which
+ *   carried an `ips` array - still reads with that array simply dropped),
  * - missing keys take the [Vehicle] defaults,
- * - an `ips` list longer than the cap keeps its first [VehicleMatch.MAX_IPS]
- *   entries, which are the newest by rule 5,
+ * - a `ble` value that is not a string leaves [Vehicle.bleAddress] null rather than
+ *   dropping the card,
  * - a `type` this build does not know falls back to [VehicleType.OTHER] rather
  *   than dropping the card,
  * - a field whose value has the wrong shape defaults that field only.
@@ -56,7 +58,7 @@ object VehicleCodec {
         parts.add(field("model", quote(v.model)))
         parts.add(field("year", quote(v.year)))
         parts.add(field("notes", quote(v.notes)))
-        parts.add(field("ips", v.ips.joinToString(prefix = "[", postfix = "]") { quote(it) }))
+        parts.add(field("ble", nullable(v.bleAddress)))
         parts.add(field("lastConnectedAtMs", v.lastConnectedAtMs?.toString() ?: "null"))
         parts.add(field("firmwareVersion", nullable(v.firmwareVersion)))
         parts.add(field("createdAtMs", v.createdAtMs.toString()))
@@ -86,7 +88,7 @@ object VehicleCodec {
             model = str(obj, "model", ""),
             year = str(obj, "year", ""),
             notes = str(obj, "notes", ""),
-            ips = ipsOf(obj),
+            bleAddress = nullableStr(obj, "ble"),
             lastConnectedAtMs = longOrNull(obj, "lastConnectedAtMs"),
             firmwareVersion = nullableStr(obj, "firmwareVersion"),
             createdAtMs = longOrNull(obj, "createdAtMs") ?: 0L,
@@ -124,12 +126,6 @@ object VehicleCodec {
         // A name this build does not know (a newer app wrote "TRUCK"): keep the
         // card and file it under the catch-all; dropping it would delete a vehicle.
         else -> VehicleType.OTHER
-    }
-
-    /** Newest first, capped at the shared rule-5 limit - a longer list is truncated. */
-    private fun ipsOf(obj: Map<*, *>): List<String> {
-        val raw = obj["ips"] as? List<*> ?: return emptyList()
-        return raw.filterIsInstance<String>().take(VehicleMatch.MAX_IPS)
     }
 
     // --- writer ----------------------------------------------------------------

@@ -14,6 +14,7 @@ import com.alefinot.dashboardpp.discovery.SubnetScanner
 import com.alefinot.dashboardpp.discovery.VerifyResult
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.RecorderTarget
+import com.alefinot.dashboardpp.vehicles.UnitIdentity
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.CropRect
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
@@ -242,7 +243,7 @@ class ConnectionViewModel(
                 Vehicle(
                     id = vehicles.nextId(),
                     mac = unit.mac,
-                    ips = listOf(unit.ip),
+                    bleAddress = unit.ip,
                     firmwareVersion = unit.version,
                     lastConnectedAtMs = seen,
                     createdAtMs = seen,
@@ -262,7 +263,7 @@ class ConnectionViewModel(
      * that is the exact state this refactor exists to make impossible, and a warning the
      * user can press through would leave two cards describing one dashboard.
      *
-     * Everything the app measured (`mac`, `ips`, `lastConnectedAtMs`, `firmwareVersion`,
+     * Everything the app measured (`mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion`,
      * `createdAtMs`, the photo) is kept by [mergeTypedFields]; a save that rebuilt the
      * record from the form would drop the evidence that binds the card to the unit.
      */
@@ -290,21 +291,21 @@ class ConnectionViewModel(
     }
 
     /**
-     * Forget a vehicle: its card, its JPEG, and the recorder's rows for the addresses it
-     * remembered. The drives it took stay exactly where they are - a trip's file name
+     * Forget a vehicle: its card, its JPEG, and the recorder's session row for the unit it
+     * was. The drives it took stay exactly where they are - a trip's file name
      * carries this card's id, and the log outlives the card on purpose.
      *
-     * The session rows go *before* the card is removed, because a row is a claim about an
-     * address; if the card disappears first, a crash in between leaves the claim pointing at
-     * nothing. Removing the rows first leaves the worst case as a card that still exists
-     * with a clean address book, which the next connect refills.
+     * The session row goes *before* the card is removed, because a row is a claim about a
+     * unit; if the card disappears first, a crash in between leaves the claim pointing at
+     * nothing. Removing the row first leaves the worst case as a card that still exists
+     * with a clean identity, which the next connect refills.
      */
     fun deleteVehicle(vehicleId: String) {
         scope.launch {
             val v = vehicles.get(vehicleId) ?: return@launch
             val ownsSession = (uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId
             if (ownsSession) ladder?.cancel()
-            tripSettings.clearSessions(v.ips)
+            tripSettings.clearSessions(listOf(UnitIdentity.key(v.mac, v.bleAddress)))
             vehicles.delete(vehicleId)
             if (selectedVehicleId.value == vehicleId) {
                 // The store clears its own pointer; the VM's copy has to follow, and the

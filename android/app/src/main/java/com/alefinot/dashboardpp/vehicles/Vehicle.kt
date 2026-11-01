@@ -1,64 +1,128 @@
 package com.alefinot.dashboardpp.vehicles
 
-/** What kind of vehicle a card describes - the garage's only categorisation. */
+import java.util.Locale
+
+/** What a vehicle is filed under in the editor and in filters. */
 enum class VehicleType { CAR, MOTORCYCLE, OTHER }
 
 /**
- * One garage card: a vehicle the user named, plus what the app knows about the
- * dashboard unit that belongs to it.
+ * A vehicle in the garage — the thing the app *means* when it connects.
  *
- * Two halves live in one record on purpose. `name` … `notes` are the user's words
- * and are never written by a connect; `mac`, `ips`, `lastConnectedAtMs` and
- * `firmwareVersion` are the app's evidence about a physical unit. Keeping them
- * together is what lets a card mean *this dashboard* rather than *whatever answered
- * at this address* - the identity rules in [VehicleMatch] only ever touch the second
- * half, and rule 3 upgrades a card made by address without disturbing the first.
+ * A card is not an address: it is a record about a physical vehicle that exists whether
+ * or not a radio is in range, which is why a card can be selected while nothing is
+ * answering. Two identities hang off it, and they mean different things:
  *
- * `id` is app-generated and stable across renames because the trips (task 8) tag
- * themselves with it: renaming a vehicle must not rewrite recorded history.
+ * - [mac] is the dashboard's own eFuse MAC, read from `/api/mac` over the link. It is the
+ *   **identity**: burnt into the unit at the factory, unchanged by network settings, a
+ *   reboot, or a re-pairing, and it is what a trip is tagged with and what two cards are
+ *   compared on ([com.alefinot.dashboardpp.viewmodel.ConnectionCore] refuses to connect a
+ *   unit whose reported MAC belongs to a different card).
+ * - [bleAddress] is the address the phone dials to reach that unit's radio — the address
+ *   the pairing was made on. It is a **key, not an identity**: it identifies *this
+ *   phone's* link to that unit, not the unit itself, which is why it can never be shown
+ *   where the MAC can be, never be derived from the MAC, and never outrank it. A card
+ *   that reports no MAC at all is still usable, it simply cannot be recognised when
+ *   something else answers.
  *
- * `mac` is `null` until the unit is bound. Old firmware never reports one, so an
- * unbound card is a normal state, not a broken one - it is matched by address
- * instead, under the narrower rule [VehicleMatch.resolve] describes.
+ * [id] is the card's own handle: generated locally, never reused, and the foreign key
+ * that the photo files and the trip records hang off. It is deliberately not derived from
+ * either radio identity — a card exists before either is known, and a hand-made card has
+ * neither.
  *
- * The contract a codec or editor author has to hold to: `mac` is `null`, or a
- * canonical `XX:XX:XX:XX:XX:XX` - uppercase, colon-separated, six pairs, as
- * [VehicleMatch.normalizeMac] writes it. Anything else (an empty string, half a
- * value, `"garage door"`) counts as *unbound*: VehicleMatch's private `claimedMac`
- * rejects it, [VehicleMatch.bindConnect] clears it on the next connect, and the
- * store round-trips it verbatim because remembering is not the store's judgement.
- * The shape check belongs in front of a typed value: `normalizeMac(typed) != null`.
- *
- * `photoFile` is a bare file name (`v1.jpg`) inside the store's vehicles dir, never
- * an absolute path: the external files directory can move (adopted storage, a
- * backup restore), and a persisted path would then be a dead link. It is a pointer,
- * not a claim that the bytes exist - if the file is gone (a photo deleted from the
- * file manager, a restore that carried records but not pictures),
- * [VehiclePhotoStore.read] answers `null` and the card draws its placeholder; the
- * record itself stays valid. An action that removes a photo and keeps the card
- * (task 5) also clears this field, so the editor does not offer a picture that is
- * already gone.
- *
- * `year` is a `String`, not an `Int`: the user types it, and "c. 1998", "1998/99"
- * and "" are all answers a number field would throw away.
- *
- * `ips` is most-recent-first and holds at most 3 entries (see
- * [VehicleMatch.bindConnect]); the launch reconnect probes them in that order, so a
- * stale address first costs a connect timeout before the live one is tried.
+ * Everything here is plain data: the rules about what an identity means live in
+ * [VehicleMatch], the rules about what the user may type live in [VehicleEditorRules],
+ * and the file format lives in [VehicleCodec].
  */
 data class Vehicle(
+    /** Stable local handle. [VehicleStore.newId] mints it; never derived from [mac]. */
     val id: String,
+
+    /**
+     * The unit's eFuse MAC as reported by `/api/mac`, normalised by
+     * [VehicleMatch.normalizeMac] to "AA:BB:CC:DD:EE:FF" uppercase.
+     *
+     * `null` means *not recorded*, which is not the same as *this unit has no MAC*: the
+     * firmware always reports one, and what can be missing is the answer — a card made by
+     * hand in the editor, or one met over a link that never got far enough to ask.
+     *
+     * The value is written only by code that read it from the device itself, never typed
+     * by a user, and it is the one field two cards are compared on when deciding whether
+     * they describe the same dashboard.
+     */
     val mac: String? = null,
+
+    /** The user's own name for this vehicle — what the card is titled with. */
     val name: String = "",
+
+    /** Filename inside `vehicle_photos/`, or null when no photo has been chosen. */
     val photoFile: String? = null,
+
     val type: VehicleType = VehicleType.CAR,
+
+    /** Free text, as entered. Blank means "not filled in", and there is no format to enforce. */
     val plate: String = "",
+
     val maker: String = "",
     val model: String = "",
+
+    /** Free text as well: a year, a model year, or a nickname — validating it would be guessing. */
     val year: String = "",
+
+    /** A note to self. No structure, no length limit, and never used by any rule. */
     val notes: String = "",
-    val ips: List<String> = emptyList(),
+
+    /**
+     * The Bluetooth address this phone's pairing was made on — the address [BleLink]
+     * dials, and the one Android may hand back only after a real bond exists (see
+     * [com.alefinot.dashboardpp.ble.BleBond]).
+     *
+     * It names a *pairing*, not a unit: a different phone holds a different address for
+     * the same dashboard, and re-pairing this phone to the same unit changes it. That is
+     * why it is stored separately from [mac] rather than merged into it, and why the
+     * recorder's session key is built from the two of them together ([UnitIdentity.key])
+     * rather than from this one on its own.
+     */
+    val bleAddress: String? = null,
+
+    /**
+     * When a unit belonging to this card last answered, epoch milliseconds, or null when
+     * the card has never connected. Written only by a verified connect, never edited by
+     * the user — it is an observation, not an opinion, and it is what orders the garage.
+     */
     val lastConnectedAtMs: Long? = null,
+
+    /** Firmware version read on the last connect; a label for the card, not a rule input. */
     val firmwareVersion: String? = null,
+
+    /** Creation stamp, epoch milliseconds; kept for sorting and for undo. */
     val createdAtMs: Long = 0L,
-)
+) {
+    /** This card has a recorded identity: a `mac` the identity rules can read. */
+    val hasIdentity: Boolean get() = !mac.isNullOrBlank()
+
+    /** This phone has a pairing to dial. Says nothing about *which* unit it reaches. */
+    val hasPairing: Boolean get() = !bleAddress.isNullOrBlank()
+
+    /**
+     * The identity line a card shows where an address used to go.
+     *
+     * The MAC comes first and alone when it is known, because it is the only one of the
+     * two that names the dashboard itself; the pairing is appended as a fact ("PAIRED")
+     * rather than as a place. With no MAC there is nothing better to show, so the pairing
+     * address stands on its own under a `PAIRED` label — and it is labelled as such so a
+     * reader cannot mistake it for an identity.
+     *
+     * Blank when the card has neither. A caller that draws a line should skip a blank one
+     * rather than render an empty row.
+     */
+    fun identityLabel(): String {
+        val m = mac?.takeIf { it.isNotBlank() }
+        val paired = hasPairing
+        return when {
+            m != null && paired -> "MAC ${m.uppercase(Locale.US)} · PAIRED"
+            m != null -> "MAC ${m.uppercase(Locale.US)}"
+            paired -> "PAIRED ${bleAddress!!.uppercase(Locale.US)}"
+            else -> ""
+        }
+    }
+}

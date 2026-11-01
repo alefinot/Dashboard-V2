@@ -106,7 +106,7 @@ class VehicleEditorRulesTest {
         // dropped it would silently unbind the card from the unit it was adopted from.
         val stored = Vehicle(
             id = "v1", mac = "A4:CF:00:00:00:01", name = "Old", photoFile = "v1.jpg",
-            ips = listOf("192.168.1.9"), lastConnectedAtMs = 123L, firmwareVersion = "1.4.6",
+            bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = 123L, firmwareVersion = "1.4.6",
             createdAtMs = 45L,
         )
         val typed = stored.copy(
@@ -124,7 +124,7 @@ class VehicleEditorRulesTest {
         assertEquals("track days", saved.notes)
         assertEquals("Toyota", saved.maker)
         assertEquals(stored.mac, saved.mac)
-        assertEquals(stored.ips, saved.ips)
+        assertEquals(stored.bleAddress, saved.bleAddress)
         assertEquals(stored.lastConnectedAtMs, saved.lastConnectedAtMs)
         assertEquals(stored.firmwareVersion, saved.firmwareVersion)
         assertEquals(stored.photoFile, saved.photoFile)

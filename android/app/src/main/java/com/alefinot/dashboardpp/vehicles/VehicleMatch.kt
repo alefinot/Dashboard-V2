@@ -5,16 +5,19 @@ sealed interface MatchDecision {
     /** A card already claims this unit — that card is it. */
     data class Bound(val vehicle: Vehicle) : MatchDecision
 
-    /** A card was probed by address and answered with a MAC nobody claims: adopt it. */
+    /**
+     * A card was dialled on its stored pairing and answered with a MAC nobody claims:
+     * adopt it.
+     */
     data class BindMac(val vehicle: Vehicle, val mac: String) : MatchDecision
 
     /**
-     * Nothing claims this unit. Task 4's page offers adoption **only when a MAC was
-     * reported** (`mac != null`): with no MAC there is no identity to adopt, only an
-     * address that answered, and the card for an address alone is made by the
-     * address rule, not by this branch.
+     * Nothing claims this unit. The page offers adoption **only when a MAC was
+     * reported** (`mac != null`): with no MAC there is no identity to adopt, only a
+     * pairing that answered, and the card for a pairing alone is made by the address
+     * rule, not by this branch.
      */
-    data class Unknown(val ip: String, val mac: String?) : MatchDecision
+    data class Unknown(val address: String, val mac: String?) : MatchDecision
 }
 
 /**
@@ -25,25 +28,19 @@ sealed interface MatchDecision {
  * renames someone's car: it tags a drive to the wrong vehicle, moves CONNECTED to a
  * card the user never pressed, and quietly binds two different units together.
  *
- * The ranking is MAC first, address second. An address is a lease, not an identity:
- * DHCP moves a dashboard, and a phone's hotspot hands the same address to the next
- * thing that plugs in. Since the firmware reports its base eFuse MAC on `/api/perf`,
- * a card that has one no longer needs to guess.
+ * The ranking is MAC first, pairing second. A Bluetooth address is not an identity
+ * either: it names *this phone's* link to a radio, so a different phone holds a
+ * different address for the same dashboard, and re-pairing changes it. It is a better
+ * handle than a DHCP address ever was (it does not move when the car moves), but it is
+ * still a lease of a different kind, and it can never outrank the eFuse MAC the unit
+ * prints about itself.
  *
- * Everything MAC-shaped goes through [normalizeMac] first, so a card stored as
- * `a4:cf:12:3b:9e:07` (typed by hand, or written by an older build) still matches
- * the `A4:CF:12:3B:9E:07` the ESP prints. Addresses are compared as exact strings:
- * they are already what the app dialed.
+ * Everything MAC-shaped goes through [normalizeMac] on both sides, so a card stored as
+ * `a4:cf:12:3b:9e:07` (written by an older build) still matches the
+ * `A4:CF:12:3B:9E:07` the ESP prints. Pairing addresses are compared as exact strings:
+ * they are already what the app dialled, and a Bluetooth address has no other spelling.
  */
 object VehicleMatch {
-
-    /**
-     * How many addresses a card remembers - see [bindConnect].
-     *
-     * `internal`, not private, so the codec truncates through the same cap: a
-     * second literal 3 in [VehicleCodec] is how the two halves drift apart.
-     */
-    internal const val MAX_IPS = 3
 
     /** Six hex pairs, colon-separated: exactly what `perfGetHandler` prints. */
     private val MAC_SHAPE = Regex("^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
@@ -53,9 +50,9 @@ object VehicleMatch {
      *
      * Going through [normalizeMac] here rather than trusting the stored text is
      * what keeps these rules total: a record holding `""` or a half-written value
-     * is a card with *no* identity - still matchable by address, still upgradable
+     * is a card with *no* identity - still matchable by pairing, still upgradable
      * by rule 3 - instead of one that can never match anything and blocks the
-     * address it remembers.
+     * pairing it remembers.
      */
     private fun claimedMac(v: Vehicle): String? = normalizeMac(v.mac)
 
@@ -83,54 +80,68 @@ object VehicleMatch {
     }
 
     /**
-     * Which card, if any, is the unit that answered at [ip] with [mac]?
+     * Which card, if any, is the unit that answered on [address] with [mac]?
      *
-     * 1. A reported MAC matches the card that claims it - that wins over any address.
-     * 2. `mac == null` (old firmware) matches only an unbound card whose `ips` holds
-     *    the answering address, and only when no MAC-bound card claims that address.
-     * 3. A card probed by address that answers with a MAC nobody claims gets it bound
-     *    ([MatchDecision.BindMac]) - a one-time upgrade, name and photo intact. A MAC
-     *    nobody claims and no address explains is [MatchDecision.Unknown]: the page
+     * [address] is the Bluetooth address the link came up on, or `null` when the answer
+     * arrived with no pairing to point at. `null` disables the address half of the rules
+     * rather than matching every card that has no pairing — a hand-made card holding no
+     * address must never look like the owner of an answer that also named no address.
+     *
+     * 1. A reported MAC matches the card that claims it - that wins over any pairing.
+     * 2. `mac == null` (old firmware) matches only an unbound card whose `bleAddress`
+     *    is the answering pairing, and only when no MAC-bound card holds that pairing.
+     * 3. A card dialled on its pairing that answers with a MAC nobody claims gets it
+     *    bound ([MatchDecision.BindMac]) - a one-time upgrade, name and photo intact. A
+     *    MAC nobody claims and no pairing explains is [MatchDecision.Unknown]: the page
      *    offers adoption rather than borrowing a card that exists.
      *
      * Ties are resolved by list order, first claimant wins; [MatchDecision.Unknown]
      * is preferred over guessing when the evidence contradicts itself.
      *
-     * One consequence to carry into the UI (task 4 owns it): rule 2 matches only
-     * *unbound* cards, so a card that already holds a MAC can never be matched by
-     * address. A bound card whose unit is still running pre-`mac` firmware, or was
-     * rolled back, therefore answers at its own remembered address and still
-     * resolves to [MatchDecision.Unknown] - only the caller knows which card it
-     * probed, so only the caller can decide what to show.
+     * One consequence to carry into the UI: rule 2 matches only *unbound* cards, so a
+     * card that already holds a MAC can never be matched by pairing. A bound card whose
+     * unit is still running pre-`mac` firmware, or was rolled back, therefore answers on
+     * its own remembered pairing and still resolves to [MatchDecision.Unknown] - only the
+     * caller knows which card it dialled, so only the caller can decide what to show.
      */
-    fun resolve(vehicles: List<Vehicle>, ip: String, mac: String?): MatchDecision {
+    fun resolve(vehicles: List<Vehicle>, address: String?, mac: String?): MatchDecision {
         val reported = normalizeMac(mac)
 
         if (reported != null) {
-            // Rule 1 - the identity is the whole answer, whatever the address says.
+            // Rule 1 - the identity is the whole answer, whatever the pairing says.
             val claimant = vehicles.firstOrNull { claimedMac(it) == reported }
             if (claimant != null) return MatchDecision.Bound(claimant)
 
-            // Rule 3 - nobody owns this unit yet, but one card was dialed at this
-            // address and got a reply. Bind them; the card's user already knows
-            // which vehicle this is.
-            val probed = vehicles.firstOrNull { !isBound(it) && it.ips.contains(ip) }
+            // Rule 3 - nobody owns this unit yet, but one card holds the pairing it
+            // answered on. Bind them; the card's user already knows which vehicle this
+            // is.
+            val probed = unboundCardAt(vehicles, address)
             if (probed != null) return MatchDecision.BindMac(probed, reported)
 
-            return MatchDecision.Unknown(ip, reported)
+            return MatchDecision.Unknown(address.orEmpty(), reported)
         }
 
-        // Rule 2 - old firmware: the address is the only evidence, and it is weak
-        // evidence. A card that has an identity and remembers this address is the
-        // likely owner of the lease, and it is not answering (a unit that could
-        // report a MAC would have done so), so an unbound card must not step into
-        // its place.
-        if (vehicles.any { isBound(it) && it.ips.contains(ip) }) {
-            return MatchDecision.Unknown(ip, null)
+        // Rule 2 - old firmware: the pairing is the only evidence, and it is weak
+        // evidence. A card that has an identity and holds this pairing is the likely
+        // owner of the link, and it is not answering (a unit that could report a MAC
+        // would have done so), so an unbound card must not step into its place.
+        if (address != null && vehicles.any { isBound(it) && it.bleAddress == address }) {
+            return MatchDecision.Unknown(address, null)
         }
-        val unbound = vehicles.firstOrNull { !isBound(it) && it.ips.contains(ip) }
-        if (unbound == null) return MatchDecision.Unknown(ip, null)
+        val unbound = unboundCardAt(vehicles, address)
+        if (unbound == null) return MatchDecision.Unknown(address.orEmpty(), null)
         return MatchDecision.Bound(unbound)
+    }
+
+    /**
+     * The first unbound card whose pairing is [address], or `null` if there is no such
+     * card. A null [address] never matches: without a pairing there is no evidence on
+     * this half of the rules at all, and `card.bleAddress == null` is the shape of every
+     * hand-made card in the garage.
+     */
+    private fun unboundCardAt(vehicles: List<Vehicle>, address: String?): Vehicle? {
+        if (address == null) return null
+        return vehicles.firstOrNull { !isBound(it) && it.bleAddress == address }
     }
 
     /**
@@ -154,22 +165,24 @@ object VehicleMatch {
     }
 
     /**
-     * Rule 5: what a successful connect does to the record.
+     * Rule 5: what a successful link does to the record.
      *
-     * The answering address goes to the **front** of `ips`, capped at 3 newest first:
-     * the launch reconnect probes in that order, so old addresses are kept only as
-     * long as they might still be reachable. A repeat connect of the address already
-     * at the front changes nothing about the list - the network watcher fires often,
-     * and four copies of one host would push the real alternatives out of the cap.
+     * The pairing the unit answered on becomes the card's `bleAddress` - the one
+     * address the ladder dials next time. There is no history to keep: a card holds one
+     * pairing, and replacing it is correct precisely because that string names a link
+     * rather than a unit. The newest-first list of network addresses existed to survive a
+     * DHCP lease moving under the app; a re-pairing replaces the address outright, and the
+     * identity that has to survive it is the MAC, which this function never infers from
+     * the address.
      *
      * [mac] is adopted when the unit reports one, and the card's existing identity
-     * is kept when it does not: a connect that proves nothing about identity must not
+     * is kept when it does not: a link that proves nothing about identity must not
      * un-bind a card that had earned it. A stored value that is not a MAC is dropped
      * in the same pass, which leaves the card honestly unbound instead of locked.
      */
-    fun bindConnect(v: Vehicle, ip: String, mac: String?, nowMs: Long): Vehicle = v.copy(
+    fun bindConnect(v: Vehicle, address: String, mac: String?, nowMs: Long): Vehicle = v.copy(
         mac = normalizeMac(mac) ?: claimedMac(v),
-        ips = (listOf(ip) + v.ips.filter { it != ip }).take(MAX_IPS),
+        bleAddress = address,
         lastConnectedAtMs = nowMs,
     )
 }

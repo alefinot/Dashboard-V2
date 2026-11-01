@@ -109,7 +109,7 @@ class VehicleCardLinesTest {
     // ── what wins when several sentences are true ────────────────────────────
     @Test
     fun `a measurement always beats the derived guess about time`() {
-        val v = Vehicle(id = "v1", ips = listOf("192.168.1.50"), lastConnectedAtMs = now - 2 * day)
+        val v = Vehicle(id = "v1", bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = now - 2 * day)
         val reason = "ESP32 at 192.168.1.50 answered /api/perf, but that unit is not the " +
             "vehicle you selected."
         val failed = cardStatusLine(v, ConnectionUiState.Failed(reason), now)
@@ -121,7 +121,7 @@ class VehicleCardLinesTest {
 
     @Test
     fun `a running ladder, a live session and an idle reason each own their line`() {
-        val v = Vehicle(id = "v1", ips = listOf("192.168.1.50"), lastConnectedAtMs = now - day)
+        val v = Vehicle(id = "v1", bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = now - day)
         val connecting = cardStatusLine(v, ConnectionUiState.Connecting(ConnectMode.SEARCH), now)
         assertEquals(ConnectMode.SEARCH.stageLine().uppercase(), connecting.text)
         assertEquals(CardTone.LIVE, connecting.tone)
@@ -152,8 +152,8 @@ class VehicleCardLinesTest {
 
     @Test
     fun `only the card that owns a session may offer to end it`() {
-        val a = Vehicle(id = "a", name = "Corolla", ips = listOf("192.168.1.50"))
-        val b = Vehicle(id = "b", name = "Van", ips = listOf("192.168.1.77"))
+        val a = Vehicle(id = "a", name = "Corolla", bleAddress = "AA:BB:CC:DD:EE:01")
+        val b = Vehicle(id = "b", name = "Van", bleAddress = "AA:BB:CC:DD:EE:02")
         val state = ConnectionUiState.Connected(
             ip = "192.168.1.50", version = "1.4.6", mac = null, vehicleId = "a",
         )

@@ -37,14 +37,14 @@ class ConnectionCoreTest {
     private fun card(
         id: String,
         mac: String? = null,
-        ips: List<String> = emptyList(),
+        ble: String? = null,
         name: String = id.uppercase(),
     ) = Vehicle(
         id = id,
         mac = mac,
         name = name,
         type = VehicleType.CAR,
-        ips = ips,
+        bleAddress = ble,
         createdAtMs = now,
     )
 
@@ -69,7 +69,7 @@ class ConnectionCoreTest {
         // hunting the network for anything that answers — which is the exact behaviour
         // the refactor exists to remove.
         for (mode in listOf(ConnectMode.SILENT, ConnectMode.PROBE)) {
-            val r = decide(listOf(card("a", ips = listOf("192.168.1.11"))), null, mode = mode)
+            val r = decide(listOf(card("a", ble = "3C:71:0A:00:00:11")), null, mode = mode)
             assertTrue(r.next is NextAction.Idle)
             assertEquals(noSelection, (r.next as NextAction.Idle).reason)
             assertNull(r.persist)
@@ -115,38 +115,32 @@ class ConnectionCoreTest {
     // ------------------------------------------------------- the probe ladder
 
     @Test
-    fun `remembered addresses are probed newest first`() {
-        val cards = listOf(card("a", ips = listOf("192.168.1.50", "192.168.1.11", "10.0.0.5")))
-        val first = decide(cards, "a")
-        assertEquals(NextAction.Probe("a", "192.168.1.50"), first.next)
-
-        val second = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"))
-        assertEquals(NextAction.Probe("a", "192.168.1.11"), second.next)
-
-        val third = decide(cards, "a", tried = listOf("192.168.1.50", "192.168.1.11"),
-            outcome = ProbeOutcome.Fail("192.168.1.11"))
-        assertEquals(NextAction.Probe("a", "10.0.0.5"), third.next)
+    fun `the card's remembered pairing is dialed before anything else`() {
+        // One address per card, and it is the one the last link came up on: there is no
+        // list to walk and no order to argue about.
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        assertEquals(NextAction.Probe("a", "3C:71:0A:00:00:50"), decide(cards, "a").next)
     }
 
     @Test
-    fun `a probe never redials an address that already failed`() {
-        // Each connect timeout is two seconds; re-trying the same dead address inside
-        // one attempt would only delay the address that might work.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50", "192.168.1.11")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"))
-        assertEquals("192.168.1.11", (r.next as NextAction.Probe).address)
+    fun `a ladder never redials a pairing that already failed in this attempt`() {
+        // A connect timeout costs the user seconds of watching a ring, and with one
+        // address per card, dialling it twice would be a ladder that loops rather than
+        // progresses - so a spent pairing moves the attempt on to the sweep.
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SEARCH)
+        assertEquals(NextAction.ScanThenProbe("a"), r.next)
     }
 
     @Test
-    fun `silent mode stops at the remembered addresses`() {
-        // Launch reconnect must not put a 15 s subnet sweep in front of the first
-        // frame: the garage is usable while it runs, and a device that is off is not
+    fun `silent mode stops at the pairing the card remembers`() {
+        // Launch reconnect must not put a 15 s subnet sweep in front of the first frame:
+        // the garage is usable while it runs, and a device that is off is not
         // going to be found by scanning the whole LAN for it.
-        val cards = listOf(card("a", name = "Workshop Van", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"), mode = ConnectMode.SILENT)
+        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SILENT)
         val failed = r.next as NextAction.Failed
         assertTrue(failed.reason.contains("Workshop Van"))
         assertTrue(failed.reason.isNotBlank())
@@ -157,17 +151,17 @@ class ConnectionCoreTest {
         // The line has to name the vehicle, because on the vehicle page it sits under
         // that card: "no Dashboard++ answered" on its own is a sentence about a network
         // the user is not asking about.
-        val cards = listOf(card("a", name = "Workshop Van", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"), mode = ConnectMode.SILENT)
+        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SILENT)
         assertTrue((r.next as NextAction.Failed).reason.contains("Workshop Van"))
     }
 
     @Test
     fun `search mode sweeps the network once the addresses are spent`() {
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"), mode = ConnectMode.SEARCH)
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SEARCH)
         assertEquals(NextAction.ScanThenProbe("a"), r.next)
     }
 
@@ -175,9 +169,9 @@ class ConnectionCoreTest {
     fun `a search that already swept gives up instead of sweeping again`() {
         // Without this the view model would re-run mDNS and the subnet scanner every
         // time the sweep came back empty, which is a loop the user watches.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"), scanDone = true,
-            outcome = ProbeOutcome.Fail("192.168.1.9"), mode = ConnectMode.SEARCH)
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"), scanDone = true,
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:09"), mode = ConnectMode.SEARCH)
         assertTrue(r.next is NextAction.Failed)
     }
 
@@ -185,9 +179,9 @@ class ConnectionCoreTest {
     fun `probe mode never sweeps the network`() {
         // RECONNECT on a card means "the addresses I remember, again" — the user is
         // asking for a retry, not for a hunt that may land on a different unit.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("192.168.1.50"),
-            outcome = ProbeOutcome.Fail("192.168.1.50"), mode = ConnectMode.PROBE)
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.PROBE)
         assertTrue(r.next is NextAction.Failed)
     }
 
@@ -196,10 +190,10 @@ class ConnectionCoreTest {
         // The difference matters on screen: Idle means "there is nothing to reach",
         // which the vehicle page answers by inviting the user in; Failed means "it was
         // reached for and nobody answered", which is what earns a RECONNECT button.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50", "10.0.0.5")))
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
         for (mode in listOf(ConnectMode.SILENT, ConnectMode.PROBE)) {
-            val r = decide(cards, "a", tried = listOf("192.168.1.50", "10.0.0.5"),
-                outcome = ProbeOutcome.Fail("10.0.0.5"), mode = mode)
+            val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
+                outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = mode)
             assertTrue("$mode", r.next is NextAction.Failed)
         }
     }
@@ -211,9 +205,9 @@ class ConnectionCoreTest {
         // Rule 3: a card made in the editor has a name but no identity. The first
         // connect that reaches it adopts the MAC the unit reports, name and photo
         // intact.
-        val cards = listOf(card("a", name = "Workshop Van", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", outcome = ok("192.168.1.50", "AA:BB:CC:DD:EE:FF"))
-        assertEquals(NextAction.Connect("a", "192.168.1.50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
+        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
+        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
         assertNotNull(r.persist)
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
         assertEquals("Workshop Van", r.persist!!.name)
@@ -225,21 +219,22 @@ class ConnectionCoreTest {
         // A unit spelling its identity in lower case, or a value read from a backup
         // file, has to end up in the record the way the ESP prints it, or the next
         // compare misses and the unit looks like a stranger.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", outcome = ok("192.168.1.50", "aa:bb:cc:dd:ee:ff"))
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "aa:bb:cc:dd:ee:ff"))
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
     }
 
     @Test
-    fun `a connect moves the answering address to the front of the list`() {
-        // The launch ladder probes in list order, so the address that just worked has
-        // to be first or every cold start pays a timeout for a stale lease.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("10.0.0.5", "192.168.1.50")))
-        val r = decide(cards, "a", tried = listOf("10.0.0.5"),
-            outcome = ok("192.168.1.50", "AA:BB:CC:DD:EE:FF"))
+    fun `a connect stores the pairing that answered as the address to dial next`() {
+        // The launch ladder dials the card's one address, so the link that just came up
+        // is the one worth remembering - and a re-pairing has to be allowed to replace it,
+        // because a pairing belongs to the phone's link and not to the dashboard.
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:05"))
+        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:05"),
+            outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
         val persisted = r.persist!!
-        assertEquals(NextAction.Connect("a", "192.168.1.50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
-        assertEquals(listOf("192.168.1.50", "10.0.0.5"), persisted.ips)
+        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
+        assertEquals("3C:71:0A:00:00:50", persisted.bleAddress)
         assertEquals("1.4.6", persisted.firmwareVersion)
     }
 
@@ -248,9 +243,9 @@ class ConnectionCoreTest {
         // Firmware predating the mac field, or a body the parser could not read. The
         // card was bound by MAC earlier; a connect that proves nothing about identity
         // must not un-bind it.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", outcome = ok("192.168.1.50", null))
-        assertEquals(NextAction.Connect("a", "192.168.1.50", "1.4.6", null), r.next)
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", null))
+        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", null), r.next)
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
     }
 
@@ -261,8 +256,8 @@ class ConnectionCoreTest {
         // with no identity at all. Address alone is enough to connect when exactly one
         // card remembers that address — refusing here would leave a card that can
         // never reconnect after a firmware rollback.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", outcome = ok("192.168.1.50", null))
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", null))
         assertTrue(r.next is NextAction.Connect)
         assertEquals("a", (r.next as NextAction.Connect).vehicleId)
         assertNull(r.adoption)
@@ -270,19 +265,19 @@ class ConnectionCoreTest {
 
     @Test
     fun `when the answering unit belongs to another card that card becomes the connection`() {
-        // The MAC outranks the address, so the unit at the selected card's remembered
-        // address belongs to another vehicle. The selection moves to the card that own
-        // the unit (plan §4) rather than marking CONNECTED on the card the user
-        // pressed — and the move has to be said out loud, because the page now shows a
-        // different vehicle than the one that was tapped.
+        // The MAC outranks the pairing, so the unit reached on the selected card's
+        // pairing belongs to another vehicle - the same dashboard, another link. The
+        // selection moves to the card that owns the unit (plan §4) rather than marking
+        // CONNECTED on the card the user pressed — and the move has to be said out loud,
+        // because the page now shows a different vehicle than the one that was tapped.
         val cards = listOf(
-            card("other", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.11")),
-            card("a", ips = listOf("192.168.1.11")),
+            card("other", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"),
+            card("a", ble = "3C:71:0A:00:00:11"),
         )
-        val r = decide(cards, "a", outcome = ok("192.168.1.11", "AA:BB:CC:DD:EE:FF"))
-        assertEquals(NextAction.Connect("other", "192.168.1.11", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:11", "AA:BB:CC:DD:EE:FF"))
+        assertEquals(NextAction.Connect("other", "3C:71:0A:00:00:11", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
         assertEquals("other", r.persist!!.id)
-        assertEquals(listOf("192.168.1.11"), r.persist!!.ips)
+        assertEquals("3C:71:0A:00:00:11", r.persist!!.bleAddress)
         assertNull(r.adoption)
         assertNotNull(r.notice)
         assertTrue(r.notice!!.contains("OTHER"))
@@ -290,15 +285,16 @@ class ConnectionCoreTest {
     }
 
     @Test
-    fun `an address two cards remember is not connected on address evidence alone`() {
-        // With no identity in the answer and two cards holding the same address, the
-        // app cannot say which vehicle this is — and a wrong guess writes that
-        // vehicle's name into the trip log.
+    fun `one pairing remembered by two cards is not connected on pairing evidence alone`() {
+        // With no identity in the answer and two cards holding the same pairing, the
+        // app cannot say which vehicle this is - and a wrong guess writes that
+        // vehicle's name into the trip log. Two cards can hold one pairing only through
+        // a hand-made or imported record, which is how this state is reachable at all.
         val cards = listOf(
-            card("a", ips = listOf("192.168.1.11")),
-            card("b", ips = listOf("192.168.1.11")),
+            card("a", ble = "3C:71:0A:00:00:11"),
+            card("b", ble = "3C:71:0A:00:00:11"),
         )
-        val r = decide(cards, "a", outcome = ok("192.168.1.11", null))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:11", null))
         assertTrue(r.next is NextAction.Failed)
         assertNull(r.persist)
     }
@@ -308,7 +304,7 @@ class ConnectionCoreTest {
         // An unclaimed MAC must never be written into the card the user happened to
         // have selected — that is how two cards end up claiming one dashboard. The
         // offer is data for the page to show, and the user decides.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.11")))
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"))
         val r = decide(cards, "a", outcome = ok("192.168.1.99", "11:22:33:44:55:66"))
         assertTrue(r.next is NextAction.Failed)
         assertNull(r.persist)
@@ -322,12 +318,12 @@ class ConnectionCoreTest {
     fun `an unclaimed unit found at launch leaves the app idle rather than failed`() {
         // The silent ladder runs unattended at startup. Finding an unlinked dashboard
         // there is information for the garage to show, not an error to apologise for.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.11")))
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"))
         val r = decide(cards, "a", mode = ConnectMode.SILENT,
-            outcome = ok("192.168.1.11", "11:22:33:44:55:66"))
+            outcome = ok("3C:71:0A:00:00:11", "11:22:33:44:55:66"))
         assertTrue(r.next is NextAction.Idle)
         assertEquals(
-            UnclaimedUnit("192.168.1.11", "1.4.6", "11:22:33:44:55:66"),
+            UnclaimedUnit("3C:71:0A:00:00:11", "1.4.6", "11:22:33:44:55:66"),
             r.adoption,
         )
     }
@@ -337,7 +333,7 @@ class ConnectionCoreTest {
         // There is nothing to adopt without a MAC: no identity to carry into a card.
         // Offering one would let the user bind a card to an address that may belong to
         // the phone's own hotspot.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ips = listOf("192.168.1.11")))
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"))
         val r = decide(cards, "a", outcome = ok("192.168.1.99", null))
         assertNull(r.adoption)
         assertTrue(r.next is NextAction.Failed)
@@ -348,8 +344,8 @@ class ConnectionCoreTest {
         // The view model publishes whatever the core hands it, so a step that finds
         // nothing to offer has to say so explicitly rather than leave the previous
         // offer on screen.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")))
-        val r = decide(cards, "a", outcome = ok("192.168.1.50", "AA:BB:CC:DD:EE:FF"))
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
         assertNull(r.adoption)
     }
 
@@ -357,10 +353,10 @@ class ConnectionCoreTest {
     fun `the next probe always belongs to the card that is selected`() {
         // The view model aborts an attempt when the selection moves, and it can only
         // notice that a step is stale if every step says who it is for.
-        val cards = listOf(card("a", ips = listOf("192.168.1.50")), card("b", ips = listOf("10.0.0.2")))
+        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"), card("b", ble = "3C:71:0A:00:00:02"))
         assertEquals("a", (decide(cards, "a").next as NextAction.Probe).vehicleId)
         assertEquals("b", (decide(cards, "b").next as NextAction.Probe).vehicleId)
-        assertEquals("10.0.0.2", (decide(cards, "b").next as NextAction.Probe).address)
+        assertEquals("3C:71:0A:00:00:02", (decide(cards, "b").next as NextAction.Probe).address)
     }
 
     @Test
