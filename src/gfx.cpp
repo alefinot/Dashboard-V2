@@ -956,6 +956,11 @@ static void otaCenteredText(const char *s, int baselineY) {
   display.print(s);
 }
 
+// Same helper under a name the non-OTA panels can use.
+static void panelCenteredText(const char *s, int baselineY) {
+  otaCenteredText(s, baselineY);
+}
+
 // The two frames a firmware update ends on. Both are drawn with the compiled-in
 // VLW arrays only - loadVLWFont() selects generated header data, it never opens
 // a LittleFS file - and neither fades the backlight: a fade is two blocking
@@ -1055,6 +1060,80 @@ void updateOTAProgress(int progress, int total) {
   if (targetW > 254) targetW = 254;
   if (targetW > otaProgressTarget)
     otaProgressTarget = targetW;
+}
+
+// ----------------------------------------------------------------------------
+// Pairing panel (BLE Secure Connections passkey)
+// ----------------------------------------------------------------------------
+// The unit is the display side of the pairing (ESP_IO_CAP_OUT in src/bt.cpp: it
+// shows the code, the phone types it), so the six-digit number that the whole
+// encrypted link rests on has to be readable from where a person actually is.
+// Before this panel it existed only in the serial log, which made pairing a
+// dashboard that is already wired into a car need a USB cable - a bench-only
+// feature dressed up as an in-car one.
+//
+// Like the update screens, this is drawn by the task that owns the panel: the
+// loop reads btPairingActive()/btPairingPasskey() and calls here, never the BLE
+// security callback (the panel is not writable from that task). It stays up until
+// the pairing lands or the stack's own window closes (60 s, see the telemetry
+// pump in src/bt.cpp), and the dashboard returns with forceFullRedraw.
+void showPairingScreen(uint32_t passkey) {
+  char code[8];
+  char name[20];
+  char buf[56];
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  snprintf(code, sizeof(code), "%06lu", (unsigned long)passkey);
+  btAdvertisedName(name, sizeof(name));
+
+  display.startWrite();
+  display.fillScreen(TFT_BLACK);
+
+  display.setTextColor(TFT_CYAN);
+  display.loadVLWFont("/Fonts/Conthrax_SemiBold_28px.vlw");
+  panelCenteredText("PAIRING", 46);
+
+  // Six digits at the size the speed number uses. Which size that turns out to
+  // be is measured, not assumed: the fonts are proportional-ish per glyph and a
+  // code that runs off the glass is worse than a code that is merely small, so
+  // the 28 px 7-segment font takes over when 120 px does not fit.
+  display.setTextColor(TFT_WHITE);
+  display.loadVLWFont("/Fonts/DS-DIGIT_120px.vlw");
+  int codeBaseline = 196;
+  if ((int)display.textWidth(code) > DISPLAY_WIDTH - 48) {
+    display.loadVLWFont("/Fonts/DS-DIGIT_28px.vlw");
+    codeBaseline = 150;
+  }
+  int codeW = (int)display.textWidth(code);
+  int codeH = display.fontHeight();
+  // The frame is drawn before the digits so the anti-aliased corners cannot
+  // overwrite their own number.
+  drawAARoundRect(display, DISPLAY_WIDTH / 2 - codeW / 2 - 10,
+                  codeBaseline - codeH + 8, codeW + 20, codeH - 8, 5,
+                  TFT_CYAN);
+  display.setCursor(DISPLAY_WIDTH / 2 - codeW / 2, codeBaseline);
+  display.print(code);
+
+  int yNote = 226, yHowto = 248, yName = 270;
+  if (codeBaseline < 180) {
+    yNote = 196;
+    yHowto = 218;
+    yName = 240;
+  }
+  display.setTextColor(TFT_WHITE);
+  display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
+  panelCenteredText("TYPE THIS CODE ON YOUR PHONE", yNote);
+  panelCenteredText("IN THE APP: VEHICLES - ADD VEHICLE", yHowto);
+  // The name, so the number on the glass and the name in the phone's scan list
+  // can be matched by eye (two units in range is the common case).
+  display.setTextColor(TFT_GREEN);
+  snprintf(buf, sizeof(buf), "THIS DASHBOARD: %s", name);
+  panelCenteredText(buf, yName);
+  display.endWrite();
+
+  logPrintf("Pairing panel: code on the display (%d px digits, %s)\n", codeH,
+            name);
 }
 
 // ----------------------------------------------------------------------------

@@ -40,6 +40,9 @@ static BLECharacteristic *s_ota = nullptr;
 static volatile bool s_connected = false;
 static volatile bool s_advertising = false;
 static volatile bool s_pairing = false;
+// The name this unit advertises, kept after btInit() so the pairing panel can
+// print the same string the phone's scan list is about to show.
+static char s_adName[16] = "";
 static volatile uint32_t s_passkey = 0;
 static volatile unsigned long s_pairingSince = 0;
 
@@ -513,6 +516,10 @@ int btLinkState() {
 
 bool btPairingActive() { return s_pairing; }
 
+void btAdvertisedName(char *out, size_t n) {
+  snprintf(out, n, "%s", s_adName[0] ? s_adName : "DPP-????");
+}
+
 uint16_t btStackFree() {
   return s_btTask ? (uint16_t)uxTaskGetStackHighWaterMark(s_btTask) : 0;
 }
@@ -544,6 +551,7 @@ void btInit() {
   char name[16];
   uint64_t mac = ESP.getEfuseMac();
   snprintf(name, sizeof(name), "DPP-%04X", (unsigned)(mac & 0xFFFF));
+  snprintf(s_adName, sizeof(s_adName), "%s", name);
 
   BLEDevice::init(name);
   BLEDevice::setMTU(517);

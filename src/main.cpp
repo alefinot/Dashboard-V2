@@ -800,14 +800,37 @@ void loop() {
     // frame is drawn.
 
     if (!otaPanelTaken()) {
-      // A firmware install must not freeze the dashboard: the big sprites are
-      // dropped and rebuilt around it (processOtaMemRelease / ensureSpeedSprite)
-      // and the components fall back to direct-panel drawing for its duration, so
-      // the screen keeps animating.
-      updateBigDisplay(snap);
-      drawFpsOverlay();
-      drawGpsDebugOverlay();
-      checkNightMode(snap);
+      // Pairing owns the glass next: the six-digit code the phone has to type is
+      // the one thing about this exchange that a person at the wheel has to see,
+      // and it lives only here and in the serial log. Redrawn when the stack
+      // hands out a new code, released when the pairing lands or the window
+      // closes (60 s in the telemetry pump), and the dashboard comes back with a
+      // full redraw because this panel painted over all of it.
+      static bool pairingShown = false;
+      static uint32_t pairingShownCode = 0xFFFFFFFF;
+      bool pairingNow = btPairingActive();
+      uint32_t pairingCode = pairingNow ? btPairingPasskey() : 0;
+      if (pairingNow && pairingCode != 0 &&
+          (!pairingShown || pairingCode != pairingShownCode)) {
+        showPairingScreen(pairingCode);
+        pairingShown = true;
+        pairingShownCode = pairingCode;
+      } else if (pairingShown && (!pairingNow || pairingCode == 0)) {
+        pairingShown = false;
+        pairingShownCode = 0xFFFFFFFF;
+        forceFullRedraw = true;
+        logPrintf("Pairing panel: released, dashboard restored\n");
+      }
+      if (!pairingShown) {
+        // A firmware install must not freeze the dashboard: the big sprites are
+        // dropped and rebuilt around it (processOtaMemRelease / ensureSpeedSprite)
+        // and the components fall back to direct-panel drawing for its duration,
+        // so the screen keeps animating.
+        updateBigDisplay(snap);
+        drawFpsOverlay();
+        drawGpsDebugOverlay();
+        checkNightMode(snap);
+      }
     } else if (otaUpdateInProgress && otaScreenStage == (uint8_t)OTA_SCREEN_UPDATING) {
       // Only the live transfer animates the bar. The done and error frames are
       // complete pictures: drawing the leftover progress target across them

@@ -900,6 +900,13 @@ int btLinkRssi();
 bool btPairingActive();
 uint32_t btPairingPasskey();
 void btClearPairingPasskey();
+// Copies the Bluetooth name this unit advertises ("DPP-####") into out, so the
+// pairing panel can print the same string the phone's scan list shows.
+void btAdvertisedName(char *out, size_t n);
+// The panel that shows the pairing passkey (src/gfx.cpp). Drawn by the display
+// task when btPairingActive() goes true and never from the BLE callback; the
+// loop releases it (full redraw) once the pairing lands or the window closes.
+void showPairingScreen(uint32_t passkey);
 void processOtaMemRelease();
 extern volatile bool otaMemReleaseRequested;
 extern volatile bool otaMemReleased;

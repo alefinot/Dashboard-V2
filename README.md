@@ -411,6 +411,18 @@ The line is debounced in software (`powerSenseOffConfirmed()` in `src/sensors.cp
 
 ## Embedded Web UI & REST API Reference
 
+> [!IMPORTANT]
+> **What the build does with this chapter today.** Everything below documents the Wi-Fi
+> portal and the HTTP API as they are implemented in `src/web.cpp` / `src/webui.html`, and
+> both files are still in the tree. The current build **excludes them**: `platformio.ini`
+> has `build_src_filter = +<*> -<web.cpp` (firmware phase 0b of the BLE-only plan, commit
+> `cef3c99`). A unit flashed from this tree therefore has no `Dashboard_Config` hotspot, no
+> `192.168.4.1`, no REST endpoint and no IP address — it is reached over Bluetooth only, and
+> flashed over USB only. Units still running a Wi-Fi firmware (1.4.x and older) behave
+> exactly as this chapter describes. Whether the portal comes back, stays out, or is
+> replaced by the BLE RPC surface is phase 2 of that plan and has not been decided; if a
+> task depends on the HTTP API being reachable on a current build, ask before assuming it.
+
 Dashboard++ embeds a single-page management portal directly into flash memory (`index_html`).
 
 ### WiFi Network Connectivity
@@ -642,7 +654,7 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 
 The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 1.1.0`, `versionCode 42` (rule 24: every shared APK bumps `versionCode`).
 
-**One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (the firmware's HTTP API is untouched by this work), and they are flashed the same way as before: wired `pio run -t upload`, or the Web Portal. What changed is that the phone is no longer a second way in.
+**One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
 ### The shell: one bar, one pager, one list
 
@@ -688,7 +700,33 @@ The ESP reports its **base eFuse MAC** as `perf.mac` over the Bluetooth RPC (upp
 `ConnectionUiState` (`viewmodel/UiState.kt`): `Idle(reason?)`, `Connecting(mode)` where the mode is `DialStored` / `Scan` / `Pair` / `Reconnect`, `Connected(address, name, version, mac?, vehicleId, mtu)`, `Failed(reason)`. The reason line is what used to be three screens (`NoWifi`, `ManualEntryNeeded`, `ConnectionLost`) and is now a sentence under the card that was being reached for, with the rest of the app still on screen.
 
 - **Pairing.** `ADD VEHICLE` scans (filtered by the firmware's service UUID, so the list is dashboards and not the neighbours' headphones), lists each `DPP-####` unit with its signal in dBm, and the tap calls `createBond()`. LE Secure Connections then needs a six-digit passkey entered on the phone — the app does not draw its own key pad, it lets Android's pairing dialog ask — and once that matches, the link comes up encrypted, subscribes to telemetry and RPC, negotiates a 517-byte MTU, reads `perf` for the name/MAC/version, and `NAME IT` opens the editor with that evidence already filled in. Nothing about the unit is typed by hand on this path.
-- **A gap that pairing walks into, stated rather than papered over:** the unit prints that passkey to its serial log (`BT: pairing passkey 123456 - type it on the phone`) and to the heartbeat line, and the firmware exposes it as `btPairingPasskey()` "so the pairing overlay can draw" — but **no panel code draws it yet**, and there is no RPC that will hand it to the phone (the phone is the side that needs it, and giving it over an unencrypted link would defeat the pairing). Pairing a dashboard today therefore needs the serial output: at the bench that is a USB cable, in the car it is not available. The display side is a firmware change, so it is outside this app-only work; it is named here because the README would otherwise describe a flow nobody can finish from the driver's seat.
+- **Where the six digits come from: the dashboard's own screen.** The unit is the display
+  side of this exchange (`ESP_IO_CAP_OUT`), so the number the whole encrypted link rests on
+  has to be readable from where a person actually is. While the pairing window is open the
+  LCD shows:
+
+  ```text
+  PAIRING
+         ┌──────────────┐
+         │ 4 2 8 5 6 1  │   ← the passkey, big 7-segment digits
+         └──────────────┘
+      TYPE THIS CODE ON YOUR PHONE
+     IN THE APP: VEHICLES - ADD VEHICLE
+       THIS DASHBOARD: DPP-B594
+  ```
+
+  The name line is there because two units in range is the normal case at a workshop: the
+  name on the glass is the name in the phone's scan list, so the two can be matched by eye.
+  The panel is drawn by the display loop from `btPairingActive()` / `btPairingPasskey()`
+  (`src/gfx.cpp`, `showPairingScreen`) and never from the BLE security callback, because
+  that callback runs on the BLE task and the panel belongs to the display task. It repaints
+  when the stack hands out a new code and steps out of the way — with a full redraw — when
+  the pairing lands or the window closes. The number is deliberately **not** readable over
+  the link: there is no RPC that returns it, and handing it to the side that is supposed to
+  be typing it over an unencrypted connection would make the pairing pointless.
+  On the bench the same information is on COM7 at 115200 (`BT: advertising as DPP-1234`,
+  `BT: pairing mode: passkey NNNNNN`, and the pairing outcome), which is where to look if a
+  pairing is refused; no cable is needed to pair a unit any more.
 - **Reconnecting.** `CONNECT` on a card dials the stored BLE address with no scan. A dropped link retries on `viewmodel/ReconnectLadder.kt` — 2 s, 5 s, 15 s, then a `Failed` reason — and any user action restarts it. There is no `ConnectivityManager` in this code and that is the point: the phone's Wi-Fi state says nothing about a GATT link, so "check your Wi-Fi" was a sentence about a network the transport never used.
 - **Radio and permissions.** Bluetooth off or permission denied is one line plus the system-settings handoff, never a dialog storm. `BLUETOOTH_SCAN` carries `neverForLocation` for Android 12+, and `ACCESS_FINE_LOCATION` is capped at `maxSdkVersion="30"`, because on Android 11 and below a BLE scan counts as a location scan. `INTERNET` stays for the trip map's OSM tiles; the Wi-Fi and network-state permissions the discovery sweep used are gone, and `AppXmlWiringTest` asserts the block both ways so a leftover permission cannot survive its own deletion.
 - **Forgetting.** `FORGET THIS UNIT` clears the app's binding and says out loud that Android may still hold the bond, and offers the system Bluetooth settings. There is no hidden un-bonding API in this app.
@@ -914,6 +952,15 @@ platformio device monitor
 > Fonts are compiled into flash as PROGMEM arrays at build time (`scripts/vlw_to_header.py`), so no `uploadfs` step is needed for text. The LittleFS partition remains in `partitions.csv` (used only for `/api/health` byte reporting).
 
 ### Over-The-Air (OTA) Updates
+
+> [!IMPORTANT]
+> **Both paths below need a unit that has a Wi-Fi address**, which a unit flashed from the
+> current tree does not — `web.cpp` (the HTTP server, the SoftAP and the station connection)
+> is out of the build, see the note at the top of *Embedded Web UI & REST API Reference*. On
+> a current-build unit the only install path is a wired `pio run -t upload`; the wireless
+> path being built for it is Bluetooth (the OTA characteristic and the chunk frames
+> `0x80`-`0x85`, firmware phases 4c/4d, with the pairing passkey shown on the panel). What
+> follows documents the Wi-Fi paths as they exist in the source and on 1.4.x units.
 
 #### Via PlatformIO CLI
 Ensure your host machine is connected to the `Dashboard_Config` WiFi network or local network:
@@ -1252,12 +1299,15 @@ In Demo Mode:
 
 ### Unreleased — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
 
-**No firmware line moved.** `src/` is untouched, `FW_VERSION` is unchanged, and the ESP's
-HTTP API, Web Portal, SoftAP and mDNS behave exactly as before — a browser on the unit's
-Wi-Fi address still gets the settings page. What changed is that the **phone** no longer
-has that second way in. Plan: `Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md`
-(local-only), with P1→P6 in one commit each (`1a10c71` identity, `6a15b33` transport and
-pairing, `7c34220` settings, `352429b` deletions).
+**No firmware line moved by those four commits.** `src/` was untouched by them, `FW_VERSION`
+is unchanged, and the ESP's HTTP API, Web Portal, SoftAP and mDNS behaved exactly as before —
+a browser on the unit's Wi-Fi address still got the settings page. What changed is that the
+**phone** no longer has that second way in. One firmware change lands after them in the same
+unreleased window — the pairing panel, because pairing was the one flow in this story nobody
+could finish from the driver's seat (see the firmware entries below). Plan:
+`Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md` (local-only), with P1→P6 in one
+commit each (`1a10c71` identity, `6a15b33` transport and pairing, `7c34220` settings,
+`352429b` deletions).
 
 - **The transport is GATT and nothing else.** Gone: `api/EspApi.kt` (the HTTP client, its
 cookie jar and its `JVM_OPEN_PORTS` gate), `discovery/` (NSD browse, subnet sweep, LAN
@@ -1274,15 +1324,37 @@ owns the ladder: dial the stored BLE address, or scan filtered by our service UU
 claim what appears; a unit reporting a MAC another card owns is refused, not silently
 adopted; a link that drops retries at 2 s / 5 s / 15 s and then says why under that card.
 LE Secure Connections needs a random six-digit passkey entered on the phone (Android's
-pairing dialog does the asking; the app draws no key pad) — and today
-the unit shows that code only in its serial log, not on its display (`btPairingPasskey()` is
-there for an overlay that was never drawn), so a pairing needs the USB cable at the bench.
+pairing dialog does the asking; the app draws no key pad), and the **unit now shows that
+code on its own LCD** while the window is open — six digits in the big 7-segment font, what
+to do with them, and the name it advertises — so a pairing no longer needs a USB cable and a
+serial terminal. (Until that panel landed the number existed only in the serial log, with
+`btPairingPasskey()` sitting there for an overlay nobody had drawn; the panel and the two
+fixes around it are the firmware entries below.)
 Everywhere else the covers offer `OPEN VEHICLE PAGE` and nothing else, and App Settings
 cannot run a connection. A card stores `bleAddress` **as Android reported it** plus the
 `mac` the unit reports on `perf.mac`; the address is never derived from the MAC, because
 the ESP32's Bluetooth address is not its base MAC and inventing one can point at somebody
 else's device. The old `ips` list is gone (records written earlier still decode, and the
 list is dropped on the next write).
+- **Firmware, landing after those commits (the first `src/` change of this plan): the
+  pairing number is on the panel.** The unit is the side that displays the passkey
+  (`ESP_IO_CAP_OUT` in `src/bt.cpp` — "we display, the phone types"), but the number was
+  only ever written to the serial log (`BT: pairing passkey 428561 - type it on the phone`),
+  so pairing a dashboard that is already wired into a car needed a USB cable and a PC: a
+  bench feature dressed up as an in-car one. While `btPairingActive()` is true the display
+  loop hands the glass to `showPairingScreen()` (`src/gfx.cpp`): the six digits in the
+  7-segment font — measured, and falling back to the 28 px face rather than running off the
+  edge — what to do with them, and the name this unit advertises. That name comes from
+  `btAdvertisedName()`, which reads the string `btInit()` built from the eFuse MAC and gave
+  to `BLEDevice::init()` — the string that went on the radio, not a second copy that can
+  drift. The panel is drawn
+  by the display loop and never from the BLE security callback (the panel belongs to the
+  display task), it repaints when the stack issues a new code, and it steps out of the way
+  with a full redraw when the pairing lands or the window closes — the stack's own 30 s
+  entry window, and the 60 s backstop the telemetry pump already kept. The code is
+  deliberately not readable over the air: no RPC returns it, and handing the number to the
+  side that is supposed to be typing it over an unencrypted link would empty the pairing of
+  meaning. `btPairingPasskey()` is now consumed by something.
 - **Settings is the unit's page, drawn natively.** The `WEB` slot's WebView and the
 six-pill group strip are replaced by the accordion: the same five groups, in the page's
 own titles, under the page's own badge icons (`scripts/icons_to_drawables.py` converts
