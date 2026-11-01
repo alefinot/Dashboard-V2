@@ -353,6 +353,33 @@ class ConfigStoreTest {
         assertEquals(emptySet<String>(), store.state.value.rebootPending)
     }
 
+    /**
+     * A boot-only row that ends up back where the last read found it needs no restart.
+     * On the bench the row went 1 → 2 → 1 and the badge went on saying "1 boot-only
+     * change: DISPLAY_ROTATION" for the rest of the session; a warning that is wrong once
+     * gets ignored the next time it is right.
+     */
+    @Test
+    fun puttingABootOnlyRowBackTheWayItWasDropsTheBadge() = runBlocking {
+        val item = int("DISPLAY_ROTATION", min = 0.0, max = 3.0, def = 1, reboot = true)
+        val store = store(item, debounceMs = 10)
+        store.sync()
+        store.edit(item, 2.0)
+        delay(150)
+        assertEquals(setOf("DISPLAY_ROTATION"), store.state.value.rebootPending)
+        store.edit(item, 1.0)
+        delay(150)
+        assertEquals(
+            "a value put back the way the unit already had it still asked for a restart",
+            emptySet<String>(),
+            store.state.value.rebootPending,
+        )
+        // …and asking for it again puts the warning back.
+        store.edit(item, 3.0)
+        delay(150)
+        assertEquals(setOf("DISPLAY_ROTATION"), store.state.value.rebootPending)
+    }
+
     // ---------------------------------------------------------------- advanced switch
 
     /**
@@ -401,18 +428,36 @@ class ConfigStoreTest {
     // ---------------------------------------------------------------- restore
 
     /**
-     * A backup from an older unit carries Wi-Fi and NTP keys a V2 unit has no use for.
-     * Writing them is harmless and misleading at once — the honest answer is to leave
-     * them alone and say how many were.
+     * A backup carries keys this app does not show — Wi-Fi and NTP settings the schema
+     * keeps out of the cards even though the unit stores them. They are not written back,
+     * and they are not failures: the honest report says they were left as the unit has
+     * them, and counts them apart from the ones the unit refused.
      */
     @Test
-    fun aRestoreLeavesKeysThisUnitCannotUseAlone() = runBlocking {
+    fun aRestoreLeavesKeysThisAppDoesNotShowAlone() = runBlocking {
         val store = store(int("A_ONE", def = 1), hidden = listOf("WIFI_SSID", "WIFI_PASS"))
         val report = store.restore("""{"A_ONE":9,"WIFI_SSID":"old network","WIFI_PASS":"hunter2"}""")
         assertEquals(1, report.applied)
-        assertEquals(2, report.skipped)
-        assertTrue("the skipped keys were not named: ${report.problems}", report.problems.any { it.contains("no use for") })
-        assertFalse("a credential was written to a unit that cannot use it", gateway.stored.containsKey("WIFI_SSID"))
+        assertEquals(2, report.leftOut)
+        assertEquals(
+            "keys left out on purpose were also counted as refused by the unit",
+            0,
+            report.refused,
+        )
+        assertTrue(
+            "the skipped keys were not named, or were described as useless to this unit: " +
+                report.problems,
+            report.problems.any { it.contains("does not show") } &&
+                report.problems.none { it.contains("no use for") },
+        )
+        report.problems.firstOrNull { it.contains("does not show") }!!
+            .let { sentence ->
+                assertTrue(
+                    "the sentence does not name the keys it counts: $sentence",
+                    sentence.contains("WIFI_SSID") && sentence.contains("WIFI_PASS"),
+                )
+            }
+        assertFalse("a credential was written to the unit", gateway.stored.containsKey("WIFI_SSID"))
         assertEquals(9, (gateway.stored["A_ONE"] as Number).toInt())
     }
 }

@@ -1,5 +1,7 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
+import com.alefinot.dashboardpp.ble.BleJson
+
 /**
  * The device unit and the human unit, and the one rule that keeps them apart:
  * `UNITS_IMPERIAL` changes the numbers on the screen and never what is stored.
@@ -39,6 +41,18 @@ object SettingsUnits {
         var v = n
         if (imperial && item.unitType != null) v = fromImperial(item.unitType, v)
         return v * item.unitScale
+    }
+
+    /**
+     * How a boxed value should read on this row. [toBox] makes every number a Double (that
+     * is what makes a unit swap arithmetic work), so a whole-number row would otherwise
+     * print "3474.0" — and on the Tools page that decimal sat under "Ambient light reading
+     * (ADC)" and read like a measurement to three decimals. An INT row shows an integer;
+     * anything else keeps the JSON shape the app already uses elsewhere.
+     */
+    fun text(item: SchemaItem, box: Any?): String {
+        val n = box as? Number ?: return box?.toString() ?: "—"
+        return if (item.kind == ValueKind.INT) n.toInt().toString() else BleJson.display(n)
     }
 
     /** The unit label as it should read: `km/h` becomes `mph` only when it is on. */

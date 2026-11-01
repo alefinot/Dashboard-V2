@@ -1,5 +1,6 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
+import com.alefinot.dashboardpp.ui.screens.otherGroupsMatching
 import com.alefinot.dashboardpp.ui.screens.renderablesFor
 import com.alefinot.dashboardpp.ui.screens.RenderCard
 import com.alefinot.dashboardpp.ui.screens.RenderRow
@@ -233,6 +234,67 @@ class SettingsLayoutTest {
         assertTrue(
             "the widget card does not say where its action is",
             (cards.last().hint ?: "").contains("Tools"),
+        )
+    }
+
+    /**
+     * Search stays per group — a 198-row table on a tablet wants browsing more than one
+     * long list — but an empty page with no lead is indistinguishable from a broken
+     * filter. On the bench, "gps" on the System page found nothing there and two rows one
+     * tap away in Sensors Tuning, with nothing saying so.
+     */
+    @Test
+    fun aQueryThatMatchesInAnotherGroupSaysWhichOne() {
+        val sensors = SchemaGroup(
+            id = "s",
+            title = "Sensors Tuning",
+            cards = listOf(
+                SchemaCard(
+                    "GNSS",
+                    listOf(
+                        SchemaItem("GPS_RATE", ValueKind.INT, RowControl.NUMBER, "Fix rate (Hz)"),
+                        SchemaItem(
+                            "GPS_BAUD", ValueKind.INT, RowControl.NUMBER, "GNSS baud rate",
+                            advanced = true,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val system = SchemaGroup(
+            id = "y",
+            title = "System & General",
+            cards = listOf(
+                SchemaCard(
+                    "General",
+                    listOf(SchemaItem("ADV_MODE", ValueKind.BOOL, RowControl.TOGGLE, "Advanced mode")),
+                ),
+            ),
+        )
+        val groups = listOf(system, sensors)
+        assertEquals(
+            listOf("Sensors Tuning" to 2),
+            otherGroupsMatching(groups, current = 0, query = "gps", advanced = true),
+        )
+        assertEquals(
+            "an advanced row should not be promised to someone who is not in advanced mode",
+            listOf("Sensors Tuning" to 1),
+            otherGroupsMatching(groups, 0, "gps", false),
+        )
+        assertEquals(
+            "a match on the label counts as much as a match on the key",
+            listOf("Sensors Tuning" to 1),
+            otherGroupsMatching(groups, 0, "baud", true),
+        )
+        assertEquals(
+            "the group already on screen should not be offered back",
+            emptyList<Pair<String, Int>>(),
+            otherGroupsMatching(groups, 1, "gps", true),
+        )
+        assertEquals(
+            "an empty query is not a search",
+            emptyList<Pair<String, Int>>(),
+            otherGroupsMatching(groups, 0, "  ", true),
         )
     }
 }

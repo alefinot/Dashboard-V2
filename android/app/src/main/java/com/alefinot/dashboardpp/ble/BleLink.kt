@@ -112,6 +112,17 @@ class BleLink(context: Context) {
     private val _state = MutableStateFlow<BleLinkState>(BleLinkState.Idle)
     val state: StateFlow<BleLinkState> = _state.asStateFlow()
 
+    /**
+     * The peer the link last came up with, kept across the panel that drives it.
+     *
+     * The settings tab offers a restart of the unit; when the unit takes it, `state`
+     * goes to `Failed("disconnected")` and the address goes with it, so the only way
+     * back is a fresh scan. The bond is already Android's, and the unit advertises
+     * again within seconds — remembering the peer is what turns that into RETRY.
+     */
+    var lastPeer: BleLinkState.Ready? = null
+        private set
+
     /** The 1 Hz snapshot, exactly as the unit frames it (the old `/api/snapshot` body). */
     private val _telemetry = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val telemetry: SharedFlow<String> = _telemetry.asSharedFlow()
@@ -298,7 +309,7 @@ class BleLink(context: Context) {
 
             telemChar = telem
             rpcChar = rpc
-            _state.value = BleLinkState.Ready(name, address, mtu)
+            _state.value = BleLinkState.Ready(name, address, mtu).also { lastPeer = it }
             true
         } catch (e: Exception) {
             // A disconnect reported by the stack already said why; keep that reason

@@ -57,11 +57,32 @@ sealed class SyncPhase {
 /** What one backup document did when it came back. */
 data class RestoreReport(
     val applied: Int,
-    val skipped: Int,
+    /** Keys the unit refused to take. */
+    val refused: Int,
+    /**
+     * Keys the file carried that this app does not write back: settings it hides on
+     * purpose, and values that are readings rather than settings. Kept apart from
+     * [refused] — those are the unit saying no, these never reached the unit — and
+     * mixing the two made a clean restore read as fourteen failures.
+     */
+    val leftOut: Int,
     val nvsErrors: Int,
     val batches: Int,
     val problems: List<String> = emptyList(),
-)
+) {
+    /**
+     * One line for the page's bar. Each reason is its own clause — the unit refusing a
+     * write, a value not sticking in flash, a key this app leaves alone — because one
+     * number under one sentence reads as "14 of the 188 failed". The separator goes only
+     * between clauses: an earlier version added one in the join *and* in each clause, so
+     * two problems printed as "… ·  · 3 values…".
+     */
+    val summary: String
+        get() = "restored $applied keys in $batches batches" +
+            (if (refused > 0) " · $refused refused by the unit" else "") +
+            (if (nvsErrors > 0) " · $nvsErrors not in flash" else "") +
+            problems.filter { it.isNotBlank() }.joinToString("") { " · $it" }
+}
 
 /**
  * The settings page's model: schema + the unit's values + local edits.
@@ -118,6 +139,14 @@ class ConfigStore(
 
     /** Last value the unit accepted, per firmware key: what a failed write reverts to. */
     private val confirmed = LinkedHashMap<String, Any?>()
+
+    /**
+     * What the last `config.get` reported, per key. [confirmed] moves with every accepted
+     * write, so it cannot answer "has this row been put back the way the unit already had
+     * it" — and that is the one question that decides whether a boot-only change still
+     * needs a restart.
+     */
+    private val readBack = LinkedHashMap<String, Any?>()
 
     /** Per-row status and messages, keyed by the row's primary key. */
     private val rowViews = LinkedHashMap<String, RowView>()
@@ -180,6 +209,8 @@ class ConfigStore(
         values.putAll(pending)
         confirmed.clear()
         confirmed.putAll(fetch.values)
+        readBack.clear()
+        readBack.putAll(fetch.values)
         // The debounce timers are deliberately left running: cancelling them is how a
         // typed value would be dropped rather than written.
         rowViews.clear()
@@ -208,9 +239,31 @@ class ConfigStore(
         // quietly disappears.
         val unknown = values.keys
             .filter {
-                !schema.isHidden(it) && it != schema.advancedKey && schema.item(it) == null
+                !schema.isHidden(it) && it != schema.advancedKey && schema.item(it) == null &&
+                    schema.extra(it) == null
             }
             .map { guessItem(it, values[it]) }
+        // An unlabelled key still has a value worth showing. Without a row view its row
+        // renders an empty box, which reads as "this setting was never set" when the
+        // unit in fact sent something for it.
+        for (item in unknown) {
+            rowViews[item.key] = RowView(values[item.key], null, RowStatus.SYNCED, null)
+        }
+        // Values the asset says are readings rather than settings, with what the unit
+        // sent for them. They are drawn read-only on the Tools page.
+        val status = schema.statusExtras.mapNotNull { spec ->
+            if (!values.containsKey(spec.key)) return@mapNotNull null
+            val raw = values[spec.key]
+            // The asset says an ADC reading is a whole number; JSON hands it over as a
+            // Double, and "2678.0" under "Ambient light reading" reads like a measurement
+            // that precise. Normalized here so the Tools page draws what the asset says.
+            val shown = if (spec.kind.equals("int", ignoreCase = true)) {
+                (raw as? Number)?.toInt() ?: raw
+            } else {
+                raw
+            }
+            spec to shown
+        }
         _state.update {
             it.copy(
                 sync = SyncPhase.Ready(
@@ -221,6 +274,7 @@ class ConfigStore(
                 ),
                 rows = LinkedHashMap(rowViews),
                 unknown = unknown,
+                unitStatus = status,
                 advanced = truth(values[schema.advancedKey]),
                 imperial = truth(values["UNITS_IMPERIAL"]),
                 missingKeys = missing,
@@ -238,15 +292,6 @@ class ConfigStore(
      * editable, labelled from its key, flagged as a guess. Better a control with an
      * ugly name than a setting nobody can reach.
      */
-    /**
-     * The app asked the unit to restart, so the boot-only rows it changed are on their
-     * way in. Nothing else clears them: `config.get` answers the same whether or not the
-     * unit has come back, so the app would be guessing.
-     */
-    fun clearRebootPending() {
-        _state.update { it.copy(rebootPending = emptySet()) }
-    }
-
     private fun guessItem(key: String, value: Any?): SchemaItem {
         val kind = when (value) {
             is Boolean -> ValueKind.BOOL
@@ -393,7 +438,19 @@ class ConfigStore(
             message,
         )
         if (item.reboot) {
-            _state.update { it.copy(rebootPending = it.rebootPending + item.key) }
+            // A boot-only row only needs a restart if it ended up somewhere other than
+            // where the last read found it. On the bench the row went 1 → 2 → 1 and the
+            // badge kept saying "1 boot-only change: DISPLAY_ROTATION" for the rest of the
+            // session; a warning that lies once gets ignored the next time it is true.
+            val backToRead = payload.isNotEmpty() && payload.all { (k, v) ->
+                readBack.containsKey(k) && sameValue(readBack[k], v)
+            }
+            _state.update {
+                it.copy(
+                    rebootPending = if (backToRead) it.rebootPending - item.key
+                    else it.rebootPending + item.key,
+                )
+            }
         }
     }
 
@@ -469,11 +526,44 @@ class ConfigStore(
         }
     }
 
-    /** Every stored value plus the extras the unit streams — the backup document. */
+    /**
+     * The app asked the unit to restart, so the boot-only rows it changed are on their
+     * way in. Nothing else clears them: `config.get` answers the same whether or not the
+     * unit has come back, so the app would be guessing.
+     */
+    fun clearRebootPending() {
+        _state.update { it.copy(rebootPending = emptySet()) }
+    }
+
+    /** Every stored value plus the settings-shaped extras — the backup document. */
     fun export(): String {
-        val out = LinkedHashMap<String, Any?>(values)
-        for ((key, value) in schema.extras) out.putIfAbsent(key, value)
+        val out = LinkedHashMap<String, Any?>()
+        for ((key, value) in values) {
+            if (unshippable(key)) continue
+            out[key] = value
+        }
+        for ((key, value) in schema.extras) {
+            // A live ADC reading or a compiled-in version string is not a setting, and
+            // putting one in a backup says the file can put it back. It cannot: the unit
+            // has no row to write it into.
+            if (unshippable(key)) continue
+            out.putIfAbsent(key, value)
+        }
         return BleJson.encode(out)
+    }
+
+    /**
+     * A live ADC reading, or a version string compiled into the firmware, is not a setting:
+     * the unit has no row to write it into, so a backup that carries one promises something
+     * it cannot deliver — and the unit answers `unknown_key` when it is offered one.
+     *
+     * Keys the schema does not name at all are different: a document written by a newer
+     * schema may well restore onto a unit that has learned them, and refusing is the unit's
+     * call to make, not this app's guess.
+     */
+    private fun unshippable(key: String): Boolean {
+        val spec = schema.extra(key) ?: return false
+        return spec.readOnly || spec.live || !spec.editable
     }
 
     /**
@@ -485,10 +575,11 @@ class ConfigStore(
      */
     suspend fun restore(text: String): RestoreReport {
         val parsed = BleJson.obj(text)
-            ?: return RestoreReport(0, 0, 0, 0, listOf("that file is not a settings backup"))
+            ?: return RestoreReport(0, 0, 0, 0, 0, listOf("that file is not a settings backup"))
         val problems = ArrayList<String>()
         var applied = 0
-        var skipped = 0
+        var refused = 0
+        var leftOut = 0
         var nvs = 0
         var batches = 0
         for (card in schema.groups.flatMap { it.cards }) {
@@ -502,7 +593,7 @@ class ConfigStore(
             val result = gateway.write(batch)
             if (!result.ok) {
                 problems += "${card.title}: ${result.error}"
-                skipped += batch.size
+                refused += batch.size
                 continue
             }
             applied += batch.size
@@ -513,7 +604,9 @@ class ConfigStore(
         // rather than being dropped by the restore. `ADV_MODE` belongs in this group:
         // it is a firmware row that the schema keeps out of the cards, and a backup
         // that did not bring it back would quietly turn advanced mode off.
-        val rest = parsed.filter { (key, _) -> !schema.isHidden(key) && schema.item(key) == null }
+        val rest = parsed.filter { (key, _) ->
+            !schema.isHidden(key) && schema.item(key) == null && !unshippable(key)
+        }
         if (rest.isNotEmpty()) {
             batches++
             val result = gateway.write(rest)
@@ -523,20 +616,28 @@ class ConfigStore(
                 applyLocally(rest)
             } else {
                 problems += "unlabelled keys: ${result.error}"
+                refused += rest.size
             }
         }
-        // A V2 unit has no Wi-Fi stack and no NTP client, so the credential keys the
-        // backup carries from an older unit are named rather than written: they are in
-        // the file, and saying they were left alone is what keeps "restored 198 keys"
-        // from meaning something other than what it says.
-        val unused = parsed.keys.filter { schema.isHidden(it) }
-        if (unused.isNotEmpty()) {
-            skipped += unused.size
-            problems += "${unused.size} key(s) this unit has no use for were left alone: " +
-                unused.take(4).joinToString(", ") + if (unused.size > 4) "…" else ""
+        // Two different reasons a key in the file does not get written, and they mean
+        // different things to whoever holds the backup: the hidden keys are real settings
+        // this app chooses not to show (Wi-Fi credentials, NTP), while the readings are not
+        // settings at all. "This unit has no use for them" is simply untrue of a Wi-Fi
+        // credential the unit streamed out itself a minute earlier.
+        val hidden = parsed.keys.filter { schema.isHidden(it) }.distinct()
+        val readings = parsed.keys.filter { !schema.isHidden(it) && unshippable(it) }.distinct()
+        if (hidden.isNotEmpty()) {
+            leftOut += hidden.size
+            problems += "${hidden.size} key(s) this app does not show were left as the unit " +
+                "has them: " + hidden.take(4).joinToString(", ") + if (hidden.size > 4) "…" else ""
+        }
+        if (readings.isNotEmpty()) {
+            leftOut += readings.size
+            problems += "${readings.size} value(s) that are not settings were left alone: " +
+                readings.take(4).joinToString(", ") + if (readings.size > 4) "…" else ""
         }
         sync()
-        return RestoreReport(applied, skipped, nvs, batches, problems)
+        return RestoreReport(applied, refused, leftOut, nvs, batches, problems)
     }
 
     private fun applyLocally(batch: Map<String, Any?>) {
@@ -577,6 +678,17 @@ class ConfigStore(
         else -> false
     }
 
+    /**
+     * `1`, `1L` and `1.0` are the same setting. The unit's JSON decides whether a number
+     * comes back as an Int, a Long or a Double, while writes are coerced to the row's
+     * kind, so `==` on the boxes would call a put-back value a change.
+     */
+    private fun sameValue(a: Any?, b: Any?): Boolean = when {
+        a is Number && b is Number -> a.toDouble() == b.toDouble()
+        a is Boolean && b is Boolean -> a == b
+        else -> a == b
+    }
+
     private fun trimNumber(v: Double): String =
         if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
 
@@ -586,6 +698,11 @@ class ConfigStore(
         val rows: Map<String, RowView> = emptyMap(),
         /** Values the unit streams that the schema has no row for. */
         val unknown: List<SchemaItem> = emptyList(),
+        /**
+         * Values the asset describes as readings, not settings — the ambient light ADC,
+         * the ESP core and build versions — with what the unit sent. Read-only.
+         */
+        val unitStatus: List<Pair<ConfigSchema.ExtraSpec, Any?>> = emptyList(),
         val advanced: Boolean = false,
         val imperial: Boolean = false,
         /** Reboot-required rows changed since the read they are measured against. */

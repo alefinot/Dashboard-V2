@@ -64,6 +64,13 @@ fun SettingsRow(
     onEdit: (boxX: Any?, boxY: Any?) -> Unit,
     /** Puts the row back to its compiled default with `config.reset`. */
     onReset: (() -> Unit)? = null,
+    /**
+     * Set for a value the unit streams but does not accept back — a live reading, a
+     * compiled-in version string. The row shows the value as text with this sentence
+     * under it instead of a control: the old page showed these too, but a slider that
+     * cannot move is worse than a line that says what it is.
+     */
+    readOnlyHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val box = SettingsUnits.toBox(item, view?.value, imperial)
@@ -79,36 +86,49 @@ fun SettingsRow(
                 )
                 if (item.labelIsGuessed) {
                     Text(
-                        "no label for ${item.key} in the firmware's form map",
+                        "the firmware has no name for ${item.key} — this one is read off " +
+                            "the key itself, so it may not be the wording you'd choose",
                         style = HudeCfgNote(),
                         color = HudColors.TextDim,
                     )
                 }
             }
-            Control(item, box, view, imperial, enabled, onEdit)
-            // The unit's own `config.reset`, one key at a time — the WebUI's reset
-            // button. Typing a default back in by hand would be a guess; this asks
-            // the firmware what the default is and gets it written the same way.
-            onReset?.let { back ->
+            if (readOnlyHint != null) {
                 Text(
-                    "reset",
-                    style = HudeCfgNote(),
-                    color = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                    modifier = Modifier.padding(start = 10.dp)
-                        .clickable(enabled = enabled, onClick = back),
+                    SettingsUnits.text(item, box) + (unit?.let { " $it" } ?: ""),
+                    style = HudeParamName(),
+                    color = HudColors.TextDim,
+                    modifier = Modifier.padding(start = 12.dp),
                 )
+            } else {
+                Control(item, box, view, imperial, enabled, onEdit)
+                // The unit's own `config.reset`, one key at a time — the WebUI's reset
+                // button. Typing a default back in by hand would be a guess; this asks
+                // the firmware what the default is and gets it written the same way.
+                onReset?.let { back ->
+                    Text(
+                        "reset",
+                        style = HudeCfgNote(),
+                        color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+                        modifier = Modifier.padding(start = 10.dp)
+                            .clickable(enabled = enabled, onClick = back),
+                    )
+                }
             }
         }
-        statusNote(view)?.let { note ->
-            Text(
-                note,
-                style = HudeCfgNote(),
-                color = when (view?.status) {
-                    RowStatus.FAILED, RowStatus.RAM_ONLY, RowStatus.MISSING -> HudColors.Amber
-                    else -> HudColors.TextDim
-                },
-                modifier = Modifier.padding(top = 2.dp),
-            )
+        (listOfNotNull(statusNote(view), readOnlyHint)).let { parts ->
+            val note = parts.joinToString(" · ")
+            if (note.isNotEmpty()) {
+                Text(
+                    note,
+                    style = HudeCfgNote(),
+                    color = when (view?.status) {
+                        RowStatus.FAILED, RowStatus.RAM_ONLY, RowStatus.MISSING -> HudColors.Amber
+                        else -> HudColors.TextDim
+                    },
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
@@ -145,6 +165,7 @@ private fun Control(
         RowControl.TOGGLE -> HudToggle(
             on = box as? Boolean ?: false,
             modifier = Modifier.padding(start = 12.dp),
+            label = item.label,
             onToggle = { if (enabled) onEdit(it, null) },
         )
         RowControl.SELECT -> SelectControl(item, box, enabled) { onEdit(it, null) }

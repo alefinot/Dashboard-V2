@@ -45,10 +45,13 @@ import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.screens.settings.RowControl
+import com.alefinot.dashboardpp.ui.screens.settings.RowStatus
+import com.alefinot.dashboardpp.ui.screens.settings.RowView
 import com.alefinot.dashboardpp.ui.screens.settings.SchemaGroup
 import com.alefinot.dashboardpp.ui.screens.settings.SchemaItem
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsRow
 import com.alefinot.dashboardpp.ui.screens.settings.SyncPhase
+import com.alefinot.dashboardpp.ui.screens.settings.ValueKind
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
@@ -108,15 +111,32 @@ fun DashboardSettingsScreen(
     // has (`BleScreen`, raised the same way App settings raises it); at the end of the
     // phase its scan list and status card live in this page's header instead, and the
     // panel goes away.
+    //
+    // A note about something that happened on the link — a restart the app asked for, a
+    // restore — goes stale the moment the link changes. On the bench the Tools page spent
+    // the rest of a session saying "restarting…" about a unit that had been back and
+    // re-read for minutes. Two things conspired: opening the panel below returns from this
+    // composable and disposes everything after this point, so the transition tracking has
+    // to sit above it if it is going to see the link come back; and it has to fire on both
+    // edges, because a note about a link that just dropped is as dead as one about a link
+    // that just returned.
+    val linked = linkState is BleLinkState.Ready
+    var wasLinked by remember { mutableStateOf(linked) }
+    LaunchedEffect(linkState) {
+        if (linked != wasLinked) note = ""
+        wasLinked = linked
+    }
+
     var showLink by remember { mutableStateOf(false) }
     if (showLink) {
         BleScreen(onBack = { showLink = false })
         return
     }
 
-    val ready = linkState is BleLinkState.Ready
+    val ready = linked
     val groups = schema?.groups ?: emptyList()
     val toolsPage = groups.size
+
     val onTools = group >= groups.size
 
     // The read follows the link: pair, and the tab pulls; re-entering the tab inside
@@ -150,13 +170,8 @@ fun DashboardSettingsScreen(
             }
             note = when {
                 text == null -> "could not read that file"
-                else -> {
-                    val report = store.restore(text)
-                    "restored ${report.applied} keys in ${report.batches} batches" +
-                        (if (report.skipped > 0) " · ${report.skipped} refused" else "") +
-                        (if (report.nvsErrors > 0) " · ${report.nvsErrors} not in flash" else "") +
-                        (report.problems.firstOrNull()?.let { " · $it" } ?: "")
-                }
+                // The report knows how to say what happened; the page only draws it.
+                else -> store.restore(text).summary
             }
             restoring = false
         }
@@ -177,9 +192,13 @@ fun DashboardSettingsScreen(
                 modifier = Modifier.weight(1f),
                 placeholder = "search settings",
             )
-            if (schema != null && schema.item(schema.advancedKey) != null) {
+            if (schema != null && schema.advancedKey.isNotEmpty()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    HudToggle(on = state.advanced, onToggle = { store.setAdvanced(it) })
+                    HudToggle(
+                        on = state.advanced,
+                        label = "advanced mode",
+                        onToggle = { store.setAdvanced(it) },
+                    )
                     Text("advanced", style = HudeCfgNote(), color = HudColors.TextDim)
                 }
             }
@@ -254,11 +273,43 @@ fun DashboardSettingsScreen(
         val items = renderablesFor(groups[group], state, query, state.advanced)
         if (items.isEmpty()) {
             Text(
-                if (query.isEmpty()) "nothing in this group" else "nothing matches \"$query\"",
+                if (query.isEmpty()) "nothing in this group" else
+                    "no setting here matches \"$query\" — the list follows the group tabs above",
                 style = HudeCfgNote(),
                 color = HudColors.TextDim,
                 modifier = Modifier.padding(16.dp),
             )
+            // Search is per group, which is right for browsing and wrong for typing:
+            // an empty page with no lead is indistinguishable from a search that broke.
+            val elsewhere = otherGroupsMatching(groups, group, query, state.advanced)
+            if (query.isNotEmpty() && elsewhere.isNotEmpty()) {
+                val hits = elsewhere.sumOf { it.second }
+                Text(
+                    // "1 match(es)" reads like a variable dump; the count and the names of
+                    // the groups to tap are what the sentence is for.
+                    "$hits ${if (hits == 1) "match" else "matches"} " +
+                        (if (elsewhere.size == 1) "in another group" else "in other groups") +
+                        " — tap " + elsewhere.joinToString(", ") { "${it.first} (${it.second})" },
+                    style = HudeCfgNote(),
+                    color = HudColors.Cyan,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+        }
+        // Nothing has been read from the unit yet, so there are no values to draw. The
+        // schema knows every label, but each one would be a blank box that invites a tap
+        // and then refuses it — which is what this page looked like on the bench with no
+        // link, and it read as a broken page rather than an unpaired one.
+        if (state.rows.isEmpty()) {
+            Text(
+                if (ready) "Reading the unit…" else
+                    "Nothing to show yet. Pair the unit with the button at the top right, " +
+                    "and this page fills in with its settings.",
+                style = HudeCfgHelp(),
+                color = HudColors.TextDim,
+                modifier = Modifier.padding(16.dp),
+            )
+            return@Column
         }
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             items(items) { renderable ->
@@ -358,6 +409,38 @@ fun renderablesFor(
     return out
 }
 
+/**
+ * How many rows [query] would match in the groups that are *not* on screen.
+ *
+ * Search stays per group — a 198-row table on a tablet wants browsing more than one
+ * long list — but typing a word and landing on an empty page with no lead is
+ * indistinguishable from a broken filter. On the bench, "gps" on the System page found
+ * nothing there and two rows one tap away in Sensors Tuning, with nothing saying so.
+ */
+fun otherGroupsMatching(
+    groups: List<SchemaGroup>,
+    current: Int,
+    query: String,
+    advanced: Boolean,
+): List<Pair<String, Int>> {
+    val needle = query.trim().lowercase()
+    if (needle.isEmpty()) return emptyList()
+    return groups.mapIndexedNotNull { index, group ->
+        if (index == current) return@mapIndexedNotNull null
+        val hits = group.cards.filterNot { it.advanced && !advanced }.sumOf { card ->
+            card.items.count { item ->
+                (!item.advanced || advanced) &&
+                    (
+                        item.label.lowercase().contains(needle) ||
+                            item.key.lowercase().contains(needle) ||
+                            item.keyY?.lowercase()?.contains(needle) == true
+                        )
+            }
+        }
+        if (hits == 0) null else group.title to hits
+    }
+}
+
 @Composable
 private fun Header(
     store: ConfigStore,
@@ -383,7 +466,7 @@ private fun Header(
                     is BleLinkState.Ready -> "LINKED"
                     is BleLinkState.Pairing -> "PAIRING…"
                     is BleLinkState.Connecting -> "CONNECTING…"
-                    else -> "PAIR THE UNIT"
+                    else -> if (state.sync is SyncPhase.Ready) "RECONNECT" else "PAIR THE UNIT"
                 },
                 style = when (linkState) {
                     is BleLinkState.Ready -> HudButtonStyle.SECONDARY
@@ -421,10 +504,13 @@ private fun SyncBar(store: ConfigStore, state: ConfigStore.SettingsState, ready:
     val (text, color) = when (val sync = state.sync) {
         is SyncPhase.Running -> "reading the unit's settings… ${sync.chunks} chunks in" to HudColors.Cyan
         is SyncPhase.Ready ->
-            "read ${sync.keys} keys (${sync.rows} table rows) in ${sync.chunks} chunks" to
-                // An xy row is one row that streams two keys, so "keys" is always a
-                // little more than "rows"; the count that means something is whether a
-                // row the schema describes came back at all.
+            // An xy row is one row that streams two keys, so "keys" is always a
+            // little more than "rows"; the count that means something is whether a
+            // row the schema describes came back at all.
+            (
+                "read ${sync.keys} keys (${sync.rows} table rows) in ${sync.chunks} chunks" +
+                    if (!ready) " · read before the link dropped" else ""
+                ) to
                 (if (state.missingKeys.isEmpty()) HudColors.Green else HudColors.Amber)
         is SyncPhase.Failed -> sync.reason to HudColors.Red
         SyncPhase.Idle ->
@@ -789,25 +875,76 @@ private fun ToolsPage(
             }
         }
 
-        // A firmware that grew a setting nobody regenerated the schema for streams a
-        // key with no row. It cannot be placed in a group — the schema is what does the
-        // placing — so it lands here with a label guessed from the key, and it is in the
-        // export either way. A setting that cannot be found looks exactly like a setting
-        // that does not exist, which is why this list is not left to the search box.
-        if (state.unknown.isNotEmpty()) {
+        // Rows this unit streams that are not settings at all — the ambient light ADC, the
+        // ESP core and build versions. The old page showed these as plain text; a stepper
+        // next to a compiled-in version string only invites a write the unit will spend a
+        // flash cycle refusing. They also stay out of the unknown list below: naming a
+        // sensor reading as "a setting nobody labelled" is how a user ends up hunting for a
+        // setting that was never a setting.
+        val hint = schema.extras.keys
+            .mapNotNull { schema.extra(it) }
+            .filter { it.editable }
+            .joinToString(", ") { it.label }
+        val unknownRows = state.unknown
+        if (state.unitStatus.isNotEmpty()) {
+            item { CardHead("Values the unit reports") }
+            items(state.unitStatus) { (spec, value) ->
+                // The asset's kinds are lower-case ("int", "text"), and the store has
+                // already turned a whole-number reading into an Int so this row draws "2678"
+                // and not "2678.0".
+                val numeric = spec.kind.equals("int", ignoreCase = true)
+                SettingsRow(
+                    item = SchemaItem(
+                        key = spec.key,
+                        kind = if (numeric) ValueKind.INT else ValueKind.STR,
+                        control = RowControl.TEXT,
+                        label = spec.label,
+                    ),
+                    view = RowView(value, null, RowStatus.SYNCED, null),
+                    imperial = false,
+                    unitSwap = emptyMap(),
+                    enabled = false,
+                    onEdit = { _, _ -> },
+                    readOnlyHint = if (spec.live) {
+                        "read from the unit while it runs — not a setting"
+                    } else {
+                        "compiled into the firmware — not a setting"
+                    },
+                )
+            }
+            // The one extra that is a real setting (the fuel calibration table) has no row
+            // of its own here, so the page says where it lives rather than pretending the
+            // card is a reading.
+            if (hint.isNotEmpty()) {
+                item {
+                    Text(
+                        "editable extras: $hint",
+                        style = HudeCfgNote(),
+                        color = HudColors.TextDim,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
+            }
+        }
+        // A firmware that grew a setting nobody regenerated the schema for streams a key
+        // with no row. It cannot be placed in a group — the schema is what does the placing
+        // — so it lands here with a label guessed from the key, and it is in the export
+        // either way. A setting that cannot be found looks exactly like a setting that does
+        // not exist, which is why this list is not left to the search box.
+        if (unknownRows.isNotEmpty()) {
             item { CardHead("Keys this app's schema does not describe") }
             item {
                 Text(
-                    "${state.unknown.size} setting(s) came from the unit with no row in this " +
-                        "app's schema. They are kept, editable with a control guessed from the " +
-                        "value, and included in the export — regenerate the schema after a " +
-                        "firmware update (scripts/gen_config_schema.py) for proper labels.",
+                    "${unknownRows.size} setting(s) the unit sent that this app's schema has no " +
+                        "row for. They are kept, editable with a control guessed from the value, " +
+                        "and included in the export — regenerate the schema after a firmware " +
+                        "update (scripts/gen_config_schema.py) for proper labels.",
                     style = HudeCfgHelp(),
                     color = HudColors.Amber,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                 )
             }
-            items(state.unknown) { item ->
+            items(unknownRows) { item ->
                 SettingsRow(
                     item = item,
                     view = state.rows[item.key],

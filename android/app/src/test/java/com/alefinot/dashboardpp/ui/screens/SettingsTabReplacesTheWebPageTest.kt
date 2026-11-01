@@ -89,6 +89,51 @@ class SettingsTabReplacesTheWebPageTest {
         }
     }
 
+    /**
+     * Advanced mode is a firmware row the schema keeps out of the cards on purpose, so
+     * asking the card list for it finds nothing — and the switch duly went missing from the
+     * header on a bench unit, leaving advanced mode at whatever the unit last happened to
+     * have, with no way to change it. The gate is the schema naming the key, not a row for
+     * it existing.
+     */
+    @Test
+    fun theAdvancedSwitchIsOfferedWheneverTheSchemaNamesTheKey() {
+        val page = codeOf(moduleSource("DashboardSettingsScreen.kt"))
+        assertTrue(
+            "the advanced switch is gated on something other than the schema naming its key",
+            Regex("schema\\.advancedKey\\.isNotEmpty\\(\\)").containsMatchIn(page),
+        )
+        assertFalse(
+            "the switch is gated on the advanced key having a card row, which it never has",
+            Regex("item\\(\\s*schema\\.advancedKey\\s*\\)\\s*!=\\s*null").containsMatchIn(page),
+        )
+    }
+
+    /**
+     * A switch drawn from scratch is a box to a screen reader. `uiautomator` reported every
+     * toggle in the settings tab as an unnamed clickable view with no checked state — which
+     * is also why none of the switch behaviour on the bench could be read off a dump. The
+     * control has to carry its name and its on/off state on the node.
+     */
+    @Test
+    fun theSwitchesSayWhatTheyAreAndWhetherTheyAreOn() {
+        val hud = codeOf(componentSource("Hud.kt"))
+        assertTrue(
+            "HudToggle is clickable rather than toggleable, so it carries no state",
+            Regex("\\.toggleable\\(").containsMatchIn(hud),
+        )
+        assertTrue("the switch never says whether it is on", Regex("stateDescription").containsMatchIn(hud))
+        assertTrue(
+            "the switch has no way of being given the name of the thing it switches",
+            Regex("contentDescription\\s*=\\s*label").containsMatchIn(hud),
+        )
+        val rows = codeOf(moduleSource("settings/SettingsRow.kt"))
+        assertTrue(
+            "a row's switch is drawn without the row's label next to it in the tree",
+            Regex("HudToggle\\([\\s\\S]{0,400}?label\\s*=\\s*item\\.label").containsMatchIn(rows),
+        )
+    }
+
     private fun codeOnly(src: String): String = src
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), " ")
         .replace(Regex("//.*"), " ")
@@ -100,6 +145,16 @@ class SettingsTabReplacesTheWebPageTest {
     }
 
     private fun screensDir() = File(moduleDir(), "src/main/java/com/alefinot/dashboardpp/ui/screens")
+
+    /** Strips comments too: a guard that passes because of prose is not a guard. */
+    private fun codeOf(src: String): String =
+        codeOnly(src).replace(Regex("//[^\\n]*"), " ")
+
+    private fun componentSource(name: String): String {
+        val f = File(File(moduleDir(), "src/main/java/com/alefinot/dashboardpp/ui/components"), name)
+        assertTrue("cannot find $f", f.isFile)
+        return f.readText()
+    }
 
     private fun settingsDir() = File(screensDir(), "settings")
 

@@ -174,6 +174,55 @@ data class ConfigSchema(
     fun card(widget: String): SchemaCard? =
         groups.flatMap { it.cards }.firstOrNull { it.widget == widget }
 
+    /**
+     * One of the values the unit streams that is not a `CFG_TABLE` row: a live ADC
+     * reading, a compiled-in version string, the fuel ohm array.
+     *
+     * The asset already knows which of these are read-only and which are live; the
+     * first cut of the settings tab parsed them and then ignored them, so on a bench
+     * unit `ambientLightValue` arrived as "Ambientlightvalue" with a stepper next to
+     * it and a reset button that the unit answers `unknown_key` to. Marking them here
+     * is what keeps a reading from being offered as a control.
+     */
+    data class ExtraSpec(
+        val key: String,
+        val label: String,
+        val kind: String,
+        /** The unit has no row to write it into — a version string, a computed value. */
+        val readOnly: Boolean,
+        /** It changes by itself while the unit runs — an ADC reading. */
+        val live: Boolean,
+        /** For an array, the key holding its length. */
+        val countKey: String?,
+    ) {
+        /** Only `fuelCalOhms`-shaped extras are settings the unit will take back. */
+        val editable: Boolean get() = !readOnly && !live
+    }
+
+    private val extraSpecs: Map<String, ExtraSpec> by lazy {
+        buildMap {
+            for ((key, raw) in extras) {
+                val m = raw as? Map<*, *> ?: continue
+                put(
+                    key,
+                    ExtraSpec(
+                        key = key,
+                        label = ConfigJson.str(m, "label") ?: key,
+                        kind = ConfigJson.str(m, "kind") ?: "text",
+                        readOnly = ConfigJson.bool(m, "readOnly") == true,
+                        live = ConfigJson.bool(m, "live") == true,
+                        countKey = ConfigJson.str(m, "countKey"),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun extra(key: String): ExtraSpec? = extraSpecs[key]
+
+    /** Extras that are readings rather than settings, in asset order. */
+    val statusExtras: List<ExtraSpec> get() = extraSpecs.values.filter { !it.editable }
+
     companion object {
 
         fun read(root: Map<String, Any?>): ConfigSchema? {

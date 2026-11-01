@@ -82,7 +82,12 @@ fun BleScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var devices by remember { mutableStateOf<List<BleDevice>>(emptyList()) }
-    var lastDevice by remember { mutableStateOf<BleDevice?>(null) }
+    // The peer the link last came up with is remembered by the link, not here: this
+    // panel is opened and closed around the settings tab, and a `remember` that drops
+    // the address turns every "the unit restarted" into a fresh scan.
+    var lastDevice by remember {
+        mutableStateOf(link.lastPeer?.let { BleDevice(it.name, it.address, 0) })
+    }
     var scanning by remember { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }

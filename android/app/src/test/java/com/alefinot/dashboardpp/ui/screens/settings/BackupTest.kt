@@ -79,7 +79,8 @@ class BackupTest {
             store.sync()
             gateway.writeQueue.addLast(WriteResult(ok = false, error = "unknown_key"))
             val report = store.restore("""{"A_ONE":5,"B_ONE":6}""")
-            assertEquals(1, report.skipped)
+            assertEquals(1, report.refused)
+            assertEquals("a clean key was counted as refused too", 0, report.leftOut)
             assertEquals(1, report.applied)
             assertEquals(listOf("Alpha: unknown_key"), report.problems)
         }
@@ -98,5 +99,33 @@ class BackupTest {
             assertEquals(0, report.applied)
             assertTrue(report.problems.isNotEmpty())
         }
+    }
+
+    /**
+     * How a restore reads in the bar. Two clauses were joined with a separator in the join
+     * and another inside each clause, so the page printed "… ·  · 3 value(s) …", and a
+     * blank entry in the list made it worse. One separator between clauses, nothing else.
+     */
+    @Test
+    fun theRestoreLinePrintsEachClauseOnce() {
+        val line = RestoreReport(
+            applied = 185,
+            refused = 0,
+            leftOut = 17,
+            nvsErrors = 0,
+            batches = 23,
+            problems = listOf(
+                "14 key(s) this app does not show were left as the unit has them: WIFI_SSID",
+                " ",
+                "3 value(s) that are not settings were left alone: ambientLightValue",
+            ),
+        ).summary
+        assertEquals(
+            "restored 185 keys in 23 batches"
+                + " · 14 key(s) this app does not show were left as the unit has them: WIFI_SSID"
+                + " · 3 value(s) that are not settings were left alone: ambientLightValue",
+            line,
+        )
+        assertTrue("the bar line still carries a doubled separator: $line", !line.contains("  · "))
     }
 }

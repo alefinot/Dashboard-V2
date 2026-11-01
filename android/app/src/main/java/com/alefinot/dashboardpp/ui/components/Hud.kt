@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.BasicTextField
@@ -38,6 +39,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
@@ -133,9 +138,20 @@ fun HudButton(
  * the whole `<label>` wraps the switch, so its tappable area is larger than the
  * control as well; 34x18dp on its own would be a hard target to hit on a phone in
  * a moving car.
+ *
+ * [label] is what the control is *of*. The old page got that from the text next to
+ * its `<input type=checkbox>`; a Compose `Box` drawn from scratch has nothing to
+ * announce, so a screen reader reads this switch as an unnamed box and cannot say
+ * whether it is on. Passing the label makes it a named, checkable switch.
  */
 @Composable
-fun HudToggle(on: Boolean, modifier: Modifier = Modifier, onToggle: (Boolean) -> Unit) {
+fun HudToggle(
+    on: Boolean,
+    modifier: Modifier = Modifier,
+    /** What this switch turns on and off, for a screen reader. */
+    label: String? = null,
+    onToggle: (Boolean) -> Unit,
+) {
     val track by animateColorAsState(
         if (on) Color(0x4000FFFF) else Color(0xFF2A2A2A),
         tween(HudMotion.SWITCH_MS, easing = HudMotion.Ease),
@@ -157,10 +173,20 @@ fun HudToggle(on: Boolean, modifier: Modifier = Modifier, onToggle: (Boolean) ->
                 .size(width = 34.dp, height = 18.dp)
                 .clip(CircleShape)
                 .background(track)
-                .clickable(
+                // `toggleable`, not `clickable`: it puts the on/off state on the node,
+                // so TalkBack says "advanced settings, switch, off" and `uiautomator`
+                // reports checkable/checked instead of an unnamed clickable box.
+                .semantics {
+                    if (label != null) contentDescription = label
+                    stateDescription = if (on) "on" else "off"
+                }
+                .toggleable(
+                    value = on,
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                ) { onToggle(!on) },
+                    role = Role.Switch,
+                    onValueChange = onToggle,
+                ),
         ) {
             Box(
                 Modifier
