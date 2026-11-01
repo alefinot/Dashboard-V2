@@ -44,6 +44,7 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
+import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorScreen
 import com.alefinot.dashboardpp.ui.screens.settings.RowControl
 import com.alefinot.dashboardpp.ui.screens.settings.RowStatus
 import com.alefinot.dashboardpp.ui.screens.settings.RowView
@@ -130,6 +131,15 @@ fun DashboardSettingsScreen(
     var showLink by remember { mutableStateOf(false) }
     if (showLink) {
         BleScreen(onBack = { showLink = false })
+        return
+    }
+
+    // The unit's performance monitor, taken the same way the link panel is taken: it needs the
+    // whole screen for the memory and partition figures, it is reached from Tools, and because it
+    // is the only thing composed while it is open, its polling stops the moment the user is back.
+    var showPerf by remember { mutableStateOf(false) }
+    if (showPerf) {
+        PerfMonitorScreen(store = store, link = link, onBack = { showPerf = false })
         return
     }
 
@@ -267,6 +277,7 @@ fun DashboardSettingsScreen(
                 onNoise = { noiseLine = it },
                 scope = scope,
                 state = state,
+                onOpenPerf = { showPerf = true },
             )
             return@Column
         }
@@ -613,7 +624,7 @@ private fun RebootBar(
 }
 
 @Composable
-private fun CardHead(title: String) {
+internal fun CardHead(title: String) {
     Text(
         title,
         style = HudeSectionCaps(),
@@ -652,6 +663,8 @@ private fun ToolsPage(
     scope: kotlinx.coroutines.CoroutineScope,
     /** So the rows this page draws carry their real status, and the unknown keys. */
     state: ConfigStore.SettingsState,
+    /** The performance monitor: the one card on this page that only ever reads. */
+    onOpenPerf: () -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         item { CardHead("Unit actions") }
@@ -660,6 +673,14 @@ private fun ToolsPage(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
             ) {
+                // Not an action on the unit — an invitation to ask it about itself. It sits here
+                // rather than in the strip because it is a bench tool: FPS against TARGET_FPS,
+                // heap over time, stack marks, partitions, and why the unit really rebooted.
+                HudButton(
+                    label = "PERFORMANCE MONITOR",
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onOpenPerf,
+                )
                 HudButton(
                     label = "RESTART",
                     style = HudButtonStyle.SECONDARY,
