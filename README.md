@@ -30,7 +30,9 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
    - [The shell: one bar, one pager, one list](#the-shell-one-bar-one-pager-one-list)
    - [The garage: a card is a vehicle and the unit that belongs to it](#the-garage-a-card-is-a-vehicle-and-the-unit-that-belongs-to-it)
    - [Identity: which dashboard belongs to which card](#identity-which-dashboard-belongs-to-which-card)
-   - [Connection: where connecting happens, and where it does not](#connection-where-connecting-happens-and-where-it-does-not)
+   - [Connection: one page, one ladder, and a reason line](#connection-one-page-one-ladder-and-a-reason-line)
+   - [Telemetry: the unit pushes, the app stopped asking](#telemetry-the-unit-pushes-the-app-stopped-asking)
+   - [Dashboard settings: the unit's page, drawn natively](#dashboard-settings-the-units-page-drawn-natively)
    - [Trip log: one file per power session, tagged with the card](#trip-log-one-file-per-power-session-tagged-with-the-card)
    - [Photos: pick, crop, one JPEG per vehicle](#photos-pick-crop-one-jpeg-per-vehicle)
    - [Building and testing the app](#building-and-testing-the-app)
@@ -52,7 +54,7 @@ Dashboard++ replaces legacy analog or basic digital gauges with an automotive-gr
 - **Configurable 7-Segment Digital Fonts:** 120px (sprite) and 28px (direct) seven-segment fonts with background "ghost digit" rendering (888 backdrop effect) and fully user-configurable integer and decimal digit boundaries for all telemetry counters.
 - **Full Sensor Suite Integration:** Precise fuel level monitoring (20-point piecewise linear calibration table + EMA filtering), engine coolant thermistor telemetry (Steinhart-Hart equation), battery voltage divider monitoring, trip fuel economy tracking, **trip average speed**, and a **session max speed (Vmax)** readout display.
 - **FreeRTOS Dual-Core Multitasking:** Strict core isolation — the continuous ~1.1KB/s GNSS UART stream is quarantined in its own Core 0 task (bulk ring-buffer read, bounded per tick, sitting below the WiFi stack), while the vehicle sensor suite and UI rendering run on Core 1, so a GPS stream backlog can never stall the dashboard or freeze any real-time value.
-- **Embedded Web Management Portal:** Embedded single-page Web application accessible over SoftAP or local WiFi network featuring grouped card-based configuration UI with live search, real-time performance telemetry panel (FPS, CPU frequency/temp, RAM, flash storage), interactive sliders, color pickers, NVS backup/restore, web serial terminal stream, and OTA firmware updating by uploading a firmware file (from the Web UI file picker, or from the Android app, which is the intended path).
+- **Embedded Web Management Portal:** Embedded single-page Web application accessible over SoftAP or local WiFi network featuring grouped card-based configuration UI with live search, real-time performance telemetry panel (FPS, CPU frequency/temp, RAM, flash storage), interactive sliders, color pickers, NVS backup/restore, web serial terminal stream, and OTA firmware updating by uploading a firmware file (the Web UI's own file picker is the only push path today: the Android app used to open that page in a WebView and upload through it, and since it became a Bluetooth-only client it can no longer reach `POST /api/ota` at all — see *Android Companion App*).
 - **Hysteresis-Based Dynamic CPU Scaling:** Three-state frequency governor (240/160/80 MHz) with hysteresis deadbands prevents oscillation, and thermal throttling automatically caps frequency at configurable warning/critical temperature thresholds.
 
 ---
@@ -432,7 +434,7 @@ The management portal features a modern grouped card-based layout:
 - **Real-time performance panel** displaying FPS, CPU frequency/temperature, RAM usage, flash storage utilization, and live serial output monitor
 - **Weather Widget group** with city, latitude/longitude, refresh interval, locale, and a day/night icon
 - **Ambient light calibration** (dark / bright reference points)
-- **OTA firmware upload** via file picker (the Web UI path; the Android app pushes the same way and additionally lists the published releases so a person picks which one to install)
+- **OTA firmware upload** via file picker — today this is the Web UI's path alone. The Android app used to reach the same endpoint through its WebView of this page; a Bluetooth-only client cannot (`ota.begin` / `ota.abort` answer `not_implemented` over RPC, and the image path over the OTA characteristic is phase 2b in `src/bt_rpc.cpp`'s comments, not code)
 - **NVS backup/restore** (export downloads `GET /api/config` as `dashboard_backup.json`, import posts it back to `POST /api/config`)
 
 ### REST API Endpoints
@@ -458,7 +460,7 @@ The management portal features a modern grouped card-based layout:
 | `/api/sensors` | `GET` | Reads calibrated battery voltage (`v`) and coolant temperature (`t`) | None | `application/json` |
 | `/api/fuel` | `GET` | Reads the fuel input: `raw` averaged ADC code, `liters`, `pct`, `ohm` sender resistance, `st` input state (0 = disabled, 1 = ok, 2 = open circuit, 3 = shorted) | None | `application/json` |
 | `/api/live` | `GET` | Single 1 Hz snapshot for the Web UI's live readings: `ambient`, `odo` (km), `fuel_raw`, `fuel_ohm`, `fuel_st`, `volts`, `temp`. One response feeds all five cells, so they always show the same instant | None | `application/json` |
-| `/api/snapshot` | `GET` | Full 1 Hz vehicle + GNSS snapshot for external consumers (the Android app's trip recorder): `ver`, `up` (uptime s), `spd`, `src` (0 = Hall, 1 = GPS, 2 = fused), `avg`, `max`, `trp_km`, `trp_l`, `ikml`, `akml`, `odo` (km, demo-aware), `fuel_l`, `fuel_pct`, `fuel_st`, `volts`, `temp`, `amb`, `sats`, `hdop`, `alt`, `lat`, `lon`, `fix`, `tmr_st`, `tmr_s`, `fps`, `heap`. `fix` is 1 only while the GNSS location is valid (`lat`/`lon` meaningful then); `hdop` and `alt` print `-1` when the fix carried neither. Read-only and allocation-free like `/api/live` | None | `application/json` |
+| `/api/snapshot` | `GET` | Full 1 Hz vehicle + GNSS snapshot for external consumers (the Android app reads this same JSON over the BLE RPC `snapshot`, and the unit pushes it unprompted on its notification characteristic): `ver`, `up` (uptime s), `spd`, `src` (0 = Hall, 1 = GPS, 2 = fused), `avg`, `max`, `trp_km`, `trp_l`, `ikml`, `akml`, `odo` (km, demo-aware), `fuel_l`, `fuel_pct`, `fuel_st`, `volts`, `temp`, `amb`, `sats`, `hdop`, `alt`, `lat`, `lon`, `fix`, `tmr_st`, `tmr_s`, `fps`, `heap`. `fix` is 1 only while the GNSS location is valid (`lat`/`lon` meaningful then); `hdop` and `alt` print `-1` when the fix carried neither. Read-only and allocation-free like `/api/live` | None | `application/json` |
 | `/api/noisematrix` | `GET` | Noise-bench snapshot: `status` (`never` / `running` / `done`), completed runs, and per run / per channel `mean`, `sigma` and peak-to-peak in mV and ADC codes (`_mv` / `_lsb`) | None | `application/json` |
 | `/api/noisematrix` | `POST` | Starts the four-run sensor noise bench (`idle`, `tft`, `bl10`, `bl90`); runs in the background for ~17 s, so poll the `GET`. Answers `409` while a job is running | None | `application/json` |
 | `/api/ambient/cal-dark` | `POST` | Sets dark-reference ambient light value (auto-brightness floor) | None | `application/json` (`{"status":"ok"\|"saved-ram-only","value":N}` — `saved-ram-only` means the value is applied but the NVS write failed) |
@@ -466,7 +468,7 @@ The management portal features a modern grouped card-based layout:
 | `/api/ota` | `POST` | Firmware install over the LAN — version, size, image-header and one-writer gates always; no signature step on any path; an **older** image is accepted without a flag (see *LAN install (`POST /api/ota`)*) | `multipart/form-data`: `target_version`, `firmware` (file part); optional `total_bytes`, `force=1` (reflash the identical build). A `signature` part may still be sent: it is counted, ignored and logged | `application/json` |
 | `/api/ota/check` | `GET` | Reports **install state** for whoever is pushing the image: `state` (`idle|staging|receiving|verifying|writing|done|error`), `percent` (`-1` when no `total_bytes` was declared), `bytes`, `bytes_total`, `quiet`, `quiet_silent_ms`, `screen`, `hold_to_restart_ms`, `error`, `last_target_version`, plus the unit's identity — `current_version` (the compiled-in build, which is what every gate compares against), `build_version`, `image_tag` (the `DPPVER=` marker this build carries inside its own image file), `previous_version`, `status`, `status_updated`. The pull-era fields `enabled`, `url`, `ca_bundle` and `ca_mode` are gone: this unit fetches nothing by itself. Answers normally even during a quiet window — it is on the allow-list | None | `application/json` |
 | `/api/serial` | `GET` | Streams internal 4 KB ring buffer logs | None | `text/plain` |
-| `/api/perf` | `GET` | Live telemetry (CPU, Heap, task stack headroom, FPS, WiFi, partitions), plus the web task's own timing: `web_serve_ms_last` / `web_serve_ms_max` (what one `handleClient()` pass costs) and `web_slow_iters` (loop iterations over 100 ms). Also reports `mac`: the base eFuse MAC (uppercase, colon-separated) - the stable device identity the companion app binds its vehicle card to, unchanged by Wi-Fi mode or DHCP | None | `application/json` |
+| `/api/perf` | `GET` | Live telemetry (CPU, Heap, task stack headroom, FPS, WiFi, partitions), plus the web task's own timing: `web_serve_ms_last` / `web_serve_ms_max` (what one `handleClient()` pass costs) and `web_slow_iters` (loop iterations over 100 ms). Also reports `mac`: the base eFuse MAC (uppercase, colon-separated) - the stable device identity, mirrored as `perf.mac` on the BLE RPC and what the companion app binds its vehicle card to, unchanged by Wi-Fi mode or DHCP | None | `application/json` |
 | `/api/health` | `GET` | Health probe: heap, FPS, partition layout and the NVS entry budget (`nvs_bytes`, `nvs_entries_used` / `_available` / `_total`) | None | `application/json` |
 | `/api/boot` | `GET` | Boot/reboot forensics (reset reason, storm, last-reboot tag, heap watermark). `reset_reason` covers the whole core enum — `POWERON`, `EXT`, `SW (clean restart)`, `PANIC (crash/abort)`, `INT_WDT`, `TASK_WDT`, `WDT (other)`, `DEEP_SLEEP_WAKE`, `BROWNOUT`, `SDIO`, `USB`, `JTAG`, `EFUSE_ERR`, `PWR_GLITCH`, `CPU_LOCKUP`, `UNKNOWN`; anything unmapped prints `RST_<n>` (issue #42) | None | `application/json` |
 
@@ -620,7 +622,7 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 - `AP_PASSWORD` (default="12345678"): Password of the `Dashboard_Config` SoftAP (the configuration portal). Set in the WebUI (System & General → Wifi → Device Config AP). Must be **empty** (open network, not recommended) or **8–63 characters**: the Wi-Fi stack rejects 1–7 character passphrases, so a shorter value is refused at load/save time and the shipped default is restored instead (logged as `Config: AP_PASSWORD too short`). The WebUI warns while the default password is still in use.
 - **Not parameters any more:** the search policy is fixed to *search forever* and TX power is fixed at `WIFI_POWER_19_5dBm` (19.5 dBm — the maximum the classic ESP32 accepts). `WIFI_RETRY_MODE`, `WIFI_RETRY_SECONDS` and `WIFI_TX_POWER_DBM` are gone from the parameter table, the WebUI and the backup template; a backup that still carries the old `WIFI_RETRY_M` / `WIFI_RETRY_S` / `WIFI_TXP` keys restores without them.
 - `WIFI_ATTEMPT_SECONDS` (default=12, range 5–60): How long one network gets per try — the window covers the driver’s scan plus association, 4-way handshake and DHCP. A dead network is dropped earlier as soon as the driver reports its `STA_DISCONNECTED` reason (`NO_AP_FOUND`, wrong password, auth timeout), so this window only decides how long a *silent* network (in range but not answering, or a stalled DHCP lease) is waited for before the next slot is tried.
-- **Not parameters any more:** `OTA_PULL_ENABLED` **and** `OTA_PULL_URL` are gone — from the parameter table, the WebUI and the backup template. They configured the path by which the unit fetched firmware from GitHub by itself, and that path was **deleted on 2026-10-31**: firmware now only ever arrives through `POST /api/ota`, pushed by the Android app or by the Web UI file picker. A backup that still carries the old `OTA_PULL_EN` / `OTA_PULL_URL` keys restores without them, exactly as the retired `WIFI_RETRY_M` / `WIFI_TXP` keys do, and `CFG_VER` is deliberately not bumped over them — bumping it would wipe every other setting on units that already exist.
+- **Not parameters any more:** `OTA_PULL_ENABLED` **and** `OTA_PULL_URL` are gone — from the parameter table, the WebUI and the backup template. They configured the path by which the unit fetched firmware from GitHub by itself, and that path was **deleted on 2026-10-31**: firmware now only ever arrives through `POST /api/ota`, pushed by the Web UI file picker (the Android app pushed it that way too until it became a Bluetooth-only client — see the Unreleased app entry above). A backup that still carries the old `OTA_PULL_EN` / `OTA_PULL_URL` keys restores without them, exactly as the retired `WIFI_RETRY_M` / `WIFI_TXP` keys do, and `CFG_VER` is deliberately not bumped over them — bumping it would wipe every other setting on units that already exist.
 - **Not a parameter any more:** `VERSION_OVERRIDE` (NVS key `VER_OVR`) was removed outright in this unreleased build. It was a hand-typed display label sitting next to the real build identity, and the moment the firmware moved on it contradicted that identity; issue #72 is the story of what it did to the update gates. The key is simply never read again — same treatment as the fuel table's legacy `TCH_n` keys — and `CFG_VER` is not bumped over it. The unit's version is `FW_VERSION`, compiled in, and `GET /api/ota/check` reports it as `current_version` and `build_version`.
 
 #### Ambient Light (Auto-Brightness)
@@ -638,7 +640,9 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it discovers the dashboard, holds a garage of vehicles, samples `/api/snapshot` once a second into a CSV trip log, and shows what those drives did. Current build: `versionName 1.1.0`, `versionCode 30` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 1.1.0`, `versionCode 42` (rule 24: every shared APK bumps `versionCode`).
+
+**One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (the firmware's HTTP API is untouched by this work), and they are flashed the same way as before: wired `pio run -t upload`, or the Web Portal. What changed is that the phone is no longer a second way in.
 
 ### The shell: one bar, one pager, one list
 
@@ -646,50 +650,75 @@ The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradle
 
 | Slot | `AppTab` | Screen | |
 |---|---|---|---|
-| 0 | `LIVE` | `LiveTab` | The app's own live gauges (drawn from the polled snapshot, not the Web UI) |
+| 0 | `LIVE` | `LiveTab` | The app's own live gauges, drawn from the telemetry the unit pushes (1 Hz) |
 | 1 | `TRIPS` | `TripsTab` | Recorded drives, badges, filter, detail |
-| 2 | `VEHICLES` | `VehicleScreen` | **The garage and every way of connecting to a vehicle. `centre` and `home`: the app opens here.** |
-| 3 | `WEB` | ESP configuration | The dashboard's own Web UI in a WebView, labelled for what it configures |
-| 4 | `SETTINGS` | `SettingsScreen` | This app's settings: recording, storage, trips folder |
+| 2 | `VEHICLES` | `VehicleScreen` | **The garage, and the only place a pairing or a connection is made. `centre` and `home`: the app opens here.** |
+| 3 | `WEB` | `DashboardSettingsScreen` | The unit's configuration, drawn natively and read over Bluetooth. The enum case is still spelled `WEB` — renaming it means touching every `when` that switches on it — and the bar's glyph says "Dashboard settings" |
+| 4 | `SETTINGS` | `SettingsScreen` | This app's settings: recording, motion, storage, trips folder, and the linked unit's name and firmware |
 
 Index 2 is the middle of five and the app opens there (`BarLayout.home`, which is the pager's `initialPage`). The garage became the home screen because it is where a connection is made: before it, every page assumed a dashboard was already there and an unreachable one left the whole app with one sentence and an address box. The bar carries one glyph size (`BarLayout.glyph`) - the centre larger - and a dimmed slot means "nothing behind this right now", not "quieter".
 
+Pages are composed lazily but kept warm once reached, and the pager distinguishes two questions that used to be collapsed into one: "is this page inside the viewport" (may it paint and take touches) and "is this the settled page" (may it put requests on the one link). Collapsing them made swipes sluggish; two pages polling the same link was a real bug in the HTTP era, and the same rule keeps the recorder and the settings page from reading over each other now.
+
 ### The garage: a card is a vehicle and the unit that belongs to it
 
-`vehicles/Vehicle.kt` is one record with two halves on purpose. The user's words - `name`, `type` (`CAR` / `MOTORCYCLE` / `OTHER`), `plate`, `maker`, `model`, `year` (a `String`: "c. 1998" and "1998/99" are answers a number field would throw away), `notes`, `photoFile` - are never written by a connect. The app's evidence about a physical unit - `mac`, `ips`, `lastConnectedAtMs`, `firmwareVersion` - is never typed. Keeping them in one record is what lets a card mean *this dashboard* instead of *whatever answered at this address*.
+`vehicles/Vehicle.kt` is one record with two halves on purpose. The user's words - `name`, `type` (`CAR` / `MOTORCYCLE` / `OTHER`), `plate`, `maker`, `model`, `year` (a `String`: "c. 1998" and "1998/99" are answers a number field would throw away), `notes`, `photoFile` - are never written by a connect. The app's evidence about a physical unit - `mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion` - is never typed. Keeping them in one record is what lets a card mean *this dashboard* instead of *whatever answered at this address*.
 
 - `id` is app-generated and stable across renames (`v1`, `v2`, ...: the next free name, `VehicleStore.nextIdName`). Trip files tag themselves with it, so renaming a vehicle does not rewrite recorded history.
 - `photoFile` is a bare file name (`v1.jpg`) inside the store's vehicles directory, never an absolute path: the external files directory can move (adopted storage, a restore), and a persisted path would become a dead link. A missing JPEG reads as "no photo", and the record stays valid.
-- `ips` is most-recent-first, capped at three entries.
-- Storage is DataStore (`vehicle_store`): one JSON record per `vehicle:<id>` row plus the selected card and the card order. Sorting and the next-name rule are pure functions in `VehicleStore`'s companion so they can be argued about in tests (`VehicleCodecTest`, `VehicleOrderTest`).
+- `bleAddress` is stored **exactly as Android reports it**, and is never derived from the eFuse MAC. The ESP32's Bluetooth address is not its base MAC, so deriving one invents an address that may belong to a different device. It is the phone's way back to a link, not an identity; `mac` stays the identity (see below).
+- The old `ips` list is gone. Records written before the change still decode (an unknown key is ignored, so an existing garage survives the upgrade), and the list is simply dropped the next time the record is written. One BLE address per card.
+- Storage is DataStore (`vehicle_store`): one JSON record per `vehicle:<id>` row plus the selected card and the card order. Sorting, the next-name rule and the codec are pure functions in `VehicleStore`'s companion so they can be argued about in tests (`VehicleCodecTest` — including the `ble` round-trip and a record that still carries `ips` — `VehicleOrderTest`, `VehicleMatchTest`).
 
 ### Identity: which dashboard belongs to which card
 
-The ESP reports its **base eFuse MAC** as `mac` on `/api/perf` (uppercase, colon-separated, six pairs) - an identity that survives Wi-Fi mode changes and DHCP, unlike the address the dashboard happens to hold. The app reads it during the verify step, and `vehicles/VehicleMatch` is the only place that text is ever interpreted:
+The ESP reports its **base eFuse MAC** as `perf.mac` over the Bluetooth RPC (uppercase, colon-separated, six pairs) - an identity that survives radio and link changes, unlike whatever address the phone happens to hold. The app reads it once per link-up, and `vehicles/VehicleMatch` is the only place that text is ever interpreted:
 
-- A unit whose reported MAC equals a card's `mac` is that card, whatever address it answers at.
-- A card with no `mac` is matched by remembered address instead - the narrower rule that keeps old firmware (which never reports a MAC) usable.
-- A card made by address is **upgraded** to the MAC on the next connect: the first half of the record is untouched, only the evidence gets stronger.
+- A unit whose reported MAC equals a card's `mac` is that card, whatever BLE address it advertises at.
+- A card with no `mac` is matched by its stored BLE address instead — the narrower rule that keeps a unit whose firmware predates `perf.mac` usable.
+- A card made by pairing alone is **upgraded** to the MAC on the first link that reports one: the first half of the record is untouched, only the evidence gets stronger.
+- A unit that answers with a MAC another card already owns is refused and reported (`notice` on the vehicle page) rather than silently adopted; an advertising unit that no card claims is offered as *adopt this unit* instead of being ignored.
 - `mac` is `null` or a canonical `XX:XX:XX:XX:XX:XX`. Anything else (an empty string, half a value, `"garbage"`) counts as unbound: `VehicleMatch` rejects it, the next connect clears it, and the store round-trips it verbatim, because remembering is not the store's judgement. The shape check lives in front of the typed value: `VehicleMatch.normalizeMac(typed) != null`.
+- The recorder's device key comes from `vehicles/UnitIdentity.key(mac, bleAddress)`: MAC when the unit gave one, BLE address when it did not, `unknown` when neither is known. It is deliberately not a name — names are typed, and typed things collide.
 
-### Connection: where connecting happens, and where it does not
+### Connection: one page, one ladder, and a reason line
 
-`ConnectionUiState` (`viewmodel/UiState.kt`) has four states: `Idle(reason?)` (nothing reached for; the reason is what the garage shows, `null` on a cold start, so the garage draws before any network request), `Connecting(mode)`, `Connected(ip, mac?, vehicleId)`, `Failed(reason)`.
+`ConnectionCore` (`viewmodel/ConnectionCore.kt`) is the whole decision — pure, no Android, so every branch of it is a JVM test. `ConnectionViewModel` drives the real GATT link (`ble/BleLink`, `ble/BleRuntime`), which is **process-wide**: a GATT connection belongs to the phone, not to a page, so swiping away from the settings tab does not drop a pairing the user spent a minute setting up.
 
-`ConnectMode` says how far an attempt goes, which is what tells a page whether it may put anything in front of the garage:
+`ConnectionUiState` (`viewmodel/UiState.kt`): `Idle(reason?)`, `Connecting(mode)` where the mode is `DialStored` / `Scan` / `Pair` / `Reconnect`, `Connected(address, name, version, mac?, vehicleId, mtu)`, `Failed(reason)`. The reason line is what used to be three screens (`NoWifi`, `ManualEntryNeeded`, `ConnectionLost`) and is now a sentence under the card that was being reached for, with the rest of the app still on screen.
 
-| Mode | When | What it tries |
-|---|---|---|
-| `SILENT` | At launch, unattended | The selected card's remembered addresses (up to three), nothing else, no screen over the garage |
-| `SEARCH` | `CONNECT` / `SEARCH FOR DASHBOARD++` pressed | Everything: the ladder, the subnet sweep, NSD discovery |
+- **Pairing.** `ADD VEHICLE` scans (filtered by the firmware's service UUID, so the list is dashboards and not the neighbours' headphones), lists each `DPP-####` unit with its signal in dBm, and the tap calls `createBond()`. LE Secure Connections then needs a six-digit passkey entered on the phone — the app does not draw its own key pad, it lets Android's pairing dialog ask — and once that matches, the link comes up encrypted, subscribes to telemetry and RPC, negotiates a 517-byte MTU, reads `perf` for the name/MAC/version, and `NAME IT` opens the editor with that evidence already filled in. Nothing about the unit is typed by hand on this path.
+- **A gap that pairing walks into, stated rather than papered over:** the unit prints that passkey to its serial log (`BT: pairing passkey 123456 - type it on the phone`) and to the heartbeat line, and the firmware exposes it as `btPairingPasskey()` "so the pairing overlay can draw" — but **no panel code draws it yet**, and there is no RPC that will hand it to the phone (the phone is the side that needs it, and giving it over an unencrypted link would defeat the pairing). Pairing a dashboard today therefore needs the serial output: at the bench that is a USB cable, in the car it is not available. The display side is a firmware change, so it is outside this app-only work; it is named here because the README would otherwise describe a flow nobody can finish from the driver's seat.
+- **Reconnecting.** `CONNECT` on a card dials the stored BLE address with no scan. A dropped link retries on `viewmodel/ReconnectLadder.kt` — 2 s, 5 s, 15 s, then a `Failed` reason — and any user action restarts it. There is no `ConnectivityManager` in this code and that is the point: the phone's Wi-Fi state says nothing about a GATT link, so "check your Wi-Fi" was a sentence about a network the transport never used.
+- **Radio and permissions.** Bluetooth off or permission denied is one line plus the system-settings handoff, never a dialog storm. `BLUETOOTH_SCAN` carries `neverForLocation` for Android 12+, and `ACCESS_FINE_LOCATION` is capped at `maxSdkVersion="30"`, because on Android 11 and below a BLE scan counts as a location scan. `INTERNET` stays for the trip map's OSM tiles; the Wi-Fi and network-state permissions the discovery sweep used are gone, and `AppXmlWiringTest` asserts the block both ways so a leftover permission cannot survive its own deletion.
+- **Forgetting.** `FORGET THIS UNIT` clears the app's binding and says out loud that Android may still hold the bond, and offers the system Bluetooth settings. There is no hidden un-bonding API in this app.
+- **Everywhere else there is no connect furniture.** The covers on the other pages offer exactly one button - `OPEN VEHICLE PAGE` - and carry no connect vocabulary and no address in either transport's spelling. App Settings cannot run a connection. That is enforced by the guard test `ConnectActionsOnOnePageTest`, whose allowlist is now the single file `VehicleScreen.kt`, and which strips comments first because half of that redesign is written down in doc comments naming the controls it removed.
 
-A silent reconnect that succeeds *does* start the trip recorder when the recording switch is on: that is what a connected dashboard has always meant. A successful silent reconnect also never raises a scan ring.
+### Telemetry: the unit pushes, the app stopped asking
 
-Every connect action (`connectVehicle`, `disconnect`, `selectVehicle`, `rescan`, `retryNoWifi`, `submitManualIp`) lives on the vehicle page, including `ENTER IP MANUALLY` and `WI-FI SETTINGS`. The covers on other pages offer exactly one button - `OPEN VEHICLE PAGE` - and contain no connect vocabulary; App Settings cannot raise the address panel. That is enforced by the guard test `ConnectActionsOnOnePageTest`, which strips comments first because half of that redesign is written down in doc comments naming the controls it removed.
+The V2 firmware streams a `snapshot` frame on its own characteristic at roughly 1 Hz, and neither the LIVE gauges nor the trip log asks for it. `trips/TelemetryFeed.kt` decides what a frame is worth: a frame whose `up_s` was already seen is a duplicate and does not become a sample, and a link that goes silent for 5 s while still reporting `Ready` gets one `snapshot` request rather than a return to polling. `TripLogService` rides that stream, which retires the one-lane request arbitration that service used to carry when its polling shared a socket with whatever page was open — the app-side twin of the fix the unit's own page needed
+for the same reason (see *V1.4.2 — live readings that never skip a second* in the Changelog).
+
+Around that stream, the link carries three more things: the app pushes the phone's clock once per link-up (`time.set`, the WebUI's own precedent — a unit with no GNSS fix keeps a correct clock this way, and one push per connection is honest about what it can guarantee); the performance monitor reads `perf` / `health` / `boot` and runs the page's live 1 s tick **only while that section is open on screen**; and **weather stays unit-fetched** over the unit's own Wi-Fi — the app has no Open-Meteo client and does not push weather, and that gap is written down here rather than quietly papered over.
+
+### Dashboard settings: the unit's page, drawn natively
+
+Slot 3 draws the unit's configuration in Compose instead of loading the unit's web page in a WebView. The page has the same shape as the unit's own settings page, because that page is the reference the driver already has.
+
+- **The schema is generated, not retyped.** `scripts/gen_config_schema.py` reads the 198 rows of `CFG_TABLE` in `src/config.cpp` plus the labels, groups, cards and help text from `src/webui.html`, and writes `android/app/src/main/assets/config_schema.json`: control types, bounds, units, formats, `reboot_required`, the advanced gate, the action widgets, and the 14 keys that are dead in V2 and must not be drawn. `--check` re-derives the file and reports any drift instead of writing it. That check is run by hand — nothing in Gradle calls the generator — so keeping the asset and the firmware together is a discipline on whoever touches `CFG_TABLE`, not a build gate. Group badges come from `scripts/icons_to_drawables.py`, which converts the page's own `iconSVG` paths into `VectorDrawable`s (`res/drawable/ic_grp_*.xml`, five of them); the schema carries only the icon *name*, so there is one source for each picture and one for each path.
+- **An accordion, not a tab strip.** Five groups under the unit page's own titles — System & General, Display, Sensors Tuning, UI Layout, and *More settings* for the rows the page does not label — each with the badge the page draws above its heading, one group open at a time, and an advanced switch gated on the schema *naming* `ADV_MODE` rather than on that key having a card row (it has none: the gate belongs to the page header in both implementations). The old app had six group pills plus a separate tools page; standing on the System tab and typing "gps" found nothing, on a page that could not say the rows were one tap away.
+- **Search behaves like the unit page's.** The matcher is word-prefix, not substring (`GPS` finds `GPS Module`, `exc` finds `EXC_RES_OHM`, `cu` does not find "fuel"), and typing a query opens the groups it finds and **hides** the groups it does not, with each group header naming how many other groups have hits. A row is searchable by its label, its key (and the second key of an `x`/`y` pair) and its unit — not by its help sentence, and not by its current value, because those are not what a person sees on the row they are looking for. A card whose title matches keeps all of its rows (typing "noise" asks for the noise bench, not one row of it), and a search can never walk through the advanced gate: the gate is a statement about the row, not about how hard someone looked.
+- **Cards flow.** One column below 600 dp, two from 600, three from 900 — the unit page's own breakpoints, 900 being where a tablet's landscape width lands. Cards fill their row in schema order, and a card that carries an action widget (the noise bench, the odometer setter, the firmware panel) takes a row to itself rather than being squeezed into a third of a tablet.
+- **Writes go to the unit as you type, and the unit decides what that cost.** An edit is sent after a 600 ms debounce (the unit's own page autosaves on a 2 s timer; the app is quicker because `SAVE` is sitting in its bar), and `config.set` applies the value live **and** writes it to flash in the same call. When the flash write fails the unit says so — `nvsErrors` — and the row is marked *in RAM only*: it is on the dashboard until it reboots, and the row says that rather than pretending otherwise. `SAVE` is therefore not a commit button; it is a flush — write everything still waiting out its debounce, right now — and its note counts rows written and rows that never reached the unit separately, because a row the unit refused has already reverted and there is nothing to resend. `pending` is measured in rows, not in edits, so a slider dragged through ten values is one thing to save.
+- Rows the unit marks `reboot_required` set `rebootPending`, which is what arms the `RESTART NOW` prompt; `RESTART`, `FACTORY RESET`, `BACKUP` and `RESTORE` sit in the sticky bottom bar because they are not attached to any one row (`reboot`, `factory.reset`, and a `config.get` / `config.set` pair for the backup, its keys split into as many messages as the unit's 8 KiB reassembly ceiling allows, less a 128-byte reserve for the envelope).
+- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The Firmware update card stays in its WebUI position showing the unit's versions and one honest line — **Bluetooth OTA is not in this firmware** (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`), updates happen from the unit's own settings page, and this app ships no updater. The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
+- The **performance monitor** is one more card in the accordion (`ui/screens/settings/PerfMonitorScreen.kt`), reachable by search like any other section, and its live tick runs only while it is the section in front of the user.
+
+`ui/screens/settings/SettingsLayout.kt` holds those rules as pure functions — open/close, search semantics, column count, card packing, advanced gating, which widget a card carries — with the unit page's behaviour as the test oracle (`SettingsLayoutTest`). `ui/screens/settings/ConfigStore.kt` holds the write model (debounce, mirror, pending, flush), tested in `ConfigStoreTest`.
 
 ### Trip log: one file per power session, tagged with the card
 
-Files land in `Android/data/com.alefinot.dashboardpp/files/trips/` named `trip-YYYYMMDD-HHMMSS-NNN.csv`, one per ESP power session: `up_s` going backwards, or a different IP answering, seals the drive and opens the next file. Format is a header line and one fixed 25-column line per sample (`trips/TripFormat.kt`), append-only, oldest first.
+Files land in `Android/data/com.alefinot.dashboardpp/files/trips/` named `trip-YYYYMMDD-HHMMSS-NNN.csv`, one per ESP power session: `up_s` going backwards, or the link ending, seals the drive and opens the next file. Format is a header line and one fixed 25-column line per sample (`trips/TripFormat.kt`), append-only, oldest first.
 
 Above the header, a file may carry one comment line naming whose drive it is:
 
@@ -698,11 +727,11 @@ Above the header, a file may carry one comment line naming whose drive it is:
 ts_ms,up_s,spd,src,avg,max,trp_km,...
 ```
 
-- The id is the card's key, the MAC is what the dashboard reported when the drive started, the name is a copy of what the card said at that moment - so a deleted vehicle still has a readable history while the current name is always looked up live from the id.
+- The id is the card's key, the MAC is what the dashboard reported when the drive started (the BLE address when a unit reports no MAC), the name is a copy of what the card said at that moment - so a deleted vehicle still has a readable history while the current name is always looked up live from the id. That tag format did not change with the transport, which is why trips recorded before the move to Bluetooth still list and parse.
 - It is a `#` comment because the data rows are a fixed-width table that `parseLine` demands at their exact width: the only way to add anything without breaking every file already on disk is a line that is not a data line. Readers skip `#` lines and the header (`TripFormat.skippable`).
 - It is written **once, when the file is created**, and never rewritten. Renaming or re-pointing mid-drive changes the tag of the *next* file, not the one being written, and a file that vanishes mid-drive is recreated without a tag rather than with a guessed one.
-- A card with no MAC on record (firmware predating `mac`) writes the word `unknown`; a drive taken with no card selected writes no line at all. An untagged file is honest: the Trips list files it under `UNKNOWN` rather than guessing.
-- Identity reaches the recorder as extras on the start command (`vehicle_id`, `vehicle_name`, `eff`, built by `ConnectionViewModel.recorderTarget()`), because `/api/snapshot` says nothing about which unit answered and a trip file outlives the connection that created it.
+- A card with no MAC on record (firmware predating `perf.mac`) writes its BLE address, and a unit that reported neither writes `unknown`; a drive taken with no card selected writes no line at all. An untagged file is honest: the Trips list files it under `UNKNOWN` rather than guessing.
+- Identity reaches the recorder as extras on the start command (`vehicle_id`, `vehicle_name`, `eff`, built by `ConnectionViewModel.recorderTarget()`), because a telemetry frame says nothing about which unit sent it and a trip file outlives the connection that created it.
 - The summary cache (`trip_index`) keeps the tag in its own row (`mtime;size;<tag or ->;<summary>`); rows written before tagging existed decode with `tagKnown = false`, get their tag read from line 1 once, and are re-seated so the next pass reads nothing.
 
 On the Trips page each card carries a badge - the vehicle name in cyan, or `NO VEHICLE` in amber keyed on the *id*, not on the label, because a file can have an id and still have no readable name. A chip row (`ALL`, one per vehicle that actually has drives, `UNKNOWN` when something is untagged) appears only when there is something to narrow: with one vehicle and nothing untagged, the list is already filtered and a control with one choice is decoration. The one exception is the chip that is **on**: while a filter hides rows that chip stays on screen, because a filter with no way back to `ALL` is a trap rather than a control. When a filter is on the header count says `N of M` instead of quietly shrinking, the empty state names the chip that is on and says how many drives exist in total, and a remembered filter pointing at a card that no longer has drives falls back to `ALL` rather than showing an empty page labelled with an id the user has never seen. The list's staggered entrance ramp is keyed to the rows as well as to the visit: an animation may delay the cards, it may not decide whether they exist. The detail page states it in one line: `Vehicle: Motosbu · dashboard 94:B5:55:F8:B8:58`, with `(that card is no longer in the garage)` when the id has no card. Deleting a card never deletes its drives.
@@ -720,6 +749,16 @@ cd android
 ```
 
 The testable APK is the debug build at `android/app/build/outputs/apk/debug/app-debug.apk` (rule 27 attaches it to every release). `versionCode` bumps on every shared APK (rule 24). The launcher icon layers are generated and geometry-checked by `python scripts/preview_icon.py` - never hand-edited, the same rule as the firmware's generated headers. Installing over USB on a development tablet is `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`; UI behaviour is then read back from the running app (`uiautomator dump`), not only from the build.
+
+The suite is ~395 plain-JVM tests, and three of them read **sources** rather than composing screens, because the module has no Compose test harness and a guard that only ran on a phone would never run in CI:
+
+| Guard | What it keeps true |
+|---|---|
+| `ConnectActionsOnOnePageTest` | Only `VehicleScreen.kt` may call a connection action; a cover offers exactly one button and no address; no screen in `ui/screens/` reaches for the deleted transport |
+| `SettingsTabReplacesTheWebPageTest` | The ESP slot draws the native page, and the settings page holds no URL, no socket and no old HTTP lane; the whole `app/src/main` tree contains no `EspApi`, `OkHttpClient`/`okhttp3`, `HttpURLConnection`, `android.webkit`/`WebView`, `Nsd`/`NsdManager`, `SubnetScanner`, `DeviceVerifier`, `BleScreen`, `GroupStrip`, `ToolsPage`, `WifiManager`, `ConnectivityManager`, `MulticastLock` or `V1Routes` in code, the files and the package that carried them must not exist, OkHttp is gone from `build.gradle.kts`, and only two files hold a URL at all — the GPX XML namespace and the map's tile user agent, named file by file so the ban itself stays absolute |
+| `AppXmlWiringTest` | FileProvider roots match the store's directory names, the camera `<queries>` block is declared, and the manifest asks for the radio the app uses and none of the ones it dropped (no `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`) |
+
+The pairing and the GATT protocol cannot be tested in JVM at all — they need a unit. The bench acceptance for this transport (unit `DPP-B594`) is in `Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md`: scan → passkey → `Ready`, reconnect from a cold app without a scan, 1 Hz LIVE, a trip tagged to the card, and the settings page exercised end to end.
 
 ---
 
@@ -739,6 +778,10 @@ Dashboard++ for ESP32/
 ├── scripts/
 │   ├── gzip_webui.py      # Pre-gzips webui.html -> webui_html_gz.h (~93 KB raw -> ~20 KB)
 │   ├── vlw_to_header.py   # Compiles .vlw font files into PROGMEM C headers
+│   ├── gen_config_schema.py # CFG_TABLE + WebUI labels -> android config_schema.json (--check guards drift)
+│   ├── icons_to_drawables.py # WebUI iconSVG paths -> android VectorDrawable group badges
+│   ├── fix_upload_layout.py  # post: build step - otadata at this table's real offset, never 0xe000 (inside nvs)
+│   ├── ble_bench_central.py  # A desktop BLE central for the RPC link (bench work, not part of any build)
 │   └── preview_icon.py    # Generates + geometry-checks the Android icon layers (android/app/src/main/res/drawable/)
 ├── include/
 │   ├── Conthrax_SemiBold7pt7b.h  # GFXfont fallback (Small badge size)
@@ -751,6 +794,15 @@ Dashboard++ for ESP32/
 ├── lib/
 │   ├── ArduinoJson/       # Optimized embedded JSON parser/serializer library
 │   └── TinyGPSPlus/       # NMEA 0183 GPS stream parser library
+├── android/               # The companion app (Kotlin + Compose, Gradle; see Android Companion App)
+│   └── app/src/main/
+│       ├── java/com/alefinot/dashboardpp/
+│       │   ├── ble/           # GATT client: protocol & framing, the link state machine, process-wide runtime
+│       │   ├── vehicles/      # The garage: records, identity matching, photo crop
+│       │   ├── trips/         # Trip recorder, CSV/GPX format, the rules for the unit's 1 Hz stream
+│       │   ├── viewmodel/     # ConnectionCore (the connection ladder) and per-screen state
+│       │   └── ui/            # The BarLayout shell, the screens, the settings accordion
+│       └── assets/config_schema.json  # GENERATED by scripts/gen_config_schema.py - never hand-edited
 └── src/
     ├── dashboard.h        # Central global header, structure definitions, API declarations
     ├── main.cpp           # System setup(), dual FreeRTOS task spawns, main display loop
@@ -758,6 +810,9 @@ Dashboard++ for ESP32/
     ├── gfx.cpp            # LovyanGFX display device class, PROGMEM VLW font loader, AA primitives, icons
     ├── sensors.cpp        # Core 0 GPS task (bulk UART drain, TinyGPS++/UBX parser, speed fusion, odo, time-sync) + Core 1 sensor task (Hall ISR, ADC sensors, snapshot)
     ├── ui.cpp             # Dirty-rendering dashboard visual layout engine
+    ├── bt.cpp             # BLE GATT server: advertising (DPP-####), service & characteristics, bonding, MTU, chunked framing
+    ├── bt_proto.h         # The wire protocol shared by the firmware and the app's ble/ package
+    ├── bt_rpc.cpp         # The JSON RPC methods served over that link (config, telemetry, actions; ota.begin/abort answer not_implemented)
     ├── web.cpp            # SoftAP/STA WiFi manager, REST API handlers, LAN firmware install, embedded Web UI
     └── webui.html         # Single-page Web UI source (gzipped at build time by scripts/gzip_webui.py)
 ```
@@ -1054,7 +1109,7 @@ The **Firmware Update** card (Settings → *Firmware Update*) is the unit's own 
 of the same three facts, and it is deliberately explicit that firmware only moves
 when a person makes it move:
 
-- **Choose** then **Install** — pushes a file you already have: the `firmware.bin` from a release plus the version it says it is. Nothing verifies the file: the version, size and image-header gates are what decide the install, and the unit logs the image's SHA-256 so you can check afterwards what actually got written. That is the same request the phone app sends, and this card is the fallback when the phone is not around.
+- **Choose** then **Install** — pushes a file you already have: the `firmware.bin` from a release plus the version it says it is. Nothing verifies the file: the version, size and image-header gates are what decide the install, and the unit logs the image's SHA-256 so you can check afterwards what actually got written. It is the same `POST /api/ota` request a phone client would send, and since the app became Bluetooth-only this card is the only thing that sends it.
 - There is **no third button**. The unit used to have a **Check Updates** control that fetched a manifest URL from GitHub by itself; it is gone, along with the pull task, the manifest parsing, the outbound HTTPS client and the `OTA_PULL_URL` field. If firmware is going to change, something with internet brings it here.
 
 At the top of the card, one line rewrites itself from `GET /api/ota/check` and
@@ -1111,20 +1166,26 @@ URL, no outbound HTTPS client for firmware, no background task, no boot check, a
 no build flag that brings any of it back. `POST /api/ota` is the one way new
 firmware gets in, and the thing that posts it is a client with internet:
 
-1. **The Android app (intended path; this is the half still being built for this
-   release).** It reads the release list from GitHub *on the phone*, shows every
-   published build with its version, date, notes and assets, and lets a person pick
-   one. The phone downloads that release's `firmware.bin` to
-   app cache, checks it against what the release claims (size, and the `DPPVER=x.y.z`
-   marker the firmware stamps inside its own image), prints the SHA-256, then pushes
-   it to the dashboard over the LAN with `multipart/form-data` (`target_version`,
-   `total_bytes`, `firmware`) and watches `GET /api/ota/check` until the unit
-   reboots. After the reboot it re-reads the identity so the screen says what is
-   actually running.
-2. **The Web UI file picker** (Settings -> *Firmware Update*) - same endpoint, same
-   gates, for when a PC is on the dashboard's network.
+1. **The Web UI file picker** (Settings -> *Firmware Update*) — today this is the only
+   push path that exists: same endpoint, same gates, for whoever is on the dashboard's
+   network with a PC (or with the phone's browser).
+2. **The Android app is no longer a path, and that is a consequence of its own**
+   **move to Bluetooth** (see the Unreleased app entry in the Changelog). It reached this
+   endpoint through the WebView of the unit's own page, which a person used to pick a
+   file in; that WebView is gone, and so is every HTTP client in the app. The fuller
+   flow this section used to describe — read the release list from GitHub on the phone,
+   show every published build with its version, date and notes, let a person pick one,
+   download its `firmware.bin` to app cache, check it against what the release claims
+   (size, and the `DPPVER=x.y.z` marker the firmware stamps inside its own image), print
+   the SHA-256, push it with `multipart/form-data` (`target_version`, `total_bytes`,
+   `firmware`), watch `GET /api/ota/check` until the unit reboots, then re-read the
+   identity so the screen says what is running — was never in the shipped app, and is
+   now further away rather than nearer: over Bluetooth the app's only update-shaped RPCs,
+   `ota.begin` and `ota.abort`, answer `not_implemented`. The image path over the OTA
+   characteristic (`BT_F_OTA` framed chunks) is phase 2b in `src/bt_rpc.cpp`'s comments,
+   not code. **A phone carrying only this app cannot update a dashboard today.**
 
-Both paths face the same guards, which live in the unit and cannot be talked around
+That one path faces the same guards, which live in the unit and cannot be talked around
 from the client: `target_version` present and version-shaped; the identical-version
 refusal (`force=1` to reflash the build that is already running); an image claiming an
 **older** version is accepted without argument, because the warning belongs in the
@@ -1138,10 +1199,11 @@ The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
 every build (`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x28f8c)`),
-the unit reports it at `GET /api/ota/check` as `image_tag`, and the app checks the
-downloaded file for it before offering to install - because the release tag and the
+the unit reports it at `GET /api/ota/check` as `image_tag`, and a pushing client is
+expected to check the file it is about to send for it — because the release tag and the
 file contents can disagree, and that disagreement is exactly the class of mistake
-that gets a unit reflashed to something nobody meant.
+that gets a unit reflashed to something nobody meant. No shipped client does that check
+yet; the marker, the print and the field are what make it possible to add one.
 
 Deleting the pull path also closes **#71** and **#70** by construction rather than by
 fix: the TLS failures that made it unreliable (the CDN chain the compiled-in CA
@@ -1187,6 +1249,87 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### Unreleased — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
+
+**No firmware line moved.** `src/` is untouched, `FW_VERSION` is unchanged, and the ESP's
+HTTP API, Web Portal, SoftAP and mDNS behave exactly as before — a browser on the unit's
+Wi-Fi address still gets the settings page. What changed is that the **phone** no longer
+has that second way in. Plan: `Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md`
+(local-only), with P1→P6 in one commit each (`1a10c71` identity, `6a15b33` transport and
+pairing, `7c34220` settings, `352429b` deletions).
+
+- **The transport is GATT and nothing else.** Gone: `api/EspApi.kt` (the HTTP client, its
+cookie jar and its `JVM_OPEN_PORTS` gate), `discovery/` (NSD browse, subnet sweep, LAN
+probe and verifier), the `MANUAL ENTRY` dialog and the `NoWifi` / `ManualEntryNeeded` /
+`ConnectionLost` screens, the `WebView` slot and the BLE bench panel, the one-lane
+request arbitration that `TripLogService` had to carry when two pages shared a socket, and
+OkHttp itself — the debug APK drops from 11.99 MB to 11.57 MB. `AndroidManifest.xml`
+drops `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_NETWORK_STATE` (kept:
+the BLE block with `neverForLocation`, and `ACCESS_FINE_LOCATION` capped at
+`maxSdkVersion="30"` for the Android 11 scan rule); `INTERNET` stays for the trip map's
+OSM tiles.
+- **Pairing is on the vehicle page and nowhere else.** `ConnectionCore` (pure, JVM-tested)
+owns the ladder: dial the stored BLE address, or scan filtered by our service UUID and
+claim what appears; a unit reporting a MAC another card owns is refused, not silently
+adopted; a link that drops retries at 2 s / 5 s / 15 s and then says why under that card.
+LE Secure Connections needs a random six-digit passkey entered on the phone (Android's
+pairing dialog does the asking; the app draws no key pad) — and today
+the unit shows that code only in its serial log, not on its display (`btPairingPasskey()` is
+there for an overlay that was never drawn), so a pairing needs the USB cable at the bench.
+Everywhere else the covers offer `OPEN VEHICLE PAGE` and nothing else, and App Settings
+cannot run a connection. A card stores `bleAddress` **as Android reported it** plus the
+`mac` the unit reports on `perf.mac`; the address is never derived from the MAC, because
+the ESP32's Bluetooth address is not its base MAC and inventing one can point at somebody
+else's device. The old `ips` list is gone (records written earlier still decode, and the
+list is dropped on the next write).
+- **Settings is the unit's page, drawn natively.** The `WEB` slot's WebView and the
+six-pill group strip are replaced by the accordion: the same five groups, in the page's
+own titles, under the page's own badge icons (`scripts/icons_to_drawables.py` converts
+the WebUI's `iconSVG` paths to `VectorDrawable`s), with the same word-prefix search that
+opens the groups it finds and hides the ones it does not, and the same write model
+(600 ms debounce → `config.set` applies live and to flash, `nvsErrors` marks the row *in
+RAM only*, `SAVE` flushes what is still waiting and counts rows written separately from
+rows that never arrived). Row data comes from `assets/config_schema.json`, generated by
+`scripts/gen_config_schema.py` from `CFG_TABLE` and the WebUI's labels; `--check` re-derives
+it and reports drift, and since nothing in Gradle calls the generator that check is run by
+hand. The old `ConfigEditor` hand-maintained
+tree, the REST backup screen and the hand-drawn `PerfScreen` are deleted.
+- **What this deliberately loses, stated where it is met:** firmware older than the BLE
+server (1.4.x and older) cannot be reached from the app at all — the vehicle card says so
+and points at the wired flash / Web Portal path; there is no firmware update over
+Bluetooth (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`), and
+the firmware card says that too; weather is still fetched by the unit itself, because the
+app has no Open-Meteo client and pushing a forecast over the RPC is a feature of its own; and
+`FORGET THIS UNIT` clears the app's binding but Android's bond stays, so the dialog says
+so and offers the system Bluetooth settings.
+- **Trip files are unaffected on disk.** The `#vehicle=id|mac|name` tag keeps its format,
+with the recorder's key now `UnitIdentity.key(mac, bleAddress)` — `mac:XX:…` when the unit
+reported one, `ble:XX:…` when only the pairing is known, `unknown` when neither — replacing
+the device IP that used to be the key, because a Bluetooth address names *this phone's*
+pairing with a radio and not the unit. Drives recorded over Wi-Fi still list, filter and
+export; their tags carry the IP that was written at the time, and nothing rewrites them.
+- **How this is enforced without a Compose test harness:** `ConnectActionsOnOnePageTest`
+allowlists `VehicleScreen.kt` as the only caller of a connection action, and fails if a
+cover carries connect vocabulary or an address in either transport's spelling; and
+`SettingsTabReplacesTheWebPageTest` walks the whole `app/src/main` tree and fails if any
+Kotlin file names `EspApi`, `HttpURLConnection`, `OkHttpClient`/`okhttp3`, `WebView`/
+`android.webkit`, `Nsd`/`NsdManager`, `SubnetScanner`, `DeviceVerifier`, `BleScreen`,
+`GroupStrip`, `ToolsPage`, `WifiManager`, `ConnectivityManager`, `MulticastLock` or
+`V1Routes`, or if `api/EspApi.kt`, `api/EspApiLane.kt`, `discovery/` or
+`ui/screens/BleScreen.kt` exist, or if OkHttp is back in `build.gradle.kts`. URLs are
+checked in raw text (stripping comments eats the half of a URL that would be the
+evidence) and are allowed in exactly two files, named: `trips/GpxWriter.kt` (the XML
+namespace it writes into a GPX root element) and `ui/map/RouteMap.kt` (the contact URL in
+the user agent sent with OSM tile requests). `AppXmlWiringTest` holds the manifest half:
+the BLE permission block in, the Wi-Fi and network-state block out.
+- **Not yet walked on hardware in this pass:** the six acceptance steps that need a phone
+and a unit — scan → passkey → `Ready`, a cold app reconnecting without a scan, 1 Hz on
+LIVE, a trip tagged to the card, and the accordion end to end (search, group open,
+edit → toast → `SAVE` → reload, `RESTART`, `BACKUP`/`RESTORE`) — are listed at the end of
+the plan. What was verified here is the build and the 395 plain-JVM tests.
+
+---
 
 ### Unreleased (next release) — the unit can no longer update itself, and the version label is gone (firmware + Web UI + Android app)
 
