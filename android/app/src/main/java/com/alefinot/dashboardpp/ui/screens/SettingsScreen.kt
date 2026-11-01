@@ -49,22 +49,22 @@ import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
 
 /**
- * The "APP SETTINGS" tab — controls that apply to the Android app itself. The
- * ESP's own configuration (network, save / reboot / reset) stays in its Web UI
- * on the "ESP SETTINGS" tab and is not duplicated here.
+ * The "APP SETTINGS" tab — controls that apply to the Android app itself. The unit's own
+ * configuration (its rows, save / reboot / factory reset) is on the dashboard settings page
+ * next door, and is not duplicated here.
  *
  * This is a tab, not an overlay: nothing to dismiss and no back handler to
  * install. It is also the settings page when there is no device, which is the point
- * of the nullable [ip]: the trip files, the motion switch and the storage figures
+ * of the nullable [unit]: the trip files, the motion switch and the storage figures
  * belong to the phone, so they stay readable and editable offline. Only the lines
- * that describe a device go quiet - the address and the firmware. The vehicle page is
+ * that describe a device go quiet - the unit's name and the firmware. The vehicle page is
  * where a device is forgotten now: a card is a vehicle, not an address, and deleting
  * one needs the name on the screen to confirm it.
  */
 @Composable
 fun SettingsScreen(
     vm: ConnectionViewModel,
-    ip: String?,
+    unit: String?,
     version: String?,
     trips: TripsViewModel,
     tripsAvailable: Boolean,
@@ -73,7 +73,6 @@ fun SettingsScreen(
     val recording by TripRuntime.state.collectAsStateWithLifecycle()
     var storageLine by remember { mutableStateOf("") }
     var showConfirmClear by remember { mutableStateOf(false) }
-    var showBle by remember { mutableStateOf(false) }
     val settings = remember { RecorderSettings(context) }
     val scope = rememberCoroutineScope()
     val recordingEnabled by settings.recordingEnabled
@@ -87,11 +86,6 @@ fun SettingsScreen(
             "?"
         }
     }
-    if (showBle) {
-        BleScreen(onBack = { showBle = false })
-        return
-    }
-
     Box(
         Modifier.fillMaxSize()
             .background(HudColors.Bg),
@@ -109,12 +103,14 @@ fun SettingsScreen(
                     // A label/value pair inside a card is the page's Performance
                     // Monitor row: `.perf-label` on the left, `.perf-value` monospace
                     // on the right. Here they stack, because the values are long.
+                    // The unit is named, not addressed: an IP was a Wi-Fi thing, and
+                    // what a driver recognises a unit by is the name on its card.
                     Text(
-                        "DEVICE IP",
+                        "UNIT",
                         color = HudColors.TextMuted,
                         style = HudePerfLabel(),
                     )
-                    Text(ip ?: "NOT CONNECTED", color = HudColors.TextPrimary, style = HudePerfValue())
+                    Text(unit ?: "NOT LINKED", color = HudColors.TextPrimary, style = HudePerfValue())
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "FIRMWARE",
@@ -145,22 +141,6 @@ fun SettingsScreen(
                     )
                 }
             }
-            Spacer(Modifier.height(24.dp))
-
-            // ── BLE link ─────────────────────────────────────────────────────
-            // The unit's own settings no longer have a Web UI: they are read and
-            // written over Bluetooth from this phone. The panel behind this button
-            // is the transport's proof - scan, pair, 1 Hz snapshot, config mirror.
-            HudButton("DASHBOARD LINK (BLE)") { showBle = true }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "This panel drives the raw link: sweep for a dashboard, pair with the code " +
-                    "it shows, then read what came back. It is the transport's proof rather " +
-                    "than a page a driver uses - pairing itself belongs to the vehicle page, " +
-                    "and the dashboard's settings are the next tab here.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             Spacer(Modifier.height(24.dp))
 
             // ── Trip recording ───────────────────────────────────────────────

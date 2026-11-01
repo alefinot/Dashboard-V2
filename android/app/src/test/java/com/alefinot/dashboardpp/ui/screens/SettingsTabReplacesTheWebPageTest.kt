@@ -8,10 +8,10 @@ import org.junit.Test
 
 /**
  * The ESP settings slot used to be a `WebView` pointed at the unit's own page. Phase 1a made
- * it a page this app draws and edits over the Bluetooth link; the WebView code itself outlives
- * that by two more phases (the plan deletes it in 2c, once the last HTTP path is gone), so this
- * guard does not ask whether the file still exists — it asks whether anything still *reaches*
- * it, and whether the page that replaced it is honest about how it talks to the unit.
+ * it a page this app draws and edits over the Bluetooth link, and the WebView code is now
+ * deleted along with the HTTP client and the Wi-Fi discovery that fed it. So this guard asks
+ * two things: that the page which replaced the web one is honest about how it talks to the
+ * unit, and that there is no *second* way to talk to it left anywhere in the app.
  *
  * Like [ConnectActionsOnOnePageTest], this reads sources rather than composing them: the module
  * has no Compose test harness, and a guard that only ran on a phone would never run in CI.
@@ -77,6 +77,80 @@ class SettingsTabReplacesTheWebPageTest {
             for (src in files) {
                 assertFalse("the settings page still mentions $banned", codeOnly(src).contains(banned))
             }
+        }
+    }
+
+    /**
+     * The whole app this time, not one page. There is one transport left — GATT — and the way
+     * to keep it that way is to fail the build the day a socket, a scanner or a WebView comes
+     * back, rather than trusting that the next person will notice which of three paths a number
+     * came from.
+     *
+     * The two `http` strings that are allowed to stay are not transports: one is the XML
+     * namespace on the root element of a written GPX file, the other is the contact URL in the
+     * user agent the trip map sends with its OSM tile requests. They are named file by file so
+     * the ban itself stays absolute.
+     */
+    @Test
+    fun thereIsNoSecondWayToReachAUnitLeftInTheApp() {
+        val root = appPackageDir()
+        val sources = root.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.toList()
+        assertTrue("no Kotlin sources under $root", sources.isNotEmpty())
+        for (banned in listOf(
+            "EspApi", "HttpURLConnection", "OkHttpClient", "okhttp3", "android.webkit", "WebView",
+            "Nsd", "NsdManager", "SubnetScanner", "DeviceVerifier", "BleScreen", "GroupStrip",
+            "ToolsPage", "WifiManager", "ConnectivityManager", "MulticastLock", "V1Routes",
+        )) {
+            for (f in sources) {
+                assertFalse(
+                    "${f.relativeTo(root)} reaches the transport that was deleted ($banned)",
+                    codeOnly(f.readText()).contains(banned),
+                )
+            }
+        }
+        // URLs are checked in the raw text, not the comment-stripped text: `codeOnly` removes
+        // everything after `//`, which is exactly the half of a URL that would have to be the
+        // evidence. The two files allowed to hold one are named, and both are read as data.
+        val urlFiles = sources.filter {
+            val raw = it.readText()
+            raw.contains("http://") || raw.contains("https://")
+        }.map { it.relativeTo(root).path.replace('\\', '/') }.sorted()
+        assertEquals(
+            "a URL appeared in code again - if it is a legitimate one (a namespace, a tile " +
+                "user agent), add it here and say what it is", listOf(
+                "trips/GpxWriter.kt",
+                "ui/map/RouteMap.kt",
+            ), urlFiles,
+        )
+        // And the parts that only ever existed to carry HTTP: the files, the package, and the
+        // dependency that makes an HTTP client possible at all.
+        for (gone in listOf("api/EspApi.kt", "api/EspApiLane.kt", "discovery", "ui/screens/BleScreen.kt")) {
+            assertFalse("$gone must not exist - it was the Wi-Fi transport", File(root, gone).exists())
+        }
+        val gradle = File(moduleDir(), "build.gradle.kts")
+        assertTrue("cannot find $gradle", gradle.isFile)
+        assertFalse(
+            "the HTTP client is back in the dependency list, which is how a transport grows " +
+                "back without anyone deleting it twice",
+            gradle.readText().contains("com.squareup.okhttp3"),
+        )
+    }
+
+    /**
+     * A transport that is gone should not still be asked for, and a radio that is the whole
+     * story should be asked for clearly. The three permissions dropped with the HTTP client
+     * were read only by the discovery sweep and by the screens that explained why a LAN could
+     * not be seen; the BLE block is what the app actually runs on. (The permissions themselves
+     * are asserted in [com.alefinot.dashboardpp.vehicles.AppXmlWiringTest], which is where the
+     * manifest is read; this half checks that the story written next to them stayed true.)
+     */
+    @Test
+    fun theManifestDoesNotPromiseAWiFiPath() {
+        val manifest = File(File(moduleDir(), "src/main"), "AndroidManifest.xml")
+        assertTrue("cannot find the manifest", manifest.isFile)
+        val prose = manifest.readText().lowercase()
+        for (claim in listOf("still talks to pre-2.0 units over wi-fi", "http path is kept")) {
+            assertFalse("the manifest still describes a Wi-Fi path ($claim)", prose.contains(claim))
         }
     }
 
@@ -167,6 +241,8 @@ class SettingsTabReplacesTheWebPageTest {
     }
 
     private fun settingsDir() = File(screensDir(), "settings")
+
+    private fun appPackageDir() = File(moduleDir(), "src/main/java/com/alefinot/dashboardpp")
 
     private fun moduleSource(name: String): String {
         val f = File(screensDir(), name)

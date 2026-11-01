@@ -23,12 +23,13 @@ import org.junit.Test
  * address panel is deleted, along with the two view-model actions it drove, so a guard that
  * still allowed "the panel the vehicle page raises" would be documenting a file that no
  * longer exists — and the day something grows back in its place, the honest failure is
- * "a third file calls these actions", not "the second file is missing". The list is now
- * exactly the page that owns connecting, plus the bench panel that still proves the raw link.
+ * "a third file calls these actions", not "the second file is missing". The BLE bench panel
+ * that used to be on the allowlist is deleted too, so the list is now exactly one file: the
+ * page that owns connecting.
  *
  * The scan looks for **calls to the view model's connection actions**, not for words: a comment
- * may talk about connecting all it likes, and App Settings legitimately still prints the
- * connection's address. A call is the thing that can actually connect.
+ * may talk about connecting all it likes, and App Settings legitimately still prints the name
+ * of the linked unit. A call is the thing that can actually connect.
  */
 class ConnectActionsOnOnePageTest {
 
@@ -37,11 +38,13 @@ class ConnectActionsOnOnePageTest {
         Regex("\\b(rescan|connectVehicle|disconnect|selectVehicle)\\s*\\(")
 
     /**
-     * The vehicle page owns every connection action the app offers, and the only other file
-     * allowed to call one is [BleScreen] — the bench panel that drives the raw link (scan,
-     * pair, snapshot, config mirror) from Settings while the settings rebuild lands. It is
-     * temporary by nature, and it is the one place a link can be dropped without killing the
-     * app until "Forget this unit" is built into the new settings page.
+     * The vehicle page owns every connection action the app offers. It used to share that
+     * permission with `BleScreen` — the bench panel that drove the raw link (scan, pair,
+     * snapshot, config mirror) while the settings rebuild landed. That panel is deleted: the
+     * settings page reads and writes over the same link, the vehicle page pairs, and
+     * "FORGET THIS UNIT" on a card is how a binding is dropped. The allowlist is one file now,
+     * so a second file calling a connection action is exactly the regression this guard was
+     * written to catch.
      *
      * The shell's permission launcher calls `retryAfterRadio()`, and it is deliberately not in
      * the regex: the rule is about where a user can *choose* to connect. That call re-runs the
@@ -49,15 +52,15 @@ class ConnectActionsOnOnePageTest {
      * thing standing in the way — putting it in the list would force the shell onto this
      * allowlist and blur the distinction the guard exists to keep.
      */
-    private val allowed = listOf("BleScreen.kt", "VehicleScreen.kt")
+    private val allowed = listOf("VehicleScreen.kt")
 
     @Test
-    fun connectionActionsAreCalledFromOnePageAndTheBenchPanel() {
+    fun connectionActionsAreCalledFromTheVehiclePageAlone() {
         val found = screenFiles().filter { actionCall.containsMatchIn(codeOnly(it.readText())) }
             .map { it.name }.sorted()
         assertEquals(
-            "a connection action may only be offered by the vehicle page (and the BLE bench " +
-                "panel); every other page has to point at the vehicle page instead",
+            "a connection action may only be offered by the vehicle page; every other page " +
+                "has to point at the vehicle page instead",
             allowed,
             found,
         )
@@ -91,7 +94,8 @@ class ConnectActionsOnOnePageTest {
         }
     }
 
-    /** App Settings keeps its switches, its storage figures and its address readout, and loses its device block. */
+    /** App Settings keeps its switches, its storage figures and the linked unit's name, and
+     * it keeps no part of the old device block. */
     @Test
     fun appSettingsHasNoConnectionActions() {
         val src = moduleSource("SettingsScreen.kt")
@@ -145,7 +149,8 @@ class ConnectActionsOnOnePageTest {
     fun noScreenReachesForTheRemovedTransport() {
         val banned = listOf(
             "EspApi", "HttpURLConnection", "http://", "android.webkit", "WebView",
-            "NsdManager", "SubnetScanner", "rememberedIp", ".ips",
+            "NsdManager", "Nsd", "SubnetScanner", "DeviceVerifier", "rememberedIp", ".ips",
+            "GroupStrip", "ToolsPage", "BleScreen",
         )
         for (f in screenFiles()) {
             val body = codeOnly(f.readText())

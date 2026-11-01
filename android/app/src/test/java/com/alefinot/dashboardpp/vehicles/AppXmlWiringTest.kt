@@ -23,6 +23,12 @@ import java.io.File
  *   report that there is no camera - on API 28 the same code works fine, which is how this one
  *   survives review on a development tablet.
  *
+ * The third thing checked here is the manifest's permission block, which fails the other way:
+ * an app that asks for more than it uses is not broken, it is mistrusted. Since the one
+ * connection story, that means the BLE block present and the Wi-Fi / network-state permissions
+ * absent - asserted, because a permission is easy to leave behind when the code that read it is
+ * deleted, and the listing is what a reviewer reads.
+ *
  * So these tests reach for the source **text** rather than the running objects. A JVM unit test
  * has no Android `Context`, so it cannot ask the store for a capture file or the provider for a
  * URI, and the assertion that actually matters is that the names which have to agree at runtime
@@ -98,6 +104,43 @@ class AppXmlWiringTest {
                 "camera on Android 11+",
             queries.value.contains("android.media.action.IMAGE_CAPTURE"),
         )
+    }
+
+    /**
+     * The radio the app actually uses, and none of the ones it no longer can.
+     *
+     * The BLE block is what the connection story runs on, and the three permissions removed
+     * with the HTTP transport were read only by the discovery sweep (`Nsd`, the subnet scan,
+     * the verifier) and by the screens that explained why a LAN could not be seen. A leftover
+     * permission is worse than dead code here: the permission list is what a reviewer, and the
+     * Play listing, read as a statement about what an app does with a phone. `INTERNET` stays -
+     * the trip map fetches OSM tiles - and the BLE `uses-feature` stays `required="false"`,
+     * which is a shipping decision (who can install the APK) rather than a code one.
+     */
+    @Test
+    fun `the manifest asks for the radio the app uses and none of the ones it dropped`() {
+        val manifest = moduleFile("src/main/AndroidManifest.xml")
+        val declared = Regex("uses-permission[^>]*android\\.permission\\.([A-Z_]+)")
+            .findAll(manifest).map { it.groupValues[1] }.toSet()
+        for (needed in listOf(
+            "BLUETOOTH", "BLUETOOTH_ADMIN", "BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "INTERNET",
+        )) {
+            assertTrue(
+                "the manifest no longer declares $needed - the link, the scan or the map " +
+                    "tiles stops working with no compile error to say so: $declared",
+                declared.contains(needed),
+            )
+        }
+        for (dropped in listOf(
+            "ACCESS_WIFI_STATE", "CHANGE_WIFI_MULTICAST_STATE", "ACCESS_NETWORK_STATE",
+            "ACCESS_COARSE_LOCATION",
+        )) {
+            assertTrue(
+                "$dropped is back in the manifest: nothing in this app reaches a network any " +
+                    "more, and a permission nobody reads is a promise the listing still makes",
+                !declared.contains(dropped),
+            )
+        }
     }
 
     /**

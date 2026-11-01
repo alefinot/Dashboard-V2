@@ -101,8 +101,8 @@ import kotlinx.coroutines.withContext
  * The ESP slot is a page like the others now: the unit's own configuration, drawn in
  * Compose and read over Bluetooth (`ConfigStore` here, `BleRuntime` for the link). The
  * WebView it replaced, the holder that used to keep its page per connection, and the
- * gesture mirror that fed touches to that View are out of this shell. The classes stay
- * until the WebView itself is deleted (the plan's Phase 2c); nothing here reaches them.
+ * gesture mirror that fed touches to that View are gone from the app, along with the
+ * HTTP client and the Wi-Fi discovery that used to carry a phone to a unit's page.
  */
 @Composable
 fun AppShell(
@@ -252,10 +252,11 @@ fun AppShell(
     // "Is the page inside the pager's viewport" decides whether it may paint and take
     // touches; a swipe uncovers it long before the pager commits, so waiting for the
     // settled page shows a half-drawn page sliding in. "Is it the settled page" decides
-    // who owns the HTTP lane and which page's own 1 s tick runs - that one has to wait
-    // for the settle, or two clients would poll the dashboard at once (the recorder
-    // stands down while the live page samples, see `EspApiLane`). The viewport answer is
-    // derived: recomputed as the pager moves, but it only changes the moment it flips,
+    // who may put requests on the one link and which page's own 1 s tick runs - that one
+    // has to wait for the settle, or two pages would be reading the same GATT connection
+    // at once (the recorder stands down while the live page samples, and the settings
+    // page asks for its mirror only while it is the page on screen). The viewport answer
+    // is derived: recomputed as the pager moves, but it only changes the moment it flips,
     // so a swipe does not recompose this screen.
     // The bar: the selected slot's glass sheet is measured from the icons, and it
     // follows the pager rather than a separate selection - which is what makes it
@@ -402,7 +403,7 @@ fun AppShell(
                             PageFade(Modifier.fillMaxSize()) {
                                 SettingsScreen(
                                     vm = connection,
-                                    ip = address,
+                                    unit = conn?.name ?: address,
                                     version = conn?.version,
                                     trips = trips,
                                     tripsAvailable = tripsAvailable,

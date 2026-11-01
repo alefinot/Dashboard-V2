@@ -12,7 +12,7 @@ android {
         applicationId = "com.alefinot.dashboardpp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 41
+        versionCode = 42
         versionName = "1.1.0"
     }
 
@@ -53,7 +53,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
     implementation("androidx.datastore:datastore-preferences:1.1.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // No HTTP client: OkHttp went out with the Wi-Fi transport (the one connection
+    // story, P6). Everything the app reads from a unit arrives over GATT, and the
+    // only thing that still reaches out to a network is the trip map, which fetches
+    // its OSM tiles through osmdroid's own stack.
 
     // Coroutines are pulled in by Compose and lifecycle, but the service and the
     // pollers depend on them directly, so the version is stated rather than

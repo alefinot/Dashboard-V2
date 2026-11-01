@@ -56,8 +56,8 @@ import kotlinx.coroutines.launch
  * (`/api/snapshot`), because HTTP offers no other way to be told anything. The unit now
  * pushes on its own characteristic and this class mostly waits, which retires the
  * one-lane negotiation this file used to carry. There was a second reader of that
- * endpoint - the ESP's own Web UI, whose tab made the service stand down through
- * `EspApiLane` - and there is no second reader now: the settings page reads
+ * endpoint - the ESP's own Web UI, whose tab could make the service stand down - and
+ * there is no second reader now: the settings page reads
  * configuration and the performance monitor reads diagnostics, and neither samples
  * speed. What a frame is worth is decided in [TelemetryFeed]: a re-sent frame does not
  * become a sample, and a link that goes quiet gets prodded once instead of polled.

@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Tiles for the trip map (osmdroid fetches them itself). Nothing in the app
+         reaches a unit over the network any more, so the three Wi-Fi / connectivity
+         permissions went out with the HTTP transport: they were read by the discovery
+         sweep (`Nsd`, the subnet scan, `DeviceVerifier`) and by the reconnect hints
+         that explained why a LAN could not be seen - none of which exist now. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Bluetooth LE. The firmware V2.0.0 units have no Wi-Fi at all: the phone is
          their only client, and this radio is the transport for settings, telemetry,
@@ -21,9 +23,11 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- The app still talks to pre-2.0 units over Wi-Fi, but a phone without a BLE
-         radio can no longer do the important half. Not `required=true` yet: the
-         HTTP path is kept for one release cycle (plan §8). -->
+    <!-- A V2 unit has no Wi-Fi at all, so a phone without a BLE radio cannot reach one
+         in any way. Still not `required=true`: a phone without Bluetooth can run the
+         app's own pages (trips, recording, settings) and that has been the shipped
+         behaviour - making the radio mandatory changes who can install the APK, which
+         is the maintainer's call, not a side effect of deleting the HTTP client. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <!-- Trip recording (see the trip recording plan). A foreground service with
