@@ -466,6 +466,25 @@ def slug(title):
     return re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
 
 
+def icon_name(ref):
+    """`{"__ref": "iconSVG.sensors"}` -> `sensors`, the name of the group's icon.
+
+    The unit's page draws the group header's badge from an inline lucide path, and the
+    app draws the same shape from `res/drawable/ic_grp_<name>.xml`. Carrying the SVG into
+    the asset would put a second copy of the drawing in the repo and make the asset a
+    graphics file; carrying the *name* is enough, because the app resolves it in its own
+    UI layer and an unknown name simply draws no badge.
+    """
+    if isinstance(ref, dict):
+        ref = ref.get("__ref")
+    if isinstance(ref, str) and ref.startswith("iconSVG."):
+        return ref.split(".", 1)[1]
+    # A group the page has no icon for (the "More settings" bucket this generator
+    # invents from unlabelled rows) still gets a name, so the app never has to handle a
+    # missing field.
+    return "more"
+
+
 def generated_label(key):
     """Label for a row the WebUI never labels: the key, split on underscores."""
     words = key.split("_")
@@ -498,7 +517,12 @@ def build(rows, groups_js, js_hidden):
     for g in groups_js:
         if not isinstance(g, dict) or "title" not in g:
             continue
-        group = {"id": slug(g["title"]), "title": g["title"], "cards": []}
+        group = {
+            "id": slug(g["title"]),
+            "title": g["title"],
+            "icon": icon_name(g.get("icon")),
+            "cards": [],
+        }
         card = None
         section = None
         for it in g.get("items", []):
@@ -567,7 +591,9 @@ def build(rows, groups_js, js_hidden):
             item = _mk_item(table, {}, k, None, labelled, generated=True)
             if item:
                 card["items"].append(item)
-        out_groups.append({"id": "more", "title": "More settings", "cards": [card]})
+        out_groups.append(
+            {"id": "more", "title": "More settings", "icon": "more", "cards": [card]}
+        )
 
     schema = {
         "_generated": "scripts/gen_config_schema.py - do not edit. Sources: "

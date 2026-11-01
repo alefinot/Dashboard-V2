@@ -1,15 +1,16 @@
 package com.alefinot.dashboardpp.ui.screens
 
-import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,10 +32,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.alefinot.dashboardpp.ble.BleJson
+import com.alefinot.dashboardpp.R
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ui.components.HudButton
@@ -45,11 +48,16 @@ import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorScreen
+import com.alefinot.dashboardpp.ui.screens.settings.RenderBlock
+import com.alefinot.dashboardpp.ui.screens.settings.RenderRow
+import com.alefinot.dashboardpp.ui.screens.settings.RenderSection
+import com.alefinot.dashboardpp.ui.screens.settings.RenderWidget
 import com.alefinot.dashboardpp.ui.screens.settings.RowControl
 import com.alefinot.dashboardpp.ui.screens.settings.RowStatus
 import com.alefinot.dashboardpp.ui.screens.settings.RowView
 import com.alefinot.dashboardpp.ui.screens.settings.SchemaGroup
 import com.alefinot.dashboardpp.ui.screens.settings.SchemaItem
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsRow
 import com.alefinot.dashboardpp.ui.screens.settings.SyncPhase
 import com.alefinot.dashboardpp.ui.screens.settings.ValueKind
@@ -60,35 +68,50 @@ import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
 import com.alefinot.dashboardpp.ui.theme.HudeHeading
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
  * The unit's configuration, as a native page.
  *
- * This is the page the app used to hand to a WebView: the ESP's own settings site,
- * loaded over Wi-Fi, framed in a glass sheet. It worked, and it is the reason the
- * settings tab and the unit's own form map used to be the same artifact — the unit
- * served the form, so the form could not disagree with itself. Once the settings
- * live in Compose, that guarantee is gone, so the page is *generated* from the
- * firmware's own tables instead (see `ConfigSchema`), and every number here is a
- * `CFG_TABLE` row the unit confirmed it has.
+ * This is the page the app used to hand to a WebView: the ESP's own settings site, loaded
+ * over Wi-Fi, framed in a glass sheet. It worked, and it is the reason the settings tab and
+ * the unit's own form map used to be the same artifact — the unit served the form, so the
+ * form could not disagree with itself. Once the settings live in Compose that guarantee is
+ * gone, so two things replaced it: the page is *generated* from the firmware's own tables
+ * (see `ConfigSchema`), so every number here is a `CFG_TABLE` row the unit confirmed it has;
+ * and its shape copies the unit page's shape exactly, so a driver who knows where a setting
+ * is on the dashboard's own screen finds it in the same place, behaving the same way, on the
+ * phone.
+ *
+ * That shape is the accordion, and it is not a style choice. The unit's page is five
+ * collapsible groups holding 198 rows, one open at a time, with a search box that opens
+ * whatever it finds and hides the groups it does not. A tab strip of the same five groups was
+ * tried first, and on the bench it failed in a way nobody noticed until someone typed into
+ * the box: the tab you are standing on is the one that gets searched, so a search for "gps"
+ * from the System tab found nothing, on a page that had no way to say that two rows were one
+ * tap away. With one long scroll of collapsible groups there is no "current tab" to be
+ * stranded on. `SettingsLayout` holds those rules and its tests hold them to the unit page's
+ * behaviour.
  *
  * What the page is made of, in order:
  *
- *  - **The link header.** A V2 unit has no network stack; Bluetooth is the only way
- *    to it, so the page starts by saying whether there is a link at all.
- *  - **The sync bar.** Nothing below it is editable before `config.get` has been
- *    joined to the schema, and the bar says which of the unit's keys the read
- *    covered.
- *  - **Search, advanced, export/restore.** The three things a 198-row form needs
- *    that a card stack does not: find a row, reveal the rows the average owner
- *    should not touch, and get the whole config off the unit.
- *  - **The group strip and the cards.** Same grouping the unit's page used, because
- *    that grouping is what its `configMap` says the settings are.
+ *  - **The link header.** A V2 unit has no network stack; Bluetooth is the only way to it, so
+ *    the page starts by saying whether there is a link at all. It does not offer to make one:
+ *    pairing is something you do to a vehicle, so it lives on the Vehicles page.
+ *  - **The sync bar.** Nothing below it is editable before `config.get` has been joined to the
+ *    schema, and the bar says which of the unit's keys the read covered.
+ *  - **Search and advanced mode.** The two things a 198-row form needs that a card stack does
+ *    not: find a row, and reveal the rows the average owner should not touch.
+ *  - **The groups.** Icons, titles and counts, from the same grouping the unit page uses,
+ *    because that grouping is what its `configMap` says the settings are. Cards flow in
+ *    columns inside a group the way the unit page's grid flows them.
+ *  - **The sticky bar at the bottom.** Write what is waiting, restart the unit, get the config
+ *    off it and back on. The actions that are not attached to one card.
  *
- * Nothing here is saved by a "save" button. Each row writes itself, and the row
- * reports what actually happened to it.
+ * Each row still writes itself — there is no save button in the flow of the form. The SAVE in
+ * the bottom bar is a different thing: it flushes what is still in the phone's RAM, for the
+ * driver who is done editing and is walking to the bike.
  */
 @Composable
 fun DashboardSettingsScreen(
@@ -108,25 +131,30 @@ fun DashboardSettingsScreen(
     val linkState by link.state.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
-    var group by remember { mutableStateOf(0) }
+    /** The one group the accordion has open. Nothing is open until someone taps. */
+    var open by remember { mutableStateOf<String?>(null) }
+    /**
+     * A group closed by a tap *during* a search. The unit page re-applies its open/close rule
+     * on every keystroke, so this lasts only until the next character; it exists because
+     * someone scrolling a long result list wants to shut the group they just read.
+     */
+    var closedWhileSearching by remember { mutableStateOf(setOf<String>()) }
+    var extrasOpen by remember { mutableStateOf(false) }
+    var unplacedOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf("") }
     var odoText by remember { mutableStateOf("") }
     var noiseLine by remember { mutableStateOf("never run") }
     var restoring by remember { mutableStateOf(false) }
-    // The link panel, over this page. For now it is the bench panel the app already
-    // has (`BleScreen`, raised the same way App settings raises it); at the end of the
-    // phase its scan list and status card live in this page's header instead, and the
-    // panel goes away.
-    //
+
     // A note about something that happened on the link — a restart the app asked for, a
-    // restore — goes stale the moment the link changes. On the bench the Tools page spent
-    // the rest of a session saying "restarting…" about a unit that had been back and
-    // re-read for minutes. Two things conspired: opening the panel below returns from this
-    // composable and disposes everything after this point, so the transition tracking has
-    // to sit above it if it is going to see the link come back; and it has to fire on both
-    // edges, because a note about a link that just dropped is as dead as one about a link
-    // that just returned.
+    // restore — goes stale the moment the link changes. On the bench the page spent the rest
+    // of a session saying "restarting…" about a unit that had been back and re-read for
+    // minutes. Two things conspired: opening the monitor page below returns from this
+    // composable and disposes everything after this point, so the transition tracking has to
+    // sit above it if it is going to see the link come back; and it has to fire on both edges,
+    // because a note about a link that just dropped is as dead as one about a link that just
+    // returned.
     val linked = linkState is BleLinkState.Ready
     var wasLinked by remember { mutableStateOf(linked) }
     LaunchedEffect(linkState) {
@@ -134,15 +162,10 @@ fun DashboardSettingsScreen(
         wasLinked = linked
     }
 
-    var showLink by remember { mutableStateOf(false) }
-    if (showLink) {
-        BleScreen(onBack = { showLink = false })
-        return
-    }
-
-    // The unit's performance monitor, taken the same way the link panel is taken: it needs the
-    // whole screen for the memory and partition figures, it is reached from Tools, and because it
-    // is the only thing composed while it is open, its polling stops the moment the user is back.
+    // The unit's performance monitor, taken the way the old link panel was: it needs the whole
+    // screen for the memory and partition figures, it is reached from the last row of the
+    // scroll, and because it is the only thing composed while it is open, its polling stops
+    // the moment the user is back.
     var showPerf by remember { mutableStateOf(false) }
     if (showPerf) {
         PerfMonitorScreen(
@@ -156,15 +179,13 @@ fun DashboardSettingsScreen(
 
     val ready = linked
     val groups = schema?.groups ?: emptyList()
-    val toolsPage = groups.size
 
-    val onTools = group >= groups.size
-
-    // The read follows the link: pair, and the tab pulls; re-entering the tab inside
-    // the TTL does not re-pull (the plan's 60 s rule).
+    // The read follows the link: pair, and the tab pulls; re-entering the tab inside the TTL
+    // does not re-pull (the plan's 60 s rule).
     LaunchedEffect(linkState, schema) {
         if (linkState is BleLinkState.Ready && schema != null) store.syncIfNeeded()
     }
+    LaunchedEffect(query) { closedWhileSearching = emptySet() }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -199,7 +220,7 @@ fun DashboardSettingsScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        Header(store, schema, state, linkState) { showLink = true }
+        Header(store, schema, state, linkState)
         SyncBar(store, state, ready)
 
         Row(
@@ -223,21 +244,7 @@ fun DashboardSettingsScreen(
                     Text("advanced", style = HudeCfgNote(), color = HudColors.TextDim)
                 }
             }
-            HudButton(
-                label = "export",
-                style = HudButtonStyle.SECONDARY,
-                enabled = state.sync is SyncPhase.Ready,
-                onClick = { exportLauncher.launch("dashboardpp-settings.json") },
-            )
-            HudButton(
-                label = if (restoring) "restoring…" else "restore",
-                style = HudButtonStyle.SECONDARY,
-                enabled = state.sync is SyncPhase.Ready && !restoring,
-                onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
-            )
         }
-
-        GroupStrip(groups, group, toolsPage) { group = it }
 
         if (state.rebootPending.isNotEmpty()) {
             RebootBar(store, state.rebootPending) { note = it }
@@ -251,8 +258,8 @@ fun DashboardSettingsScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
-        // A refusal with no row to carry it — the advanced switch is the only one, and
-        // it lives in the header rather than in a card.
+        // A refusal with no row to carry it — the advanced switch is the only one, and it
+        // lives in the header rather than in a card.
         state.error?.let {
             Text(
                 it,
@@ -274,89 +281,392 @@ fun DashboardSettingsScreen(
             )
             return@Column
         }
-        if (onTools) {
-            ToolsPage(
-                store = store,
-                schema = schema,
-                enabled = unitEnabled,
-                confirm = confirm,
-                onConfirm = { confirm = it },
-                onNote = { note = it },
-                odoText = odoText,
-                onOdo = { odoText = it },
-                noiseLine = noiseLine,
-                onNoise = { noiseLine = it },
-                scope = scope,
-                state = state,
-                onOpenPerf = { showPerf = true },
-            )
-            return@Column
-        }
-        val items = renderablesFor(groups[group], state, query, state.advanced)
-        if (items.isEmpty()) {
-            Text(
-                if (query.isEmpty()) "nothing in this group" else
-                    "no setting here matches \"$query\" — the list follows the group tabs above",
-                style = HudeCfgNote(),
-                color = HudColors.TextDim,
-                modifier = Modifier.padding(16.dp),
-            )
-            // Search is per group, which is right for browsing and wrong for typing:
-            // an empty page with no lead is indistinguishable from a search that broke.
-            val elsewhere = otherGroupsMatching(groups, group, query, state.advanced)
-            if (query.isNotEmpty() && elsewhere.isNotEmpty()) {
-                val hits = elsewhere.sumOf { it.second }
-                Text(
-                    // "1 match(es)" reads like a variable dump; the count and the names of
-                    // the groups to tap are what the sentence is for.
-                    "$hits ${if (hits == 1) "match" else "matches"} " +
-                        (if (elsewhere.size == 1) "in another group" else "in other groups") +
-                        " — tap " + elsewhere.joinToString(", ") { "${it.first} (${it.second})" },
-                    style = HudeCfgNote(),
-                    color = HudColors.Cyan,
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-        }
-        // Nothing has been read from the unit yet, so there are no values to draw. The
-        // schema knows every label, but each one would be a blank box that invites a tap
-        // and then refuses it — which is what this page looked like on the bench with no
-        // link, and it read as a broken page rather than an unpaired one.
+
+        val searching = SettingsLayout.words(query).isNotEmpty()
+        val shown = SettingsLayout.groupsShown(groups, query, state.advanced)
+        val autoOpen = SettingsLayout.openGroups(open, query, groups, state.advanced)
+        fun isOpen(id: String) = if (searching) id in autoOpen && id !in closedWhileSearching
+        else open == id
+
+        // Nothing has been read from the unit yet, so there are no values to draw. The schema
+        // knows every label, but each one would be a blank box that invites a tap and then
+        // refuses it — which is what this page looked like on the bench with no link, and it
+        // read as a broken page rather than an unpaired one.
         if (state.rows.isEmpty()) {
             Text(
                 if (ready) "Reading the unit…" else
-                    "Nothing to show yet. Pair the unit with the button at the top right, " +
-                    "and this page fills in with its settings.",
+                    "Nothing to show yet. Pair the unit from the Vehicles page, and this page " +
+                    "fills in with its settings.",
                 style = HudeCfgHelp(),
                 color = HudColors.TextDim,
                 modifier = Modifier.padding(16.dp),
             )
             return@Column
         }
+        if (searching && shown.isEmpty()) {
+            Text(
+                "no setting matches \"$query\". The box looks at each row's label, its " +
+                    "firmware key and its unit — a word you can see on the row is a word that " +
+                    "finds it.",
+                style = HudeCfgNote(),
+                color = HudColors.Cyan,
+                modifier = Modifier.padding(16.dp),
+            )
+        }
+
+        val widthDp = LocalConfiguration.current.screenWidthDp
+        val columns = SettingsLayout.columns(widthDp)
+        val unplaced = SettingsLayout.unlabelledBlock(state, query)
+
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            items(items) { renderable ->
-                when (renderable) {
-                    is RenderCard -> {
-                        CardHead(renderable.title)
-                        renderable.hint?.let {
-                            Text(
-                                it,
-                                style = HudeCfgNote(),
-                                color = HudColors.TextDim,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
+            item {
+                Text(
+                    if (searching) {
+                        "${shown.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} of " +
+                            "${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} settings " +
+                            "match \"$query\""
+                    } else {
+                        "${groups.size} groups · ${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} " +
+                            "settings · tap a group to open it"
+                    },
+                    style = HudeCfgNote(),
+                    color = HudColors.TextDim,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
+                )
+            }
+
+            for (group in shown) {
+                val groupOpen = isOpen(group.id)
+                item {
+                    GroupSummary(
+                        group = group,
+                        hits = group.cards.sumOf { card ->
+                            if (SettingsLayout.cardShown(card, query, state.advanced))
+                                SettingsLayout.rowsOf(card, query, state.advanced).size else 0
+                        },
+                        total = group.cards.sumOf { it.items.size },
+                        open = groupOpen,
+                        onClick = {
+                            if (searching) {
+                                closedWhileSearching =
+                                    if (groupOpen) closedWhileSearching + group.id
+                                    else closedWhileSearching - group.id
+                            } else {
+                                open = SettingsLayout.tapOpen(open, group.id)
+                            }
+                        },
+                    )
+                }
+                if (groupOpen) {
+                    items(SettingsLayout.pack(SettingsLayout.blocksFor(group, state, query, state.advanced), columns)) { rowOfCards ->
+                        CardRow(
+                            row = rowOfCards,
+                            state = state,
+                            schema = schema,
+                            enabled = unitEnabled,
+                            store = store,
+                            scope = scope,
+                            confirm = confirm,
+                            onConfirm = { confirm = it },
+                            onNote = { note = it },
+                            odoText = odoText,
+                            onOdo = { odoText = it },
+                            noiseLine = noiseLine,
+                            onNoise = { noiseLine = it },
+                        )
+                    }
+                }
+            }
+
+            // Values the unit streams that the schema describes as readings rather than
+            // settings — the ambient light ADC, the ESP core and build versions. They are read
+            // only on purpose: a stepper next to a compiled-in version string only invites a
+            // write the unit will spend a flash cycle refusing.
+            if (state.unitStatus.isNotEmpty()) {
+                item {
+                    SimpleSummary("Values the unit reports", state.unitStatus.size, extrasOpen) {
+                        extrasOpen = !extrasOpen
+                    }
+                }
+                if (extrasOpen) {
+                    item {
+                        Column(Modifier.fillMaxWidth()) {
+                            state.unitStatus.forEach { (spec, value) ->
+                                // The asset's kinds are lower-case ("int", "text"), and the
+                                // store has already turned a whole-number reading into an Int so
+                                // this row draws "2678" and not "2678.0".
+                                val numeric = spec.kind.equals("int", ignoreCase = true)
+                                SettingsRow(
+                                    item = SchemaItem(
+                                        key = spec.key,
+                                        kind = if (numeric) ValueKind.INT else ValueKind.STR,
+                                        control = RowControl.TEXT,
+                                        label = spec.label,
+                                    ),
+                                    view = RowView(
+                                        value,
+                                        null,
+                                        RowStatus.SYNCED,
+                                        null,
+                                    ),
+                                    imperial = false,
+                                    unitSwap = emptyMap(),
+                                    enabled = false,
+                                    onEdit = { _, _ -> },
+                                    readOnlyHint = if (spec.live) {
+                                        "read from the unit while it runs — not a setting"
+                                    } else {
+                                        "compiled into the firmware — not a setting"
+                                    },
+                                )
+                            }
+                            // The one extra that is a real setting (the fuel calibration table)
+                            // has no row of its own here, so the page says where it lives rather
+                            // than pretending the card is a reading.
+                            val hint = schema.extras.keys
+                                .mapNotNull { schema.extra(it) }
+                                .filter { it.editable }
+                                .joinToString(", ") { it.label }
+                            if (hint.isNotEmpty()) {
+                                Text(
+                                    "editable extras: $hint",
+                                    style = HudeCfgNote(),
+                                    color = HudColors.TextDim,
+                                    modifier = Modifier.padding(bottom = 6.dp),
+                                )
+                            }
                         }
                     }
-                    is RenderSection -> SectionHead(renderable.title)
-                    is RenderRow -> SettingsRow(
-                        item = renderable.item,
-                        view = state.rows[renderable.item.key],
-                        imperial = state.imperial,
-                        unitSwap = schema.imperial,
-                        enabled = unitEnabled,
-                        onEdit = { x, y -> store.edit(renderable.item, x, y) },
-                        onReset = { store.reset(renderable.item) },
+                }
+            }
+
+            // A firmware that grew a setting nobody regenerated the schema for streams a key
+            // with no row. It cannot be placed in a group — the schema is what does the placing
+            // — so it gets a group of its own, and it is in the export either way. A setting
+            // that cannot be found looks exactly like a setting that does not exist, which is
+            // why this is not left to the search box.
+            if (unplaced != null) {
+                item {
+                    SimpleSummary(
+                        unplaced.card.title,
+                        unplaced.body.size,
+                        unplacedOpen,
+                    ) { unplacedOpen = !unplacedOpen }
+                }
+                if (unplacedOpen) {
+                    item {
+                        Column(Modifier.fillMaxWidth()) {
+                            unplaced.card.hint?.let {
+                                Text(
+                                    it,
+                                    style = HudeCfgHelp(),
+                                    color = HudColors.Amber,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                )
+                            }
+                            unplaced.body.forEach { renderable ->
+                                if (renderable is RenderRow) {
+                                    SettingsRow(
+                                        item = renderable.item,
+                                        view = state.rows[renderable.item.key],
+                                        imperial = state.imperial,
+                                        unitSwap = schema.imperial,
+                                        enabled = unitEnabled,
+                                        onEdit = { x, y -> store.edit(renderable.item, x, y) },
+                                        onReset = { store.reset(renderable.item) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // The last row of the scroll, where the unit page keeps its own performance panel.
+            item {
+                SimpleSummary("PERFORMANCE MONITOR", 0, false) { showPerf = true }
+            }
+            item { Spacer(Modifier.height(8.dp)) }
+        }
+
+        BottomBar(
+            store = store,
+            state = state,
+            ready = ready,
+            scope = scope,
+            onNote = { note = it },
+            confirm = confirm,
+            onConfirm = { confirm = it },
+            onExport = { exportLauncher.launch("dashboardpp-settings.json") },
+            onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+            restoring = restoring,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The accordion
+// ---------------------------------------------------------------------------
+
+/**
+ * One group's header row: the unit page's badge, its title, how many settings it holds, and
+ * the chevron that says whether it is open.
+ *
+ * The count changes meaning while a search is running — "12 of 23" is the answer to "how much
+ * of this group did my typing find", and it is also the answer to "is this group worth opening
+ * again after I clear the box", which the old tab strip never had to answer.
+ */
+@Composable
+private fun GroupSummary(
+    group: SchemaGroup,
+    hits: Int,
+    total: Int,
+    open: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(4.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            .clip(shape)
+            .background(if (open) HudColors.CyanDim else HudColors.Panel)
+            .border(1.dp, if (open) HudColors.Cyan else HudColors.Hairline, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        groupIcon(group.icon)?.let { res ->
+            // Tinted in the UI layer rather than in the drawable: the same badge has to read
+            // as a dim shape while a group is closed and as a lit one when it is open, and a
+            // single white asset can do both.
+            Image(
+                painter = painterResource(res),
+                contentDescription = group.title,
+                colorFilter = ColorFilter.tint(
+                    if (open) HudColors.Cyan else HudColors.TextDim,
+                ),
+                modifier = Modifier.width(18.dp).height(18.dp),
+            )
+        }
+        Text(
+            group.title.uppercase(),
+            style = HudeSectionCaps(),
+            color = if (open) HudColors.TextPrimary else HudColors.TextDim,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            if (total == 0) "no settings" else "$hits of $total",
+            style = HudeCfgNote(),
+            color = HudColors.TextDim,
+        )
+        Text(if (open) "▾" else "▸", style = HudeParamName(), color = HudColors.Cyan)
+    }
+}
+
+/** A summary row for the two things that are not schema groups: readings, and the monitor. */
+@Composable
+private fun SimpleSummary(title: String, count: Int, open: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(4.dp)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+            .clip(shape)
+            .background(HudColors.Panel)
+            .border(1.dp, HudColors.Hairline, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(
+            title,
+            style = HudeSectionCaps(),
+            color = HudColors.TextDim,
+            modifier = Modifier.weight(1f),
+        )
+        if (count > 0) {
+            Text("$count", style = HudeCfgNote(), color = HudColors.TextDim)
+        }
+        Text(if (open) "▾" else "▸", style = HudeParamName(), color = HudColors.Cyan)
+    }
+}
+
+/**
+ * The drawable for a group's badge, by the name the schema carries.
+ *
+ * Written as a table rather than looked up by resource name, so an asset generated by a newer
+ * firmware with a group nobody has drawn a badge for is a group with no badge — not a crash,
+ * and not a placeholder icon that claims the app knows what the group is.
+ */
+private fun groupIcon(icon: String?): Int? = when (icon) {
+    "system" -> R.drawable.ic_grp_system
+    "display" -> R.drawable.ic_grp_display
+    "sensors" -> R.drawable.ic_grp_sensors
+    "layout" -> R.drawable.ic_grp_layout
+    "more" -> R.drawable.ic_grp_more
+    else -> null
+}
+
+/**
+ * The cards of one row of the grid, side by side and weighted equally.
+ *
+ * This is the unit page's `repeat(auto-fit, minmax(min(240px,100%),1fr))`: equal fractions, a
+ * card per track, and a card as tall as its own rows. The packing itself is
+ * [SettingsLayout.pack], which is where the tests are.
+ */
+@Composable
+private fun CardRow(
+    row: List<RenderBlock>,
+    state: ConfigStore.SettingsState,
+    schema: ConfigSchema,
+    enabled: Boolean,
+    store: ConfigStore,
+    scope: CoroutineScope,
+    confirm: String?,
+    onConfirm: (String?) -> Unit,
+    onNote: (String) -> Unit,
+    odoText: String,
+    onOdo: (String) -> Unit,
+    noiseLine: String,
+    onNoise: (String) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        row.forEach { block ->
+            Column(Modifier.weight(1f)) {
+                CardHead(block.card.title)
+                block.card.hint?.let {
+                    Text(
+                        it,
+                        style = HudeCfgNote(),
+                        color = HudColors.TextDim,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
+                }
+                block.body.forEach { renderable ->
+                    when (renderable) {
+                        is RenderSection -> SectionHead(renderable.title)
+                        is RenderWidget -> WidgetControl(
+                            widget = renderable.widget,
+                            store = store,
+                            enabled = enabled,
+                            confirm = confirm,
+                            onConfirm = onConfirm,
+                            onNote = onNote,
+                            odoText = odoText,
+                            onOdo = onOdo,
+                            noiseLine = noiseLine,
+                            onNoise = onNoise,
+                            scope = scope,
+                        )
+                        is RenderRow -> SettingsRow(
+                            item = renderable.item,
+                            view = state.rows[renderable.item.key],
+                            imperial = state.imperial,
+                            unitSwap = schema.imperial,
+                            enabled = enabled,
+                            onEdit = { x, y -> store.edit(renderable.item, x, y) },
+                            onReset = { store.reset(renderable.item) },
+                        )
+                    }
                 }
             }
         }
@@ -364,104 +674,128 @@ fun DashboardSettingsScreen(
 }
 
 // ---------------------------------------------------------------------------
-// What the page is made of
+// The bottom bar
 // ---------------------------------------------------------------------------
 
-/** One thing in the page's scroll list. */
-sealed interface Renderable
-
-data class RenderCard(val title: String, val hint: String? = null) : Renderable
-data class RenderSection(val title: String) : Renderable
-data class RenderRow(val item: SchemaItem) : Renderable
-
 /**
- * The rows a group should show, in the unit's own order, with the advanced rows
- * either in or out and the search applied.
+ * The actions that belong to the page rather than to one card, kept where the thumb already
+ * is: write what is waiting, restart the unit, take the config off it, put one back.
  *
- * Deliberately a plain function over the schema and the read: it is the piece most
- * likely to be wrong (a card that drops its rows, an advanced row that escapes the
- * switch), and it is the piece that can be tested without a phone.
+ * **SAVE** is not how a row is saved — a row writes itself, and reports what happened to it.
+ * What is left in the phone's RAM is a debounce window's worth of edits, and a driver who has
+ * changed four rows and is about to walk outside wants them on the unit, not in a timer that a
+ * dropped link will undo. The button says how many rows are waiting, and after writing, says
+ * what is left.
  */
-fun renderablesFor(
-    group: SchemaGroup,
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BottomBar(
+    store: ConfigStore,
     state: ConfigStore.SettingsState,
-    query: String,
-    advanced: Boolean,
-): List<Renderable> {
-    val needle = query.trim().lowercase()
-    val out = ArrayList<Renderable>()
-    for (card in group.cards) {
-        if (card.advanced && !advanced) continue
-        val matched = card.items.filter { item ->
-            (!item.advanced || advanced) && (
-                needle.isEmpty() ||
-                    item.label.lowercase().contains(needle) ||
-                    item.key.lowercase().contains(needle) ||
-                    (item.keyY?.lowercase()?.contains(needle) == true)
-                )
-        }
-        if (matched.isEmpty()) continue
-        // A widget card's settings are still settings: the button it grew on the
-        // unit's page is an addition, not a replacement, so its rows are drawn here
-        // like any other card's, and the action itself waits on the Tools page.
-        out += RenderCard(
-            card.title,
-            if (card.widget != null) "its button is on the Tools page" else null,
-        )
-        var section: String? = null
-        for (item in matched) {
-            if (item.section != section) {
-                section = item.section
-                if (section != null) out += RenderSection(section)
-            }
-            out += RenderRow(item)
+    ready: Boolean,
+    scope: CoroutineScope,
+    onNote: (String) -> Unit,
+    confirm: String?,
+    onConfirm: (String?) -> Unit,
+    onExport: () -> Unit,
+    onRestore: () -> Unit,
+    restoring: Boolean,
+) {
+    Box(
+        Modifier.fillMaxWidth()
+            .background(HudColors.Bg)
+            .border(1.dp, HudColors.Hairline, RoundedCornerShape(0.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            HudButton(
+                label = when {
+                    state.pending > 0 -> "SAVE ${state.pending}"
+                    state.sync is SyncPhase.Ready -> "SAVED"
+                    else -> "SAVE"
+                },
+                style = HudButtonStyle.PRIMARY,
+                enabled = ready && state.pending > 0,
+                onClick = {
+                    scope.launch {
+                        noteOfFlush(store.flush())?.let(onNote)
+                    }
+                },
+            )
+            HudButton(
+                label = "RESTART",
+                style = HudButtonStyle.SECONDARY,
+                enabled = ready,
+                onClick = {
+                    scope.launch {
+                        val r = store.action("reboot")
+                        if (r.ok || r.error == "timeout") store.clearRebootPending()
+                        onNote(
+                            if (r.ok || r.error == "timeout") "restarting…"
+                            else "restart refused: ${r.error}",
+                        )
+                    }
+                },
+            )
+            HudButton(
+                label = "BACKUP",
+                style = HudButtonStyle.SECONDARY,
+                enabled = state.sync is SyncPhase.Ready,
+                onClick = onExport,
+            )
+            HudButton(
+                label = if (restoring) "RESTORING…" else "RESTORE",
+                style = HudButtonStyle.SECONDARY,
+                enabled = state.sync is SyncPhase.Ready && !restoring,
+                onClick = onRestore,
+            )
+            HudButton(
+                label = if (confirm == "factory.reset") "CONFIRM FACTORY RESET" else "FACTORY RESET",
+                style = HudButtonStyle.DANGER,
+                enabled = ready,
+                onClick = {
+                    if (confirm != "factory.reset") {
+                        onConfirm("factory.reset")
+                        onNote("that wipes every setting on the unit — press again to confirm")
+                    } else {
+                        scope.launch {
+                            val r = store.action("factory.reset")
+                            onConfirm(null)
+                            onNote(
+                                if (r.ok || r.error == "timeout") "factory reset done — re-reading"
+                                else "factory reset refused: ${r.error}",
+                            )
+                            store.syncIfNeeded(force = true)
+                        }
+                    }
+                },
+            )
         }
     }
-    // Values the unit streams that the schema has no row for: a firmware that grew a
-    // setting nobody regenerated the schema for. They are shown rather than dropped.
-    if (state.unknown.isNotEmpty() && needle.isNotEmpty()) {
-        val unknown = state.unknown.filter {
-            it.label.lowercase().contains(needle) || it.key.lowercase().contains(needle)
-        }
-        if (unknown.isNotEmpty()) {
-            out += RenderCard("Unlabelled keys")
-            unknown.forEach { out += RenderRow(it) }
-        }
-    }
-    return out
 }
 
 /**
- * How many rows [query] would match in the groups that are *not* on screen.
+ * What a SAVE should say, in the words the row itself would use.
  *
- * Search stays per group — a 198-row table on a tablet wants browsing more than one
- * long list — but typing a word and landing on an empty page with no lead is
- * indistinguishable from a broken filter. On the bench, "gps" on the System page found
- * nothing there and two rows one tap away in Sensors Tuning, with nothing saying so.
+ * Null means "nothing worth saying": every waiting row wrote cleanly, which is the button's
+ * normal ending and does not need a line under it. Anything that did not reach the unit does —
+ * the unit refused it, or the link went away mid-write — and the reason is written on the row,
+ * so this line only refuses to claim a clean sweep.
  */
-fun otherGroupsMatching(
-    groups: List<SchemaGroup>,
-    current: Int,
-    query: String,
-    advanced: Boolean,
-): List<Pair<String, Int>> {
-    val needle = query.trim().lowercase()
-    if (needle.isEmpty()) return emptyList()
-    return groups.mapIndexedNotNull { index, group ->
-        if (index == current) return@mapIndexedNotNull null
-        val hits = group.cards.filterNot { it.advanced && !advanced }.sumOf { card ->
-            card.items.count { item ->
-                (!item.advanced || advanced) &&
-                    (
-                        item.label.lowercase().contains(needle) ||
-                            item.key.lowercase().contains(needle) ||
-                            item.keyY?.lowercase()?.contains(needle) == true
-                        )
-            }
-        }
-        if (hits == 0) null else group.title to hits
-    }
+private fun noteOfFlush(flush: ConfigStore.Flush): String? = when {
+    flush.rows == 0 -> null
+    flush.notWritten > 0 ->
+        "wrote ${flush.rows - flush.notWritten} · ${flush.notWritten} did not reach the unit " +
+            "— the rows say why"
+    else -> "wrote ${flush.rows} row(s) to the unit"
 }
+
+// ---------------------------------------------------------------------------
+// The header and the bars above the scroll
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun Header(
@@ -469,7 +803,6 @@ private fun Header(
     schema: ConfigSchema?,
     state: ConfigStore.SettingsState,
     linkState: BleLinkState,
-    onOpenLink: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -482,30 +815,21 @@ private fun Header(
                 style = HudeCfgNote(),
                 color = HudColors.TextDim,
             )
-            Spacer(Modifier.weight(1f))
-            HudButton(
-                label = when (linkState) {
-                    is BleLinkState.Ready -> "LINKED"
-                    is BleLinkState.Pairing -> "PAIRING…"
-                    is BleLinkState.Connecting -> "CONNECTING…"
-                    else -> if (state.sync is SyncPhase.Ready) "RECONNECT" else "PAIR THE UNIT"
-                },
-                style = when (linkState) {
-                    is BleLinkState.Ready -> HudButtonStyle.SECONDARY
-                    else -> HudButtonStyle.PRIMARY
-                },
-                onClick = onOpenLink,
-            )
         }
-        val (line, color) = when (linkState) {
+        // No button here. Pairing is something you do to a vehicle, and the Vehicles page is
+        // where a vehicle is picked up; a second way to start pairing, on a page that only
+        // makes sense once a unit is already linked, was a second story about how the app ever
+        // finds a unit.
+        val (line, color) = when (val link = linkState) {
             is BleLinkState.Ready ->
-                "linked to ${linkState.name} · MTU ${linkState.mtu}" to HudColors.Green
+                "linked to ${link.name} · MTU ${link.mtu}" to HudColors.Green
             is BleLinkState.Pairing ->
                 "pairing — confirm the code shown on the dashboard" to HudColors.Cyan
-            is BleLinkState.Connecting -> "connecting to ${linkState.name}…" to HudColors.Cyan
-            is BleLinkState.Failed -> "link failed: ${linkState.reason}" to HudColors.Red
+            is BleLinkState.Connecting -> "connecting to ${link.name}…" to HudColors.Cyan
+            is BleLinkState.Failed -> "link failed: ${link.reason}" to HudColors.Red
             BleLinkState.Idle ->
-                "no Bluetooth link — the unit's settings live on the unit" to HudColors.TextDim
+                "no Bluetooth link — the unit's settings live on the unit, and the Vehicles " +
+                    "page is where you pair one" to HudColors.TextDim
         }
         Text(line, style = HudeCfgNote(), color = color, modifier = Modifier.padding(top = 4.dp))
         if (state.missingKeys.isNotEmpty()) {
@@ -526,9 +850,9 @@ private fun SyncBar(store: ConfigStore, state: ConfigStore.SettingsState, ready:
     val (text, color) = when (val sync = state.sync) {
         is SyncPhase.Running -> "reading the unit's settings… ${sync.chunks} chunks in" to HudColors.Cyan
         is SyncPhase.Ready ->
-            // An xy row is one row that streams two keys, so "keys" is always a
-            // little more than "rows"; the count that means something is whether a
-            // row the schema describes came back at all.
+            // An xy row is one row that streams two keys, so "keys" is always a little more
+            // than "rows"; the count that means something is whether a row the schema
+            // describes came back at all.
             (
                 "read ${sync.keys} keys (${sync.rows} table rows) in ${sync.chunks} chunks" +
                     if (!ready) " · read before the link dropped" else ""
@@ -553,47 +877,10 @@ private fun SyncBar(store: ConfigStore, state: ConfigStore.SettingsState, ready:
     }
 }
 
-@Composable
-private fun GroupStrip(
-    groups: List<SchemaGroup>,
-    selected: Int,
-    toolsPage: Int,
-    onSelect: (Int) -> Unit,
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-    ) {
-        groups.forEachIndexed { index, group ->
-            GroupPill(group.title, index == selected) { onSelect(index) }
-        }
-        GroupPill("TOOLS", selected == toolsPage) { onSelect(toolsPage) }
-    }
-}
-
-@Composable
-private fun GroupPill(label: String, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(4.dp)
-    Box(
-        Modifier.clip(shape)
-            .background(if (selected) HudColors.CyanDim else HudColors.Panel)
-            .border(1.dp, if (selected) HudColors.Cyan else HudColors.Hairline, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(
-            label,
-            style = HudeFormLabel(),
-            color = if (selected) HudColors.TextPrimary else HudColors.TextDim,
-        )
-    }
-}
-
 /**
- * The bar a boot-only change leaves behind. `DISPLAY_ROTATION` and friends are read
- * once at boot, so the unit will draw the old geometry until it restarts — the row
- * saved, and the change is still not visible. Saying so is the whole point.
+ * The bar a boot-only change leaves behind. `DISPLAY_ROTATION` and friends are read once at
+ * boot, so the unit will draw the old geometry until it restarts — the row saved, and the
+ * change is still not visible. Saying so is the whole point.
  */
 @Composable
 private fun RebootBar(
@@ -646,347 +933,11 @@ internal fun CardHead(title: String) {
 }
 
 @Composable
-private fun SectionHead(title: String) {
+internal fun SectionHead(title: String) {
     Text(
         title,
         style = HudeParamName(),
         color = HudColors.TextDim,
         modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
     )
-}
-
-// ---------------------------------------------------------------------------
-// Tools: the cards that act rather than configure
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ToolsPage(
-    store: ConfigStore,
-    schema: ConfigSchema,
-    enabled: Boolean,
-    confirm: String?,
-    onConfirm: (String?) -> Unit,
-    onNote: (String) -> Unit,
-    odoText: String,
-    onOdo: (String) -> Unit,
-    noiseLine: String,
-    onNoise: (String) -> Unit,
-    scope: kotlinx.coroutines.CoroutineScope,
-    /** So the rows this page draws carry their real status, and the unknown keys. */
-    state: ConfigStore.SettingsState,
-    /** The performance monitor: the one card on this page that only ever reads. */
-    onOpenPerf: () -> Unit,
-) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        item { CardHead("Unit actions") }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                // Not an action on the unit — an invitation to ask it about itself. It sits here
-                // rather than in the strip because it is a bench tool: FPS against TARGET_FPS,
-                // heap over time, stack marks, partitions, and why the unit really rebooted.
-                HudButton(
-                    label = "PERFORMANCE MONITOR",
-                    style = HudButtonStyle.SECONDARY,
-                    onClick = onOpenPerf,
-                )
-                HudButton(
-                    label = "RESTART",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = enabled,
-                    onClick = {
-                        scope.launch {
-                            val r = store.action("reboot")
-                            if (r.ok || r.error == "timeout") store.clearRebootPending()
-                            onNote(if (r.ok || r.error == "timeout") "restarting…" else "restart refused: ${r.error}")
-                        }
-                    },
-                )
-                HudButton(
-                    label = "SLEEP",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = enabled,
-                    onClick = {
-                        scope.launch {
-                            val r = store.action("sleep")
-                            onNote(if (r.ok || r.error == "timeout") "the unit is asleep" else "sleep refused: ${r.error}")
-                        }
-                    },
-                )
-                HudButton(
-                    label = if (confirm == "factory.reset") "CONFIRM FACTORY RESET" else "FACTORY RESET",
-                    style = HudButtonStyle.DANGER,
-                    enabled = enabled,
-                    onClick = {
-                        if (confirm != "factory.reset") {
-                            onConfirm("factory.reset")
-                            onNote("that wipes every setting on the unit — press again to confirm")
-                        } else {
-                            scope.launch {
-                                val r = store.action("factory.reset")
-                                onConfirm(null)
-                                onNote(
-                                    if (r.ok || r.error == "timeout") {
-                                        "factory reset done — re-reading"
-                                    } else {
-                                        "factory reset refused: ${r.error}"
-                                    },
-                                )
-                                store.syncIfNeeded(force = true)
-                            }
-                        }
-                    },
-                )
-            }
-        }
-        item { CardHead("Trip") }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                Text(
-                    "resets the trip distance, time and averages on the unit",
-                    style = HudeCfgHelp(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.weight(1f),
-                )
-                HudButton(
-                    label = if (confirm == "trip.reset") "CONFIRM" else "RESET TRIP",
-                    style = HudButtonStyle.WARNING,
-                    enabled = enabled,
-                    onClick = {
-                        if (confirm != "trip.reset") {
-                            onConfirm("trip.reset")
-                        } else {
-                            scope.launch {
-                                val r = store.action("trip.reset")
-                                onConfirm(null)
-                                onNote(if (r.ok) "trip reset" else "trip reset refused: ${r.error}")
-                            }
-                        }
-                    },
-                )
-            }
-        }
-        item { CardHead("Odometer") }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                HudInput(
-                    value = odoText,
-                    onValueChange = { raw -> onOdo(raw.filter { it.isDigit() || it == '.' }) },
-                    modifier = Modifier.width(140.dp),
-                    placeholder = "km",
-                )
-                HudButton(
-                    label = "SET ODOMETER",
-                    style = HudButtonStyle.WARNING,
-                    enabled = enabled && odoText.toDoubleOrNull() != null,
-                    onClick = {
-                        scope.launch {
-                            val km = odoText.toDoubleOrNull() ?: return@launch
-                            val r = store.action("odo.set", BleJson.params("km" to km))
-                            onNote(
-                                if (r.ok) {
-                                    "odometer set to ${(r.fields["km"] as? Number)?.toDouble() ?: km} km"
-                                } else {
-                                    "odometer set refused: ${r.error}"
-                                },
-                            )
-                        }
-                    },
-                )
-            }
-        }
-        item { CardHead("Ambient light calibration") }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                Text(
-                    "captures the light sensor reading the unit is reporting right now",
-                    style = HudeCfgHelp(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.weight(1f),
-                )
-                listOf("dark", "bright").forEach { which ->
-                    HudButton(
-                        label = "CAPTURE $which",
-                        style = HudButtonStyle.SECONDARY,
-                        enabled = enabled,
-                        onClick = {
-                            scope.launch {
-                                val r = store.action("cal.ambient", BleJson.params("which" to which))
-                                onNote(
-                                    if (r.ok) {
-                                        "$which point captured" +
-                                            if (r.fields["adjusted"] == true) " (the other point moved too)" else ""
-                                    } else {
-                                        "capture refused: ${r.error}"
-                                    },
-                                )
-                                store.syncIfNeeded(force = true)
-                            }
-                        },
-                    )
-                }
-            }
-        }
-        item { CardHead("Noise bench") }
-        item {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                Text(
-                    "measures sensor input jitter on the unit: $noiseLine",
-                    style = HudeCfgHelp(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.weight(1f),
-                )
-                HudButton(
-                    label = "RUN",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = enabled,
-                    onClick = {
-                        scope.launch {
-                            val start = store.action("noise", BleJson.params("start" to true))
-                            if (!start.ok) {
-                                onNoise("could not start: ${start.error}")
-                                return@launch
-                            }
-                            // The bench runs on the unit between display frames; poll
-                            // its snapshot until it says done (or give up).
-                            var line = "started…"
-                            repeat(20) {
-                                delay(1500)
-                                val r = store.action("noise")
-                                if (!r.ok) {
-                                    line = "lost: ${r.error}"
-                                    return@repeat
-                                }
-                                val status = r.fields["status"] as? String ?: "?"
-                                val runs = (r.fields["runs"] as? Number)?.toInt() ?: 0
-                                line = "$status · $runs runs"
-                                if (status == "done") return@repeat
-                            }
-                            onNoise(line)
-                        }
-                    },
-                )
-            }
-        }
-        item { CardHead("Firmware") }
-        item {
-            Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Text(
-                    "unit firmware V${store.buildVersion.ifEmpty { "?" }} · " +
-                        "Arduino core ${store.coreVersion.ifEmpty { "?" }}",
-                    style = HudeParamName(),
-                    color = HudColors.TextPrimary,
-                )
-                Text(
-                    "This tab does not push firmware. The unit has no path that accepts a " +
-                        "firmware image over Bluetooth yet, and an unsigned image it pulled " +
-                        "by itself is not a thing this project wants — the app's firmware " +
-                        "page stays the way to update a unit that is reachable by Wi-Fi.",
-                    style = HudeCfgHelp(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-
-        // Rows this unit streams that are not settings at all — the ambient light ADC, the
-        // ESP core and build versions. The old page showed these as plain text; a stepper
-        // next to a compiled-in version string only invites a write the unit will spend a
-        // flash cycle refusing. They also stay out of the unknown list below: naming a
-        // sensor reading as "a setting nobody labelled" is how a user ends up hunting for a
-        // setting that was never a setting.
-        val hint = schema.extras.keys
-            .mapNotNull { schema.extra(it) }
-            .filter { it.editable }
-            .joinToString(", ") { it.label }
-        val unknownRows = state.unknown
-        if (state.unitStatus.isNotEmpty()) {
-            item { CardHead("Values the unit reports") }
-            items(state.unitStatus) { (spec, value) ->
-                // The asset's kinds are lower-case ("int", "text"), and the store has
-                // already turned a whole-number reading into an Int so this row draws "2678"
-                // and not "2678.0".
-                val numeric = spec.kind.equals("int", ignoreCase = true)
-                SettingsRow(
-                    item = SchemaItem(
-                        key = spec.key,
-                        kind = if (numeric) ValueKind.INT else ValueKind.STR,
-                        control = RowControl.TEXT,
-                        label = spec.label,
-                    ),
-                    view = RowView(value, null, RowStatus.SYNCED, null),
-                    imperial = false,
-                    unitSwap = emptyMap(),
-                    enabled = false,
-                    onEdit = { _, _ -> },
-                    readOnlyHint = if (spec.live) {
-                        "read from the unit while it runs — not a setting"
-                    } else {
-                        "compiled into the firmware — not a setting"
-                    },
-                )
-            }
-            // The one extra that is a real setting (the fuel calibration table) has no row
-            // of its own here, so the page says where it lives rather than pretending the
-            // card is a reading.
-            if (hint.isNotEmpty()) {
-                item {
-                    Text(
-                        "editable extras: $hint",
-                        style = HudeCfgNote(),
-                        color = HudColors.TextDim,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
-                }
-            }
-        }
-        // A firmware that grew a setting nobody regenerated the schema for streams a key
-        // with no row. It cannot be placed in a group — the schema is what does the placing
-        // — so it lands here with a label guessed from the key, and it is in the export
-        // either way. A setting that cannot be found looks exactly like a setting that does
-        // not exist, which is why this list is not left to the search box.
-        if (unknownRows.isNotEmpty()) {
-            item { CardHead("Keys this app's schema does not describe") }
-            item {
-                Text(
-                    "${unknownRows.size} setting(s) the unit sent that this app's schema has no " +
-                        "row for. They are kept, editable with a control guessed from the value, " +
-                        "and included in the export — regenerate the schema after a firmware " +
-                        "update (scripts/gen_config_schema.py) for proper labels.",
-                    style = HudeCfgHelp(),
-                    color = HudColors.Amber,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                )
-            }
-            items(unknownRows) { item ->
-                SettingsRow(
-                    item = item,
-                    view = state.rows[item.key],
-                    imperial = state.imperial,
-                    unitSwap = schema.imperial,
-                    enabled = enabled,
-                    onEdit = { x, y -> store.edit(item, x, y) },
-                    onReset = { store.reset(item) },
-                )
-            }
-        }
-    }
 }

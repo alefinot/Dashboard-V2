@@ -106,6 +106,86 @@ class ConfigStoreTest {
         assertEquals(63L, (gateway.stored["SPEED_MAX"] as Number).toLong())
     }
 
+    /**
+     * The SAVE button's job. A debounce window is a place a value can die — the link drops,
+     * the phone sleeps, someone walks off to the bike — and a driver who has just finished
+     * editing wants those rows on the unit rather than in the phone's RAM with a timer on
+     * them. It reports the rows it sent, and the pending count is what disables the button
+     * when there is nothing left to send.
+     */
+    @Test
+    fun saveWritesWhatIsStillWaitingWithoutWaitingForTheDebounce() = runBlocking {
+        val a = int("SPEED_MAX", def = 60)
+        val b = int("CRUISE_SPEED", def = 90)
+        val store = store(a, b, debounceMs = 5_000)
+        store.sync()
+        assertEquals("a fresh read leaves nothing pending", 0, store.state.value.pending)
+        store.edit(a, 61)
+        store.edit(b, 91)
+        assertEquals("a typed row is pending until the unit has it", 2, store.state.value.pending)
+        gateway.writes.clear()
+        val flush = store.flush()
+        assertEquals(2, flush.rows)
+        assertEquals(0, flush.notWritten)
+        assertEquals("a flush does not sit out the debounce", 2, gateway.writes.size)
+        assertEquals(61L, (gateway.stored["SPEED_MAX"] as Number).toLong())
+        assertEquals(91L, (gateway.stored["CRUISE_SPEED"] as Number).toLong())
+        assertEquals(0, store.state.value.pending)
+        val pieces = gateway.writes.size
+        assertEquals("nothing left to write", 0, store.flush().rows)
+        assertEquals("an empty flush does not spend a round trip", pieces, gateway.writes.size)
+    }
+
+    /**
+     * A row the unit refuses did not reach the unit, and the SAVE count has to say so: a button
+     * that reports "wrote 2" across a refusal told the driver something that was never true.
+     * It is not counted as *pending* though — the row is back on the value the unit confirmed,
+     * so there is nothing left in the phone to send, and the row itself is where the reason is.
+     */
+    @Test
+    fun saveCountsARowTheUnitRefusedAsNotReachingTheUnit() = runBlocking {
+        val a = int("SPEED_MAX", def = 60)
+        val b = int("CRUISE_SPEED", def = 90)
+        val store = store(a, b, debounceMs = 5_000)
+        store.sync()
+        store.edit(a, 61)
+        store.edit(b, 91)
+        gateway.writeQueue.add(WriteResult(ok = false, error = "the unit said no"))
+        gateway.writeQueue.add(WriteResult(ok = true))
+        val flush = store.flush()
+        assertEquals(2, flush.rows)
+        assertEquals(1, flush.notWritten)
+        assertEquals(60L, (gateway.stored["SPEED_MAX"] as Number).toLong())
+        assertEquals(91L, (gateway.stored["CRUISE_SPEED"] as Number).toLong())
+        assertEquals(RowStatus.FAILED, store.state.value.rows["SPEED_MAX"]?.status)
+        assertEquals("the refused row is back on the unit's value", 0, store.state.value.pending)
+    }
+
+    /**
+     * An `xy` row holds two keys and answers one write. Counting keys would send that row twice
+     * (and charge the unit for a flash cycle it did not need), so a flush works through rows.
+     */
+    @Test
+    fun anXyRowIsOneRowToSave() = runBlocking {
+        val xy = SchemaItem(
+            key = "POS_X",
+            keyY = "POS_Y",
+            kind = ValueKind.INT,
+            control = RowControl.PAIR,
+            label = "Position",
+            defaultValue = 10,
+            defaultY = 20,
+        )
+        val store = store(xy, debounceMs = 5_000)
+        store.sync()
+        store.edit(xy, 40, 50)
+        gateway.writes.clear()
+        assertEquals("two pending keys, one row", 1, store.flush().rows)
+        assertEquals(0, store.flush().notWritten)
+        assertEquals(1, gateway.writes.size)
+        assertEquals(0, store.state.value.pending)
+    }
+
     @Test
     fun aSwitchGoesOutWithoutWaitingForTyping() = runBlocking {
         val item = bool("ADV_MODE", def = false)

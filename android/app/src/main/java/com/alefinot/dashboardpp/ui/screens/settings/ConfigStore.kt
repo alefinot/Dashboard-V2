@@ -273,6 +273,7 @@ class ConfigStore(
                     rows = schema.rows,
                 ),
                 rows = LinkedHashMap(rowViews),
+                pending = 0,
                 unknown = unknown,
                 unitStatus = status,
                 advanced = truth(values[schema.advancedKey]),
@@ -408,11 +409,13 @@ class ConfigStore(
         }
     }
 
-    private suspend fun writeRow(item: SchemaItem, notice: String?) {
+    private suspend fun writeRow(item: SchemaItem, notice: String?): Boolean {
         val payload = LinkedHashMap<String, Any?>()
         values[item.key]?.let { payload[item.key] = coerce(item.kind, it) }
         item.keyY?.let { ky -> values[ky]?.let { payload[ky] = it } }
-        if (payload.isEmpty()) return
+        // A row with nothing in it has no value to send; that is not a failure, it is nothing
+        // to do, and reporting it as one would put a red row on a screen that did nothing.
+        if (payload.isEmpty()) return true
         val result = try {
             gateway.write(payload)
         } catch (e: Exception) {
@@ -424,7 +427,7 @@ class ConfigStore(
             values[item.key] = confirmed[item.key]
             item.keyY?.let { values[it] = confirmed[it] }
             markRow(item, RowStatus.FAILED, result.error)
-            return
+            return false
         }
         confirmed.putAll(payload)
         val message = if (result.nvsErrors > 0) {
@@ -452,6 +455,7 @@ class ConfigStore(
                 )
             }
         }
+        return true
     }
 
     private fun coerce(kind: ValueKind, value: Any?): Any? = when (kind) {
@@ -468,7 +472,55 @@ class ConfigStore(
             status,
             message,
         )
-        _state.update { it.copy(rows = LinkedHashMap(rowViews)) }
+        _state.update { it.copy(rows = LinkedHashMap(rowViews), pending = pendingKeys().size) }
+    }
+
+    /**
+     * The keys this app has changed and the unit has not confirmed.
+     *
+     * A refused write puts its value back to the confirmed one, so it drops out of this list
+     * on the spot; a row still waiting out its debounce stays in it. An `xy` row answers with
+     * both keys, which is why [flush] works through items rather than keys.
+     */
+    private fun pendingKeys(): List<String> =
+        values.keys.filter { key -> !sameValue(confirmed[key], values[key]) }.toList()
+
+    /**
+     * Write everything that has not been written, now, without waiting out the debounce.
+     *
+     * The button exists because someone who has just changed four rows and is walking to the
+     * bike wants those four values on the unit, not in the phone's RAM with a timer on them.
+     * [Flush] counts rows: [Flush.rows] is how many went out, [Flush.notWritten] how many did
+     * not land — refused by the firmware, or lost because the link went away in the middle.
+     *
+     * A refused row is not counted as still pending, and that is deliberate: the row has gone
+     * back to what the unit last confirmed, so there is nothing left in the phone for SAVE to
+     * send, and repeating a value the firmware already said no to buys another flash cycle and
+     * the same answer. The row is where the bad news is written; the count only refuses to
+     * claim a clean sweep.
+     */
+    suspend fun flush(): Flush {
+        val items = LinkedHashSet<SchemaItem>()
+        for (key in pendingKeys()) {
+            timers.remove(key)?.cancel()
+            schema.item(key)?.let { items += it }
+        }
+        var rows = 0
+        var notWritten = 0
+        for (item in items) {
+            rows++
+            if (!writeRow(item, null)) notWritten++
+        }
+        publishPending()
+        return Flush(rows, notWritten)
+    }
+
+    /** What one SAVE press did, in rows. */
+    data class Flush(val rows: Int, val notWritten: Int)
+
+    /** Republish the pending count after a path that writes without going through [markRow]. */
+    private fun publishPending() {
+        _state.update { it.copy(pending = pendingKeys().size) }
     }
 
     /** One key back to its compiled default — with `config.reset`, not by typing. */
@@ -506,7 +558,7 @@ class ConfigStore(
     fun setAdvanced(on: Boolean) {
         val key = schema.advancedKey
         values[key] = on
-        _state.update { it.copy(advanced = on, error = null) }
+        _state.update { it.copy(advanced = on, error = null, pending = pendingKeys().size) }
         scope.launch {
             val result = try {
                 gateway.write(linkedMapOf<String, Any?>(key to on))
@@ -520,7 +572,11 @@ class ConfigStore(
                 // advanced mode that is not on.
                 values[key] = confirmed[key]
                 _state.update {
-                    it.copy(advanced = truth(confirmed[key]), error = "advanced mode: ${result.error}")
+                    it.copy(
+                        advanced = truth(confirmed[key]),
+                        error = "advanced mode: ${result.error}",
+                        pending = pendingKeys().size,
+                    )
                 }
             }
         }
@@ -707,6 +763,12 @@ class ConfigStore(
         val imperial: Boolean = false,
         /** Reboot-required rows changed since the read they are measured against. */
         val rebootPending: Set<String> = emptySet(),
+        /**
+         * Rows changed here that the unit has not confirmed — the debounce window and an
+         * in-flight write both count. The page's SAVE button is disabled at zero and says
+         * how many rows it is about to write at anything else.
+         */
+        val pending: Int = 0,
         val missingKeys: List<String> = emptyList(),
         val error: String? = null,
     )

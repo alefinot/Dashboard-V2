@@ -121,17 +121,31 @@ data class SchemaCard(
     val advanced: Boolean = false,
     /**
      * A card whose work is not a list of rows: `tripReset`, `noiseBench`,
-     * `firmwareUpdate`, the calibration capture flows. The renderer gives those a
-     * button into their own screen instead of drawing their rows inline.
+     * `firmwareUpdate`, the calibration capture flows. The page draws those controls inside
+     * the card, above the rows of the same card - the way the unit's own page does it - and
+     * a widget this build cannot draw says so on the card instead of disappearing.
+     *
+     * Only card-level widgets are parsed. The asset also carries a `widget` on one **row**
+     * (`pointCount` on `FUEL_TOUCH_POINTS`), which is a leftover name from the unit page's
+     * markup — the id of the input inside the fuel calibration table — not an action. The row
+     * itself is drawn as a number, and the fuel table is drawn from its own value kind.
      */
     val widget: String? = null,
 )
 
-/** A tab of the old page: System, Display, Sensors, UI Layout, plus the leftovers. */
+/** A group of the unit's settings page: System & General, Display, ..., plus leftovers. */
 data class SchemaGroup(
     val id: String,
     val title: String,
     val cards: List<SchemaCard>,
+    /**
+     * The name of the badge the unit's own page draws beside the group title - `system`,
+     * `display`, `sensors`, `layout`, `more`. Only the **name** is carried: the drawing
+     * lives in `res/drawable/ic_grp_<name>.xml` in the UI layer, and a name this build
+     * does not know draws no badge rather than breaking the page. Null only for an asset
+     * generated before the field existed.
+     */
+    val icon: String? = null,
 )
 
 /**
@@ -169,10 +183,6 @@ data class ConfigSchema(
     fun item(key: String): SchemaItem? = byKey[key]
 
     fun isHidden(key: String): Boolean = hidden.contains(key)
-
-    /** A card by its widget name, for the Tools entry points. */
-    fun card(widget: String): SchemaCard? =
-        groups.flatMap { it.cards }.firstOrNull { it.widget == widget }
 
     /**
      * One of the values the unit streams that is not a `CFG_TABLE` row: a live ADC
@@ -253,6 +263,7 @@ data class ConfigSchema(
                     id = ConfigJson.str(gm, "id") ?: "",
                     title = ConfigJson.str(gm, "title") ?: "",
                     cards = outCards,
+                    icon = ConfigJson.str(gm, "icon"),
                 )
             }
             return ConfigSchema(

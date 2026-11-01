@@ -64,8 +64,8 @@ import java.io.File
 /**
  * One card's details, editable — a panel over the garage, not a route.
  *
- * It is a panel for the same reason [ManualEntryPanel] is one, and for the same reason the
- * page's delete confirmation is a box inside the card rather than a window: the page behind
+ * It is a panel for the same reason the page's delete confirmation is a box inside the card
+ * rather than a window: the page behind
  * is the point, and closing this returns the user to their garage with the bar, the pager
  * and their place in it exactly as they left it. A route could only ever drop them back on
  * some other page.

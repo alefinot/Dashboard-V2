@@ -14,7 +14,9 @@ import org.junit.Test
  *
  * What the bench found, in the order the user found it:
  *   1. typing a word that matched a setting in another group left an empty page saying
- *       "nothing matches", with no lead to the group that held it;
+ *       "nothing matches", with no lead to the group that held it. (The tab strip was replaced
+ *       by the accordion for exactly this reason: a search now opens the groups it finds and
+ *       hides the ones it does not, so there is no empty page to lead anyone out of.);
  *   2. a restore refused fourteen keys with one sentence saying they had "no use", which read
  *      as fourteen failed writes;
  *   3. the advanced switch in the header announced itself as a sentence ("show advanced
@@ -37,6 +39,35 @@ class SettingsPageBenchFindingsTest {
     }
 
     /** Comment-free source, so a remembered description in a comment cannot satisfy a guard. */
+    /**
+     * Two cards the unit's own page gives an action to, and this app cannot give one. `ota.begin`
+     * answers `not_implemented` in the firmware, and the "match to reference" calibrations work
+     * from a live reading that this page does not hold. The plan keeps both cards where the unit
+     * page puts them, so the guard is that they say what they cannot do rather than draw a
+     * control that would do something else — and that nothing in the settings pages has started
+     * quietly calling an OTA method the firmware refuses.
+     */
+    @Test
+    fun aCardWithNoActionAvailableSaysSoInsteadOfInventingOne() {
+        val layout = codeOnly("settings/SettingsLayout.kt")
+        assertTrue(
+            "the firmware update card offers an update this firmware does not answer: " +
+                "ota.begin returns not_implemented, so the card has to say where updates happen",
+            layout.contains("Bluetooth OTA is not in this firmware"),
+        )
+        val widgets = codeOnly("SettingsWidgets.kt")
+        assertTrue(
+            "a 'match to reference' control was invented without the live reading it needs",
+            widgets.contains("match to reference"),
+        )
+        val offenders = root.listFiles { f: File -> f.isFile && f.name.endsWith(".kt") }
+            .orEmpty()
+            .filter { codeOnly(it.name).contains("action(\"ota") }
+            .map { it.name }
+            .sorted()
+        assertEquals("no settings screen may start an OTA: $offenders", emptyList<String>(), offenders)
+    }
+
     private fun codeOnly(name: String): String {
         var s = source(name)
         Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL).findAll(s).forEach { m ->
@@ -46,15 +77,18 @@ class SettingsPageBenchFindingsTest {
     }
 
     @Test
-    fun aSearchNamesTheGroupThatHoldsTheMatch() {
+    fun aSearchOpensTheGroupsItFindsInsteadOfApologising() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         assertTrue(
-            "an empty search page no longer leads to the group that holds the match",
-            page.contains("otherGroupsMatching"),
+            "the page no longer asks the layout which groups a query reaches, so it cannot " +
+                "open them",
+            page.contains("SettingsLayout.groupsShown") && page.contains("SettingsLayout.openGroups"),
         )
         assertTrue(
-            "the hint still uses the plural-of-plural wording the user read as a variable dump",
-            page.contains("if (hits == 1) \"match\" else \"matches\""),
+            "the stranded-search hint is back: with one accordion there is no 'current group' " +
+                "to be stuck in, and a count that mixed label matches with key matches was " +
+                "never something the user could predict",
+            !page.contains("otherGroupsMatching"),
         )
         assertTrue(
             "the empty message still says the words the user read as a lie",
@@ -87,18 +121,18 @@ class SettingsPageBenchFindingsTest {
     }
 
     /**
-     * The cleared-note effect has to stay in composition while the link panel is up. This
-     * guard compares offsets in the file: the effect must appear before the early return.
+     * The cleared-note effect has to stay in composition while another page is up. This guard
+     * compares offsets in the file: the effect must appear before the early return.
      */
     @Test
     fun theRestartNoteIsClearedWhenTheLinkComesBack() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         val clearAt = page.indexOf("wasLinked = linked")
-        val panelAt = page.indexOf("BleScreen(")
+        val panelAt = page.indexOf("PerfMonitorScreen(")
         assertTrue("the restart note is no longer cleared on a link change", clearAt > 0)
         assertTrue(
-            "the effect that clears the note sits below the early return that draws the link " +
-                "panel, so opening the panel destroys it and the note outlives the reboot",
+            "the effect that clears the note sits below the early return that draws the monitor " +
+                "page, so opening it destroys the effect and the note outlives the reboot",
             clearAt in 0 until panelAt,
         )
     }
@@ -113,7 +147,7 @@ class SettingsPageBenchFindingsTest {
         )
     }
 
-    /** The Tools page must not carry a second, unexplained copy of that problem. */
+    /** The readings entry must not carry a second, unexplained copy of that problem. */
     @Test
     fun readingsFromTheUnitAreMarkedAsReadings() {
         val page = codeOnly("DashboardSettingsScreen.kt")

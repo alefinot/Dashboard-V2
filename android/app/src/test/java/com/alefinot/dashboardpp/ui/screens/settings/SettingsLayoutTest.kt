@@ -1,23 +1,29 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
-import com.alefinot.dashboardpp.ui.screens.otherGroupsMatching
-import com.alefinot.dashboardpp.ui.screens.renderablesFor
-import com.alefinot.dashboardpp.ui.screens.RenderCard
-import com.alefinot.dashboardpp.ui.screens.RenderRow
-import com.alefinot.dashboardpp.ui.screens.RenderSection
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.blocksFor
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.columns
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.openGroups
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.pack
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.tapOpen
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.unlabelledBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Which rows the settings page is allowed to draw, and in what order.
+ * Which rows the settings page is allowed to draw, in what order, and where the cards land.
  *
- * The unit's form map has 242 rows; the generated schema describes 198 of them; the
- * page draws a subset of those depending on the master switch and the search box.
- * Every one of those reductions is a setting the owner cannot reach, so each has to
- * be written down with its reason — and this is the check that a row never disappears
- * twice.
+ * The unit's form map has 242 rows; the generated schema describes 198 of them; the page
+ * draws a subset of those depending on the master switch and the search box. Every one of
+ * those reductions is a setting the owner cannot reach, so each has to be written down with
+ * its reason — and this is the check that a row never disappears twice.
+ *
+ * The rules themselves are the unit page's rules, and the tests are written against that
+ * page's behaviour rather than against whatever the Kotlin happens to do first: the driver
+ * who has learned where a setting is on the unit's screen has to land in the same place on
+ * the phone, and the day the two disagree is the day the search box stops being reliable on
+ * either.
  *
  * [renderablesFor] works one group at a time, which is how the page shows them, so
  * "everything" means every group in the schema.
@@ -103,24 +109,35 @@ class SettingsLayoutTest {
     }
 
     /**
-     * A widget card is a button plus its rows, not a button instead of them. The unit's
-     * own page drew the capture button above the same settings; hiding the rows behind
-     * the action would put values in a place nobody looks.
+     * A widget card is a control plus its rows, not a control instead of them, and the
+     * control is inside the card rather than on a page of its own. The unit's page draws its
+     * button above the settings of the same card; an app that hides those rows behind a
+     * button into another screen puts values where nobody looks.
      */
     @Test
-    fun aWidgetCardStillCarriesItsOwnRows() {
+    fun aWidgetCardCarriesItsControlAndItsOwnRows() {
         val rows = keys(drawn())
         assertTrue("the widget card's settings vanished", rows.contains("ENABLE_AUTO_BRIGHTNESS"))
-        val card = renderablesFor(group, ConfigStore.SettingsState(), "", false)
-            .filterIsInstance<RenderCard>()
-            .first { it.title == "Auto brightness" }
-        assertEquals("its button is on the Tools page", card.hint)
+        val body = blocksFor(group, ConfigStore.SettingsState(), "", false)
+            .first { it.card.title == "Auto brightness" }
+        assertEquals(
+            "the card's own action is not drawn with it",
+            listOf<Renderable>(RenderWidget("ambientCalibrate"), RenderRow(row("ENABLE_AUTO_BRIGHTNESS"))),
+            body.body,
+        )
+        assertTrue("a card with a control that needs its width was packed into a column", body.wide)
     }
 
-    /** Search matches the label and the firmware key, because owners read one and
-     *  the changelog, docs and error strings say the other. */
+    /**
+     * Search finds a row by its label and by the firmware key, because owners read one off
+     * the row and the other off the changelog, the docs and the unit's error strings.
+     *
+     * Word-prefix, per word, exactly like the unit page's `match()`: `exc` finds
+     * `EXC_RES_OHM`. A substring matcher would find different rows for the same typing on
+     * the phone than on the unit.
+     */
     @Test
-    fun searchSeesLabelsAndKeys() {
+    fun searchSeesLabelsAndKeysByWordPrefix() {
         assertEquals(listOf("GPS_RATE"), keys(drawn(query = "gps rate")))
         assertEquals(listOf("CALIB_OFFSET"), keys(drawn(query = "calib_", advanced = true)))
         assertEquals(
@@ -128,12 +145,79 @@ class SettingsLayoutTest {
             emptyList<String>(),
             keys(drawn(query = "gearbox")),
         )
+        // A prefix of a word, not a fragment inside one: "cu" must not find "fuel".
+        val g = SchemaGroup(
+            "gc", "Group",
+            listOf(SchemaCard(
+                "Fuel",
+                listOf(SchemaItem("FUEL_SENSOR", ValueKind.BOOL, RowControl.TOGGLE, "Fuel level sensor")),
+            )),
+        )
+        assertEquals(
+            "a query matched inside a word the row never starts",
+            emptyList<String>(),
+            renderablesFor(g, ConfigStore.SettingsState(), "cu", false).filterIsInstance<RenderRow>()
+                .map { it.item.key },
+        )
+    }
+
+    /**
+     * A query that names a card shows the whole card, and one that names a section shows
+     * the whole section — the unit page's rule, and the reason "noise" finds the noise bench
+     * even though nobody remembers which rows belong to it.
+     */
+    @Test
+    fun aTitleMatchCarriesEverythingUnderIt() {
+        val cards = listOf(
+            SchemaCard(
+                "Noise bench",
+                listOf(row("NOISE_WINDOW_MS"), row("NOISE_MIN_HZ")),
+            ),
+            SchemaCard(
+                "Layout",
+                listOf(row("HUD_SPEED", section = "Speedometer"), row("HUD_RPM", section = "Tachometer")),
+            ),
+        )
+        val g = SchemaGroup("gt", "Group", cards)
+        assertEquals(
+            "a card by name did not bring its rows",
+            listOf("NOISE_WINDOW_MS", "NOISE_MIN_HZ"),
+            renderablesFor(g, ConfigStore.SettingsState(), "noise bench", false)
+                .filterIsInstance<RenderRow>().map { it.item.key },
+        )
+        assertEquals(
+            "a section by name did not bring its rows",
+            listOf("HUD_RPM"),
+            renderablesFor(g, ConfigStore.SettingsState(), "tacho", false)
+                .filterIsInstance<RenderRow>().map { it.item.key },
+        )
+    }
+
+    /**
+     * A group's own title is not searched — the unit page skips it on purpose. Typing a
+     * group name is not a search for a setting, and treating it as one opens a group whose
+     * cards are all empty.
+     */
+    @Test
+    fun aGroupTitleIsNotSearched() {
+        val g = SchemaGroup("gg", "Sensors Tuning", listOf(SchemaCard("GNSS", listOf(row("GPS_RATE")))))
+        assertEquals(
+            "the group name was searched, and its rows came with it",
+            emptyList<String>(),
+            renderablesFor(g, ConfigStore.SettingsState(), "sensors tuning", false)
+                .filterIsInstance<RenderRow>().map { it.item.key },
+        )
     }
 
     /** An advanced row found by search still has to be inside the advanced gate. */
     @Test
     fun searchDoesNotWalkThroughTheAdvancedGate() {
         assertTrue("search reached an advanced row", keys(drawn(query = "calib")).isEmpty())
+        assertTrue(
+            "search reached an advanced card",
+            renderablesFor(group, ConfigStore.SettingsState(), "advanced card", false)
+                .filterIsInstance<RenderCard>().none { it.title == "Advanced card" },
+        )
     }
 
     @Test
@@ -159,16 +243,43 @@ class SettingsLayoutTest {
                     is RenderCard -> it.title
                     is RenderSection -> it.title
                     is RenderRow -> it.item.key
+                    is RenderWidget -> it.widget
                 }
             },
         )
     }
 
     /**
-     * With the switch on and no search, every row in the real schema is drawn exactly
-     * once across all four groups. This is the assertion that catches a card that moved
-     * somewhere the renderer skips — the failure mode that hides a setting instead of
-     * showing it wrong.
+     * A section heading with nothing under it is dropped, on the unit's page and here. A
+     * bare heading above an empty stretch of card is the failure mode that makes a filtered
+     * page look broken rather than filtered.
+     */
+    @Test
+    fun aSectionHeadingSurvivesOnlyWithRowsUnderIt() {
+        val g = SchemaGroup(
+            "g3", "Group",
+            listOf(
+                SchemaCard(
+                    "Card",
+                    listOf(row("A_GPS", section = "GPS"), row("B_TACHO", section = "Tachometer")),
+                ),
+            ),
+        )
+        val out = renderablesFor(g, ConfigStore.SettingsState(), "a", false).filter {
+            it is RenderSection || it is RenderRow
+        }
+        assertEquals(listOf("GPS", "A_GPS"), out.map {
+            when (it) {
+                is RenderSection -> it.title
+                else -> (it as RenderRow).item.key
+            }
+        })
+    }
+
+    /**
+     * With the switch on and no search, every row in the real schema is drawn exactly once
+     * across all groups. This is the assertion that catches a card that moved somewhere the
+     * renderer skips — the failure mode that hides a setting instead of showing it wrong.
      */
     @Test
     fun everySchemaRowIsDrawnExactlyOnceAcrossAllGroups() {
@@ -200,8 +311,9 @@ class SettingsLayoutTest {
 
     /**
      * A key the unit streams that this app's schema has no row for — a setting a newer
-     * firmware grew — has to be reachable. Dropping it would make the setting stop
-     * existing on the phone with nothing on screen to say why.
+     * firmware grew — has to be reachable. It cannot be placed in a group (the schema is
+     * what does the placing), so it forms a block of its own, and dropping it would make the
+     * setting stop existing on the phone with nothing on screen to say why.
      */
     @Test
     fun aKeyTheSchemaDoesNotKnowIsReachableBySearch() {
@@ -212,89 +324,209 @@ class SettingsLayoutTest {
             label = "New thing",
             labelIsGuessed = true,
         )
-        val rows = drawn(query = "new", unknown = listOf(guessed))
-        assertTrue("the unlabelled key is not drawn", guessed in rows.map { it.item })
-    }
-
-    /** Only a card that grew a button on the unit's page says where that button is. */
-    @Test
-    fun onlyAWidgetCardPointsSomewhereElse() {
-        val g = SchemaGroup(
-            "g3",
-            "Group",
-            listOf(
-                SchemaCard("Plain", listOf(row("PLAIN_ROW"))),
-                SchemaCard("Has a button", listOf(row("BUTTON_ROW")), widget = "tripReset"),
-            ),
-        )
-        val cards = renderablesFor(g, ConfigStore.SettingsState(), "", false)
-            .filterIsInstance<RenderCard>()
-        assertEquals(2, cards.size)
-        assertNull("an ordinary card claims there is something elsewhere", cards.first().hint)
-        assertTrue(
-            "the widget card does not say where its action is",
-            (cards.last().hint ?: "").contains("Tools"),
+        val state = ConfigStore.SettingsState(unknown = listOf(guessed))
+        val found = unlabelledBlock(state, "new")
+        assertEquals("the unlabelled key is not drawn", listOf(guessed), found?.body?.map { (it as RenderRow).item })
+        assertNull("an empty unlabelled set made an empty block", unlabelledBlock(ConfigStore.SettingsState(), "new"))
+        assertEquals(
+            "the unlabelled key survived a query that does not mention it",
+            null,
+            unlabelledBlock(state, "gearbox"),
         )
     }
 
     /**
-     * Search stays per group — a 198-row table on a tablet wants browsing more than one
-     * long list — but an empty page with no lead is indistinguishable from a broken
-     * filter. On the bench, "gps" on the System page found nothing there and two rows one
-     * tap away in Sensors Tuning, with nothing saying so.
+     * Only the firmware card carries a line of its own, and it says where an update
+     * actually happens. A widget's action is drawn inside its card, so no card points at
+     * another page — there is no Tools page left to point at.
      */
     @Test
-    fun aQueryThatMatchesInAnotherGroupSaysWhichOne() {
-        val sensors = SchemaGroup(
-            id = "s",
-            title = "Sensors Tuning",
-            cards = listOf(
-                SchemaCard(
-                    "GNSS",
-                    listOf(
-                        SchemaItem("GPS_RATE", ValueKind.INT, RowControl.NUMBER, "Fix rate (Hz)"),
-                        SchemaItem(
-                            "GPS_BAUD", ValueKind.INT, RowControl.NUMBER, "GNSS baud rate",
-                            advanced = true,
-                        ),
+    fun onlyTheFirmwareCardSaysSomethingAboutItself() {
+        val g = SchemaGroup(
+            "g4",
+            "Group",
+            listOf(
+                SchemaCard("Plain", listOf(row("PLAIN_ROW"))),
+                SchemaCard("Trip", listOf(row("TRIP_AUTO_RESET")), widget = "tripReset"),
+                SchemaCard("Firmware", emptyList(), widget = "firmwareUpdate"),
+            ),
+        )
+        val blocks = blocksFor(g, ConfigStore.SettingsState(), "", false)
+        assertEquals(3, blocks.size)
+        assertNull("an ordinary card claims there is something elsewhere", blocks[0].card.hint)
+        assertNull("a widget card points somewhere else", blocks[1].card.hint)
+        assertTrue(
+            "the firmware card does not say where a unit is updated after this app stops " +
+                "carrying a way in: ota.begin answers not_implemented, and the app ships no " +
+                "updater, so the card has to say so in those words",
+            (blocks[2].card.hint ?: "").contains("Bluetooth OTA is not in this firmware"),
+        )
+        // A card that is only an action shows on its own title - it has no other text.
+        assertEquals(
+            "searching for the firmware card lost it",
+            listOf("Firmware"),
+            blocksFor(g, ConfigStore.SettingsState(), "firmware", false).map { it.card.title },
+        )
+        assertEquals(
+            "a rowless action card survived a query that names neither it nor a row",
+            emptyList<String>(),
+            blocksFor(g, ConfigStore.SettingsState(), "speed", false).map { it.card.title },
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // The accordion: one group open, and a search that opens what it finds
+    // -----------------------------------------------------------------------
+
+    private val system = SchemaGroup(
+        id = "system",
+        title = "System & General",
+        icon = "system",
+        cards = listOf(SchemaCard("General", listOf(row("ADV_MODE")))),
+    )
+    private val sensors = SchemaGroup(
+        id = "sensors",
+        title = "Sensors Tuning",
+        icon = "sensors",
+        cards = listOf(
+            SchemaCard(
+                "GNSS",
+                listOf(
+                    SchemaItem("GPS_RATE", ValueKind.INT, RowControl.NUMBER, "Fix rate (Hz)"),
+                    SchemaItem(
+                        "GPS_BAUD", ValueKind.INT, RowControl.NUMBER, "GNSS baud rate",
+                        advanced = true,
                     ),
                 ),
             ),
-        )
-        val system = SchemaGroup(
-            id = "y",
-            title = "System & General",
-            cards = listOf(
-                SchemaCard(
-                    "General",
-                    listOf(SchemaItem("ADV_MODE", ValueKind.BOOL, RowControl.TOGGLE, "Advanced mode")),
-                ),
+        ),
+    )
+    private val display = SchemaGroup(
+        id = "display",
+        title = "Display",
+        icon = "display",
+        cards = listOf(
+            SchemaCard(
+                "Brightness",
+                listOf(row("BRIGHT_DAY", section = "Daytime"), row("DAYTIME_GPS")),
             ),
-        )
-        val groups = listOf(system, sensors)
+        ),
+    )
+    private val groups = listOf(system, sensors, display)
+
+    /**
+     * Opening a group closes the one that was open, and tapping an open header closes it.
+     * The unit page's `initDetailsAnim` in one line — a 198-row page that opens everything
+     * has no structure left.
+     */
+    @Test
+    fun theAccordionHoldsOneGroupOpenAtATime() {
+        assertEquals("sensors", tapOpen(null, "sensors"))
+        assertEquals("display", tapOpen("sensors", "display"))
+        assertNull("tapping the open header did not close it", tapOpen("display", "display"))
+    }
+
+    /** Browsing (no query): exactly the tapped group, or none. */
+    @Test
+    fun noQueryMeansNothingIsOpenUntilATap() {
+        assertEquals(emptySet<String>(), openGroups(null, "", groups, true))
+        assertEquals(setOf("sensors"), openGroups("sensors", "  ", groups, true))
+    }
+
+    /**
+     * A query opens every group that has a hit and closes the rest — the unit page sets
+     * `open` on matching groups and takes it off the others. A search that has to be
+     * expanded by hand looks broken: it finds rows and shows none of them.
+     */
+    @Test
+    fun aQueryOpensEveryGroupItFinds() {
         assertEquals(
-            listOf("Sensors Tuning" to 2),
-            otherGroupsMatching(groups, current = 0, query = "gps", advanced = true),
+            "the search left a group with hits closed",
+            setOf("sensors", "display"),
+            openGroups("system", "gps", groups, true),
         )
         assertEquals(
-            "an advanced row should not be promised to someone who is not in advanced mode",
-            listOf("Sensors Tuning" to 1),
-            otherGroupsMatching(groups, 0, "gps", false),
+            "an advanced-only hit opened a group that cannot show it",
+            emptySet<String>(),
+            openGroups("system", "baud", groups, false),
         )
         assertEquals(
-            "a match on the label counts as much as a match on the key",
-            listOf("Sensors Tuning" to 1),
-            otherGroupsMatching(groups, 0, "baud", true),
+            "a one-word hit in one group opened the others too",
+            setOf("display"),
+            openGroups("system", "daytime", groups, false),
+        )
+    }
+
+    /**
+     * A group with no hits is hidden while a query runs, and every group is back the moment
+     * the box is empty. The old page needed a "2 matches in another group" hint because a
+     * tab could leave someone stranded on an empty filter; the accordion cannot, so the hint
+     * is gone — and with it the question of whether the count was a label match or a key
+     * match, which nobody could predict.
+     */
+    @Test
+    fun aGroupWithNoHitsIsHiddenAndTheOtherGroupsHintIsGone() {
+        // "gps" hits Fix rate in Sensors and DAYTIME_GPS in Display; System's one row is an
+        // advanced switch and stays hidden, which is the whole point of hiding.
+        assertEquals(
+            listOf("sensors", "display"),
+            SettingsLayout.groupsShown(groups, "gps", true).map { it.id },
         )
         assertEquals(
-            "the group already on screen should not be offered back",
+            "a group with no hits is still on screen",
+            listOf("display"),
+            SettingsLayout.groupsShown(groups, "daytime", true).map { it.id },
+        )
+        assertEquals(
+            "clearing the box did not bring the groups back",
+            groups,
+            SettingsLayout.groupsShown(groups, "", true),
+        )
+        assertEquals(
+            "there is no other-groups hint any more",
             emptyList<Pair<String, Int>>(),
-            otherGroupsMatching(groups, 1, "gps", true),
+            SettingsLayout.otherGroupsMatching(groups, 0, "gps", true),
         )
+    }
+
+    // -----------------------------------------------------------------------
+    // Columns: the unit page's grid, on the phone and on a tablet
+    // -----------------------------------------------------------------------
+
+    /** The unit page's own breakpoints — one card on a phone, two from 600 dp, three from 900. */
+    @Test
+    fun theColumnCountFollowsTheWidth() {
+        assertEquals(1, columns(360))
+        assertEquals(1, columns(599))
+        assertEquals(2, columns(600))
+        assertEquals(2, columns(899))
+        assertEquals(3, columns(900))
+        assertEquals(3, columns(1280))
+    }
+
+    /**
+     * Cards pack across the columns in the schema's order, and a block that needs the width
+     * (a calibration capture, a noise readout, a fuel table) takes a row of its own instead
+     * of being squeezed into a third of a tablet.
+     */
+    @Test
+    fun cardsPackRowWiseAndWideBlocksTakeTheirOwnRow() {
+        val blocks = (1..5).map {
+            RenderBlock(RenderCard("C$it"), listOf(RenderRow(row("KEY_$it"))), wide = it == 3)
+        }
         assertEquals(
-            "an empty query is not a search",
-            emptyList<Pair<String, Int>>(),
-            otherGroupsMatching(groups, 0, "  ", true),
+            listOf(listOf("C1", "C2"), listOf("C3"), listOf("C4", "C5")),
+            pack(blocks, 2).map { row -> row.map { it.card.title } },
+        )
+        val plain = (1..5).map { RenderBlock(RenderCard("C$it"), listOf(RenderRow(row("KEY_$it")))) }
+        assertEquals(
+            listOf(listOf("C1", "C2", "C3"), listOf("C4", "C5")),
+            pack(plain, 3).map { row -> row.map { it.card.title } },
+        )
+        // On a phone every card is its own row, wide or not.
+        assertEquals(
+            listOf(listOf("C1"), listOf("C2"), listOf("C3")),
+            pack(blocks.take(3), 1).map { row -> row.map { it.card.title } },
         )
     }
 }

@@ -352,19 +352,19 @@ class UnitDiagTest {
     )
 
     /**
-     * The monitor is opened from the Tools page and closed again; a screen that only exists in
-     * the source is how a feature ends up unreachable. Read from source, because the module has
-     * no Compose test harness.
+     * The monitor is opened from the last row of the settings scroll and closed again; a screen
+     * that only exists in the source is how a feature ends up unreachable. Read from source,
+     * because the module has no Compose test harness.
      */
     @Test
-    fun theToolsPageOpensItAndNothingButTheLinkFeedsIt() {
+    fun theSettingsScrollOpensItAndNothingButTheLinkFeedsIt() {
         val page = moduleSource("DashboardSettingsScreen.kt")
         assertTrue(
-            "the Tools page never opens the performance monitor",
+            "nothing opens the performance monitor",
             Regex("PerfMonitorScreen\\s*\\(").containsMatchIn(codeOf(page)),
         )
         assertTrue(
-            "the Tools page does not name the entry where a user will look for it",
+            "the scroll does not name the entry where a user will look for it",
             Regex("\"PERFORMANCE MONITOR\"").containsMatchIn(page),
         )
         val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
