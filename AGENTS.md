@@ -24,14 +24,26 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 - The upload layout is repaired by `scripts/fix_upload_layout.py` (a `post:` extra script in `platformio.ini`): it moves the otadata write to this table's real offset (`0x1D000`) and removes PlatformIO's fixed `0xe000` write, which sits **inside `nvs`** here and was destroying two settings pages per flash. Keep that script: without it a wired flash may not boot what it just wrote, and it silently loses NVS settings.
 - If esptool reports `Failed to start stub flasher. There was no response.`, retry once (at 115200 baud if needed); if it keeps failing, hold **BOOT** while tapping **RESET** to force download mode. Confirm the port with `esptool --port COM7 --baud 115200 read_mac`.
 - If COM7 is unreachable / not detected, **stop and ask the user how to continue** — do not auto-fallback to a guessed port or method.
+- **The firmware built from this tree has no Wi-Fi stack** (`platformio.ini`:
+  `build_src_filter = +<*> -<web.cpp` — firmware phase 0b of the BLE-only plan). A unit
+  flashed from it has no SoftAP, no `192.168.4.1`, no REST endpoint and no IP address, so
+  for that unit method 1 below is the only one that exists. Methods 2 and 3 apply only to
+  units still running a Wi-Fi firmware (≤ 1.4.x). `src/web.cpp` and `src/webui.html` are
+  still in the tree; whether the build uses them is a separate in-progress decision — if a
+  task depends on the Web Portal or the HTTP API being live, **ask before assuming it**.
 - When asking, list the available flashing methods:
-  1. USB serial (PlatformIO `--upload-port <other COM port>`)
-  2. WiFi OTA via PlatformIO: `pio run -t upload --upload-port <ESP_IP>` (device must be on the `Dashboard_Config` SoftAP or a known LAN IP)
-  3. Web Portal OTA upload (browser → `http://192.168.4.1` → System Actions → upload `firmware.bin`)
-  4. Android app firmware update (the app lists the published GitHub releases, downloads
-     the chosen one to phone storage, verifies it, then pushes it to the unit over
-     `POST /api/ota`) — the intended end-user path. There is **no** cloud pull on the
-     unit: it never fetches firmware by itself, and there is no self-update code left.
+  1. USB serial (PlatformIO `--upload-port <other COM port>`) — works on every unit
+  2. WiFi OTA via PlatformIO: `pio run -t upload --upload-port <ESP_IP>` (device must be on the `Dashboard_Config` SoftAP or a known LAN IP) — Wi-Fi firmwares only (≤ 1.4.x)
+  3. Web Portal OTA upload (browser → `http://192.168.4.1` → System Actions → upload `firmware.bin`) — Wi-Fi firmwares only (≤ 1.4.x)
+  4. **The Android app is not an update path, and do not plan one over HTTP.** A phone has
+     no way to reach `POST /api/ota` on a unit with no IP, and the app never had
+     Bluetooth. Its update card lists the published GitHub releases, downloads the chosen
+     `firmware.bin`, checks the SHA-256 and the version marker inside it, then stops with
+     "send it to the unit yourself". The transport under construction is **BLE**: the OTA
+     characteristic and chunk frames (`0x80`-`0x85`) plus the pairing passkey shown on the
+     panel (firmware phases 4c/4d, app phase P6) — see
+     `Implementation plans/BLE-only firmware (phased).md`. There is **no** cloud pull on
+     the unit: it never fetches firmware by itself, and there is no self-update code left.
 
 ## 6. Implementation Plans — Never in Git
 - All implementation plans must be written/exported into the `Implementation plans/` folder at the repo root.
