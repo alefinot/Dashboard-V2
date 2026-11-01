@@ -44,6 +44,8 @@ import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.ble.ConfigMirror
 import com.alefinot.dashboardpp.ble.WeatherPush
+import com.alefinot.dashboardpp.ble.linkFailureText
+import com.alefinot.dashboardpp.ble.scanFailureText
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudInput
@@ -224,7 +226,7 @@ fun BleScreen(onBack: () -> Unit) {
                     }
                 }
 
-                val error = scanError ?: (state as? BleLinkState.Failed)?.let { failureText(it.reason) }
+                val error = scanError ?: (state as? BleLinkState.Failed)?.let { linkFailureText(it.reason) }
                 if (error != null) {
                     item {
                         Text(error, color = HudColors.Red, style = HudeCfgNote())
@@ -410,7 +412,7 @@ private fun StatusCard(state: BleLinkState, scanning: Boolean) {
             "Type the 6-digit code shown on the dashboard into Android's pairing dialog."
         is BleLinkState.Ready ->
             "${state.address} · MTU ${state.mtu} B · encrypted"
-        is BleLinkState.Failed -> failureText(state.reason)
+        is BleLinkState.Failed -> linkFailureText(state.reason)
     }
     Box(
         Modifier.fillMaxWidth()
@@ -522,28 +524,3 @@ private fun number(value: Any?): String = when (value) {
     else -> value.toString()
 }
 
-private fun scanFailureText(reason: String?): String = when (reason) {
-    "bluetooth_off" -> "Bluetooth is off. Turn it on and scan again."
-    "no_bluetooth" -> "This phone has no Bluetooth LE radio."
-    "permission" -> "Bluetooth permission denied. Allow it in Android settings."
-    "no_scanner" -> "Android would not start a BLE scan. Try again."
-    else -> "Bluetooth scan failed: ${reason ?: "unknown"}"
-}
-
-private fun failureText(reason: String): String = when (reason) {
-    "permission" -> "Bluetooth permission denied. Allow it in Android settings."
-    "bluetooth_off" -> "Bluetooth is off. Turn it on and scan again."
-    "no_bluetooth" -> "This phone has no Bluetooth LE radio."
-    "connect_timeout", "connect_failed" ->
-        "The dashboard did not answer. Move closer, check it is powered, then retry."
-    "pairing_failed" ->
-        "Pairing did not complete. The unit must show a 6-digit code and it must be " +
-            "typed on this phone before the dialog closes."
-    "telem_subscribe_failed", "rpc_subscribe_failed" ->
-        "The unit refused the notification subscription. Clear the pairing in Android " +
-            "settings and pair again."
-    "service_missing", "telem_missing", "rpc_missing" ->
-        "This is not the expected dashboard service. Update the unit's firmware."
-    "disconnected" -> "The link dropped. The unit advertises again; tap RETRY."
-    else -> "Link failed: $reason"
-}

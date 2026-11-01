@@ -15,11 +15,14 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.alefinot.dashboardpp.MainActivity
 import com.alefinot.dashboardpp.R
-import com.alefinot.dashboardpp.api.EspApi
-import com.alefinot.dashboardpp.api.EspApiLane
+import com.alefinot.dashboardpp.ble.BleApi
+import com.alefinot.dashboardpp.ble.BleLink
+import com.alefinot.dashboardpp.ble.BleLinkState
+import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.trips.CsvTripWriter
 import com.alefinot.dashboardpp.trips.RecorderSettings
+import com.alefinot.dashboardpp.trips.TelemetryFeed
 import com.alefinot.dashboardpp.trips.TripEvent
 import com.alefinot.dashboardpp.trips.TripPolicy
 import com.alefinot.dashboardpp.trips.TripRecorder
@@ -35,30 +38,46 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
  * The recording lane (trip recording plan §5): a foreground service that owns one
- * 1 Hz poll of `/api/snapshot`, appends each sample to the open trip file and
+ * 1 Hz stream from the dashboard, appends each sample to the open trip file and
  * keeps the session state machine alive while the app is in the background.
  *
  * It is a foreground service with an ongoing notification because that is the
  * only shape Android permits for work that must continue while the phone is
- * driving; the notification also says what is happening, which is the honest
- * trade for a partial wake lock. Polling stands down while the Web UI tab is on
- * screen — that tab's own 1 Hz fetch becomes the only traffic to the device, so
- * the total never exceeds one request per second (plan §2, one-lane rule).
+ * driving; the notification also says what is happening, which is the honest trade for
+ * a partial wake lock.
+ *
+ * What changed when this became a Bluetooth app: the service used to *ask* once a second
+ * (`/api/snapshot`), because HTTP offers no other way to be told anything. The unit now
+ * pushes on its own characteristic and this class mostly waits, which retires the
+ * one-lane negotiation this file used to carry. There was a second reader of that
+ * endpoint - the ESP's own Web UI, whose tab made the service stand down through
+ * `EspApiLane` - and there is no second reader now: the settings page reads
+ * configuration and the performance monitor reads diagnostics, and neither samples
+ * speed. What a frame is worth is decided in [TelemetryFeed]: a re-sent frame does not
+ * become a sample, and a link that goes quiet gets prodded once instead of polled.
  */
 class TripLogService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var pollJob: Job? = null
+    private var feedJob: Job? = null
     private var recorder: TripRecorder? = null
     private var writer: CsvTripWriter? = null
     private var store: TripStore? = null
     private var settings: RecorderSettings? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var ip: String = ""
+    /**
+     * Which dashboard the files belong to, as `UnitIdentity.key` spells it - handed over
+     * on the start command by the view model, the only place that knows both the card and
+     * the MAC the unit reported. Deliberately not read off the link: a trip spans a
+     * re-pairing and a reboot, and the point of a device key is that it stays put while
+     * the link under it changes.
+     */
+    private var deviceKey: String = ""
 
     /**
      * Whose drives the files are: the card selected when this service was pointed at
@@ -89,12 +108,12 @@ class TripLogService : Service() {
                 return START_NOT_STICKY
             }
         }
-        val target = intent?.getStringExtra(EXTRA_IP)
-        if (target.isNullOrEmpty()) {
+        val key = intent?.getStringExtra(EXTRA_DEVICE_KEY)
+        if (key.isNullOrEmpty()) {
             shutdown()
             return START_NOT_STICKY
         }
-        ip = target
+        deviceKey = key
         vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
         vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
         eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
@@ -107,7 +126,7 @@ class TripLogService : Service() {
             this, NOTIF_ID, buildNotification(null, null),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
-        beginPolling()
+        beginFeeding()
         return START_STICKY
     }
 
@@ -117,8 +136,8 @@ class TripLogService : Service() {
     }
 
     fun shutdown() {
-        pollJob?.cancel()
-        pollJob = null
+        feedJob?.cancel()
+        feedJob = null
         recorder?.stop()
         recorder = null
         writer?.closeAll()
@@ -130,41 +149,47 @@ class TripLogService : Service() {
     }
 
     /**
-     * The poll loop. One request in flight (the [EspApiLane] guarantees it), one
-     * per second while a session is live, backing off when the device stopped
-     * answering so a trip that has already sealed does not keep the radio busy.
+     * The stream lane: wait for the unit's frames, and ask only when they stop coming.
+     *
+     * One accepted frame per pass, which is also one tick of the trip session machine —
+     * the frame rate and the tick rate were the same number when both were a poll, and
+     * they are still the same number now that only one of them is. Waiting with a
+     * timeout instead of sleeping is what makes the quiet case interesting: a link that
+     * reports `Ready` and sends nothing for [TelemetryFeed.SILENT_MS] gets exactly one
+     * `snapshot` request, which tells "the subscription dropped" apart from "the unit is
+     * rebooting" without a second mechanism. When that answer is absent too, the stale
+     * counter and the give-up back-off say so plainly.
      */
-    private fun beginPolling() {
-        if (pollJob?.isActive == true) return
-        pollJob = scope.launch {
+    private fun beginFeeding() {
+        if (feedJob?.isActive == true) return
+        feedJob = scope.launch {
             if (!awaitRecorder()) return@launch
-            var probed = false
+            val link = BleRuntime.link(this@TripLogService)
+            val api = BleApi(link)
+            var lastUp = -1L
             while (isActive) {
-                val pausedForWebUi = EspApiLane.webUiVisible
-                TripRuntime.update { it.copy(ip = this@TripLogService.ip, polling = true, pausedForWebUi = pausedForWebUi) }
-                var nextDelay = POLL_MS
-                if (!pausedForWebUi) {
-                    val snap = EspApi.snapshot(ip)
-                    if (snap != null) {
-                        handleSnapshot(snap)
-                    } else if (!probed) {
-                        // First contact attempt. If /api/live answers but
-                        // /api/snapshot does not, the device runs firmware from
-                        // before this endpoint existed and cannot be recorded —
-                        // the UI shows "needs update" instead of a dead tab.
-                        probed = true
-                        val live = EspApi.live(ip)
-                        if (live != null) {
-                            TripRuntime.update {
-                                it.copy(live = live, lastError = EspApi.FIRMWARE_UPDATE_REQUIRED,
-                                    lastOkMs = System.currentTimeMillis())
-                            }
-                            shutdown()
-                            break
+                TripRuntime.update { it.copy(deviceKey = deviceKey, polling = true) }
+                val frame = withTimeoutOrNull(TelemetryFeed.SILENT_MS) { nextFrame(link) }
+                if (frame != null && TelemetryFeed.accepts(lastUp, frame.up)) {
+                    lastUp = frame.up
+                    handleSnapshot(frame)
+                } else if (frame == null) {
+                    val now = System.currentTimeMillis()
+                    val ready = link.state.value is BleLinkState.Ready
+                    val lastOk = TripRuntime.state.value.lastOkMs
+                    if (ready && TelemetryFeed.dueForPoll(lastOk, now, false)) {
+                        // The prod is also the answer to "is this link still the unit":
+                        // a request that times out here is the failure the old loop used
+                        // to meet on its next poll, found five seconds sooner.
+                        val merged = TelemetryFeed.mergeProd(lastUp, api.snapshot())
+                        if (merged != null) {
+                            lastUp = merged.up
+                            handleSnapshot(merged)
+                        } else {
+                            TripRuntime.update { it.copy(lastError = "no-answer") }
                         }
-                        nextDelay = handleFailure()
                     } else {
-                        nextDelay = handleFailure()
+                        TripRuntime.update { it.copy(lastError = "no-answer") }
                     }
                 }
                 recorder?.onTick()?.let { ev ->
@@ -177,10 +202,18 @@ class TripLogService : Service() {
                     shutdown()
                     break
                 }
-                delay(nextDelay)
             }
         }
     }
+
+    /**
+     * The next pushed frame, or null when it cannot be read as a snapshot.
+     *
+     * A frame that will not parse is not retried: the unit sends another one a second
+     * later, and a frame that mattered would show up as the stale counter, which is the
+     * signal the user already has.
+     */
+    private suspend fun nextFrame(link: BleLink): Snapshot? = Snapshot.parse(link.telemetry.first())
 
     /** True when the device has been unreachable long enough to stop the service. */
     private fun shouldGiveUp(): Boolean {
@@ -190,22 +223,10 @@ class TripLogService : Service() {
         return System.currentTimeMillis() - state.lastOkMs > TripPolicy.IDLE_RETRY_MS
     }
 
-    /** Back-off schedule while the device is silent: 1 s, then 5 s, then 15 s. */
-    private fun handleFailure(): Long {
-        val state = TripRuntime.state.value
-        val since = System.currentTimeMillis() - state.lastOkMs
-        TripRuntime.update { it.copy(lastError = "no-answer") }
-        return when {
-            state.lastOkMs == 0L -> SLOW_POLL_MS
-            since < TripPolicy.SEAL_AFTER_MS -> SLOW_POLL_MS
-            else -> BACKOFF_POLL_MS
-        }
-    }
-
     /** One accepted sample: append it, publish it, show it. */
     private fun handleSnapshot(s: Snapshot) {
         val rec = recorder ?: return
-        val event = rec.onSnapshot(ip, s)
+        val event = rec.onSnapshot(deviceKey, s)
         val summary = rec.summary()
         val now = System.currentTimeMillis()
         TripRuntime.update {
@@ -217,7 +238,6 @@ class TripLogService : Service() {
                 tripPath = rec.openTrip?.path,
                 tripStartMs = rec.openTrip?.startMs ?: 0L,
                 lastError = null,
-                live = null,
             )
         }
         applyWake(rec.isRecording)
@@ -261,7 +281,7 @@ class TripLogService : Service() {
         // Carry the last session across service restarts, so the ESP rebooting
         // while the app was closed still continues the same trip file.
         val prior = try {
-            appSettings.sessionFor(ip)
+            appSettings.sessionFor(deviceKey)
         } catch (e: Exception) {
             null
         }
@@ -337,7 +357,7 @@ class TripLogService : Service() {
         )
         val stopIntent = Intent(this, TripLogService::class.java).apply {
             action = ACTION_STOP
-            putExtra(EXTRA_IP, ip)
+            putExtra(EXTRA_DEVICE_KEY, deviceKey)
         }
         val stopPending = PendingIntent.getService(
             this, 1, stopIntent,
@@ -401,7 +421,7 @@ class TripLogService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.alefinot.dashboardpp.action.STOP_TRIPS"
-        const val EXTRA_IP = "ip"
+        const val EXTRA_DEVICE_KEY = "device_key"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_LIVE = "live"
 
@@ -413,13 +433,20 @@ class TripLogService : Service() {
         private const val CHANNEL = "trip_recording"
         private const val NOTIF_ID = 4201
         private const val WAKE_TAG = "dashboardpp:trip"
-        private const val POLL_MS = 1_000L
-        private const val SLOW_POLL_MS = 5_000L
-        private const val BACKOFF_POLL_MS = 15_000L
-
-        fun start(context: Context, ip: String, vehicleId: String, vehicleName: String, eff: String) {
+        /**
+         * Point the recorder at a dashboard. No address in the signature anywhere: the
+         * link is the process-wide one ([BleRuntime]), and what a trip file needs is the
+         * device key, which outlives the link.
+         */
+        fun start(
+            context: Context,
+            deviceKey: String,
+            vehicleId: String,
+            vehicleName: String,
+            eff: String,
+        ) {
             val intent = Intent(context, TripLogService::class.java).apply {
-                putExtra(EXTRA_IP, ip)
+                putExtra(EXTRA_DEVICE_KEY, deviceKey)
                 putExtra(EXTRA_VEHICLE_ID, vehicleId)
                 putExtra(EXTRA_VEHICLE_NAME, vehicleName)
                 putExtra(EXTRA_EFF, eff)

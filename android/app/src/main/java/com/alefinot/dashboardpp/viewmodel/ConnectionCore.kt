@@ -4,25 +4,54 @@ import com.alefinot.dashboardpp.vehicles.MatchDecision
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.VehicleMatch
 
-/** Why the ladder is running, which decides how far it is allowed to go. */
+/** Why an attempt is running, which decides how far it is allowed to go. */
 enum class ConnectMode {
-    /** Unattended, at launch: the selected vehicle's remembered addresses, nothing else. */
+    /** Unattended, at launch: dial the selected card's pairing and nothing else. */
     SILENT,
 
-    /** The user pressed CONNECT (or SEARCH FOR DASHBOARD): everything, including the sweep. */
-    SEARCH,
-
-    /** A retry of the remembered addresses — the same reach as [SILENT], asked for. */
+    /**
+     * The user pressed CONNECT, or the reconnect ladder decided to try again: dial the
+     * card's pairing, still without a scan. A scan is a radio sweep the user did not
+     * ask for, and on Bluetooth it is the difference between a reconnect in two seconds
+     * and a hunt that can land on the dashboard in the next car.
+     */
     PROBE,
+
+    /**
+     * The user asked to *find* a dashboard (ADD VEHICLE → SEARCH): dial what the card
+     * remembers, then let the radio sweep for units advertising the dashboard service.
+     */
+    SEARCH,
 }
 
-/** What one probe of one address answered. Mirrors `VerifyResult` one-to-one. */
-sealed interface ProbeOutcome {
-    /** A Dashboard++ signed its body at [ip]. [mac] is null on firmware that predates it. */
-    data class Ok(val ip: String, val version: String?, val mac: String?) : ProbeOutcome
+/** One dashboard on the advertising list, as the BLE scan reported it. */
+data class Found(val address: String, val name: String, val rssi: Int)
 
-    /** Nothing answered, or what answered was not a Dashboard++. */
-    data class Fail(val ip: String) : ProbeOutcome
+/** What one link attempt answered. */
+sealed interface LinkOutcome {
+    /**
+     * A dashboard came up on the link.
+     *
+     * [vehicleId] is the card the link was **dialed for** (null for a unit found by a
+     * scan, which no card owns yet) — it is not the answer to "which vehicle is this",
+     * which is what the identity rules below decide from [mac] and [address].
+     *
+     * [version] is null when the unit never sent a snapshot to read it from, and [mac]
+     * is null on firmware that predates the `perf.mac` field. Both nulls are load
+     * bearing: with no MAC the address is the whole claim, and a unit that never
+     * reported a version cannot be checked against the trip store's requirements.
+     */
+    data class Ok(
+        val vehicleId: String?,
+        val address: String,
+        val name: String,
+        val version: String?,
+        val mac: String?,
+        val mtu: Int = 0,
+    ) : LinkOutcome
+
+    /** The link did not come up, or came up and refused the identity read. */
+    data class Fail(val address: String) : LinkOutcome
 }
 
 /** What to do next. One step, decided from what has already been tried. */
@@ -30,26 +59,38 @@ sealed interface NextAction {
     /** Nothing to reach, and nothing being reached for: the vehicle page shows [reason]. */
     data class Idle(val reason: String) : NextAction
 
-    /** Probe [address] for the vehicle [vehicleId], and come back with the answer. */
-    data class Probe(val vehicleId: String, val address: String) : NextAction
+    /**
+     * Dial [address] for the card [vehicleId] — a pairing this phone already holds, or a
+     * scan result named by [name]. This is the only step that touches the radio's
+     * connect path, and it is the same call either way: Android's `connectGatt` pairs
+     * on first use and reuses the bond afterwards.
+     */
+    data class Pair(val vehicleId: String?, val address: String, val name: String) : NextAction
 
-    /** mDNS plus the subnet sweep. [vehicleId] is null when no card exists yet. */
-    data class ScanThenProbe(val vehicleId: String?) : NextAction
+    /** Sweep for units advertising the dashboard service. */
+    data object Scan : NextAction
 
-    /** The unit that answered belongs to [vehicleId]: show it as connected. */
+    /**
+     * The unit on the link belongs to [vehicleId]: show it as connected.
+     *
+     * The identity rules pick the card; a Connect naming a card the user did not select
+     * is legal (rule 1 outranks the dial) and comes with a [CoreResult.notice] saying so.
+     */
     data class Connect(
         val vehicleId: String,
-        val ip: String,
+        val address: String,
+        val name: String,
         val version: String?,
         val mac: String?,
+        val mtu: Int,
     ) : NextAction
 
-    /** The ladder is spent and nothing verified: [reason] is what the page says. */
+    /** The attempt is spent and nothing came up: [reason] is the line under that card. */
     data class Failed(val reason: String) : NextAction
 }
 
 /** A dashboard that answered and is claimed by no card — an offer for the page, not a write. */
-data class UnclaimedUnit(val ip: String, val version: String?, val mac: String)
+data class UnclaimedUnit(val address: String, val name: String, val version: String?, val mac: String)
 
 /** One decision: what to do, what it is worth writing down, and what the page must say. */
 data class CoreResult(
@@ -69,15 +110,32 @@ data class CoreResult(
  * that answered; the garage replaced that question with "reach **this** vehicle's
  * dashboard", which splits the old single ladder into three decisions that only work
  * together: how far to go (mode), which card an answer belongs to (identity), and what
- * to write down (rule 5). Drawing them as one `when` in a composable is how the old
- * code ended up unable to tell "the unit at this address belongs to another card" from
+ * to write down (rule 5). Drawing them as one `when` in a composable is how the old code
+ * ended up unable to tell "the unit at this address belongs to another card" from
  * "nothing answered" — the two look identical from inside a verify call.
  *
+ * Over Bluetooth the ladder got shorter and its vocabulary changed, and the difference
+ * is worth being explicit about, because it is the reason this file still exists:
+ *
+ *  - **An address is a pairing, not a location.** A network address described where a
+ *    unit could be reached and went stale whenever DHCP moved it; a Bluetooth address is
+ *    this phone's name for the bond, and it is the *only* thing that can dial a unit that
+ *    is switched on and in range. So `Dial`/`Pair` is one step, not a probe of a list,
+ *    and there is no such thing as trying "the other address" for the same card.
+ *  - **Discovery is a radio sweep, and it is the user's decision.** A network sweep was
+ *    cheap to hide in a retry; a BLE scan needs a permission, an on radio, and fifteen
+ *    seconds of the phone listening for a stranger's advertisement. So only [ConnectMode.SEARCH]
+ *    ever scans, and a card that has never been paired says so instead of quietly
+ *    starting a sweep.
+ *  - **Identity is the only cross-phone truth.** A MAC says "this unit"; a pairing says
+ *    "this phone's link to something". The rules below therefore always prefer the MAC,
+ *    and refuse to guess a vehicle from a pairing when more than one card could own it.
+ *
  * So [decide] answers exactly one step, and the view model is the loop. Everything here
- * is pure: no network, no clock, no store. That is what makes the expensive cases
- * testable — a card bound to a unit that reports no identity, an address two cards
- * remember, a unit nobody owns — instead of leaving them to be discovered on a tablet
- * where the wrong answer writes someone's car name into a trip log.
+ * is pure: no radio, no clock, no store. That is what makes the expensive cases testable
+ * — a card bound to a unit that reports no identity, an address two cards claim, a unit
+ * nobody owns — instead of leaving them to be discovered on a tablet where the wrong
+ * answer writes someone's car name into a trip log.
  *
  * The identity half deliberately **does not** reuse [VehicleMatch.resolve] for a
  * no-MAC answer. `resolve` takes the first unbound card holding the address, which is
@@ -91,71 +149,158 @@ object ConnectionCore {
     /** The line the vehicle page shows when there is no card to reach. */
     const val NO_VEHICLE_SELECTED = "No vehicle selected"
 
-    private const val NO_ADDRESS = "That vehicle has no remembered address yet."
-    private const val NO_ANSWER = "No Dashboard++ answered on this network."
+    /**
+     * The line for a card that has never been paired. It names the way out, because the
+     * app will not start a scan on this card's behalf: a scan is how a *new* unit is
+     * found, and a card the user made by hand has no unit to find yet.
+     */
+    const val NEVER_PAIRING = "has never been paired — scan from ADD VEHICLE"
+
+    /** The line for a pairing that was dialed and did not answer. */
+    const val NO_ANSWER = "did not answer over Bluetooth. Is it powered, paired, and in range?"
+
     private const val UNCLAIMED = "A dashboard answered that no vehicle card knows."
     private const val AMBIGUOUS =
-        "More than one vehicle card remembers that address, and the dashboard did not " +
-            "report an identity, so the app cannot tell which vehicle it is."
+        "More than one vehicle card is paired with that unit, and it did not report an " +
+            "identity, so the app cannot tell which vehicle it is."
+    private const val NOTHING_FOUND =
+        "No dashboard answered, and the scan found none. Check that the unit is powered " +
+            "and not already linked to another phone."
 
     /**
-     * [tried] is every address already probed in this attempt (including the one
-     * [outcome] just reported), [scanDone] says whether the sweep has already run, and
-     * [nowMs] is supplied rather than read so the record a step produces is testable.
+     * [tried] is every address already linked to in this attempt (including the one
+     * [outcome] just reported), [scanDone] says whether the radio sweep has already run
+     * in this attempt, [found] is what that sweep returned, [outcome] is the answer to
+     * the step that was just taken or null, and [nowMs] is supplied rather than read so
+     * the record a step produces is testable.
+     *
+     * [scanDone] is a flag rather than something inferred from [found] being empty,
+     * because "the sweep ran and found nothing" and "no sweep yet" look identical in the
+     * list and the second one is the only case where scanning again would ever help.
      */
     fun decide(
         vehicles: List<Vehicle>,
         selectedId: String?,
         tried: List<String>,
         scanDone: Boolean,
-        outcome: ProbeOutcome?,
+        found: List<Found>,
+        outcome: LinkOutcome?,
         mode: ConnectMode,
         nowMs: Long,
+        pinned: Found? = null,
     ): CoreResult {
-        val answer = outcome as? ProbeOutcome.Ok
+        val answer = outcome as? LinkOutcome.Ok
         if (answer != null) return resolveAnswer(vehicles, selectedId, answer, mode, nowMs)
-        return nextStep(vehicles, selectedId, tried, scanDone, mode)
+        return nextStep(vehicles, selectedId, tried, scanDone, found, outcome, mode, pinned)
     }
 
-    // ------------------------------------------------------------------ the ladder
+    /**
+     * What clearing a card's pairing costs the phone.
+     *
+     * [hadPairing] is whether the card held one at all (a card that never had a pairing
+     * leaves nothing behind), and [adapterBonded] is whether Android still holds a bond
+     * for that address. The app cannot drop Android's side of a bond — `removeBond` is a
+     * hidden API on the versions this app runs on — so the honest answer is that one half
+     * is cleared here and the other half is the phone's to clear, in its own settings.
+     *
+     * The note is only worth showing when there is a bond left behind: a forget that
+     * leaves nothing is finished, and a warning about a bond that does not exist teaches
+     * the user to distrust the page.
+     */
+    data class ForgetDecision(val needsSystemUnpair: Boolean, val note: String?)
+
+    /** The sentence the vehicle page shows when the phone still holds the bond. */
+    const val STILL_BONDED =
+        "The card no longer holds a pairing, but this phone is still bonded to that unit. " +
+            "Remove it in the phone's Bluetooth settings if this phone should stop " +
+            "answering it."
+
+    fun forgetUnit(hadPairing: Boolean, adapterBonded: Boolean): ForgetDecision =
+        if (hadPairing && adapterBonded) ForgetDecision(true, STILL_BONDED) else ForgetDecision(false, null)
+
+    /**
+     * True when this card's pairing has already been dialed in this attempt. The card,
+     * not the address, is the unit of retry: a card holds exactly one pairing, so
+     * "tried" means "we already reached for that unit once".
+     */
+    private fun dialed(card: Vehicle, tried: List<String>): Boolean =
+        card.bleAddress != null && card.bleAddress in tried
 
     private fun nextStep(
         vehicles: List<Vehicle>,
         selectedId: String?,
         tried: List<String>,
         scanDone: Boolean,
+        found: List<Found>,
+        outcome: LinkOutcome?,
         mode: ConnectMode,
+        pinned: Found?,
     ): CoreResult {
         val card = selectedId?.let { id -> vehicles.firstOrNull { it.id == id } }
         // A selection that is gone (deleted from under the attempt) is the same
-        // nothing-to-reach answer as never having one; there is no card to probe.
+        // nothing-to-reach answer as never having one; there is no card to dial.
         if (selectedId != null && card == null) return CoreResult(NextAction.Idle(NO_VEHICLE_SELECTED))
 
-        val untried = card?.bleAddress?.takeIf { it.isNotEmpty() && it !in tried }
-        if (untried != null) return CoreResult(NextAction.Probe(card!!.id, untried))
+        // 1. A unit the user tapped in the sweep list is dialed before anything else.
+        //    Every other rule here is a guess about which dashboard was meant - the card's
+        //    pairing says "something this phone met once", the sweep order says "whoever is
+        //    loudest" - and a tap on a name is not a guess. A pinned unit is not tied to a
+        //    card yet, which is why the step carries no `vehicleId`: the identity rules get
+        //    to say which card (or none) the unit that answers turns out to be.
+        if (pinned != null && pinned.address !in tried) {
+            return CoreResult(NextAction.Pair(null, pinned.address, pinned.name))
+        }
 
-        return when (mode) {
-            // Unattended paths stop at the card's own addresses. A subnet sweep costs
-            // ~15 s, a multicast lock, and can land on a dashboard the user never
-            // touched — none of which belongs at launch or on a network callback.
-            ConnectMode.SILENT, ConnectMode.PROBE -> when {
-                card == null -> CoreResult(NextAction.Idle(NO_VEHICLE_SELECTED))
-                !card.hasPairing -> CoreResult(NextAction.Idle(NO_ADDRESS))
-                // The address on file was dialed and nobody answered. That is a
-                // failure, not a wait: the vehicle page shows it under that card.
+        // 2. A card that has a pairing gets dialed before anything is swept. This is the
+        //    fast path and the one the user expects: their own unit, no radio hunt.
+        if (card != null && card.hasPairing && !dialed(card, tried)) {
+            return CoreResult(
+                NextAction.Pair(card.id, card.bleAddress!!, card.name.ifEmpty { card.id }),
+            )
+        }
+
+        // 3. Only a search the user asked for may sweep the radio, and only once.
+        if (mode == ConnectMode.SEARCH) {
+            val nextFound = found
+                .filter { it.address != pinned?.address }
+                .sortedByDescending { it.rssi }
+                .firstOrNull { it.address !in tried }
+            return when {
+                // No sweep has run yet in this attempt: the card's own pairing (if any)
+                // has been dialed, and the radio is the only way left to meet a unit
+                // this phone has never bonded with.
+                !scanDone -> CoreResult(NextAction.Scan)
+
+                nextFound != null -> CoreResult(
+                    NextAction.Pair(null, nextFound.address, nextFound.name),
+                )
+
                 else -> CoreResult(
+                    // The card's pairing failed (or did not exist) and the sweep found
+                    // nothing worth dialing, or found only units already dialed.
                     NextAction.Failed(
-                        "No Dashboard++ answered for ${card.name.ifEmpty { card.id }} " +
-                            "at its remembered address.",
+                        if (outcome is LinkOutcome.Fail && card != null) {
+                            "${card.name.ifEmpty { card.id }} $NO_ANSWER $NOTHING_FOUND"
+                        } else NOTHING_FOUND,
                     ),
                 )
             }
+        }
 
-            ConnectMode.SEARCH ->
-                // The sweep is the only door left: either the card has never connected,
-                // or none of its remembered addresses is live any more.
-                if (scanDone) CoreResult(NextAction.Failed(NO_ANSWER))
-                else CoreResult(NextAction.ScanThenProbe(selectedId))
+        // 4. A silent or user-retry attempt stops at the card's own pairing. A sweep
+        //    needs a permission prompt and the phone listening for other people's
+        //    dashboards — neither belongs at launch, or behind a reconnect timer.
+        return when {
+            card == null -> CoreResult(NextAction.Idle(NO_VEHICLE_SELECTED))
+            !card.hasPairing -> CoreResult(
+                NextAction.Idle("${card.name.ifEmpty { card.id }} $NEVER_PAIRING"),
+            )
+            // The pairing on file was dialed and nobody came up. That is a failure, not
+            // a wait: the vehicle page shows it under that card, and [ReconnectLadder]
+            // is what decides whether it is retried at all.
+            else -> CoreResult(
+                NextAction.Failed("${card.name.ifEmpty { card.id }} $NO_ANSWER"),
+            )
         }
     }
 
@@ -164,17 +309,17 @@ object ConnectionCore {
     private fun resolveAnswer(
         vehicles: List<Vehicle>,
         selectedId: String?,
-        answer: ProbeOutcome.Ok,
+        answer: LinkOutcome.Ok,
         mode: ConnectMode,
         nowMs: Long,
     ): CoreResult {
         val mac = VehicleMatch.normalizeMac(answer.mac)
 
-        // No identity in the answer: the address is the whole claim, so it has to be
+        // No identity in the answer: the pairing is the whole claim, so it has to be
         // unambiguous on its own. See the class note for why this does not go through
         // VehicleMatch.resolve's first-claimant tie-break.
         if (mac == null) {
-            val owners = vehicles.filter { it.bleAddress != null && it.bleAddress == answer.ip }
+            val owners = vehicles.filter { it.bleAddress != null && it.bleAddress == answer.address }
             return when (owners.size) {
                 1 -> toConnect(owners.first(), answer, selectedId, vehicles, nowMs)
                 0 -> CoreResult(NextAction.Failed(UNCLAIMED))
@@ -182,13 +327,13 @@ object ConnectionCore {
             }
         }
 
-        return when (val decision = VehicleMatch.resolve(vehicles, answer.ip, mac)) {
+        return when (val decision = VehicleMatch.resolve(vehicles, answer.address, mac)) {
             // Rule 1 — a card claims this MAC. Rule 2 is unreachable here (it only
             // fires when no MAC was reported).
             is MatchDecision.Bound -> toConnect(decision.vehicle, answer, selectedId, vehicles, nowMs)
 
-            // Rule 3 — an unbound card remembers this address and the unit that
-            // answered reports a MAC nobody owns: bind them, name and photo intact.
+            // Rule 3 — an unbound card holds this pairing and the unit that came up
+            // reports a MAC nobody owns: bind them, name and photo intact.
             is MatchDecision.BindMac -> toConnect(decision.vehicle, answer, selectedId, vehicles, nowMs)
 
             // Nobody owns this unit. It is never written into the card that happened to
@@ -196,35 +341,37 @@ object ConnectionCore {
             is MatchDecision.Unknown -> CoreResult(
                 next = if (mode == ConnectMode.SILENT) {
                     // Found unattended: the vehicle page shows the offer when it is
-                    // opened; there is no ladder to have failed.
+                    // opened; there is no attempt to have failed.
                     NextAction.Idle(UNCLAIMED)
                 } else {
                     NextAction.Failed(UNCLAIMED)
                 },
-                adoption = UnclaimedUnit(answer.ip, answer.version, mac),
+                adoption = UnclaimedUnit(answer.address, answer.name, answer.version, mac),
             )
         }
     }
 
     private fun toConnect(
         card: Vehicle,
-        answer: ProbeOutcome.Ok,
+        answer: LinkOutcome.Ok,
         selectedId: String?,
         vehicles: List<Vehicle>,
         nowMs: Long,
     ): CoreResult {
-        // Rule 5 — the pairing that answered becomes the card's address to dial next
+        // Rule 5 — the pairing that came up becomes the card's address to dial next
         // time, the identity is adopted when one was reported and kept when it was not,
-        // and the firmware version rides along because the verify step already fetched it
-        // and the trips page needs it for the trip store.
-        val bound = VehicleMatch.bindConnect(card, answer.ip, answer.mac, nowMs)
+        // and the firmware version rides along because the link-up read already fetched
+        // it and the trips page needs it for the trip store.
+        val bound = VehicleMatch.bindConnect(card, answer.address, answer.mac, nowMs)
         val version = answer.version ?: bound.firmwareVersion
         return CoreResult(
             next = NextAction.Connect(
                 vehicleId = card.id,
-                ip = answer.ip,
+                address = answer.address,
+                name = answer.name,
                 version = answer.version,
                 mac = VehicleMatch.normalizeMac(answer.mac),
+                mtu = answer.mtu,
             ),
             persist = bound.copy(firmwareVersion = version),
             notice = noticeFor(card, selectedId, vehicles),

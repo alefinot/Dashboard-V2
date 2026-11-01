@@ -19,6 +19,13 @@ import org.junit.Test
  * ADD VEHICLE card. A cover may now only say which vehicle it is waiting for and offer to take
  * you there.
  *
+ * The IP-era names in the regex below are gone rather than kept as a courtesy. The manual
+ * address panel is deleted, along with the two view-model actions it drove, so a guard that
+ * still allowed "the panel the vehicle page raises" would be documenting a file that no
+ * longer exists — and the day something grows back in its place, the honest failure is
+ * "a third file calls these actions", not "the second file is missing". The list is now
+ * exactly the page that owns connecting, plus the bench panel that still proves the raw link.
+ *
  * The scan looks for **calls to the view model's connection actions**, not for words: a comment
  * may talk about connecting all it likes, and App Settings legitimately still prints the
  * connection's address. A call is the thing that can actually connect.
@@ -27,35 +34,43 @@ class ConnectActionsOnOnePageTest {
 
     /** Everything the view model offers that starts, stops or chooses a connection. */
     private val actionCall =
-        Regex("\\b(rescan|retryNoWifi|connectVehicle|disconnect|selectVehicle|submitManualIp)\\s*\\(")
+        Regex("\\b(rescan|connectVehicle|disconnect|selectVehicle)\\s*\\(")
 
     /**
-     * The vehicle page, plus [ManualEntryPanel], which the vehicle page raises and nothing
-     * else does - which [manualAddressPanelIsRaisedOnlyFromTheVehiclePage] is what keeps true.
+     * The vehicle page owns every connection action the app offers, and the only other file
+     * allowed to call one is [BleScreen] — the bench panel that drives the raw link (scan,
+     * pair, snapshot, config mirror) from Settings while the settings rebuild lands. It is
+     * temporary by nature, and it is the one place a link can be dropped without killing the
+     * app until "Forget this unit" is built into the new settings page.
      *
-     * [BleScreen] is the third entry and it is temporary: it is the bench panel that proves
-     * the BLE transport (scan, pair, snapshot, config mirror) while the vehicle page still
-     * only knows HTTP. Phase 2c moves BLE into the connection ladder and deletes the panel;
-     * until then its DISCONNECT is the only way to drop a link without killing the app.
+     * The shell's permission launcher calls `retryAfterRadio()`, and it is deliberately not in
+     * the regex: the rule is about where a user can *choose* to connect. That call re-runs the
+     * attempt the launch already made, once, in the one case where the phone itself was the
+     * thing standing in the way — putting it in the list would force the shell onto this
+     * allowlist and blur the distinction the guard exists to keep.
      */
-    private val allowed = listOf("BleScreen.kt", "ManualEntryPanel.kt", "VehicleScreen.kt")
+    private val allowed = listOf("BleScreen.kt", "VehicleScreen.kt")
 
     @Test
-    fun connectionActionsAreCalledFromTwoScreenFilesOnly() {
+    fun connectionActionsAreCalledFromOnePageAndTheBenchPanel() {
         val found = screenFiles().filter { actionCall.containsMatchIn(codeOnly(it.readText())) }
             .map { it.name }.sorted()
         assertEquals(
-            "a connection action may only be offered by the vehicle page (and the address panel " +
-                "it raises); every other page has to point at the vehicle page instead",
+            "a connection action may only be offered by the vehicle page (and the BLE bench " +
+                "panel); every other page has to point at the vehicle page instead",
             allowed,
             found,
+        )
+        assertTrue(
+            "the vehicle page must still be the one that owns connecting",
+            found.contains("VehicleScreen.kt"),
         )
     }
 
     /** The covers' whole vocabulary: one action, and it is navigation, not connection. */
     @Test
     fun offlineCoverOffersOnlyTheWayToTheVehiclePage() {
-        val src = moduleSource("OfflineCover.kt")
+        val src = moduleSource("NotLinkedCover.kt")
         val actions = Regex("HudButton\\(\\s*\"([^\"]+)\"").findAll(src)
             .map { it.groupValues[1] }.toList()
         assertEquals(
@@ -65,8 +80,14 @@ class ConnectActionsOnOnePageTest {
         )
         assertFalse("a cover must not reach for the view model", codeOnly(src).contains("ConnectionViewModel"))
         val body = codeOnly(src)
-        for (gone in listOf("rescan", "retryNoWifi", "ENTER IP", "FIND DEVICE", "WI-FI", "onFind", "rememberedIp")) {
-            assertFalse("OfflineCover grew connect furniture again ($gone)", body.contains(gone))
+        for (gone in listOf("rescan", "ENTER IP", "FIND DEVICE", "WI-FI", "SSID", "onFind", "rememberedIp")) {
+            assertFalse("NotLinkedCover grew connect furniture again ($gone)", body.contains(gone))
+        }
+        // And no address, in either transport's spelling. The cover is the page that says
+        // "nothing is here"; the moment it prints a number or a MAC it becomes a second
+        // place a user can read an identity from, and the two will disagree.
+        for (word in listOf("192.168", "ip", "IP")) {
+            assertFalse("NotLinkedCover mentions an address ($word)", Regex("\b$word\b").containsMatchIn(body))
         }
     }
 
@@ -81,35 +102,62 @@ class ConnectActionsOnOnePageTest {
             emptyList<String>(),
             offenders,
         )
-        assertFalse("App Settings may not raise the address panel", src.contains("onEnterIp"))
+        assertFalse("App Settings may not raise an address panel", src.contains("onEnterIp"))
+        assertFalse("App Settings may not name a network", Regex("\b(SSID|Wi-Fi|wifi)\b").containsMatchIn(codeOnly(src)))
     }
 
-    /** The address panel is raised from one place, and every cover gets the way to the garage. */
+    /** Every cover in the shell gets the way to the garage, and nothing else. */
     @Test
-    fun manualAddressPanelIsRaisedOnlyFromTheVehiclePage() {
+    fun everyCoverPointsAtTheVehiclePage() {
         val src = moduleSource("ConnectedTabs.kt")
-        assertEquals(
-            "exactly one page may raise the manual-address panel",
-            1,
-            Regex("onEnterIp = \\{ manualOpen = true \\}").findAll(src).count(),
+        assertFalse(
+            "the shell may not raise a manual-address panel: there is no address to enter",
+            src.contains("ManualEntryPanel"),
         )
         // Counted against the covers that exist rather than a number kept by hand: the
         // ESP slot used to be one of them (a WebView with nothing to load), and it is a
         // settings page now, with a Bluetooth link header of its own. The live page's
         // cover is left, and a guard that pinned "2" would have failed for the right
         // reason but said the wrong thing about it.
-        val covers = Regex("OfflineCover\\(").findAll(codeOnly(src)).count()
+        val covers = Regex("NotLinkedCover\\(").findAll(codeOnly(src)).count()
         assertTrue("the shell is expected to still have a cover", covers >= 1)
         assertEquals(
             "every cover in the shell must be handed the way to the vehicle page",
             covers,
             Regex("onOpenVehicles = openGarage").findAll(codeOnly(src)).count(),
         )
+        // The covers' one remaining action is navigation. If a button that connects ever
+        // reappears here, it will not be called a cover; that is why the count is checked
+        // against the NotLinkedCover calls rather than against a list of button labels.
+        assertEquals(
+            "the shell itself may not call a connection action",
+            emptyList<String>(),
+            actionCall.findAll(codeOnly(src)).map { it.value }.toList(),
+        )
+    }
+
+    /**
+     * The transport this guard is written against: no HTTP, no network discovery, no WebView
+     * of the dashboard's own page anywhere in the screens directory. Written as one test
+     * because the failure that matters is a single file quietly reaching for a socket.
+     */
+    @Test
+    fun noScreenReachesForTheRemovedTransport() {
+        val banned = listOf(
+            "EspApi", "HttpURLConnection", "http://", "android.webkit", "WebView",
+            "NsdManager", "SubnetScanner", "rememberedIp", ".ips",
+        )
+        for (f in screenFiles()) {
+            val body = codeOnly(f.readText())
+            for (b in banned) {
+                assertFalse("${f.name} still mentions $b", body.contains(b))
+            }
+        }
     }
 
     /**
      * Comments stripped out. Half the point of this redesign is written down in doc comments
-     * that name the controls they removed - [OfflineCover]'s says in prose why there is no FIND
+     * that name the controls they removed - [NotLinkedCover]'s says in prose why there is no FIND
      * DEVICE button - and a guard that read those would fail on the explanation of its own rule.
      */
     private fun codeOnly(src: String): String = src

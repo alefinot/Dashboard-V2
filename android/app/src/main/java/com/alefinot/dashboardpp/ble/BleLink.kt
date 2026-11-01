@@ -183,6 +183,23 @@ class BleLink(context: Context) {
     fun enabled(): Boolean = adapter?.isEnabled == true
 
     /**
+     * Whether this phone still holds a **bond** for [address].
+     *
+     * Distinct from a link: a bond survives a disconnect, an app uninstall and even the
+     * card being forgotten, and it is what makes the next pairing silent. The app clears
+     * its own memory of a pairing but cannot clear Android's (`removeBond` is not a
+     * public API on the versions this app runs on), so the vehicle page needs this to say
+     * honestly which half of a forget it could actually do.
+     */
+    fun isBonded(address: String): Boolean = try {
+        adapter?.getRemoteDevice(address)?.bondState == BluetoothDevice.BOND_BONDED
+    } catch (e: IllegalArgumentException) {
+        // An address this adapter never saw is not bonded to it; the store is only
+        // trusted to hold well-formed strings, and a malformed one answers the same way.
+        false
+    }
+
+    /**
      * Scans for units advertising the dashboard service.
      *
      * The flow emits the whole list each time a new unit appears and closes when

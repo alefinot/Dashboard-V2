@@ -1,6 +1,9 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Bitmap
+import android.provider.Settings
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,6 +59,7 @@ import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.viewmodel.ConnectMode
+import com.alefinot.dashboardpp.viewmodel.Found
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
@@ -88,15 +92,19 @@ import kotlinx.coroutines.delay
  * with it. Recorded trips stay, badged with the name they were driven under.
  *
  * This page is also the app's **only** place for connect actions - CONNECT, DISCONNECT,
- * SEARCH and ENTER IP MANUALLY. The Live and ESP covers deliberately carry none of them:
- * a device belongs to a vehicle, so reaching for one starts by choosing a card, and a
- * second copy of the same control somewhere else is what makes a connection impossible to
- * explain.
+ * SEARCH, the PAIR rows a sweep produces, and FORGET UNIT. The Live and ESP covers
+ * deliberately carry none of them: a device belongs to a vehicle, so reaching for one
+ * starts by choosing a card, and a second copy of the same control somewhere else is what
+ * makes a connection impossible to explain.
+ *
+ * The sweep list sits here too, on the ADD VEHICLE card rather than on a page of its own.
+ * It used to be a hunt that ended wherever it ended; now it is a question this page asks
+ * ("which dashboard is out there?") and answers with names, and the row the user taps
+ * becomes that vehicle's pairing.
  */
 @Composable
 fun VehicleScreen(
     connection: ConnectionViewModel,
-    onEnterIp: () -> Unit,
     onEdit: (String) -> Unit,
     onNameUnclaimed: () -> Unit,
 ) {
@@ -109,12 +117,21 @@ fun VehicleScreen(
     val state = connection.uiState.value
     val notice by connection.notice
     val unclaimed by connection.unclaimed
-    // Whether the search button has to read RETRY NETWORK instead of SEARCH FOR DASHBOARD++. It
+    // Whether the sweep button has to read SEARCH AGAIN instead of SEARCH FOR DASHBOARD++. It
     // is decided here, from the same tested mapping the covers use ([ShellRouting]), rather than
     // handed down by the shell: the rule and the sentence it changes belong on the same page,
     // and a pass-through parameter is one more thing that can drift out of agreement with the
     // state it was computed from.
-    val findIsRetryNetwork = ShellRouting.view(state).findIsRetryNetwork
+    val findIsRetrySearch = ShellRouting.view(state).findIsRetrySearch
+
+    // What the last sweep heard, and why it may have heard nothing. Both are read here
+    // rather than passed down: the list belongs under the button that started it, and a
+    // sweep with no visible answer is indistinguishable from a sweep that found nothing
+    // unless the page says which one happened.
+    val found = connection.scanResults.value
+    val scanWhy = connection.scanError.value
+    val radioMissing = connection.adapterOn.value == false
+    val bondNote = connection.bondNote.value
 
     // The clock the derived status lines ("LAST SEEN YESTERDAY") are measured against.
     // Read once per composition and refreshed once a minute while this page is on screen:
@@ -174,11 +191,15 @@ fun VehicleScreen(
                         state = if (v.id == selectedId) state else null,
                         connected = connectedCard(v, state),
                         nowMs = nowMs,
-                        ringProgress = connection.scanProgress.value,
+                        // There is no sweep percentage to show: a BLE scan reports units,
+                        // not progress, so the ring spins (P3 replaces the dial with the
+                        // pair/search split, which has no ring at all).
+                        ringProgress = 0f,
                         photo = cardPhoto(connection, v.id),
                         onClick = { connection.selectVehicle(v.id) },
                         onConnect = { connection.connectVehicle(v.id, ConnectMode.SEARCH) },
                         onDisconnect = { connection.disconnect() },
+                        onForgetUnit = { connection.forgetUnit(v.id) },
                         onEdit = { onEdit(v.id) },
                     )
                     Spacer(Modifier.height(10.dp))
@@ -195,9 +216,15 @@ fun VehicleScreen(
                 Spacer(Modifier.height(10.dp))
             }
             unclaimed?.let {
+                // The unit is named the way it advertises (`DPP-<eFuse>`), not by the
+                // Bluetooth address: an address is this phone's handle for a link, it is
+                // printed nowhere on the unit, and asking someone to name a car after it
+                // would be asking them to adopt a serial number. The MAC is the identity,
+                // and it is shown because that is the string worth checking.
                 NoticeCard(
                     "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
-                    "${it.ip} (firmware ${it.version ?: "unknown"}) is not on this list yet. " +
+                    "${it.name} (firmware ${it.version ?: "unknown"}, " +
+                        "MAC ${it.mac.uppercase()}) is not on this list yet. " +
                         "Name it and it becomes a card of its own.",
                     HudColors.Cyan,
                     actionLabel = "NAME IT",
@@ -206,12 +233,27 @@ fun VehicleScreen(
                 Spacer(Modifier.height(10.dp))
             }
 
+            bondNote?.let {
+                // The half this app could not do. `removeBond` is not a public API, so the
+                // honest sentence is "the card forgot it, this phone has not" plus the way
+                // to the screen where it can be finished.
+                NoticeCard(
+                    "THIS PHONE IS STILL BONDED TO THAT UNIT",
+                    it,
+                    HudColors.Amber,
+                    actionLabel = "PHONE BLUETOOTH SETTINGS",
+                    onAction = { openPhoneBluetoothSettings(context) },
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+
             AddVehicleCard(
                 onSearch = { connection.rescan() },
-                onEnterIp = onEnterIp,
-                findIsRetryNetwork = findIsRetryNetwork,
-                onRetryNetwork = { connection.retryNoWifi() },
-                onWifi = { openWifiSettings(context) },
+                found = found,
+                scanWhy = scanWhy,
+                radioMissing = radioMissing,
+                retry = findIsRetrySearch,
+                onPair = { connection.pairWith(it) },
             )
         }
     }
@@ -313,7 +355,12 @@ private fun CardCover(
  * question is gone.
  *
  * What a card offers depends on what the card *is*, not on what the page is doing: the
- * connected card always offers DISCONNECT (even if the selection has moved on, because
+ * selected and paired card also offers FORGET UNIT, which clears the pairing and the
+ * identity this card holds and leaves the card, its name and its photo alone - the
+ * difference between "this phone should stop reaching that dashboard" and "this vehicle
+ * does not exist" (see [VehicleEditorScreen]'s DELETE THE CARD).
+ *
+ * The connected card always offers DISCONNECT (even if the selection has moved on, because
  * that is the card with a session to end), and any other selected card offers CONNECT.
  * Every card offers EDIT, including a card nobody is standing on: a card is a record about
  * a vehicle, and records are edited whether or not they are the one being reached for. A
@@ -332,6 +379,7 @@ private fun VehicleCard(
     onClick: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onForgetUnit: () -> Unit,
     onEdit: () -> Unit,
 ) {
     val status = cardStatusLine(vehicle, state, nowMs)
@@ -409,13 +457,87 @@ private fun VehicleCard(
                 style = HudButtonStyle.SECONDARY,
             ) { onEdit() }
         }
+
+        // A row of its own, because the label has to be read rather than squeezed: what
+        // this button clears is the **pairing**, not the vehicle, and that distinction is
+        // the difference between it and DELETE THE CARD in the editor. Offered on the card
+        // the user is standing on, and only when that card holds a pairing - a card with
+        // nothing to forget would grow a button that does nothing, and a wall of unpair
+        // controls for four other cars is how a dashboard gets detached by accident.
+        if (selected && vehicle.hasPairing) {
+            Spacer(Modifier.height(8.dp))
+            HudButton(
+                "FORGET THIS UNIT",
+                modifier = Modifier.widthIn(min = 168.dp),
+                style = HudButtonStyle.SECONDARY,
+            ) { onForgetUnit() }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Clears this card's pairing on this phone. The card, its name and its " +
+                    "photo stay - DELETE THE CARD in the editor is the one that removes " +
+                    "the vehicle.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+        }
+    }
+}
+
+/**
+ * One dashboard the radio heard, by the name it advertises and the signal it arrived on.
+ *
+ * The address is deliberately absent from the row: it is the handle this phone would
+ * invent for the link, not something printed on the unit, and a list of addresses is how
+ * a sweep stops being answerable ("is that my car or the neighbour's?"). RSSI is kept
+ * because it is the one thing that does answer that - the dashboard in the boot room is
+ * the loud one.
+ */
+@Composable
+private fun SweepRow(unit: Found, onPair: (Found) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .hudCard()
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(unit.name, color = HudColors.TextPrimary, style = HudePerfLabel())
+            Spacer(Modifier.height(2.dp))
+            Text("signal ${unit.rssi} dBm", color = HudColors.TextDim, style = HudeCfgNote())
+        }
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.heightIn(min = 44.dp)) {
+            HudButton("PAIR", style = HudButtonStyle.PRIMARY) { onPair(unit) }
+        }
+    }
+}
+
+/**
+ * Hand off to the phone's own Bluetooth screen. Some devices route that action to a
+ * vendor screen that is not there, so the fall back is the settings home rather than a
+ * crash: the note above the button is the information, the button is a convenience.
+ */
+private fun openPhoneBluetoothSettings(context: android.content.Context) {
+    val intents = listOf(
+        Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
+        Intent(Settings.ACTION_SETTINGS),
+    )
+    for (intent in intents) {
+        try {
+            context.startActivity(intent)
+            return
+        } catch (e: ActivityNotFoundException) {
+            continue
+        }
     }
 }
 
 /**
  * A fact the connection published that no card can carry: either the unit that answered
- * belongs to another card, or it belongs to none. Both are drawn here because the page has
- * to contradict its own cards out loud rather than let a wrong card stand.
+ * belongs to another card, or it belongs to none, or this phone is still bonded to a unit
+ * the card just stopped trusting. All three are drawn here because the page has to
+ * contradict its own cards out loud rather than let a wrong card stand.
  */
 @Composable
 private fun NoticeCard(
@@ -449,25 +571,29 @@ private fun NoticeCard(
 }
 
 /**
- * The last thing in the garage, and the only way a new vehicle gets in: [plan §5] puts every
- * entry point on this page because it is the page a user is already standing on. SEARCH runs
- * the whole ladder (walk, mDNS, probe, and adopting a unit no card claims); ENTER IP MANUALLY
- * raises the app's only address box, the one path for a device no discovery can see.
+ * The last thing in the garage, and the only way a new vehicle gets in: [plan §5] puts
+ * every entry point on this page because it is the page a user is already standing on.
+ * SEARCH is the button: it dials what the selected card remembers and then sweeps the
+ * radio, which is everything the app can do about a dashboard it has not met.
  *
- * When there is no local network to search, the same button checks for one before it hunts
- * (`retryNoWifi`, which is the only path that can say "there is no network here" instead of
- * "I found nothing"), and the system's Wi-Fi panel is offered next to it: the app cannot join a
- * network for the user, and the place that used to offer this - the Live cover - no longer has
- * any connect furniture at all. The label stays the same either way: it is one button with one
- * meaning, and the sentence under it says what is different right now.
+ * What the sweep heard is listed under the button, as named rows the user can pick. That
+ * list is the reason the box next to it is gone rather than renamed: a Bluetooth address
+ * is not printed anywhere on a Dashboard++, typing one cannot pair with anything, and the
+ * unit's own name is on its screen and in this list - so the way in is a sweep and a tap,
+ * and the pairing happens here [plan §4].
+ *
+ * A tap is not decoration: it pins that unit to the front of the ladder ([Found] goes to
+ * [ConnectionViewModel.pairWith]), which is what makes two dashboards in range, or a
+ * neighbour's, an actual choice instead of a race between signal strengths.
  */
 @Composable
 private fun AddVehicleCard(
     onSearch: () -> Unit,
-    onEnterIp: () -> Unit,
-    findIsRetryNetwork: Boolean,
-    onRetryNetwork: () -> Unit,
-    onWifi: () -> Unit,
+    found: List<Found>,
+    scanWhy: String?,
+    radioMissing: Boolean,
+    retry: Boolean,
+    onPair: (Found) -> Unit,
 ) {
     Column(
         Modifier
@@ -477,50 +603,43 @@ private fun AddVehicleCard(
     ) {
         Text("ADD VEHICLE", color = HudColors.TextDim, style = HudeSectionTitle())
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            HudButton(
-                "SEARCH FOR DASHBOARD++",
-                modifier = Modifier.weight(1f),
-                style = HudButtonStyle.PRIMARY,
-            ) { if (findIsRetryNetwork) onRetryNetwork() else onSearch() }
-            HudButton(
-                "ENTER IP MANUALLY",
-                modifier = Modifier.weight(1f),
-                style = HudButtonStyle.SECONDARY,
-            ) { onEnterIp() }
-        }
-        if (findIsRetryNetwork) {
-            Spacer(Modifier.height(8.dp))
-            HudButton("WI-FI SETTINGS", style = HudButtonStyle.SECONDARY) { onWifi() }
-        }
+        HudButton(
+            if (retry) "SEARCH AGAIN" else "SEARCH FOR DASHBOARD++",
+            modifier = Modifier.fillMaxWidth(),
+            style = HudButtonStyle.PRIMARY,
+        ) { onSearch() }
         Spacer(Modifier.height(10.dp))
+
+        // A sweep that could not run, or found nothing, has to say which. Silence here is
+        // what made the old network hunt untrustworthy: an empty list and a blocked radio
+        // looked the same, so the user pressed the button again.
+        if (found.isEmpty()) {
+            scanWhy?.let {
+                Text(it, color = HudColors.Amber, style = HudeCfgNote())
+                Spacer(Modifier.height(10.dp))
+            }
+            if (radioMissing) {
+                Text(
+                    "Bluetooth is off on this phone. Turn it on, then search.",
+                    color = HudColors.Amber,
+                    style = HudeCfgNote(),
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+        } else {
+            Text("IN RANGE", color = HudColors.TextDim, style = HudeSectionTitle())
+            Spacer(Modifier.height(8.dp))
+            for (unit in found) {
+                SweepRow(unit, onPair)
+                Spacer(Modifier.height(8.dp))
+            }
+        }
         Text(
-            if (findIsRetryNetwork) {
-                "Searching needs a local network: join the Wi-Fi the dashboard is on (or " +
-                    "share one over USB tethering), then try again - or type its address."
-            } else {
-                "A dashboard that answers becomes a card. Name it, and the app remembers the " +
-                    "vehicle rather than the address - which is why coming back to a car you " +
-                    "drive every day takes a couple of seconds and a first hunt does not."
-            },
+            "A dashboard that answers becomes a card. Name it, and the app remembers the " +
+                "vehicle rather than the radio address - which is why coming back to a car " +
+                "you drive every day takes a couple of seconds and a first hunt does not.",
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )
-    }
-}
-
-/**
- * The system's Wi-Fi panel, for the one case the app cannot fix itself: there is no network
- * to scan. A device with no such screen simply opens nothing - RETRY NETWORK still does the
- * useful half as soon as a network exists.
- */
-private fun openWifiSettings(context: android.content.Context) {
-    try {
-        context.startActivity(
-            android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    } catch (e: android.content.ActivityNotFoundException) {
-        // No such panel on this device; the retry button still works.
     }
 }

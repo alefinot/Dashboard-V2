@@ -32,8 +32,6 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
-import com.alefinot.dashboardpp.api.EspApi
-import com.alefinot.dashboardpp.api.EspApiLane
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripRuntimeState
@@ -81,13 +79,21 @@ private const val CHIP_PULSE_STEP_MS = 60L
  * configuration stays in the Web UI, so there is only ever one writer of the
  * ESP's state and no second implementation of the config logic to drift.
  *
- * One poller only: when the recording service is running, its 1 Hz sample is
- * rendered from [TripRuntime] and this screen opens no connection at all. It
- * polls itself only while the service is not polling, and never while the Web UI
- * tab is on screen (that WebView's own live fetch becomes the single client).
+ * It reads [TripRuntime] and nothing else. That used to be an optimisation - "one
+ * poller only" - and now it is the whole design: the unit pushes one frame a second on
+ * its own characteristic, the recording service follows that stream, and this page renders
+ * what the service published. A page that fetched for itself would be a second reader of
+ * one link, which is how the HTTP version of this app needed a lane to arbitrate.
+ *
+ * So there is no address in the signature, and there is no fallback path. Over the old
+ * transport this page had to cope with a device that answered `/api/live` but not
+ * `/api/snapshot` - firmware from before that endpoint existed - which meant a second
+ * data model, a "limited data" notice and a whole branch of the layout. A unit this app
+ * can pair with answers `snapshot`; anything else is a link that did not come up, and the
+ * state says so in one place.
  */
 @Composable
-fun LiveTab(ip: String, active: Boolean) {
+fun LiveTab(active: Boolean) {
     var state by remember { mutableStateOf(TripRuntime.state.value) }
 
     LaunchedEffect(active) {
@@ -96,38 +102,6 @@ fun LiveTab(ip: String, active: Boolean) {
         }
     }
 
-    LaunchedEffect(ip, active, state.polling) {
-        if (!active || state.polling) return@LaunchedEffect
-        while (true) {
-            if (EspApiLane.webUiVisible) {
-                delay(1000)
-                continue
-            }
-            val snapshot = EspApi.snapshot(ip)
-            if (snapshot != null) {
-                TripRuntime.update {
-                    it.copy(
-                        ip = ip,
-                        snapshot = snapshot,
-                        live = null,
-                        lastOkMs = System.currentTimeMillis(),
-                        lastError = null,
-                    )
-                }
-            } else {
-                val live = EspApi.live(ip)
-                TripRuntime.update {
-                    it.copy(
-                        ip = ip,
-                        live = live ?: it.live,
-                        lastOkMs = if (live != null) System.currentTimeMillis() else it.lastOkMs,
-                        lastError = if (live == null) "no-answer" else null,
-                    )
-                }
-            }
-            delay(1000)
-        }
-    }
 
     Column(
         Modifier.fillMaxSize()
@@ -181,21 +155,16 @@ fun LiveTab(ip: String, active: Boolean) {
 
         HudEnter(modifier = Modifier.fillMaxWidth(), delayMs = 2 * HudMotion.STAGGER_MS) {
             Column(Modifier.fillMaxWidth()) {
-                if (snapshot == null && state.live != null) {
-                    // Firmware older than V1.4.6 answers /api/live but has no
-                    // /api/snapshot: show what it does publish, and say what is missing.
-                    FallbackNotice()
-                    Spacer(Modifier.height(12.dp))
-                    LiveReadingsCells(state)
-                } else if (snapshot != null) {
+                if (snapshot != null) {
                     SnapshotCells(snapshot)
                 } else {
+                    // The page is here, the link may be up, and nothing has been
+                    // measured yet. Say that and nothing more: the reason a frame is
+                    // missing belongs to the link, and the vehicles page already shows
+                    // it. Two pages inventing two explanations is how "no data" used to
+                    // turn into a walk through four screens.
                     Text(
-                        if (state.lastError == EspApi.FIRMWARE_UPDATE_REQUIRED) {
-                            "No snapshot endpoint on this device."
-                        } else {
-                            "Waiting for the dashboard…"
-                        },
+                        "Waiting for the dashboard…",
                         color = HudColors.TextMuted,
                         style = HudeCfgHelp(),
                     )
@@ -241,8 +210,6 @@ private fun fmt(value: Double, places: Int = 1): String =
 private fun StatusChip(state: TripRuntimeState, active: Boolean) {
     val (label, target) = when {
         state.recording -> "RECORDING" to HudColors.Green
-        state.lastError == EspApi.FIRMWARE_UPDATE_REQUIRED -> "NEEDS UPDATE" to HudColors.Amber
-        state.pausedForWebUi -> "PAUSED · WEB UI" to HudColors.Amber
         // Nothing has come back yet on this connection - that is not the same
         // claim as "the dashboard stopped answering", which is what NO DATA means.
         state.lastOkMs == 0L -> "CONNECTING" to HudColors.TextDim
@@ -341,34 +308,6 @@ private fun StatusChip(state: TripRuntimeState, active: Boolean) {
                     style = Stroke(width = 1.5.dp.toPx()),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun FallbackNotice() {
-    Box(
-        Modifier.fillMaxWidth()
-            // `#msg` with `.msg-warning`: 8px corners, the status strip's own fill
-            // under an amber wash at 8%, amber hairline at 30%, 12x6 padding. No
-            // shadow - `#msg` declares none.
-            .hudCard(
-                fill = HudColors.Msg,
-                borderColor = HudColors.Amber.copy(alpha = 0.3f),
-            )
-            .background(HudColors.Amber.copy(alpha = 0.08f), HudRadius.CardShape)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Column {
-            Text("LIMITED DATA", color = HudColors.Amber, style = HudeSectionTitle())
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "This device has no /api/snapshot endpoint, so speed, GNSS and trip " +
-                    "figures are not published and this drive cannot be recorded. " +
-                    "Update the firmware to V1.4.6 or newer.",
-                color = HudColors.TextMuted,
-                style = HudeCfgNote(),
-            )
         }
     }
 }
@@ -481,31 +420,5 @@ private fun SnapshotCells(s: Snapshot) {
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-    )
-}
-
-@Composable
-private fun LiveReadingsCells(state: TripRuntimeState) {
-    val live = state.live ?: return
-    RowOf(
-        { StatCell("ODO", fmt(live.odo, 1), "km", modifier = Modifier.fillMaxWidth()) },
-        {
-            StatCell(
-                "FUEL INPUT", fuelStateLabel(live.fuelSt),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-    )
-    RowOf(
-        { StatCell("RAW", live.fuelRaw.toString(), "ADC", modifier = Modifier.fillMaxWidth()) },
-        { StatCell("OHMS", fmt(live.fuelOhm, 1), "Ω", modifier = Modifier.fillMaxWidth()) },
-    )
-    RowOf(
-        { StatCell("BATTERY", fmt(live.volts, 2), "V", modifier = Modifier.fillMaxWidth()) },
-        { StatCell("COOLANT", fmt(live.temp, 1), "°C", modifier = Modifier.fillMaxWidth()) },
-    )
-    RowOf(
-        { StatCell("LIGHT", live.ambient.toString(), modifier = Modifier.fillMaxWidth()) },
-        { StatCell("SPEED", "—", modifier = Modifier.fillMaxWidth(), dim = true) },
     )
 }

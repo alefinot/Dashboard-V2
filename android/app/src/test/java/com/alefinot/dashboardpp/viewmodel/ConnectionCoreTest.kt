@@ -22,14 +22,26 @@ import org.junit.Test
  * binds two different dashboards into one record.
  *
  * [ConnectionCore.decide] answers one step. The view model is the loop, so every test
- * here says what the *next* step is, given what has already been tried and what the
- * last probe answered — including the two cases the old code could not express: a card
- * with no unit bound (rule 3), and a unit that answers without an identity at all
- * (firmware predating the `mac` field).
+ * here says what the *next* step is, given what has already been dialed, whether the
+ * radio has been swept, what the sweep found and what the last link answered — including
+ * the two cases the old code could not express: a card with no unit bound (rule 3), and a
+ * unit that answers without an identity at all (firmware predating the `mac` field).
+ *
+ * The shapes below changed when the transport did, and the old names are worth listing
+ * because they explain what the new ones are not: there is no `Probe` (an address is not a
+ * place to knock on), no `ScanThenProbe` (a sweep is a step of its own, and it is the
+ * user's decision rather than a fallback the ladder reaches for by itself), and an
+ * `Ok(...)` answer is a link that came up rather than a host that answered a request.
  */
 class ConnectionCoreTest {
 
     private val now = 1_700_000_000_000L
+
+    /** What a unit advertises and reports as its name. */
+    private val UNIT = "Dashboard++"
+
+    /** A BLE address this phone could hold as a pairing. */
+    private val PAIR_A = "3C:71:0A:00:00:50"
 
     /** The line the shell shows when there is nothing to reach. */
     private val noSelection = ConnectionCore.NO_VEHICLE_SELECTED
@@ -53,12 +65,20 @@ class ConnectionCoreTest {
         selectedId: String?,
         tried: List<String> = emptyList(),
         scanDone: Boolean = false,
-        outcome: ProbeOutcome? = null,
+        found: List<Found> = emptyList(),
+        outcome: LinkOutcome? = null,
         mode: ConnectMode = ConnectMode.SEARCH,
-    ) = ConnectionCore.decide(cards, selectedId, tried, scanDone, outcome, mode, now)
+        pinned: Found? = null,
+    ) = ConnectionCore.decide(cards, selectedId, tried, scanDone, found, outcome, mode, now, pinned)
 
-    private fun ok(ip: String, mac: String?, version: String? = "1.4.6") =
-        ProbeOutcome.Ok(ip, version, mac)
+    /** A dashboard that came up on the link. [address] is the pairing, not a location. */
+    private fun ok(
+        address: String,
+        mac: String?,
+        version: String? = "1.4.6",
+        name: String = UNIT,
+        mtu: Int = 512,
+    ) = LinkOutcome.Ok(null, address, name, version, mac, mtu)
 
     // ---------------------------------------------------------------- selection
 
@@ -82,7 +102,7 @@ class ConnectionCoreTest {
         // SEARCH FOR DASHBOARD on the ADD VEHICLE card: there is no card yet, so the
         // sweep is the only door, and what it finds comes back as an offer to name.
         val r = decide(emptyList(), null, mode = ConnectMode.SEARCH)
-        assertEquals(NextAction.ScanThenProbe(null), r.next)
+        assertEquals(NextAction.Scan, r.next)
     }
 
     @Test
@@ -95,10 +115,11 @@ class ConnectionCoreTest {
     }
 
     @Test
-    fun `a card that has never connected is idle on the unattended paths`() {
+    fun `a card that has never been paired is idle on the unattended paths`() {
         // Distinct from "no selection": here the user pressed CONNECT on a card they
-        // made in the editor, and the honest answer at launch is that the app has no
-        // address for it yet — not "no vehicle selected".
+        // made in the editor, and the honest answer at launch is that the app holds no
+        // pairing for it yet — not "no vehicle selected". And the line names the way
+        // out, because nothing in the app will start a scan on this card's behalf.
         for (mode in listOf(ConnectMode.SILENT, ConnectMode.PROBE)) {
             val r = decide(listOf(card("a")), "a", mode = mode)
             assertTrue("$mode", r.next is NextAction.Idle)
@@ -119,28 +140,28 @@ class ConnectionCoreTest {
         // One address per card, and it is the one the last link came up on: there is no
         // list to walk and no order to argue about.
         val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        assertEquals(NextAction.Probe("a", "3C:71:0A:00:00:50"), decide(cards, "a").next)
+        assertEquals(NextAction.Pair("a", PAIR_A, "A"), decide(cards, "a").next)
     }
 
     @Test
     fun `a ladder never redials a pairing that already failed in this attempt`() {
         // A connect timeout costs the user seconds of watching a ring, and with one
-        // address per card, dialling it twice would be a ladder that loops rather than
+        // pairing per card, dialling it twice would be a ladder that loops rather than
         // progresses - so a spent pairing moves the attempt on to the sweep.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SEARCH)
-        assertEquals(NextAction.ScanThenProbe("a"), r.next)
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.SEARCH)
+        assertEquals(NextAction.Scan, r.next)
     }
 
     @Test
     fun `silent mode stops at the pairing the card remembers`() {
-        // Launch reconnect must not put a 15 s subnet sweep in front of the first frame:
-        // the garage is usable while it runs, and a device that is off is not
-        // going to be found by scanning the whole LAN for it.
-        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SILENT)
+        // Launch reconnect must not put a radio sweep and a permission prompt in front of
+        // the first frame: the garage is usable while the dial runs, and a dashboard that
+        // is switched off is not going to be found by sweeping the air for it.
+        val cards = listOf(card("a", name = "Workshop Van", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.SILENT)
         val failed = r.next as NextAction.Failed
         assertTrue(failed.reason.contains("Workshop Van"))
         assertTrue(failed.reason.isNotBlank())
@@ -151,37 +172,56 @@ class ConnectionCoreTest {
         // The line has to name the vehicle, because on the vehicle page it sits under
         // that card: "no Dashboard++ answered" on its own is a sentence about a network
         // the user is not asking about.
-        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SILENT)
+        val cards = listOf(card("a", name = "Workshop Van", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.SILENT)
         assertTrue((r.next as NextAction.Failed).reason.contains("Workshop Van"))
     }
 
     @Test
-    fun `search mode sweeps the network once the addresses are spent`() {
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.SEARCH)
-        assertEquals(NextAction.ScanThenProbe("a"), r.next)
+    fun `search mode sweeps the radio once the pairing is spent`() {
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.SEARCH)
+        assertEquals(NextAction.Scan, r.next)
     }
 
     @Test
     fun `a search that already swept gives up instead of sweeping again`() {
-        // Without this the view model would re-run mDNS and the subnet scanner every
-        // time the sweep came back empty, which is a loop the user watches.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"), scanDone = true,
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:09"), mode = ConnectMode.SEARCH)
+        // Without this the view model would put the phone back on the radio every time
+        // the sweep came back empty, which is a loop the user watches - and a sweep is a
+        // permission, an on radio and fifteen seconds of attention, not a free retry.
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A), scanDone = true,
+            outcome = LinkOutcome.Fail("3C:71:0A:00:00:09"), mode = ConnectMode.SEARCH)
         assertTrue(r.next is NextAction.Failed)
     }
 
     @Test
-    fun `probe mode never sweeps the network`() {
-        // RECONNECT on a card means "the addresses I remember, again" — the user is
+    fun `the sweep is offered in order of signal, and never a pairing already dialed`() {
+        // A sweep can return several dashboards - two units in range, or one unit and a
+        // neighbour's. The nearest is the one the user is standing next to, and a unit
+        // this attempt already reached for must not be dialed a second time.
+        val cards = listOf(card("a"))
+        val found = listOf(
+            Found("3C:71:0A:00:00:22", UNIT, -70),
+            Found("3C:71:0A:00:00:11", UNIT, -55),
+            Found("3C:71:0A:00:00:33", UNIT, -40),
+        )
+        val first = decide(cards, "a", scanDone = true, found = found, mode = ConnectMode.SEARCH)
+        assertEquals(NextAction.Pair(null, "3C:71:0A:00:00:33", UNIT), first.next)
+        val second = decide(cards, "a", tried = listOf("3C:71:0A:00:00:33"), scanDone = true,
+            found = found, mode = ConnectMode.SEARCH)
+        assertEquals(NextAction.Pair(null, "3C:71:0A:00:00:11", UNIT), second.next)
+    }
+
+    @Test
+    fun `probe mode never sweeps the radio`() {
+        // RECONNECT on a card means "the pairing I remember, again" — the user is
         // asking for a retry, not for a hunt that may land on a different unit.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-            outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = ConnectMode.PROBE)
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.PROBE)
         assertTrue(r.next is NextAction.Failed)
     }
 
@@ -190,10 +230,10 @@ class ConnectionCoreTest {
         // The difference matters on screen: Idle means "there is nothing to reach",
         // which the vehicle page answers by inviting the user in; Failed means "it was
         // reached for and nobody answered", which is what earns a RECONNECT button.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
+        val cards = listOf(card("a", ble = PAIR_A))
         for (mode in listOf(ConnectMode.SILENT, ConnectMode.PROBE)) {
-            val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:50"),
-                outcome = ProbeOutcome.Fail("3C:71:0A:00:00:50"), mode = mode)
+            val r = decide(cards, "a", tried = listOf(PAIR_A),
+                outcome = LinkOutcome.Fail(PAIR_A), mode = mode)
             assertTrue("$mode", r.next is NextAction.Failed)
         }
     }
@@ -205,9 +245,11 @@ class ConnectionCoreTest {
         // Rule 3: a card made in the editor has a name but no identity. The first
         // connect that reaches it adopts the MAC the unit reports, name and photo
         // intact.
-        val cards = listOf(card("a", name = "Workshop Van", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
-        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
+        val cards = listOf(card("a", name = "Workshop Van", ble = PAIR_A))
+        val r = decide(cards, "a", outcome = ok(PAIR_A, "AA:BB:CC:DD:EE:FF"))
+        assertEquals(
+            NextAction.Connect("a", PAIR_A, UNIT, "1.4.6", "AA:BB:CC:DD:EE:FF", 512), r.next,
+        )
         assertNotNull(r.persist)
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
         assertEquals("Workshop Van", r.persist!!.name)
@@ -219,8 +261,8 @@ class ConnectionCoreTest {
         // A unit spelling its identity in lower case, or a value read from a backup
         // file, has to end up in the record the way the ESP prints it, or the next
         // compare misses and the unit looks like a stranger.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "aa:bb:cc:dd:ee:ff"))
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", outcome = ok(PAIR_A, "aa:bb:cc:dd:ee:ff"))
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
     }
 
@@ -231,10 +273,12 @@ class ConnectionCoreTest {
         // because a pairing belongs to the phone's link and not to the dashboard.
         val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:05"))
         val r = decide(cards, "a", tried = listOf("3C:71:0A:00:00:05"),
-            outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
+            outcome = ok(PAIR_A, "AA:BB:CC:DD:EE:FF"))
         val persisted = r.persist!!
-        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
-        assertEquals("3C:71:0A:00:00:50", persisted.bleAddress)
+        assertEquals(
+            NextAction.Connect("a", PAIR_A, UNIT, "1.4.6", "AA:BB:CC:DD:EE:FF", 512), r.next,
+        )
+        assertEquals(PAIR_A, persisted.bleAddress)
         assertEquals("1.4.6", persisted.firmwareVersion)
     }
 
@@ -243,9 +287,9 @@ class ConnectionCoreTest {
         // Firmware predating the mac field, or a body the parser could not read. The
         // card was bound by MAC earlier; a connect that proves nothing about identity
         // must not un-bind it.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", null))
-        assertEquals(NextAction.Connect("a", "3C:71:0A:00:00:50", "1.4.6", null), r.next)
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = PAIR_A))
+        val r = decide(cards, "a", outcome = ok(PAIR_A, null))
+        assertEquals(NextAction.Connect("a", PAIR_A, UNIT, "1.4.6", null, 512), r.next)
         assertEquals("AA:BB:CC:DD:EE:FF", r.persist!!.mac)
     }
 
@@ -256,8 +300,8 @@ class ConnectionCoreTest {
         // with no identity at all. Address alone is enough to connect when exactly one
         // card remembers that address — refusing here would leave a card that can
         // never reconnect after a firmware rollback.
-        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", null))
+        val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = PAIR_A))
+        val r = decide(cards, "a", outcome = ok(PAIR_A, null))
         assertTrue(r.next is NextAction.Connect)
         assertEquals("a", (r.next as NextAction.Connect).vehicleId)
         assertNull(r.adoption)
@@ -275,7 +319,10 @@ class ConnectionCoreTest {
             card("a", ble = "3C:71:0A:00:00:11"),
         )
         val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:11", "AA:BB:CC:DD:EE:FF"))
-        assertEquals(NextAction.Connect("other", "3C:71:0A:00:00:11", "1.4.6", "AA:BB:CC:DD:EE:FF"), r.next)
+        assertEquals(
+            NextAction.Connect("other", "3C:71:0A:00:00:11", UNIT, "1.4.6", "AA:BB:CC:DD:EE:FF", 512),
+            r.next,
+        )
         assertEquals("other", r.persist!!.id)
         assertEquals("3C:71:0A:00:00:11", r.persist!!.bleAddress)
         assertNull(r.adoption)
@@ -305,11 +352,11 @@ class ConnectionCoreTest {
         // have selected — that is how two cards end up claiming one dashboard. The
         // offer is data for the page to show, and the user decides.
         val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"))
-        val r = decide(cards, "a", outcome = ok("192.168.1.99", "11:22:33:44:55:66"))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:99", "11:22:33:44:55:66"))
         assertTrue(r.next is NextAction.Failed)
         assertNull(r.persist)
         assertEquals(
-            UnclaimedUnit("192.168.1.99", "1.4.6", "11:22:33:44:55:66"),
+            UnclaimedUnit("3C:71:0A:00:00:99", UNIT, "1.4.6", "11:22:33:44:55:66"),
             r.adoption,
         )
     }
@@ -323,7 +370,7 @@ class ConnectionCoreTest {
             outcome = ok("3C:71:0A:00:00:11", "11:22:33:44:55:66"))
         assertTrue(r.next is NextAction.Idle)
         assertEquals(
-            UnclaimedUnit("3C:71:0A:00:00:11", "1.4.6", "11:22:33:44:55:66"),
+            UnclaimedUnit("3C:71:0A:00:00:11", UNIT, "1.4.6", "11:22:33:44:55:66"),
             r.adoption,
         )
     }
@@ -331,10 +378,11 @@ class ConnectionCoreTest {
     @Test
     fun `a unit that reports no identity at all is not offered for adoption`() {
         // There is nothing to adopt without a MAC: no identity to carry into a card.
-        // Offering one would let the user bind a card to an address that may belong to
-        // the phone's own hotspot.
+        // Offering one would let the user bind a card to a pairing that may belong to a
+        // completely different unit - a phone's own watch, a headset, anything this radio
+        // has bonded with before.
         val cards = listOf(card("a", mac = "AA:BB:CC:DD:EE:FF", ble = "3C:71:0A:00:00:11"))
-        val r = decide(cards, "a", outcome = ok("192.168.1.99", null))
+        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:99", null))
         assertNull(r.adoption)
         assertTrue(r.next is NextAction.Failed)
     }
@@ -344,8 +392,8 @@ class ConnectionCoreTest {
         // The view model publishes whatever the core hands it, so a step that finds
         // nothing to offer has to say so explicitly rather than leave the previous
         // offer on screen.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"))
-        val r = decide(cards, "a", outcome = ok("3C:71:0A:00:00:50", "AA:BB:CC:DD:EE:FF"))
+        val cards = listOf(card("a", ble = PAIR_A))
+        val r = decide(cards, "a", outcome = ok(PAIR_A, "AA:BB:CC:DD:EE:FF"))
         assertNull(r.adoption)
     }
 
@@ -353,21 +401,21 @@ class ConnectionCoreTest {
     fun `the next probe always belongs to the card that is selected`() {
         // The view model aborts an attempt when the selection moves, and it can only
         // notice that a step is stale if every step says who it is for.
-        val cards = listOf(card("a", ble = "3C:71:0A:00:00:50"), card("b", ble = "3C:71:0A:00:00:02"))
-        assertEquals("a", (decide(cards, "a").next as NextAction.Probe).vehicleId)
-        assertEquals("b", (decide(cards, "b").next as NextAction.Probe).vehicleId)
-        assertEquals("3C:71:0A:00:00:02", (decide(cards, "b").next as NextAction.Probe).address)
+        val cards = listOf(card("a", ble = PAIR_A), card("b", ble = "3C:71:0A:00:00:02"))
+        assertEquals("a", (decide(cards, "a").next as NextAction.Pair).vehicleId)
+        assertEquals("b", (decide(cards, "b").next as NextAction.Pair).vehicleId)
+        assertEquals("3C:71:0A:00:00:02", (decide(cards, "b").next as NextAction.Pair).address)
     }
 
     @Test
-    fun `a card that has never connected is swept for only when the user asked`() {
-        // A card made in the editor has no address, so the sweep is the only way it
-        // can ever get one — but a sweep is a 15 s scan that may land on a unit the
-        // user never touched, so it runs from the pressed CONNECT and never from
-        // launch or the network watcher.
+    fun `a card that has never been paired is swept for only when the user asked`() {
+        // A card made in the editor has no pairing, so the sweep is the only way it can
+        // ever get one — but a sweep is fifteen seconds of the phone listening for a
+        // stranger's advertisement, and it needs a permission, so it runs from the button
+        // the user pressed and never from launch or the link watcher.
         val cards = listOf(card("a"))
         val search = decide(cards, "a", mode = ConnectMode.SEARCH)
-        assertEquals(NextAction.ScanThenProbe("a"), search.next)
+        assertEquals(NextAction.Scan, search.next)
         // A second sweep is a loop the user watches.
         val spent = decide(cards, "a", scanDone = true, mode = ConnectMode.SEARCH)
         assertTrue(spent.next is NextAction.Failed)
@@ -380,12 +428,82 @@ class ConnectionCoreTest {
         // page shows is empty and the editor starts blank.
         val cards = listOf(card("a"))
         val r = decide(cards, "a", scanDone = true, mode = ConnectMode.SEARCH,
-            outcome = ok("192.168.1.99", "11:22:33:44:55:66"))
+            outcome = ok("3C:71:0A:00:00:99", "11:22:33:44:55:66"))
         assertEquals(
-            UnclaimedUnit("192.168.1.99", "1.4.6", "11:22:33:44:55:66"),
+            UnclaimedUnit("3C:71:0A:00:00:99", UNIT, "1.4.6", "11:22:33:44:55:66"),
             r.adoption,
         )
         assertTrue(r.next is NextAction.Failed)
         assertNull(r.persist)
+    }
+
+    // ------------------------------------------------------------------- picking from a sweep
+
+    /**
+     * The point of listing what the sweep heard instead of dialing what the ladder
+     * picked: two units in range, and a tap decides. Both the card's own pairing and a
+     * stronger signal lose to the name the user pressed, because every other rule is a
+     * guess about which dashboard was meant and a tap is not.
+     */
+    @Test
+    fun `a unit the user picked is dialed ahead of the card's own pairing and of louder signals`() {
+        val cards = listOf(card("card", mac = "AABBCCDDEE02", ble = "AA:BB:CC:DD:EE:02"))
+        val r = decide(
+            cards, "card",
+            scanDone = true,
+            found = listOf(Found("AA:BB:CC:DD:EE:03", "DPP-03", -40), Found(PAIR_A, UNIT, -90)),
+            pinned = Found(PAIR_A, UNIT, -90),
+        )
+        assertEquals(NextAction.Pair(null, PAIR_A, UNIT), r.next)
+    }
+
+    /** A pinned unit that already refused is not dialed twice; the ladder carries on. */
+    @Test
+    fun `a picked unit that already refused is behind the user now`() {
+        val cards = listOf(card("card", mac = "AABBCCDDEE02", ble = "AA:BB:CC:DD:EE:02"))
+        val r = decide(
+            cards, "card",
+            tried = listOf(PAIR_A),
+            scanDone = true,
+            found = listOf(Found("AA:BB:CC:DD:EE:03", "DPP-03", -40)),
+            pinned = Found(PAIR_A, UNIT, -90),
+        )
+        // The card's remembered pairing is next, and the sweep keeps its own order.
+        assertEquals(NextAction.Pair("card", "AA:BB:CC:DD:EE:02", "CARD"), r.next)
+    }
+
+    /** With nothing pinned, the ladder's own order (strongest signal first) stands. */
+    @Test
+    fun `a search dials the loudest unit when the user did not pick one`() {
+        val r = decide(
+            emptyList(), null,
+            scanDone = true,
+            found = listOf(Found("AA:BB:CC:DD:EE:09", "DPP-09", -91), Found("AA:BB:CC:DD:EE:10", "DPP-10", -30)),
+        )
+        assertEquals(NextAction.Pair(null, "AA:BB:CC:DD:EE:10", "DPP-10"), r.next)
+    }
+
+    // ---------------------------------------------------------------------- forgetting a unit
+
+    /**
+     * What clearing a card's pairing leaves behind.
+     *
+     * Android owns the bond and the app cannot revoke it (`removeBond` is not a public
+     * API here), so the only honest forget is one that says which half it did. The note
+     * appears exactly when there is a bond to work off - and never when there is nothing
+     * to apologise for, because a page that warns about bonds that do not exist teaches
+     * the user to ignore the page.
+     */
+    @Test
+    fun `forgetting a unit warns only when this phone is still bonded`() {
+        for (had in listOf(true, false)) {
+            for (bonded in listOf(true, false)) {
+                val d = ConnectionCore.forgetUnit(had, bonded)
+                assertEquals("$had/$bonded", had && bonded, d.needsSystemUnpair)
+            }
+        }
+        assertNull(ConnectionCore.forgetUnit(false, false).note)
+        assertNull(ConnectionCore.forgetUnit(true, false).note)
+        assertTrue(ConnectionCore.forgetUnit(true, true).note!!.contains("Bluetooth settings"))
     }
 }

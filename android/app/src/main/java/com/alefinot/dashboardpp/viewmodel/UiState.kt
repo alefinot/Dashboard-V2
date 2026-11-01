@@ -13,21 +13,34 @@ sealed interface ConnectionUiState {
      * An attempt is running. [mode] says how far it is going, which is what tells the
      * page whether to show a scan ring: a [ConnectMode.SILENT] reconnect must not put
      * any screen in front of the garage, while a search the user asked for shows its
-     * progress inside the card.
+     * progress inside the card. [stage] says where in the attempt we are, because the
+     * honest line under a card changes mid-attempt: dialing a pairing the phone already
+     * holds, sweeping the radio for units we have never met, and being mid-pairing with
+     * the code showing on the dashboard are three different things to tell the user.
      */
-    data class Connecting(val mode: ConnectMode) : ConnectionUiState
+    data class Connecting(
+        val mode: ConnectMode,
+        val stage: AttemptStage = AttemptStage.DIAL,
+    ) : ConnectionUiState
 
     /**
-     * A unit is connected. [mac] is its eFuse identity from the verify step (null on
-     * firmware that predates it), and [vehicleId] is the card it belongs to — the two
-     * together are what the trip log tags, so a drive records which vehicle it was in
-     * rather than which address answered.
+     * A unit is connected.
+     *
+     * [address] is the Bluetooth address of the link — this phone's name for the pairing,
+     * which is why it is never shown to the user as if it were an identity, and why
+     * [mac] (the unit's own eFuse identity, null on firmware that predates it) is what
+     * the trip key is built from. [vehicleId] is the card it belongs to: the two together
+     * are what the trip log tags, so a drive records which vehicle it was in rather than
+     * which link answered. [mtu] is what the negotiated ATT MTU turned out to be, which
+     * the settings page shows as a write-budget number.
      */
     data class Connected(
-        val ip: String,
+        val address: String,
+        val name: String,
         val version: String?,
         val mac: String? = null,
         val vehicleId: String,
+        val mtu: Int = 0,
     ) : ConnectionUiState
 
     /**
@@ -39,48 +52,17 @@ sealed interface ConnectionUiState {
     data class Failed(val reason: String) : ConnectionUiState
 }
 
-/**
- * What a network event entitles the app to do.
- *
- * `ConnectivityManager` calls back when the network says so, not when the user does: a
- * VPN interface registering, a hotspot starting, Wi-Fi flapping behind a dock Ethernet
- * handover. Every event acted on is a connect attempt, so these two answers are the
- * whole design of the watcher, and they are kept here as a pure rule because the
- * interesting part is the argument, not the callback.
- *
- * The scoping is what the garage changes. Since a card is bound to a physical unit, an
- * unattended hunt can only ever mean "reach the unit on the selected card again" —
- * there is no such thing as an unattended search for *some* dashboard, which is what
- * the old boot ladder did, and why a tablet that joined the house Wi-Fi could end up
- * connected to a dashboard in someone else's car.
- */
-object ReconnectPolicy {
+/** Where in an attempt a [ConnectionUiState.Connecting] is. */
+enum class AttemptStage {
+    /** Dialing a pairing this phone already holds. No user action needed. */
+    DIAL,
+
+    /** Sweeping the radio for dashboards this phone has never met. */
+    SCAN,
 
     /**
-     * Should a network coming up reach again for the selected vehicle?
-     *
-     * Only from a state the app has already given up on ([Idle], [Failed]) — those are
-     * the two the covers ask a finger for. Only when that network is a local LAN: a VPN
-     * interface is a network event with no subnet that could hold the dashboard. And
-     * only with a vehicle selected: with the garage empty there is nothing to reach, and
-     * the watcher has to stay quiet rather than fall back to scanning.
+     * Bringing a newly found unit up, which is the one stage that may need a finger:
+     * the dashboard shows a six-digit code and the system pairing sheet asks for it.
      */
-    fun shouldHunt(
-        state: ConnectionUiState,
-        hasLocalLan: Boolean,
-        hasSelection: Boolean,
-    ): Boolean = when (state) {
-        is ConnectionUiState.Idle, is ConnectionUiState.Failed -> hasLocalLan && hasSelection
-        is ConnectionUiState.Connecting, is ConnectionUiState.Connected -> false
-    }
-
-    /**
-     * Should a network going away re-check the unit we are "connected" to?
-     *
-     * Only a [Connected] session can be invalidated by losing a network, and it is
-     * worth one real request to find out: otherwise the app sits on a dead address until
-     * a Web UI load fails, which on the shell means until the user opens the ESP slot.
-     */
-    fun shouldRecheck(state: ConnectionUiState): Boolean =
-        state is ConnectionUiState.Connected
+    PAIR,
 }

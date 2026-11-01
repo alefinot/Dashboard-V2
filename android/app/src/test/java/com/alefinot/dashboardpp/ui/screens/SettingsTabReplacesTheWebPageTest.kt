@@ -29,10 +29,20 @@ class SettingsTabReplacesTheWebPageTest {
         val composers = screenFiles().filter {
             Regex("DashboardWebScreen\\s*\\(").containsMatchIn(codeOnly(it.readText()))
         }.map { it.name }
-        assertEquals(
-            "the WebView page may only be defined, never composed: $composers",
-            listOf("DashboardWebScreen.kt"),
+        assertEquals("nothing may compose a WebView page: $composers",
+            emptyList<String>(),
             composers.sorted(),
+        )
+        // The file itself is gone. An uncomposed-but-present page is what let the WebView
+        // era survive its own replacement for two phases, and it cost a delete, a rename
+        // and a doc rewrite every time someone read a reference to it.
+        val present = screenFiles().filter {
+            it.name in listOf("DashboardWebScreen.kt", "WebUiGestureMirror.kt")
+        }.map { it.name }
+        assertEquals("these files must not exist: $present", emptyList<String>(), present)
+        assertFalse(
+            "the WebView package must not survive the transport it needed",
+            File(File(moduleDir(), "src/main/java/com/alefinot/dashboardpp"), "webview").isDirectory,
         )
     }
 

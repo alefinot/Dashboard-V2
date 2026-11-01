@@ -14,11 +14,10 @@ import org.junit.Test
  * What a garage card is allowed to claim about a vehicle.
  *
  * A card is the only place the app writes a sentence about a car, and a sentence like
- * "LAST SEEN 2 DAYS AGO" next to "ESP32 at 192.168.1.50 answered /api/perf, but that unit
- * is not the vehicle you selected" is not two equal pieces of text: the second is a
- * measurement, the first is a guess about time. So the wording is built here, in plain
- * functions, where the boundary cases are testable rather than visible once a year on a
- * screen.
+ * "LAST SEEN 2 DAYS AGO" next to "THIS PHONE ALREADY PAIRED WITH ANOTHER VEHICLE" is not
+ * two equal pieces of text: the second is a measurement, the first is a guess about time.
+ * So the wording is built here, in plain functions, where the boundary cases are testable
+ * rather than visible once a year on a screen.
  *
  * The dates are counted in **UTC day boundaries**. That is a deliberate choice, not an
  * oversight: a car driven at 23:50 at home and looked at from a hotel in another zone the
@@ -28,6 +27,55 @@ import org.junit.Test
 class VehicleCardLinesTest {
 
     private val day = 24L * 60 * 60 * 1000
+
+    /**
+     * A unit this phone once dialed, and can now never dial.
+     *
+     * The line is the price of deleting the Wi-Fi transport, and the card is the only
+     * place left that can say it: there is no second route to offer, no "open the web
+     * page instead", and no reason to dress the dead end up. `BAD` rather than `WARN`
+     * because there is nothing on this phone that fixes it.
+     */
+    @Test
+    fun `a unit too old for Bluetooth is named as such and not as never connected`() {
+        val line = cardStatusLine(
+            Vehicle(id = "v", name = "Old Bench", type = VehicleType.CAR, firmwareVersion = "1.4.6"),
+            null,
+            1_700_553_600_000L,
+        )
+        assertEquals(CardTone.BAD, line.tone)
+        assertTrue(line.text, line.text.contains("NO BLUETOOTH ON THIS UNIT"))
+        // "LAST SEEN" would be true and useless: the unit answered long enough to record a
+        // version, and the reason it never answers now is the part worth printing.
+        assertFalse(line.text, line.text.contains("LAST SEEN"))
+        assertFalse(line.text, line.text.contains("NEVER CONNECTED"))
+    }
+
+    /**
+     * The other half of the same rule: a card with **no** recorded version is not called
+     * pre-Bluetooth. An unknown version is an unknown version, and the app would be
+     * telling someone to go update a unit that may already be current.
+     */
+    @Test
+    fun `a unit that never reported a version is not accused of being old`() {
+        val never = cardStatusLine(
+            Vehicle(id = "v", name = "New", type = VehicleType.CAR, firmwareVersion = null),
+            null,
+            1_700_553_600_000L,
+        )
+        assertEquals(CardTone.DIM, never.tone)
+        assertEquals("NEVER CONNECTED", never.text)
+
+        val met = cardStatusLine(
+            Vehicle(
+                id = "v", name = "Motorbike", type = VehicleType.MOTORCYCLE,
+                firmwareVersion = null, lastConnectedAtMs = 1_700_553_600_000L - 86_400_000L,
+            ),
+            null,
+            1_700_553_600_000L,
+        )
+        assertFalse(met.text, met.text.contains("NO BLUETOOTH"))
+    }
     // 2024-10-26 13:40 UTC: mid-afternoon, so "30 hours ago" is yesterday rather
     // than two days ago by the luck of where the timestamp happened to fall.
     private val now = 1_729_950_000_000L
@@ -123,15 +171,21 @@ class VehicleCardLinesTest {
     fun `a running ladder, a live session and an idle reason each own their line`() {
         val v = Vehicle(id = "v1", bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = now - day)
         val connecting = cardStatusLine(v, ConnectionUiState.Connecting(ConnectMode.SEARCH), now)
-        assertEquals(ConnectMode.SEARCH.stageLine().uppercase(), connecting.text)
+        assertEquals(ConnectionUiState.Connecting(ConnectMode.SEARCH).stageLine().uppercase(), connecting.text)
         assertEquals(CardTone.LIVE, connecting.tone)
 
         val connected = cardStatusLine(
             v,
-            ConnectionUiState.Connected(ip = "192.168.1.50", version = "1.4.6", mac = null, vehicleId = "v1"),
+            ConnectionUiState.Connected(
+                address = "3C:71:0A:00:00:50", name = "Dashboard++", version = "1.4.6",
+                mac = null, vehicleId = "v1",
+            ),
             now,
         )
-        assertEquals("CONNECTED · 192.168.1.50", connected.text)
+        // The line names the firmware, not the pairing. A Bluetooth address is this
+        // phone's name for a bond: printing it where a driver reads their own car
+        // implies it identifies the unit, and it does not.
+        assertEquals("CONNECTED · V1.4.6", connected.text)
         assertEquals(CardTone.GOOD, connected.tone)
 
         val idle = cardStatusLine(v, ConnectionUiState.Idle("No vehicle selected yet."), now)
@@ -155,7 +209,8 @@ class VehicleCardLinesTest {
         val a = Vehicle(id = "a", name = "Corolla", bleAddress = "AA:BB:CC:DD:EE:01")
         val b = Vehicle(id = "b", name = "Van", bleAddress = "AA:BB:CC:DD:EE:02")
         val state = ConnectionUiState.Connected(
-            ip = "192.168.1.50", version = "1.4.6", mac = null, vehicleId = "a",
+            address = "3C:71:0A:00:00:50", name = "Dashboard++", version = "1.4.6",
+            mac = null, vehicleId = "a",
         )
         assertTrue(connectedCard(a, state))
         // The selection has moved to the van; the Corolla still owns the session, so it
@@ -173,7 +228,7 @@ class VehicleCardLinesTest {
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.SILENT)))
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.PROBE)))
         assertTrue(showScanRing(ConnectionUiState.Connecting(ConnectMode.SEARCH)))
-        assertFalse(showScanRing(ConnectionUiState.Connected("1.2.3.4", "1.4.6", null, "a")))
+        assertFalse(showScanRing(ConnectionUiState.Connected("3C:71:0A:00:00:50", "n", "1.4.6", null, "a")))
         assertFalse(showScanRing(null))
     }
 

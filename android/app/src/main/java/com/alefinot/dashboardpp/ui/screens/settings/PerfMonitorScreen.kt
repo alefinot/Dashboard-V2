@@ -74,6 +74,8 @@ import kotlinx.coroutines.isActive
 fun PerfMonitorScreen(
     store: ConfigStore,
     link: BleLink,
+    /** Why the unit's clock was not set from the phone; null when it was set [plan §4]. */
+    timeNote: String? = null,
     onBack: () -> Unit,
 ) {
     val linkState by link.state.collectAsStateWithLifecycle()
@@ -193,6 +195,17 @@ fun PerfMonitorScreen(
             if (lastRead.isNotEmpty()) {
                 Text("last read $lastRead", style = HudeCfgNote(), color = HudColors.TextDim)
             }
+        }
+        // The clock is part of the link's state, and the only place it is reported is
+        // here — the app pushed it on the way in, and if that failed the unit's own
+        // stamps are the thing that is wrong, which is a fact about the numbers below.
+        timeNote?.let {
+            Text(
+                it,
+                style = HudeCfgNote(),
+                color = HudColors.Amber,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
         }
         if (error.isNotEmpty()) {
             Text(

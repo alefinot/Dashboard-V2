@@ -23,6 +23,8 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -111,7 +113,7 @@ fun AppShell(
 ) {
     val context = LocalContext.current
     val connected = conn != null
-    val ip = conn?.ip
+    val address = conn?.address
 
     // The unit's configuration lives on the unit, and a V2 unit reaches this phone over
     // Bluetooth and nothing else. The link is the process-wide one (`BleRuntime`),
@@ -132,11 +134,38 @@ fun AppShell(
         schema?.let { ConfigStore(BleConfigGateway(BleApi(link), link), it, storeScope) }
     }
 
+    // Android's permission is the first reason a dashboard can be out of range, and it is
+    // the only one this phone decides rather than the dashboard's switch. It is asked for
+    // here, once, at the moment the shell comes up: the alternative (which is what this app
+    // used to do with Wi-Fi permissions) is to reach for the radio, fail, and explain the
+    // failure afterwards. The launcher lives at the shell rather than on the page that
+    // asks, because scan and connect both need it and a page that asks per action is a page
+    // that asks twice. Nothing is drawn for it - the grant or the refusal changes one
+    // boolean, and the page that was already on screen says what it means.
+    val askRadio = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { granted ->
+        connection.notePermissionsResult(granted)
+        if (granted.values.all { it }) connection.retryAfterRadio()
+    }
+    LaunchedEffect(Unit) {
+        val wanted = connection.blePermissionRequest()
+        if (wanted.isNotEmpty()) askRadio.launch(wanted.toTypedArray())
+    }
+
+    // A phone that has never met a dashboard gets different words on the covers: there is
+    // no "waiting for X" to say, and the old first-run instructions ("open the access
+    // point name, find the IP printed on the label") have no subject left.
+    val firstRun = remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(Unit) {
+        firstRun.value = try {
+            connection.vehicleCount() == 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     var openTrip by remember { mutableStateOf<TripRow?>(null) }
-    // Typing an address by hand is a panel over the shell. It is raised from the vehicle
-    // page and nowhere else, and it closes by itself the moment a device turns up.
-    var manualOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(connected) { if (connected) manualOpen = false }
 
     // The editor is state in the shell, not a route, for the same reason the manual-address
     // panel is: closing it returns the user to the garage exactly where they were. The draft
@@ -197,20 +226,22 @@ fun AppShell(
     // in the offline shell (see ShellRules.recorderWants). It also needs to know whose
     // drive this is, which is what the recorder writes as the file's `#vehicle=` line:
     // the snapshot endpoint says nothing about who answered, so the app has to say it.
-    LaunchedEffect(ip, conn?.vehicleId, tripsAvailable, recordingEnabled) {
-        val target = ip?.takeIf { ShellRules.recorderWants(ip, tripsAvailable, recordingEnabled) }
-        if (target != null) {
-            val owner = connection.recorderTarget()
+    LaunchedEffect(address, conn?.vehicleId, tripsAvailable, recordingEnabled) {
+        // The recorder's owner is resolved once, here, and handed over whole: the service
+        // cannot ask a pushed frame who sent it, and a trip file outlives the link that
+        // produced it. `owner` is null exactly when nothing is linked, so one null check
+        // carries both halves of that.
+        val owner = connection.recorderTarget()
+        if (owner != null && ShellRules.recorderWants(true, tripsAvailable, recordingEnabled)) {
             TripLogService.start(
-                context, target,
-                owner?.vehicleId.orEmpty(), owner?.vehicleName.orEmpty(), owner?.eff.orEmpty(),
+                context, owner.deviceKey, owner.vehicleId, owner.vehicleName, owner.eff,
             )
         } else {
             TripLogService.stop(context)
             // A page the firmware cannot serve is snapped out of, not animated to: the
             // user did not ask to go anywhere. With no device the trips page is the
             // phone's own, so the offline shell leaves the user on it.
-            if (ShellRules.pageUnserved(tripsAvailable, connected = ip != null)) {
+            if (ShellRules.pageUnserved(tripsAvailable, connected = address != null)) {
                 val now = BarLayout.pages.getOrElse(pager.currentPage) { BarLayout.home }
                 if (now == AppTab.TRIPS) pager.scrollToPage(BarLayout.pageOf(AppTab.LIVE))
             }
@@ -296,7 +327,6 @@ fun AppShell(
                         AppTab.VEHICLES -> NativePage(inView) {
                             VehicleScreen(
                                 connection,
-                                onEnterIp = { manualOpen = true },
                                 onEdit = { id ->
                                     editorRefusal = null
                                     editorIsNew = false
@@ -315,20 +345,24 @@ fun AppShell(
                                 // The page stays, the live view does not: this is what
                                 // "limited features, not a limited app" looks like on the
                                 // page that needs a device most.
-                                OfflineCover(
-                                    title = "NO DASHBOARD ON THE NETWORK",
+                                NotLinkedCover(
+                                    title = "NO DASHBOARD IN RANGE",
                                     reason = reason,
-                                    note = "Trips and App Settings work without a device. " +
+                                    note = "Trips and App Settings work without a dashboard. " +
                                         "Speed, GNSS and the dashboard's own configuration " +
                                         "need one - the vehicle page is where a dashboard is " +
-                                        "found and connected.",
+                                        "paired and connected.",
                                     vehicleName = coverVehicleName,
                                     onOpenVehicles = openGarage,
+                                    permissionProblem = connection.permissionMissing.value,
+                                    firstRun = firstRun.value == true,
                                 )
                             } else {
-                                // Off-screen pages are not the live view: their polling has
-                                // to stay down or two clients would hit /api/snapshot at once.
-                                LiveTab(ip = conn.ip, active = page == AppTab.LIVE)
+                                // One stream, one reader: the recording service follows the
+                                // unit's frames whether this page is on screen or not, and
+                                // the page renders what the service published rather than
+                                // opening a second reader of the same link.
+                                LiveTab(active = page == AppTab.LIVE)
                             }
                         }
                         AppTab.WEB -> NativePage(inView) {
@@ -353,6 +387,7 @@ fun AppShell(
                                         modifier = Modifier.padding(16.dp),
                                     )
                                     else -> DashboardSettingsScreen(
+                                        timeNote = connection.timeNote.value,
                                         store = unit,
                                         schema = schema,
                                         link = link,
@@ -367,7 +402,7 @@ fun AppShell(
                             PageFade(Modifier.fillMaxSize()) {
                                 SettingsScreen(
                                     vm = connection,
-                                    ip = conn?.ip,
+                                    ip = address,
                                     version = conn?.version,
                                     trips = trips,
                                     tripsAvailable = tripsAvailable,
@@ -400,13 +435,6 @@ fun AppShell(
                     }
                 },
             )
-        }
-
-        if (manualOpen) {
-            // Over the shell, not instead of it: cancelling returns the user to the page
-            // they were on, and a successful entry recomposes the same shell with a
-            // device in it.
-            ManualEntryPanel(vm = connection) { manualOpen = false }
         }
 
         editing?.let { draft ->

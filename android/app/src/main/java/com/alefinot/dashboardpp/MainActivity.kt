@@ -1,9 +1,7 @@
 package com.alefinot.dashboardpp
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -18,7 +16,6 @@ import com.alefinot.dashboardpp.ui.screens.DashboardRoot
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudTheme
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
-import com.alefinot.dashboardpp.webview.FileChooser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -70,33 +67,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The radio permissions are *not* asked for here. They are asked for by the shell
+     * ([ConnectedTabs]) the moment it composes, which is the first moment there is a page
+     * on screen to explain a refusal - and the same launcher is what a grant resumes
+     * through, so the ask and the retry are one piece. Android 13 notifications, by
+     * contrast, have nothing to do with reaching the dashboard, so they keep their own
+     * quiet ask at launch.
+     */
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val granted = ContextCompat.checkSelfPermission(
             this, Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == FileChooser.REQUEST_CODE) {
-            val callback = FileChooser.pendingCallback
-            FileChooser.pendingCallback = null
-            // ACTION_OPEN_DOCUMENT reports a single pick in data.data and several
-            // picks in clipData; both have to reach the page or the file input
-            // never fires (issue #49). Cancelling must deliver null as well -
-            // Chromium will not open another chooser while the old callback is
-            // unresolved.
-            val clip = data?.clipData
-            val uris: Array<Uri>? = when {
-                resultCode != RESULT_OK -> null
-                clip != null && clip.itemCount > 0 ->
-                    (0 until clip.itemCount).map { clip.getItemAt(it).uri }.toTypedArray()
-                data?.data != null -> arrayOf(data.data!!)
-                else -> null
-            }
-            callback?.onReceiveValue(uris)
-        }
     }
 }

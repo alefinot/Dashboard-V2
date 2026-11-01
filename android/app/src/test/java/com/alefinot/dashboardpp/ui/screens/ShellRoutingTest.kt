@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import com.alefinot.dashboardpp.trips.TripsEnabled
+import com.alefinot.dashboardpp.viewmodel.AttemptStage
 import com.alefinot.dashboardpp.viewmodel.ConnectMode
 import com.alefinot.dashboardpp.viewmodel.ConnectionCore
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
@@ -30,7 +31,7 @@ class ShellRoutingTest {
         val view = ShellRouting.view(ConnectionUiState.Idle(null))
         assertNull(view.conn)
         assertNull(view.reason)
-        assertTrue(view.findIsRetryNetwork)
+        assertTrue(view.findIsRetrySearch)
     }
 
     @Test
@@ -50,10 +51,10 @@ class ShellRoutingTest {
     }
 
     @Test
-    fun `a ladder that is running says which ladder is running`() {
+    fun `a running attempt says which attempt is running`() {
         // With the scan ring gone, the line under the cover is the only place a wait can
-        // be explained. A sweep of the whole network and a retry of two remembered
-        // addresses are not the same wait, and the app must not say "searching" for both.
+        // be explained. A sweep of the air and a retry of one remembered pairing are not
+        // the same wait, and the app must not say "searching" for both.
         val lines = ConnectMode.values().map {
             ShellRouting.view(ConnectionUiState.Connecting(it)).reason
         }
@@ -61,15 +62,42 @@ class ShellRoutingTest {
         assertEquals(lines.size, lines.distinct().size)
     }
 
+    /**
+     * The stage the user has to act on beats the mode, whatever the mode was.
+     *
+     * The six-digit code is on the dashboard, and the app cannot know which of its three
+     * ladders is running at the moment the code appears. A line about the ladder during
+     * that moment is a line about the app while the phone is waiting for a finger, so the
+     * stage wins - and the scan stage gets its own sentence because "searching" over a
+     * radio is not "searching" over a network, and fifteen seconds of listening is a wait
+     * the user should be able to identify.
+     */
+    @Test
+    fun `the pairing stage says what to do regardless of which mode is running`() {
+        for (mode in ConnectMode.values()) {
+            val line = ShellRouting.view(
+                ConnectionUiState.Connecting(mode, AttemptStage.PAIR),
+            ).reason!!
+            assertTrue(line, line.contains("code shown on the dashboard"))
+            val scan = ShellRouting.view(
+                ConnectionUiState.Connecting(mode, AttemptStage.SCAN),
+            ).reason!!
+            assertTrue(scan, scan.contains("Scanning for dashboards"))
+            // No line about a link claims a network: there is no network to claim.
+            assertFalse("$mode/$line", line.contains("network"))
+            assertFalse("$mode/$scan", scan.contains("network"))
+        }
+    }
+
     @Test
     fun `a connected vehicle is the shell, with a connection and no reason`() {
         val state = ConnectionUiState.Connected(
-            "192.168.1.116", "1.4.6", "A4:CF:12:3B:9E:07", "v1",
+            "3C:71:0A:00:00:50", "Dashboard++", "1.4.6", "A4:CF:12:3B:9E:07", "v1", 517,
         )
         val view = ShellRouting.view(state)
         assertEquals(state, view.conn)
         assertNull(view.reason)
-        assertFalse(view.findIsRetryNetwork)
+        assertFalse(view.findIsRetrySearch)
     }
 
     @Test
@@ -82,7 +110,7 @@ class ShellRoutingTest {
         assertTrue(view.reason.orEmpty().isNotBlank())
         // The ladder just ran on a network that exists, so FIND DEVICE re-runs it
         // rather than asking whether there is a network at all.
-        assertFalse(view.findIsRetryNetwork)
+        assertFalse(view.findIsRetrySearch)
     }
 
     @Test
@@ -102,18 +130,18 @@ class ShellRoutingTest {
         assertEquals(detail, view.reason)
         // With no vehicle to reach, the only thing worth retrying is whether there is a
         // network and a card to reach at all.
-        assertTrue(view.findIsRetryNetwork)
+        assertTrue(view.findIsRetrySearch)
     }
 
     @Test
     fun `the recorder only runs with a device to record from`() {
-        assertTrue(ShellRules.recorderWants("192.168.1.116", tripsAvailable = true, recordingEnabled = true))
+        assertTrue(ShellRules.recorderWants(true, tripsAvailable = true, recordingEnabled = true))
         // The offline shell must never start the service, whatever the switches say.
-        assertFalse(ShellRules.recorderWants(null, tripsAvailable = true, recordingEnabled = true))
-        assertFalse(ShellRules.recorderWants(null, tripsAvailable = false, recordingEnabled = false))
+        assertFalse(ShellRules.recorderWants(false, tripsAvailable = true, recordingEnabled = true))
+        assertFalse(ShellRules.recorderWants(false, tripsAvailable = false, recordingEnabled = false))
         // And the two switches still mean what they meant.
-        assertFalse(ShellRules.recorderWants("192.168.1.116", tripsAvailable = false, recordingEnabled = true))
-        assertFalse(ShellRules.recorderWants("192.168.1.116", tripsAvailable = true, recordingEnabled = false))
+        assertFalse(ShellRules.recorderWants(true, tripsAvailable = false, recordingEnabled = true))
+        assertFalse(ShellRules.recorderWants(true, tripsAvailable = true, recordingEnabled = false))
     }
 
     @Test

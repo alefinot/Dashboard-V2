@@ -125,4 +125,52 @@ data class Vehicle(
             else -> ""
         }
     }
+
+    /**
+     * Whether this card's unit is too old to reach at all.
+     *
+     * [BLE_MIN_FIRMWARE] is the first firmware that carries the GATT server this app
+     * dials; below it there is no link to make, and the app has no second transport to
+     * fall back on — that is the accepted cost of deleting the Wi-Fi stack, and the card
+     * is the only place left where it can be said. The label comes from the last connect
+     * that *did* happen, which is why a card that has never been connected is not called
+     * out this way: an unknown version is not an old one, and guessing would tell the
+     * user to go update a unit that may already be current.
+     */
+    val preBleFirmware: Boolean
+        get() = firmwareVersion != null && !firmwareAtLeast(firmwareVersion, BLE_MIN_FIRMWARE)
+}
+
+/**
+ * The first firmware carrying the Bluetooth GATT server the app connects to. The ESP side
+ * of the contract: `src/bt_gatt.cpp` publishes the service from this release on, and every
+ * release before it can only be reached over HTTP — which this app no longer speaks.
+ */
+const val BLE_MIN_FIRMWARE = "1.5.0"
+
+/**
+ * Numeric firmware comparison: "1.10.2" is newer than "1.4.6" to a number compare and
+ * older to a string compare, and the version labels the units print are dotted numbers
+ * with an optional leading `V`.
+ *
+ * A label this parser does not understand answers **true** — it would be a cruel trick to
+ * tell someone their unit is too old on the strength of a string the parser could not
+ * read, when the alternative is to say nothing and let them find out by trying. The same
+ * bias is why a missing version never triggers [Vehicle.preBleFirmware].
+ */
+fun firmwareAtLeast(version: String?, minimum: String): Boolean {
+    if (version.isNullOrBlank()) return true
+    val parts = version.trim().removePrefix("V").removePrefix("v").split(".").take(3)
+    if (parts.size < 2) return true
+    // The first two components have to read as numbers, or this is not a version at all.
+    // Reading `1.x.2` as "1.2" would be inventing a fact about someone's unit.
+    val nums = parts.map { it.takeWhile { c -> c.isDigit() }.toIntOrNull() }
+    if (nums[0] == null || nums[1] == null) return true
+    val min = minimum.split(".").mapNotNull { it.toIntOrNull() }
+    for (i in 0 until 3) {
+        val a = nums.getOrElse(i) { null } ?: 0
+        val b = min.getOrElse(i) { 0 }
+        if (a != b) return a > b
+    }
+    return true
 }

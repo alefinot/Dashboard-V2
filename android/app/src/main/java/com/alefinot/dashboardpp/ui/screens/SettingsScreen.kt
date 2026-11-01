@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.alefinot.dashboardpp.api.EspApi
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import androidx.compose.runtime.rememberCoroutineScope
@@ -155,9 +154,10 @@ fun SettingsScreen(
             HudButton("DASHBOARD LINK (BLE)") { showBle = true }
             Spacer(Modifier.height(4.dp))
             Text(
-                "Scan for the dashboard, pair with the code it shows, then read its " +
-                    "settings over Bluetooth. This works with nothing but the radio: " +
-                    "no Wi-Fi and no network.",
+                "This panel drives the raw link: sweep for a dashboard, pair with the code " +
+                    "it shows, then read what came back. It is the transport's proof rather " +
+                    "than a page a driver uses - pairing itself belongs to the vehicle page, " +
+                    "and the dashboard's settings are the next tab here.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )
@@ -165,10 +165,8 @@ fun SettingsScreen(
 
             // ── Trip recording ───────────────────────────────────────────────
             RecordingCard(
-                available = tripsAvailable,
                 recording = recording.recording,
-                paused = recording.pausedForWebUi,
-                needsUpdate = recording.lastError == EspApi.FIRMWARE_UPDATE_REQUIRED,
+                needsUpdate = !tripsAvailable,
             )
             Spacer(Modifier.height(12.dp))
             Row(
@@ -191,7 +189,8 @@ fun SettingsScreen(
                             val owner = vm.recorderTarget()
                             if (owner != null) {
                                 TripLogService.start(
-                                    context, owner.ip, owner.vehicleId, owner.vehicleName, owner.eff,
+                                    context, owner.deviceKey, owner.vehicleId,
+                                    owner.vehicleName, owner.eff,
                                 )
                             }
                         } else {
@@ -278,15 +277,12 @@ fun SettingsScreen(
  */
 @Composable
 private fun RecordingCard(
-    available: Boolean,
     recording: Boolean,
-    paused: Boolean,
     needsUpdate: Boolean,
 ) {
     val (status, color) = when {
-        needsUpdate || !available -> "NEEDS FIRMWARE UPDATE" to HudColors.Amber
+        needsUpdate -> "NEEDS FIRMWARE UPDATE" to HudColors.Amber
         recording -> "RECORDING NOW" to HudColors.Green
-        paused -> "PAUSED · WEB UI OPEN" to HudColors.Amber
         else -> "NOT RECORDING" to HudColors.TextDim
     }
     // The page's status strip (`#msg` plus its `.msg-*` variants): 8px radius, a
@@ -306,20 +302,17 @@ private fun RecordingCard(
             Spacer(Modifier.height(6.dp))
             Text(
                 when {
-                    needsUpdate || !available ->
-                        "This device does not publish /api/snapshot, so speed, GNSS " +
-                            "and trip figures are unavailable and drives cannot be " +
-                            "logged. Update the dashboard firmware to V1.4.6 or newer."
-                    paused ->
-                        "The Web UI on this phone is the dashboard's only HTTP client, " +
-                            "so logging is paused while you configure. It resumes when " +
-                            "you leave the tab; the drive stays one trip with a gap " +
-                            "marked where it paused."
+                    needsUpdate ->
+                        "This dashboard's firmware is older than V1.4.6, so it does not " +
+                            "send the frame the trip recorder reads. Speed, GNSS and trip " +
+                            "figures stay unavailable and drives cannot be logged until the " +
+                            "firmware is updated."
                     recording ->
-                        "Sampling once per second. This Android version keeps polling " +
-                            "with the screen off or the app backgrounded; battery " +
-                            "optimization for this app is switched off so gaps do not " +
-                            "appear at every screen timeout."
+                        "Following the dashboard's one-per-second stream. This Android " +
+                            "version keeps reading with the screen off or the app " +
+                            "backgrounded; battery optimization for this app is switched " +
+                            "off so the drive does not fill with gaps at every screen " +
+                            "timeout."
                     else ->
                         "Logging idle: connected, waiting for samples, or auto-start " +
                             "is off."

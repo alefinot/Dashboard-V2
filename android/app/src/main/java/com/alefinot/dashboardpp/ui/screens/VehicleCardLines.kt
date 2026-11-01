@@ -139,16 +139,25 @@ private const val DAY_MS = 24L * 60 * 60 * 1000
  *
  * 1. a live or failed attempt says exactly what it said, and it wins over any guess about
  *    the past — the user is watching something happen *now*;
- * 2. a live session says which address is reporting;
+ * 2. a live session says what the unit that came up is running (its firmware version) —
+ *    deliberately **not** the Bluetooth address it came up on. That address is this
+ *    phone's name for the pairing, not the dashboard's identity, it changes if the unit is
+ *    un-paired and re-paired, and printing it in the place where a driver expects to see
+ *    their car is how "which unit is this?" stops being answerable. The identity a card can
+ *    show is its MAC, and the editor shows that; what is worth adding here is the one fact
+ *    that decides whether trips, GNSS and the rest are available on this unit.
  * 3. otherwise the card falls back to [lastSeenLine], which is a derived statement about
  *    time and must never cover a measurement.
  */
 fun cardStatusLine(v: Vehicle, state: ConnectionUiState?, nowMs: Long): CardStatusLine = when (state) {
     is ConnectionUiState.Connected ->
-        CardStatusLine("CONNECTED · ${state.ip}", CardTone.GOOD)
+        CardStatusLine(
+            state.version?.let { "CONNECTED · V$it" } ?: "CONNECTED",
+            CardTone.GOOD,
+        )
 
     is ConnectionUiState.Connecting ->
-        CardStatusLine(state.mode.stageLine().uppercase(), CardTone.LIVE)
+        CardStatusLine(state.stageLine().uppercase(), CardTone.LIVE)
 
     is ConnectionUiState.Failed -> CardStatusLine(state.reason, CardTone.BAD)
 
@@ -160,9 +169,25 @@ fun cardStatusLine(v: Vehicle, state: ConnectionUiState?, nowMs: Long): CardStat
     null -> fallback(v, nowMs)
 }
 
-private fun fallback(v: Vehicle, nowMs: Long): CardStatusLine =
-    if (v.lastConnectedAtMs == null) CardStatusLine("NEVER CONNECTED", CardTone.DIM)
-    else CardStatusLine(lastSeenLine(v.lastConnectedAtMs, nowMs), CardTone.MUTED)
+/**
+ * The line for a unit the app cannot reach because it has nothing to reach it **with**.
+ *
+ * Firmware before the Bluetooth GATT server cannot be paired, and the app no longer
+ * speaks the transport that could: deleting the Wi-Fi stack was a decision, and this is
+ * where its cost is paid out loud. It is named on the card rather than in a dialog
+ * because the card is where the user is standing when they press CONNECT, and because
+ * the way out (the unit's own settings page, on its own screen) is not something this
+ * app can walk them through.
+ */
+private const val NO_RADIO = "NO BLUETOOTH ON THIS UNIT — UPDATE IT FROM THE UNIT'S OWN PAGE"
+
+private fun fallback(v: Vehicle, nowMs: Long): CardStatusLine = when {
+    // Said before "never connected": for a unit this phone once met and can now never
+    // dial, "never connected" would be false, and the reason is the useful part.
+    v.preBleFirmware -> CardStatusLine(NO_RADIO, CardTone.BAD)
+    v.lastConnectedAtMs == null -> CardStatusLine("NEVER CONNECTED", CardTone.DIM)
+    else -> CardStatusLine(lastSeenLine(v.lastConnectedAtMs, nowMs), CardTone.MUTED)
+}
 
 /**
  * Whether a live session belongs to this card.

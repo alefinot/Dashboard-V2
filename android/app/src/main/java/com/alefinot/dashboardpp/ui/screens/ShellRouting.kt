@@ -1,5 +1,6 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import com.alefinot.dashboardpp.viewmodel.AttemptStage
 import com.alefinot.dashboardpp.viewmodel.ConnectMode
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 
@@ -25,11 +26,13 @@ data class ShellView(
     val reason: String?,
     /**
      * Whether the garage's search button has to check for a network before it hunts: when the
-     * app has given up without a network, or has nothing to reach for, re-scanning the subnet is
-     * pointless and what has to be retried is whether a network exists now. The label does not
-     * change with it - one button, one meaning - but the offer of the system's Wi-Fi panel does.
+     * app has given up with the radio idle, or has nothing to reach for, and what has to be
+     * retried is whether there is a pairing and a switch turned on at all. It drives the one
+     * label the ADD VEHICLE card uses (SEARCH FOR DASHBOARD++ / SEARCH AGAIN) so the button
+     * says what pressing it will cost: a dial of something remembered, or fifteen seconds of
+     * sweeping the air for something never met.
      */
-    val findIsRetryNetwork: Boolean,
+    val findIsRetrySearch: Boolean,
 )
 
 object ShellRouting {
@@ -37,27 +40,46 @@ object ShellRouting {
         // The garage is the first frame, so the state a cold start draws is a shell with
         // nothing connected yet and nothing said about it yet either.
         is ConnectionUiState.Idle -> ShellView(null, state.reason, true)
-        is ConnectionUiState.Connecting -> ShellView(null, state.mode.stageLine(), false)
+        is ConnectionUiState.Connecting -> ShellView(null, state.stageLine(), false)
         is ConnectionUiState.Connected -> ShellView(state, null, false)
         is ConnectionUiState.Failed -> ShellView(null, state.reason, false)
     }
 }
 
 /**
- * The stage line for a running ladder. The view model publishes the mode, not the
- * sentence: what the words are is a page decision, and they belong next to the page's
- * other rules rather than inside the loop that decides the ladder.
+ * The line a running attempt shows under the card it is working on.
+ *
+ * The view model publishes a mode and a stage, not a sentence: what the words are is a
+ * page decision, and they belong next to the page's other rules rather than inside the
+ * loop that decides the ladder.
+ *
+ * **The stage outranks the mode**, because the stage is the part the user can act on. The
+ * three modes differ in how hard the app is trying, which matters to how long a wait
+ * should feel; only one stage matters to what someone should be *doing* - the dashboard
+ * is showing six digits and asking to be confirmed, and a line about which ladder is
+ * running would be a line about the app while the phone is waiting for a finger.
  */
-fun ConnectMode.stageLine(): String = when (this) {
-    // A launch-time reconnect: the app is trying the addresses this vehicle's dashboard
-    // answered from before, and the user has not asked for anything.
-    ConnectMode.SILENT -> "Reaching the selected vehicle's dashboard…"
-    // A retry of those addresses at a press: the line says what it is doing by naming
-    // what it is relying on, which is also why it is fast.
-    ConnectMode.PROBE -> "Trying the addresses that answered before…"
-    // Nothing remembered answered (or nothing is remembered), so the network itself is
-    // being asked: mDNS and a subnet sweep, which is the slow one.
-    ConnectMode.SEARCH -> "Locating a Dashboard++ on this network…"
+fun ConnectionUiState.Connecting.stageLine(): String = when (stage) {
+    // The phone is listening for dashboards it has never met. This is the slow stage, and
+    // the one that needs a permission, so the line says what is happening in air terms -
+    // "on this network" used to be the honest phrase and is now a lie about the radio.
+    AttemptStage.SCAN -> "Scanning for dashboards…"
+    // The one stage with a task in it. Named for the thing on the dashboard's screen,
+    // because that is where the code is, and Android's own dialog does not say whose
+    // number it is asking about.
+    AttemptStage.PAIR -> "Pairing — type the code shown on the dashboard"
+    // Which ladder, for the stage that needs nobody: dialing a pairing this phone holds.
+    AttemptStage.DIAL -> when (mode) {
+        // A launch-time reconnect: the app is dialing the pairing this vehicle's card
+        // holds, and the user has not asked for anything.
+        ConnectMode.SILENT -> "Dialing the selected vehicle's pairing…"
+        // A retry at a press: the line says what it relies on, which is also why it is
+        // fast. There is no sweep in this mode, and the line must not promise one.
+        ConnectMode.PROBE -> "Dialing the pairing again…"
+        // Nothing remembered answered (or nothing is remembered), so the radio is about to
+        // be swept - the slow one, and the one the user asked for by pressing SEARCH.
+        ConnectMode.SEARCH -> "Looking for a Dashboard++…"
+    }
 }
 
 /**
@@ -65,9 +87,18 @@ fun ConnectMode.stageLine(): String = when (this) {
  * composables so they can be argued about in a test instead of on a tablet.
  */
 object ShellRules {
-    /** The recorder needs a device to sample: offline, it does not run. */
-    fun recorderWants(ip: String?, tripsAvailable: Boolean, recordingEnabled: Boolean): Boolean =
-        ip != null && tripsAvailable && recordingEnabled
+    /**
+     * The recorder needs a device to sample: with no link it does not run.
+     *
+     * The argument used to be an address, which asked this rule to care about *how* the
+     * device is reached. It does not: what matters is that a link is up and being
+     * followed, which is a boolean and not a string that can be wrong in three ways.
+     */
+    fun recorderWants(
+        linked: Boolean,
+        tripsAvailable: Boolean,
+        recordingEnabled: Boolean,
+    ): Boolean = linked && tripsAvailable && recordingEnabled
 
     /**
      * A dimmed glyph, not a missing one: the bar keeps five slots in the same order

@@ -95,6 +95,12 @@ fun DashboardSettingsScreen(
     store: ConfigStore,
     schema: ConfigSchema?,
     link: BleLink,
+    /**
+     * Why the unit's clock was not set from this phone (null when it was). Passed through
+     * to the monitor page, which is where the rest of the link status lives; this page has
+     * no business explaining a link it does not own.
+     */
+    timeNote: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -139,7 +145,12 @@ fun DashboardSettingsScreen(
     // is the only thing composed while it is open, its polling stops the moment the user is back.
     var showPerf by remember { mutableStateOf(false) }
     if (showPerf) {
-        PerfMonitorScreen(store = store, link = link, onBack = { showPerf = false })
+        PerfMonitorScreen(
+            store = store,
+            link = link,
+            timeNote = timeNote,
+            onBack = { showPerf = false },
+        )
         return
     }
 
