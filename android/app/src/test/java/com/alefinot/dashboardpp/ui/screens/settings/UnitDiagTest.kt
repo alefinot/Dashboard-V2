@@ -365,7 +365,9 @@ class UnitDiagTest {
         )
         assertTrue(
             "the scroll does not name the entry where a user will look for it",
-            Regex("\"PERFORMANCE MONITOR\"").containsMatchIn(page),
+            // The row carries the WebUI's own title case since the 1.6.0 restyle; what the guard
+            // cares about is that the entry is NAMED in the scroll, not how it is capitalised.
+            Regex("\"Performance Monitor\"").containsMatchIn(page),
         )
         val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
         for (banned in listOf("http://", "https://", "android.webkit", "EspApi", "HttpURLConnection")) {
