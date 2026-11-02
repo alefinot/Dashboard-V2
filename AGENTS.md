@@ -51,10 +51,17 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
      shipping a *downloader*, and never add an HTTP updater. The contract (phase **2b** of
      `Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md`, §4.7 — now code on both ends):
      JSON `begin {size, crc32}` → `begin_ok` with the offset and the MTU-capped chunk size,
-     `offset (4 B LE) + payload` writes, `ack` every 16 KB, `end` → CRC-32 + `esp_ota_end()`
-     verify → flip to the spare slot → tagged reboot. **120 s** silence window on both ends
+     `offset (4 B LE) + payload` writes, `ack` every 4 KiB (one flash sector: an ACK is a claim
+     about flash, so the unit never ACKs further ahead than it has actually drained), `end` →
+     CRC-32 + `esp_ota_end()` verify → flip to the spare slot → tagged reboot. **`ota.end` drains
+     the handoff ring before it counts bytes** — the link keeps the frames and the RPC in order, but
+     `btTask` takes the RPC up before its next poll pass, and skipping that drain reports a complete
+     image as `bad_length` (bench, 2026-11-03). **120 s** silence window on both ends
      (`src/bt_ota.cpp` `OTA_SILENCE_MS` = `OtaController.RESUME_WINDOW_MS`); mid-install the
-     unit answers **only** `ping` and `ota.*` (`ota_in_progress` for the rest); an image must
+     unit answers **only** `ping` and `ota.*` (`ota_in_progress` for the rest) **and the dashboard
+     is parked** (`otaQuietActive` holds `loop()` and the sensor task at their tops; the update
+     screen ticks at ~120 ms, and a refused install restores the producers, the sprite and the font
+     on its own); an image must
      fit the app slot, which is why the build gate is **1.80 MB**. **No signing anywhere**
      (rule 3) — that CRC-32 is the only integrity check on the wire, and the unit has no
      version gate: the app shows both versions and asks before reflashing the same one.
