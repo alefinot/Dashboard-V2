@@ -70,7 +70,10 @@ object OtaController {
      * Android's outgoing queue in a few seconds, the card then reports a number far behind what is
      * really on flash, and the first hiccup wedges a queue nobody can flush. Pacing against the
      * unit's own ACK keeps the outstanding window small and the progress figure honest. It must stay
-     * above the unit's ACK cadence (`OTA_ACK_BYTES`, 16 KiB), or the two sides deadlock.
+     * above the unit's ACK cadence (`OTA_ACK_BYTES` in `src/bt_ota.cpp` — 4 KiB, one flash sector),
+     * or the two sides deadlock. It is not the unit's cushion either: that is the 16-slot handoff
+     * ring in `bt_ota.cpp` (measured using 2 of its 15 usable slots on a full install) plus the
+     * link's own write-completion pacing.
      */
     const val OUTSTANDING_BYTES = 32 * 1024
 

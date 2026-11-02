@@ -65,20 +65,23 @@ static const unsigned long OTA_SILENCE_MS = 120000UL;
 // A ceiling on the whole install, for a client that opens a session and then
 // forgets to send ota.end: the unit must not stay parked forever.
 static const unsigned long OTA_MAX_MS = 15UL * 60UL * 1000UL;
-// How much accepted data between ACKs. The ACK is the phone's resume token, so
-// it also bounds how much has to be re-sent after a drop; 16 KB is ~30 writes
-// and roughly one per second on a healthy link.
+// How much accepted data between ACKs. The ACK is the phone's resume token, so it
+// also bounds how much has to be re-sent after a drop. 4096 B is ~8 writes and one
+// flash sector - the same granularity at which the drain pays for an erase - so the
+// offset a phone resumes from is a boundary the unit has really written to, never a
+// point that only ever existed in the handoff ring.
 //
-// It is also, in practice, the phone's IN-FLIGHT ALLOWANCE above the point the
-// unit has actually written: the app stops and waits for the next ACK once it has
-// been told about OTA_ACK_BYTES more data. That makes this number a flow-control
-// limit, not just an ACK cadence, and it has to stay smaller than the unit's
-// handoff ring (OTA_RING_SLOTS below) - see the coupling note there. The old
-// 16 KB was four times that ring: the phone could always be further ahead than
-// the unit could hold, and an erase-heavy stretch ended in a ring overflow
-// reported as `bad_frame`. 4096 B is one flash sector, which is also the
-// granularity at which the drain pays for an erase, and it keeps the resume token
-// on a sector boundary.
+// What this number is NOT: the phone's in-flight allowance. The unit must not read
+// it that way, because ble/OtaController.kt lets the phone run OUTSTANDING_BYTES
+// (32 KB) past the last ACK it was given - more than four times this unit's whole
+// handoff ring. What holds the air rate near the drain rate is the link's own flow
+// control (write-without-response, one write completing before the next is issued);
+// the ring's depth is the cushion for the stretches where that still leaves the
+// unit behind, see under OTA_RING_SLOTS.
+//
+// The old 16 KB cadence was two problems at once: four times the ring of its day,
+// and an ACK of up to 14 KB that had only ever been seen in RAM - after a drop the
+// phone resumed from an offset the unit had never put on flash.
 static const uint32_t OTA_ACK_BYTES = 4096;
 // An app slot in partitions.csv (0x1D0000). Larger than this cannot fit, and
 // the build gate (1.80 MB) exists so a normal build never asks.
@@ -94,18 +97,19 @@ static const uint32_t OTA_MIN_IMAGE = 4096u;
 // usable slots - 1,488 B, about 135 ms at 45 ms per frame - while the longest gap
 // between drains was only 60 ms. The drain was not missing passes; it was writing
 // slower than one frame per arrival interval on average, because every 4 KB
-// sector crossed costs an erase. With the phone allowed to run OTA_ACK_BYTES
-// ahead of the drain point, a ring shallower than that allowance is simply the
-// bottleneck of the transfer, and it reports being the bottleneck as `bad_frame`.
+// sector crossed costs an erase.
 //
-// So the two constants are coupled, and the ring has to be the bigger one:
-//   (OTA_RING_SLOTS - 1) * chunk  >  OTA_ACK_BYTES
-// The phone cannot get more than OTA_ACK_BYTES of data past the last ACK it was
-// given, so if the ring is deeper than that allowance it physically cannot
-// overflow: a slow-flash stretch now backs the phone up at its ACK wait instead of
-// filling the unit's buffer. btOtaBegin() checks the inequality against the chunk
-// size the link actually negotiated, because changing one number without the
-// other re-creates the fault this is meant to remove.
+// Nothing about the ACK cadence protects this ring. The phone may run
+// OUTSTANDING_BYTES (32 KB, ble/OtaController.kt) past the last ACK it was given -
+// over four times this ring's capacity - so the ring's own depth is the unit's only
+// cushion, and depth in slots is depth in arrival intervals: a slot is exactly one
+// frame, the largest thing the link can deliver. 15 usable slots at the observed
+// 45 ms per frame is ~670 ms of cushion, and an erase-bound stretch has to fit
+// inside that. The bench run at this depth used 2 of the 15, worst drain gap 56 ms.
+//
+// A ring that does overflow says so out loud now - `bad_frame ring full`, with the
+// depth and how many frames were refused (btOtaPush) - instead of being reported as
+// a malformed frame and chased as a phone bug.
 static const int OTA_RING_SLOTS = 16;
 static const int OTA_RING_MASK = OTA_RING_SLOTS - 1;
 static const int OTA_SLOT_BYTES = 4 + 512;  // offset prefix + max payload
@@ -414,13 +418,13 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_drainGapMaxMs = 0;
   s_ringsOver = false;
 
-  // The coupling that keeps this transfer from becoming its own bottleneck: the
-  // phone may run at most one ACK window past the point the unit has written, so
-  // a ring shallower than that window overflows whenever the flash lags the link
-  // (see OTA_RING_SLOTS). Capping the window at half the usable ring, for the
-  // chunk size this link negotiated, makes the inequality true at every MTU
-  // instead of only at the one measured on the bench. Said out loud rather than
-  // asserted, because the fault it prevents looks exactly like a phone bug.
+  // The ACK window for this session, capped at half the usable handoff ring for
+  // the chunk size this link negotiated. Not flow control - the phone's allowance
+  // is 32 KB, far past this ring (see OTA_ACK_BYTES) - but honesty about flash:
+  // an ACK is a claim about what the unit has written, and the unit should not make
+  // a claim further ahead than what it has actually drained, or the resume token
+  // after a drop points at bytes that only ever lived in RAM. Said out loud when it
+  // bites, because it changes the progress granularity the phone sees.
   s_ackBytes = OTA_ACK_BYTES;
   {
     uint32_t halfRing = (uint32_t)(OTA_RING_SLOTS - 1) * s_chunk / 2u;

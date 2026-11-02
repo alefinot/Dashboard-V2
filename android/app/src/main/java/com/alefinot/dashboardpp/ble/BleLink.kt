@@ -136,7 +136,8 @@ class BleLink(context: Context) {
      * `BT_F_OTA` frames: what the unit says about a firmware install it is running.
      *
      * These are unsolicited — the phone asked once (`ota.begin`) and the unit then reports as it
-     * writes: `begin_ok`, an `ack` every 16 KB, then `done` or `error`. That is why they are a
+     * writes: `begin_ok`, an `ack` every 4 KiB (one flash sector on the unit), then `done` or
+     * `error`. That is why they are a
      * flow and not replies: an ACK arrives while the phone is busy pushing the next chunk, and
      * a request/response pairing would have nothing to pair it with. `ble/OtaCore.kt` parses
      * them; the collector has to be running before the first write or the ACKs are lost, which
