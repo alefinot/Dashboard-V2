@@ -114,6 +114,13 @@ constexpr int HALL_SENSOR_PIN = 33;
 // one thing a button may do there is recover the unit, and it must not be
 // reachable by the knock-that-almost-wipes-a-trip gesture.
 #define OTA_HOLD_RESTART_MS 3000
+// How often the display loop wakes while an install owns the unit (loop()'s quiet
+// window): the update frame, its progress bar, the trip-button gesture and the
+// BLE liveness guard are the only things still running then. Slow on purpose - a
+// 60 Hz panel loop next to a flash write buys nothing behind an update screen -
+// and still far inside the 3 s hold-to-restart budget, so the button feels
+// immediate while the screen is taken.
+#define OTA_QUIET_TICK_MS 120
 // How long the on-screen trip-reset confirmation stays up.
 #define TRIP_RESET_NOTICE_MS 3000
 

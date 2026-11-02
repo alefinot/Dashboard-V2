@@ -2252,6 +2252,19 @@ void processOtaScreenButton() {
 
 void sensorTask(void *pvParameters) {
   for (;;) {
+    // Firmware-update quiet window: this task stops here for the whole install
+    // (decision B of the BLE install plan - producers parked, the panel shows an
+    // update frame, nothing on it is being read). Cooperative wait at the loop
+    // top, never vTaskSuspend() from the BLE task: this task takes g_stateMutex,
+    // and freezing it inside that section would stall the display task with it
+    // (rule 11). What keeps working: the GPIO ISR still stamps edges into its own
+    // ring (it overwrites its oldest entries while nobody drains it, sensors.cpp
+    // :656), and the trip button on the update screen is polled by the display
+    // loop. What costs nothing to lose: speed, distance, trip stats and the demo
+    // simulator, all of which the reboot after a good install rebuilds - and on a
+    // failed one, the fusion's standstill timeout plus the 3-revolution confirm
+    // gate absorb the gap in edge timestamps before any value is displayed again.
+    while (otaQuietActive) vTaskDelay(pdMS_TO_TICKS(200));
     // Issue #30: turn the raw edge stamps collected by the GPIO ISR into pulses,
     // intervals and distance credits. Everything the ISR used to decide is here.
     processHallEdges();

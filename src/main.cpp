@@ -263,6 +263,20 @@ static bool applyCpuFreq(int mhz, const char *why) {
 // ---------------------------------------------------------------------------
 int otaQuietMhzBefore = 0;  // the clock the window took over, for the log line
 
+// Loop-side bookkeeping for the sensor-task liveness watch (HB `sMaxGap=`). File
+// scope so the quiet window can re-seed it: while an install is open the sensor
+// task is parked on purpose, and the first tick after the window closes must not
+// be reported as a multi-minute stall.
+static unsigned long g_diagSensorTickSeen = 0;
+
+// Frame-interval bookkeeping (feeds HB `maxFrame=`/`over24=`, the FPS overlay and
+// the CPU scaler's FPS). File scope so the quiet window can re-seed it: a loop
+// that spends three minutes parked behind an update screen is not a three-minute
+// frame drop, and one such sample in the 0.05 filter drags the measured FPS - and
+// the scaler's next decision - down for the minute after the window closes.
+static unsigned long g_diagLastFrameMs = 0;
+static float g_diagFilteredFrameMs = 16.6f;
+
 void otaQuietEnter(const char *why) {
   if (otaQuietActive) return;
 
@@ -604,6 +618,160 @@ static void processConfigApply() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The panel side of a firmware install, split out of loop() so the quiet
+// window can run it on its own slow tick without the dashboard pipeline behind
+// it. Same code, same order, same statics - the install task never touches the
+// panel itself, this task does.
+// ---------------------------------------------------------------------------
+static void handleOtaPanelRequests() {
+  // Requests from the BLE task (src/bt_ota.cpp), drawn by the task that owns
+  // the panel.
+  static unsigned long otaErrorShownMs = 0;
+  // GPIO25 belongs to the screen while the screen is up, and its only gesture
+  // is the restart hold (processOtaScreenButton owns its own debounce; the
+  // sensor task's trip path is deaf for the whole window). Polled before the
+  // frames below so a held button wins the iteration it is detected in: the
+  // restart it asks for never returns, and it must not lose a race with a
+  // dwell release or with a frame the BLE task asked for a moment earlier.
+  if (otaPanelTaken()) processOtaScreenButton();
+  if (pendingOtaScreen) {
+    pendingOtaScreen = false;
+    showUpdatingScreen();
+    // Ack for the task running the install: the panel is now covered by a
+    // finished, static picture, so a flash write starting now happens behind
+    // the screen and not under it. Nothing else may draw between here and the
+    // ack - the update screen is the only thing a quiet window shows.
+    otaScreenDrawn = true;
+  }
+  if (pendingOtaDoneScreen) {
+    pendingOtaDoneScreen = false;
+    showOtaDoneScreen();
+    otaScreenDrawn = true;
+  }
+  if (pendingOtaErrorScreen) {
+    pendingOtaErrorScreen = false;
+    long errBytes = 0, errTotal = 0;
+    otaInstallBytesSnapshot(&errBytes, &errTotal);
+    showOtaErrorScreen(otaInstallReason(), otaInstallDetail(), errBytes, errTotal);
+    otaScreenDrawn = true;
+    otaErrorShownMs = millis();
+    // The panel is part of the reporting path now, so its own lifecycle has to
+    // be in the log: "the unit refused the image" and "the unit stopped telling
+    // the driver it refused" are two different moments, and a field report that
+    // says the message never appeared needs to say which one happened.
+    logPrintf("OTA panel: failure frame drawn (reason=%s bytes=%ld/%ld)\n",
+              otaInstallReason(), errBytes, errTotal);
+  }
+  // The error screen is information, not a cell: after a dwell it gives the
+  // panel back, because the unit is still running fine - a refused image never
+  // touched the slot it boots from - and a dashboard that hides itself for the
+  // rest of the drive is a second problem invented to report the first. The
+  // hold-to-restart gesture is there for the case where this screen is showing
+  // because something did go wrong inside the unit.
+  if (otaScreenStage == (uint8_t)OTA_SCREEN_FAILED && otaErrorShownMs != 0 &&
+      millis() - otaErrorShownMs > OTA_ERROR_SCREEN_DWELL_MS) {
+    otaErrorShownMs = 0;
+    otaScreenRelease();
+    logPrintf("OTA panel: failure frame released after %lums, dashboard restored\n",
+              (unsigned long)OTA_ERROR_SCREEN_DWELL_MS);
+  }
+  // GPIO25 while the update flow owns the panel is polled above, before any
+  // frame is drawn.
+
+}
+
+// The live transfer animates the bar; the done and error frames are complete
+// pictures. Called from the frame block and from the quiet window.
+static void animateOtaProgress() {
+  // Only the live transfer animates the bar. The done and error frames are
+  // complete pictures: drawing the leftover progress target across them
+  // would scribble a cyan line through the message that explains them.
+  static unsigned long lastOtaAdvance = 0;
+  static bool otaRebootShown = false;
+  static float otaSmoothedW = 0.0f;
+  unsigned long now = millis();
+  if (otaProgressFillW < otaProgressTarget && now - lastOtaAdvance >= 40) {
+    lastOtaAdvance = now;
+    int remaining = otaProgressTarget - otaProgressFillW;
+    int step;
+    if (remaining > 50)
+      step = random(10, 25);
+    else if (remaining > 20)
+      step = random(8, 18);
+    else
+      step = random(5, 12);
+    if (otaProgressFillW + step > otaProgressTarget)
+      step = otaProgressTarget - otaProgressFillW;
+    otaProgressFillW += step;
+  }
+  float diff = (float)otaProgressFillW - otaSmoothedW;
+  otaSmoothedW += diff * 0.08f;
+  if (fabsf(diff) < 1.0f) otaSmoothedW = (float)otaProgressFillW;
+  int fillW = (int)(otaSmoothedW + 0.5f);
+  if (fillW > 260) fillW = 260;
+  if (fillW > 0) {
+    int barX = DISPLAY_WIDTH / 2 - (260 / 2);
+    display.startWrite();
+    display.fillRect(barX, 160, fillW, 8, TFT_CYAN);
+    display.endWrite();
+  }
+  // The bar creeps; the line under it says how far the unit has actually
+  // got, in bytes it accepted itself (the same number it will quote back as
+  // the resume token). It repaints only when that number moved.
+  drawOTAProgressCounters();
+  if (otaUpdateSuccess && fillW >= 258 && !otaRebootShown) {
+    otaRebootShown = true;
+    // Same ending as the push path: the panel says what happened and stays
+    // that way long enough to read before the new firmware takes over. Here
+    // the frame is drawn directly rather than through the pendingOtaDoneScreen
+    // handoff because this *is* the display task - there is no other task to
+    // hand it to, and the restart follows in the next statement.
+    otaScreenStage = OTA_SCREEN_DONE;
+    showOtaDoneScreen();
+    // Long enough for two things: the driver reading the panel, and the `done`
+    // event actually leaving over BLE. The phone is the one that has to know the
+    // install finished - if the restart beats the notification it can only guess,
+    // and a guess is how a successful install ends up reported as stalled.
+    delay(3000);
+    bootinfo_tag_reboot("ota");
+    ESP.restart();
+  }
+}
+
+// Reboot the unit if the BLE pump stopped answering: with the dashboard producers
+// parked this is the only liveness guard left that matters during an install, so
+// the quiet window runs it too.
+static void bleLivenessWatchdog(unsigned long now) {
+  // BLE-task heartbeat watchdog: if the telemetry pump stops advancing its
+  // counter, the phone can no longer reach the unit. Reboot to recover.
+  // Disarmed only for the duration of a fast-reboot storm: the permanent
+  // disarming let a later wedge stay dead forever, so re-arm 3 minutes after
+  // boot. The 45s budget is the old web-task figure, kept because the pump is
+  // a 1 Hz loop and a 45 s gap means it is genuinely stuck, not slow.
+  if (watchdogDisabled && millis() > 180000) {
+    watchdogDisabled = false;
+    logPrintf("BLE watchdog re-armed\n");
+  }
+  // Seed from the live counter (not 0) so the first check is a real
+  // "did it advance since arming?" test, not a 0==0 comparison.
+  static unsigned long lastBtLoop = (unsigned long)btLoopCount;
+  static unsigned long btWatchdogDue = 0;
+  if (btWatchdogDue == 0) btWatchdogDue = millis() + 60000;
+  if (now >= btWatchdogDue) {
+    if (btLoopCount != lastBtLoop) {
+      lastBtLoop = btLoopCount;
+      btWatchdogDue = now + 45000;
+    } else if (!watchdogDisabled) {
+      logPrintf("BLE task stalled (heartbeat stopped), rebooting\n");
+      delay(100);
+      bootinfo_tag_reboot("ble-watchdog");
+      ESP.restart();
+    }
+  }
+}
+
+
 void loop() {
   if (pendingSleep)
     showGoodbyeScreen(true);
@@ -697,7 +865,11 @@ void loop() {
               (unsigned long)ESP.getFreeHeap());
   }
   static unsigned long lastLoopEntryMs = 0;
-  if (lastLoopEntryMs != 0) {
+  // The loop gap watch measures the dashboard loop. During an install the loop is
+  // parked behind the update screen at ~120 ms a tick on purpose, so it would
+  // print a "stall" every tick - a bench install produced 1,064 of these lines in
+  // two and a half minutes, each one costing UART time next to the transfer.
+  if (lastLoopEntryMs != 0 && !otaQuietActive) {
     unsigned long loopGap = now - lastLoopEntryMs;
     if (loopGap > 50)
       logPrintf("STALL: loop gap %lums heap=%lu otaReq=%d memAct=%d btCount=%lu bt=%d\n",
@@ -706,6 +878,41 @@ void loop() {
                 (unsigned long)btLoopCount, btLinkState());
   }
   lastLoopEntryMs = now;
+
+  // An open install owns the unit. Nothing below this point runs while it is
+  // window is open: no sensor snapshot, no clock refresh, no dashboard draw, no
+  // night mode, no CPU scaler, no factory-reset button watch (decision B of the
+  // BLE install plan: producers parked, panel owns the screen). What does run is
+  // the heap release the install asked for, the update frame and its progress bar,
+  // the trip-button gesture, and the BLE liveness guard. The tick is slow on
+  // purpose: 60 frames a second of panel traffic next to a flash write buys
+  // nothing behind an update screen, and the reboot that follows a good install
+  // rebuilds all of it anyway.
+  //
+  // loopWasQuiet is this task's own memory of the window, and the watches below
+  // are re-seeded here rather than in otaQuietExit(): that runs on BtTask (core
+  // 0), and core 1 then raced it - it saw the window close while still holding
+  // the pre-window tick, and printed the parked period as a 179 s sMaxGap and a
+  // 181 s maxFrame in the next heartbeat (bench, 2026-11-03).
+  static bool loopWasQuiet = false;
+  if (otaQuietActive) {
+    loopWasQuiet = true;
+    processOtaMemRelease();
+    processMemSaverRelease();
+    handleOtaPanelRequests();
+    if (otaUpdateInProgress && otaScreenStage == (uint8_t)OTA_SCREEN_UPDATING)
+      animateOtaProgress();
+    bleLivenessWatchdog(now);
+    vTaskDelay(pdMS_TO_TICKS(OTA_QUIET_TICK_MS));
+    return;
+  }
+  if (loopWasQuiet) {
+    loopWasQuiet = false;
+    lastLoopEntryMs = now;         // the first loop after the window is not a stall
+    g_diagSensorTickSeen = 0;      // a parked producer is not a stalled one
+    g_diagLastFrameMs = now;       // a parked loop is not a frame drop
+    g_diagFilteredFrameMs = 16.6f;  // and the FPS filter restarts neutral
+  }
 
   // Frees the speed sprite when an OTA check is pending (safe point: no sprite
   // is in use between frames). Must run before any TLS work starts.
@@ -765,14 +972,15 @@ void loop() {
   }
   // Sensor-task heartbeat: the loop never stalls (HB proves it), so a stalled
   // sensor task is invisible without a dedicated tick watch. Track the max
-  // gap between sensor ticks; printed in the HB as sMaxGap=.
-  static unsigned long lastSensorTickSeen = 0;
-  if (g_sensorLastTickMs != lastSensorTickSeen) {
-    if (lastSensorTickSeen != 0) {
-      unsigned long gap = g_sensorLastTickMs - lastSensorTickSeen;
+  // gap between sensor ticks; printed in the HB as sMaxGap=. The quiet window
+  // parks this task on purpose and re-seeds the watch on the way out, so an
+  // install never shows up here as a stall.
+  if (g_sensorLastTickMs != g_diagSensorTickSeen) {
+    if (g_diagSensorTickSeen != 0) {
+      unsigned long gap = g_sensorLastTickMs - g_diagSensorTickSeen;
       if (gap > g_diagMaxSensorGapMs) g_diagMaxSensorGapMs = gap;
     }
-    lastSensorTickSeen = g_sensorLastTickMs;
+    g_diagSensorTickSeen = g_sensorLastTickMs;
   }
 
   // Noise bench condition "tft": every display tick repaints the whole panel.
@@ -782,17 +990,16 @@ void loop() {
   // (issue #36), so the old "unlimited" special case was dead code.
   if (now - lastDisplayUpdate >= DISPLAY_REFRESH_MS) {
     unsigned long frameStartMs = millis();
-    static unsigned long lastFrameTime = 0;
-    static float filteredFrameTimeMs = 16.6f;
-    unsigned long frameDeltaMs = now - lastFrameTime;
+    if (g_diagLastFrameMs == 0) g_diagLastFrameMs = now;  // first pass: no delta yet
+    unsigned long frameDeltaMs = now - g_diagLastFrameMs;
     if (frameDeltaMs > 0) {
-      lastFrameTime = now;
+      g_diagLastFrameMs = now;
       if (frameDeltaMs > g_diagMaxFrameMs) g_diagMaxFrameMs = frameDeltaMs;
       if (frameDeltaMs > 24) g_diagOver24Ms = g_diagOver24Ms + 1;
-      filteredFrameTimeMs =
-          (filteredFrameTimeMs * 0.95f) + ((float)frameDeltaMs * 0.05f);
-      if (filteredFrameTimeMs > 0.0f)
-        currentMeasuredFps = 1000.0f / filteredFrameTimeMs;
+      g_diagFilteredFrameMs =
+          (g_diagFilteredFrameMs * 0.95f) + ((float)frameDeltaMs * 0.05f);
+      if (g_diagFilteredFrameMs > 0.0f)
+        currentMeasuredFps = 1000.0f / g_diagFilteredFrameMs;
     }
     static unsigned long lastFpsAvgCalcTime = 0;
     if (now - lastFpsAvgCalcTime >= 250) {
@@ -812,60 +1019,7 @@ void loop() {
     // statement.
     lastDisplayUpdate = now;
 
-    // Requests from the BLE task (src/bt_ota.cpp), drawn by the task that owns
-    // the panel.
-    static unsigned long otaErrorShownMs = 0;
-    // GPIO25 belongs to the screen while the screen is up, and its only gesture
-    // is the restart hold (processOtaScreenButton owns its own debounce; the
-    // sensor task's trip path is deaf for the whole window). Polled before the
-    // frames below so a held button wins the iteration it is detected in: the
-    // restart it asks for never returns, and it must not lose a race with a
-    // dwell release or with a frame the BLE task asked for a moment earlier.
-    if (otaPanelTaken()) processOtaScreenButton();
-    if (pendingOtaScreen) {
-      pendingOtaScreen = false;
-      showUpdatingScreen();
-      // Ack for the task running the install: the panel is now covered by a
-      // finished, static picture, so a flash write starting now happens behind
-      // the screen and not under it. Nothing else may draw between here and the
-      // ack - the update screen is the only thing a quiet window shows.
-      otaScreenDrawn = true;
-    }
-    if (pendingOtaDoneScreen) {
-      pendingOtaDoneScreen = false;
-      showOtaDoneScreen();
-      otaScreenDrawn = true;
-    }
-    if (pendingOtaErrorScreen) {
-      pendingOtaErrorScreen = false;
-      long errBytes = 0, errTotal = 0;
-      otaInstallBytesSnapshot(&errBytes, &errTotal);
-      showOtaErrorScreen(otaInstallReason(), otaInstallDetail(), errBytes, errTotal);
-      otaScreenDrawn = true;
-      otaErrorShownMs = millis();
-      // The panel is part of the reporting path now, so its own lifecycle has to
-      // be in the log: "the unit refused the image" and "the unit stopped telling
-      // the driver it refused" are two different moments, and a field report that
-      // says the message never appeared needs to say which one happened.
-      logPrintf("OTA panel: failure frame drawn (reason=%s bytes=%ld/%ld)\n",
-                otaInstallReason(), errBytes, errTotal);
-    }
-    // The error screen is information, not a cell: after a dwell it gives the
-    // panel back, because the unit is still running fine - a refused image never
-    // touched the slot it boots from - and a dashboard that hides itself for the
-    // rest of the drive is a second problem invented to report the first. The
-    // hold-to-restart gesture is there for the case where this screen is showing
-    // because something did go wrong inside the unit.
-    if (otaScreenStage == (uint8_t)OTA_SCREEN_FAILED && otaErrorShownMs != 0 &&
-        millis() - otaErrorShownMs > OTA_ERROR_SCREEN_DWELL_MS) {
-      otaErrorShownMs = 0;
-      otaScreenRelease();
-      logPrintf("OTA panel: failure frame released after %lums, dashboard restored\n",
-                (unsigned long)OTA_ERROR_SCREEN_DWELL_MS);
-    }
-    // GPIO25 while the update flow owns the panel is polled above, before any
-    // frame is drawn.
-
+    handleOtaPanelRequests();
     if (!otaPanelTaken()) {
       // Pairing owns the glass next: the six-digit code the phone has to type is
       // the one thing about this exchange that a person at the wheel has to see,
@@ -891,69 +1045,16 @@ void loop() {
         logPrintf("Pairing panel: released, dashboard restored\n");
       }
       if (!pairingShown) {
-        // A firmware install must not freeze the dashboard: the big sprites are
-        // dropped and rebuilt around it (processOtaMemRelease / ensureSpeedSprite)
-        // and the components fall back to direct-panel drawing for its duration,
-        // so the screen keeps animating.
+        // Reached only when the install flow does NOT own the panel. While the
+        // quiet window is up this task never gets this far at all: loop() takes
+        // the quiet branch above, and the dashboard pipeline does not run.
         updateBigDisplay(snap);
         drawFpsOverlay();
         drawGpsDebugOverlay();
         checkNightMode(snap);
       }
     } else if (otaUpdateInProgress && otaScreenStage == (uint8_t)OTA_SCREEN_UPDATING) {
-      // Only the live transfer animates the bar. The done and error frames are
-      // complete pictures: drawing the leftover progress target across them
-      // would scribble a cyan line through the message that explains them.
-      static unsigned long lastOtaAdvance = 0;
-      static bool otaRebootShown = false;
-      static float otaSmoothedW = 0.0f;
-      unsigned long now = millis();
-      if (otaProgressFillW < otaProgressTarget && now - lastOtaAdvance >= 40) {
-        lastOtaAdvance = now;
-        int remaining = otaProgressTarget - otaProgressFillW;
-        int step;
-        if (remaining > 50)
-          step = random(10, 25);
-        else if (remaining > 20)
-          step = random(8, 18);
-        else
-          step = random(5, 12);
-        if (otaProgressFillW + step > otaProgressTarget)
-          step = otaProgressTarget - otaProgressFillW;
-        otaProgressFillW += step;
-      }
-      float diff = (float)otaProgressFillW - otaSmoothedW;
-      otaSmoothedW += diff * 0.08f;
-      if (fabsf(diff) < 1.0f) otaSmoothedW = (float)otaProgressFillW;
-      int fillW = (int)(otaSmoothedW + 0.5f);
-      if (fillW > 260) fillW = 260;
-      if (fillW > 0) {
-        int barX = DISPLAY_WIDTH / 2 - (260 / 2);
-        display.startWrite();
-        display.fillRect(barX, 160, fillW, 8, TFT_CYAN);
-        display.endWrite();
-      }
-      // The bar creeps; the line under it says how far the unit has actually
-      // got, in bytes it accepted itself (the same number it will quote back as
-      // the resume token). It repaints only when that number moved.
-      drawOTAProgressCounters();
-      if (otaUpdateSuccess && fillW >= 258 && !otaRebootShown) {
-        otaRebootShown = true;
-        // Same ending as the push path: the panel says what happened and stays
-        // that way long enough to read before the new firmware takes over. Here
-        // the frame is drawn directly rather than through the pendingOtaDoneScreen
-        // handoff because this *is* the display task - there is no other task to
-        // hand it to, and the restart follows in the next statement.
-        otaScreenStage = OTA_SCREEN_DONE;
-        showOtaDoneScreen();
-        // Long enough for two things: the driver reading the panel, and the `done`
-        // event actually leaving over BLE. The phone is the one that has to know the
-        // install finished - if the restart beats the notification it can only guess,
-        // and a guess is how a successful install ends up reported as stalled.
-        delay(3000);
-        bootinfo_tag_reboot("ota");
-        ESP.restart();
-      }
+      animateOtaProgress();
     }
     unsigned long frameMs = millis() - frameStartMs;
     if (frameMs > 100)
@@ -1100,32 +1201,7 @@ void loop() {
     }
   }
 
-  // BLE-task heartbeat watchdog: if the telemetry pump stops advancing its
-  // counter, the phone can no longer reach the unit. Reboot to recover.
-  // Disarmed only for the duration of a fast-reboot storm: the permanent
-  // disarming let a later wedge stay dead forever, so re-arm 3 minutes after
-  // boot. The 45s budget is the old web-task figure, kept because the pump is
-  // a 1 Hz loop and a 45 s gap means it is genuinely stuck, not slow.
-  if (watchdogDisabled && millis() > 180000) {
-    watchdogDisabled = false;
-    logPrintf("BLE watchdog re-armed\n");
-  }
-  // Seed from the live counter (not 0) so the first check is a real
-  // "did it advance since arming?" test, not a 0==0 comparison.
-  static unsigned long lastBtLoop = (unsigned long)btLoopCount;
-  static unsigned long btWatchdogDue = 0;
-  if (btWatchdogDue == 0) btWatchdogDue = millis() + 60000;
-  if (now >= btWatchdogDue) {
-    if (btLoopCount != lastBtLoop) {
-      lastBtLoop = btLoopCount;
-      btWatchdogDue = now + 45000;
-    } else if (!watchdogDisabled) {
-      logPrintf("BLE task stalled (heartbeat stopped), rebooting\n");
-      delay(100);
-      bootinfo_tag_reboot("ble-watchdog");
-      ESP.restart();
-    }
-  }
+  bleLivenessWatchdog(now);
 
   vTaskDelay(pdMS_TO_TICKS(1));
 }
