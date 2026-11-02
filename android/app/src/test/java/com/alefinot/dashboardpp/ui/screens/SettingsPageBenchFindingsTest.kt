@@ -40,20 +40,21 @@ class SettingsPageBenchFindingsTest {
 
     /** Comment-free source, so a remembered description in a comment cannot satisfy a guard. */
     /**
-     * Two cards the unit's own page gives an action to, and this app cannot give one. `ota.begin`
-     * answers `not_implemented` in the firmware, and the "match to reference" calibrations work
-     * from a live reading that this page does not hold. The plan keeps both cards where the unit
-     * page puts them, so the guard is that they say what they cannot do rather than draw a
-     * control that would do something else — and that nothing in the settings pages has started
-     * quietly calling an OTA method the firmware refuses.
+     * A card whose action this page cannot carry on its own, and one calibration the page cannot
+     * do at all. The firmware card's work belongs to `OtaController` and the link, not to a
+     * settings row, so the guard is (a) the card states what an install risks, and (b) no settings
+     * screen starts an install by calling an RPC directly — an install that skipped the controller
+     * would own a 1.5 MB transfer nobody is tracking, and could not resume after a dropped link.
+     * The "match to reference" calibrations still cannot be invented: they need a live reading
+     * this page does not hold.
      */
     @Test
     fun aCardWithNoActionAvailableSaysSoInsteadOfInventingOne() {
         val layout = codeOnly("settings/SettingsLayout.kt")
         assertTrue(
-            "the firmware update card offers an update this firmware does not answer: " +
-                "ota.begin returns not_implemented, so the card has to say where updates happen",
-            layout.contains("Bluetooth OTA is not in this firmware"),
+            "the firmware update card stopped saying where the new image goes: it must state the " +
+                "spare-slot guarantee, because that is what makes START safe to press",
+            layout.contains("spare flash slot"),
         )
         val widgets = codeOnly("SettingsWidgets.kt")
         assertTrue(
@@ -65,7 +66,12 @@ class SettingsPageBenchFindingsTest {
             .filter { codeOnly(it.name).contains("action(\"ota") }
             .map { it.name }
             .sorted()
-        assertEquals("no settings screen may start an OTA: $offenders", emptyList<String>(), offenders)
+        assertEquals(
+            "a settings screen started an install on its own; the transfer belongs to " +
+                "OtaController: $offenders",
+            emptyList<String>(),
+            offenders,
+        )
     }
 
     private fun codeOnly(name: String): String {

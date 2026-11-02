@@ -90,11 +90,43 @@ class BleApi(private val link: BleLink) {
 
     suspend fun factoryReset(): BleReply = link.request("factory.reset", timeoutMs = 10_000)
 
-    /** The bounded tail of the unit's log, as a JSON object with a `text` field. */
+    /** The bounded tail of the unit's log, pulled on demand. */
     suspend fun log(): String? {
         val reply = link.request("log.get")
         return if (reply.ok) BleJson.string(reply.fields, "text") ?: reply.body else null
     }
+
+    // ------------------------------------------------------------------
+    // Firmware install (phase 2b)
+    //
+    // The control messages are ordinary RPC methods so the handshake gets the same request
+    // queue, correlation and timeout as every other call; only the image itself bypasses RPC
+    // and travels as raw writes on the OTA characteristic. That split is `ble/OtaCore.kt`'s
+    // business — from here it is four questions and one flow of answers.
+    // ------------------------------------------------------------------
+
+    /**
+     * Asks the unit to open its spare flash slot for a [size]-byte image whose CRC-32 is
+     * [crc32]. The answer carries the write size to use and the offset to continue from, which
+     * is what makes a resumed transfer continue instead of start over.
+     */
+    suspend fun otaBegin(size: Int, crc32: Long): BleReply =
+        link.request(
+            "ota.begin",
+            BleJson.params("size" to size, "crc32" to crc32),
+            // Opening a flash slot is not fast, and a wrong-size answer is worth waiting for
+            // rather than retrying into a half-open install.
+            timeoutMs = 20_000,
+        )
+
+    /** Where an install stands: `active`, `off`, `size`, `stage`. */
+    suspend fun otaStatus(): BleReply = link.request("ota.status", timeoutMs = 5_000)
+
+    /** Stops an install. The unit's running image is untouched either way. */
+    suspend fun otaAbort(): BleReply = link.request("ota.abort", timeoutMs = 8_000)
+
+    /** Tells the unit the last byte went out; it then runs its own image check. */
+    suspend fun otaEnd(): BleReply = link.request("ota.end", timeoutMs = 10_000)
 }
 
 /** The merged result of a streamed `config.get`. */

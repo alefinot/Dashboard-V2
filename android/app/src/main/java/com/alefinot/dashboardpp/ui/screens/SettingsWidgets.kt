@@ -32,10 +32,10 @@ import kotlinx.coroutines.launch
  * somebody has to go looking for. They used to live on a page of their own called TOOLS;
  * that page is gone, and each control came back to the card it belongs to.
  *
- * Every control here is an RPC the firmware already answers. Nothing is invented: what a
- * widget does is what `src/webui.html` does with the same name, and where this app cannot do
- * the unit's thing, the card says so instead of drawing a button that would do something
- * else.
+ * Every control here is an RPC the unit answers over the link, with one exception that is
+ * labelled where it sits: the firmware card (`firmwareUpdate`) asks the unit to start an install,
+ * and a unit whose build predates the Bluetooth installer answers `not_implemented`. The card
+ * prints that answer instead of drawing a wheel that would never finish.
  */
 @Composable
 internal fun WidgetControl(
@@ -57,10 +57,10 @@ internal fun WidgetControl(
         "odometerSet" -> OdometerControl(store, enabled, odoText, onOdo, onNote, scope)
         "ambientCalibrate" -> AmbientCalibrationControl(store, enabled, onNote, scope)
         "noiseBench" -> NoiseBenchControl(store, enabled, noiseLine, onNoise, scope)
-        // Nothing to press. What this card has to say is said on the card itself, by
-        // `SettingsLayout.cardHint`, because the sentence belongs to the card and not to a
-        // control that would otherwise be an empty row.
-        "firmwareUpdate" -> {}
+        // The one control that is not a request the unit answers today: it asks the unit to
+        // open its spare flash slot, and a unit built before the Bluetooth installer says
+        // `not_implemented`. The card prints that instead of hiding it.
+        "firmwareUpdate" -> FirmwareUpdateControl(store, enabled, onNote)
         "tempCalibrate" -> NoLiveReadingControl("engine temperature", "NTC_TEMP_OFFSET", enabled)
         "batteryCalibrate" -> NoLiveReadingControl("battery voltage", "BATTERY_OFFSET", enabled)
         else -> Text(

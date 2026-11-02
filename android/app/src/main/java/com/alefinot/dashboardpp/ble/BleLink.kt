@@ -132,6 +132,19 @@ class BleLink(context: Context) {
     val logs: SharedFlow<String> = _logs.asSharedFlow()
 
     /**
+     * `BT_F_OTA` frames: what the unit says about a firmware install it is running.
+     *
+     * These are unsolicited — the phone asked once (`ota.begin`) and the unit then reports as it
+     * writes: `begin_ok`, an `ack` every 16 KB, then `done` or `error`. That is why they are a
+     * flow and not replies: an ACK arrives while the phone is busy pushing the next chunk, and
+     * a request/response pairing would have nothing to pair it with. `ble/OtaCore.kt` parses
+     * them; the collector has to be running before the first write or the ACKs are lost, which
+     * only costs a coarser progress bar (the unit's own `ota.status` still says where it stands).
+     */
+    private val _otaEvents = MutableSharedFlow<String>(extraBufferCapacity = 32)
+    val otaEvents: SharedFlow<String> = _otaEvents.asSharedFlow()
+
+    /**
      * The index of each streamed `config.get` chunk as it lands, so a settings
      * screen can say "reading your settings, chunk 4" instead of showing a spinner
      * for eight seconds. Hot, not sticky: a chunk nobody is watching is a chunk
@@ -157,6 +170,17 @@ class BleLink(context: Context) {
     @Volatile
     private var rpcChar: BluetoothGattCharacteristic? = null
 
+    /**
+     * The write-only characteristic a firmware image travels on.
+     *
+     * A unit from before the BLE OTA state machine has it too (the profile always declared it),
+     * so its presence says nothing about whether an install is possible — that is answered by
+     * `ota.begin`. It is therefore optional at discovery: a link without it still runs every
+     * other method, and only the firmware card's start button goes quiet.
+     */
+    @Volatile
+    private var otaChar: BluetoothGattCharacteristic? = null
+
     // Callback-thread only.
     private val telemFrames = FrameAssembler()
     private val rpcFrames = FrameAssembler()
@@ -168,6 +192,7 @@ class BleLink(context: Context) {
     private var mtuDone: CompletableDeferred<Int>? = null
     private var descriptorDone: CompletableDeferred<Int>? = null
     private var writeDone: CompletableDeferred<Int>? = null
+    private var otaWriteDone: CompletableDeferred<Int>? = null
 
     private val seq = AtomicInteger(1)
     private val pending = ConcurrentHashMap<Int, Pending>()
@@ -320,6 +345,8 @@ class BleLink(context: Context) {
                 ?: throw IOException("telem_missing")
             val rpc = service.getCharacteristic(RPC_UUID)
                 ?: throw IOException("rpc_missing")
+            // Optional on purpose, see the field comment.
+            otaChar = service.getCharacteristic(OTA_UUID)
 
             if (!subscribe(client, telem)) throw IOException("telem_subscribe_failed")
             if (!subscribe(client, rpc)) throw IOException("rpc_subscribe_failed")
@@ -378,6 +405,75 @@ class BleLink(context: Context) {
                 pending.remove(id)
             }
         }
+    }
+
+    /** True when the unit exposes the OTA characteristic at all. */
+    fun otaAvailable(): Boolean = otaChar != null
+
+    /**
+     * Puts one firmware chunk on the wire.
+     *
+     * `WRITE_TYPE_NO_RESPONSE`, and the write is only issued once the stack reports the previous
+     * one: that is the flow control a 1.5 MB transfer needs. It also means the transfer stops by
+     * itself when the unit cannot keep up, instead of filling Android's outgoing queue, missing
+     * ATT slots and getting the connection torn down — the failure mode that looks like a broken
+     * cable.
+     *
+     * The write shares [writeMutex] with the RPC frames, one chunk at a time rather than one
+     * locked burst, so `ota.status` and `ota.abort` still fit between chunks when the driver
+     * presses a button mid-transfer.
+     */
+    suspend fun otaWrite(frame: ByteArray): Boolean {
+        val client = gatt ?: return false
+        val characteristic = otaChar ?: return false
+        if (_state.value !is BleLinkState.Ready) return false
+        return writeMutex.withLock {
+            try {
+                writeOtaFrame(client, characteristic, frame)
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun writeOtaFrame(
+        client: BluetoothGatt,
+        characteristic: BluetoothGattCharacteristic,
+        frame: ByteArray,
+    ) {
+        val done = CompletableDeferred<Int>()
+        otaWriteDone = done
+        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            client.writeCharacteristic(
+                characteristic,
+                frame,
+                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE,
+            ) == 0
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            @Suppress("DEPRECATION")
+            characteristic.value = frame
+            @Suppress("DEPRECATION")
+            client.writeCharacteristic(characteristic)
+        }
+        if (!started) {
+            otaWriteDone = null
+            throw IOException("ota_write_busy")
+        }
+        val status = try {
+            withTimeout(OTA_WRITE_TIMEOUT_MS) { done.await() }
+        } catch (e: TimeoutCancellationException) {
+            // Nothing came back for [OTA_WRITE_TIMEOUT_MS] of airtime. Say so rather than queue
+            // more writes into a link that may already be gone; the transfer's resume path decides
+            // whether it continues.
+            throw IOException("ota_write_timeout")
+        } finally {
+            otaWriteDone = null
+        }
+        if (status != BluetoothGatt.GATT_SUCCESS) throw IOException("ota_write_status_$status")
     }
 
     /** Drops the link. The next [connect] starts from a clean GATT client. */
@@ -615,6 +711,7 @@ class BleLink(context: Context) {
                     BleProto.T_RESP -> onResponse(text)
                     BleProto.T_CHUNK -> onChunk(text)
                     BleProto.T_LOG -> _logs.tryEmit(text)
+                    BleProto.T_OTA -> _otaEvents.tryEmit(text)
                 }
             }
         }
@@ -664,7 +761,10 @@ class BleLink(context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            // One in-flight write at a time across both characteristics, so only one of the two
+            // deferreds is ever armed.
             writeDone?.complete(status)
+            otaWriteDone?.complete(status)
         }
 
         override fun onCharacteristicChanged(
@@ -702,6 +802,10 @@ class BleLink(context: Context) {
         gatt = null
         telemChar = null
         rpcChar = null
+        otaChar = null
+        // A transfer waiting on its next write must learn about this now, not four seconds later
+        // when its own timeout fires.
+        otaWriteDone?.complete(BluetoothGatt.GATT_FAILURE)
         mtu = 23
         runCatching { client.disconnect() }
         runCatching { client.close() }
@@ -728,6 +832,7 @@ class BleLink(context: Context) {
         val SERVICE_UUID: UUID = UUID.fromString(BleProto.SERVICE_UUID)
         val TELEM_UUID: UUID = UUID.fromString(BleProto.TELEM_UUID)
         val RPC_UUID: UUID = UUID.fromString(BleProto.RPC_UUID)
+        val OTA_UUID: UUID = UUID.fromString(BleProto.OTA_UUID)
         val CCCD_UUID: UUID = UUID.fromString(BleProto.CCCD_UUID)
 
         const val CONNECT_TIMEOUT_MS = 20_000L
@@ -736,6 +841,7 @@ class BleLink(context: Context) {
         const val DISCOVER_TIMEOUT_MS = 10_000L
         const val DESCRIPTOR_TIMEOUT_MS = 8_000L
         const val WRITE_TIMEOUT_MS = 8_000L
+        const val OTA_WRITE_TIMEOUT_MS = 4_000L
         const val REQUEST_TIMEOUT_MS = 15_000L
     }
 }

@@ -155,21 +155,22 @@ object SettingsLayout {
     }
 
     /**
-     * One line on a card that is not a list of rows: what its action does, said on the
+     * One line on a card that is not a list of rows: what its action risks, said on the
      * card itself rather than promised on some other page.
      *
-     * Only the firmware card needs one. Bluetooth OTA is the unit's `ble.ota.begin()` path,
-     * which this firmware does not build, and an app that offers a firmware update it
-     * cannot carry is worse than one that says where the update happens.
+     * Only the firmware card needs one, and it needs it because a firmware update is the one
+     * setting-shaped thing on this page that can end with a vehicle sitting in the drive with a
+     * dead display. What the line says is what `src/bt_ota.cpp` guarantees: the image is written
+     * to the spare flash slot, and the unit switches to it only after its own checks pass.
      */
     private fun cardHint(card: SchemaCard): String? = when (card.widget) {
-        // The plan's sentence, and the firmware's: `ota.begin`/`ota.abort` answer
-        // `not_implemented` (bt_rpc.cpp), so there is no update to start from a phone. The card
-        // stays because the version lines on it are worth reading; the sentence keeps the card
-        // from promising an action that does not exist. Wi-Fi used to be the way in, and the app
-        // is not going to promise a road it is about to close.
-        "firmwareUpdate" -> "Bluetooth OTA is not in this firmware — updates happen from the " +
-            "unit's own settings page. This app ships no updater."
+        // Said on the card, above the buttons, because it is the sentence that decides whether a
+        // person presses them: a refused, cancelled or half-finished install leaves the running
+        // firmware exactly where it was. The buttons and their answers belong to the control
+        // (`FirmwareUpdateControl`); this line is only about what can go wrong.
+        "firmwareUpdate" -> "The new image is written to the unit's spare flash slot and put in " +
+            "charge only after it passes the unit's own checks. A cancelled, interrupted or " +
+            "refused install leaves the unit running what it ran before."
         else -> null
     }
 

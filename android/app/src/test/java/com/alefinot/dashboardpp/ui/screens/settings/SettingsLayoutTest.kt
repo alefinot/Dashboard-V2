@@ -356,10 +356,10 @@ class SettingsLayoutTest {
         assertNull("an ordinary card claims there is something elsewhere", blocks[0].card.hint)
         assertNull("a widget card points somewhere else", blocks[1].card.hint)
         assertTrue(
-            "the firmware card does not say where a unit is updated after this app stops " +
-                "carrying a way in: ota.begin answers not_implemented, and the app ships no " +
-                "updater, so the card has to say so in those words",
-            (blocks[2].card.hint ?: "").contains("Bluetooth OTA is not in this firmware"),
+            "the firmware card does not say what an install risks: the image goes to the spare " +
+                "flash slot and only takes charge after the unit's own checks pass, and the card " +
+                "has to say that before anybody presses START",
+            (blocks[2].card.hint ?: "").contains("spare flash slot"),
         )
         // A card that is only an action shows on its own title - it has no other text.
         assertEquals(
