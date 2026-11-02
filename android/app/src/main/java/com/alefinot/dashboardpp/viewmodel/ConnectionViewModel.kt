@@ -1037,7 +1037,19 @@ class ConnectionViewModel(
                 uiState.value = ConnectionUiState.Failed(step.reason)
             }
             is LadderStep.Retry -> {
-                if (ladder?.isActive == true) return
+                // The guard is about the link, not about the dial. A dial still in flight is not
+                // a reason to forget the failure - it is usually the dial that *reported* this very
+                // event, and dropping the retry there leaves the phone silent with the unit
+                // advertising: after a firmware install rebooted the unit on the bench
+                // (2026-11-02) the app dialed once, swallowed its own retry, and never tried
+                // again for four minutes. What must not be dialled over is an attempt to build a
+                // link that is actually progressing - that one will report again on its own.
+                val now = link.state.value
+                if (now is BleLinkState.Ready || now is BleLinkState.Connecting ||
+                    now is BleLinkState.Pairing
+                ) {
+                    return
+                }
                 attempts++
                 retry?.cancel()
                 retry = scope.launch {

@@ -145,6 +145,28 @@ class OtaCoreTest {
         assertNull(nextSegment(total = 1000, chunk = 300, off = 1200))
     }
 
+    /**
+     * A second `begin_ok` must not pull the phone back onto bytes the unit already has.
+     *
+     * The unit answers `ota.begin` in the RPC reply and again as an event, and the event lands after
+     * the loop has already moved past the first write. On the bench unit on 2026-11-02 a duplicate
+     * `begin_ok` at offset 0 arrived 0.4 s into a 1.5 MB install, the phone re-sent the first frame,
+     * and the unit ended the install at 496 bytes with `offset_mismatch`. Before the first write the
+     * event is the resume answer and is taken; after it, the phone's position wins and the unit's
+     * real position is recovered from ACKs / `ota.status` instead.
+     */
+    @Test
+    fun aLateBeginOkDoesNotRewindTheTransfer() {
+        // Nothing sent yet: the event is the resume answer, take it.
+        assertEquals(786432, adoptBeginOkOffset(sentTo = 0, eventOff = 786432))
+        assertEquals(0, adoptBeginOkOffset(sentTo = 0, eventOff = 0))
+        // Bytes already sent: the echo of an answer already applied is ignored.
+        assertEquals(496, adoptBeginOkOffset(sentTo = 496, eventOff = 0))
+        assertEquals(1048576, adoptBeginOkOffset(sentTo = 1048576, eventOff = 0))
+        // A duplicate that agrees with the phone changes nothing either way.
+        assertEquals(496, adoptBeginOkOffset(sentTo = 496, eventOff = 496))
+    }
+
     /** The phone's checksum has to be the same number the unit computes, or the check is theatre. */
     @Test
     fun crcIsTheSameNumberTheUnitComputes() {
@@ -405,6 +427,7 @@ class OtaCoreTest {
             "ota_in_progress", "too_many", "no_space", "size_declined", "bad_magic", "bad_length",
             "no_chunk_size", "bad_state", "update_begin_failed", "write_failed", "not_open",
             "no_session", "offset_mismatch", "crc", "link_lost", "stalled", "aborted", "end_failed",
+            "bad_frame", "too_small",
             "not_implemented",
             // src/bt_rpc.cpp
             "no_permission", "unknown_method", "too_many_frames", "parse_error",
@@ -432,9 +455,52 @@ class OtaCoreTest {
         assertTrue(OtaErrors.needsAction("offset_mismatch"))
         assertTrue(!OtaErrors.needsAction("already_running"))
         assertTrue(!OtaErrors.needsAction("aborted"))
-        // The resume window the sentence promises has to be the window the controller waits for.
-        assertTrue(OtaErrors.explain("link_lost").contains("60 seconds"))
-        assertEquals(60_000L, OtaController.RESUME_WINDOW_MS)
+        // The resume window the sentence promises is checked against the firmware's own number in
+        // `resumeWindowAndPacingMatchTheFirmware`, which is the only place it can be verified.
+    }
+
+    /**
+     * The two sides of the resume promise have to be the same number.
+     *
+     * The card tells a person the unit holds an install open for a while, and RESUME is offered on
+     * the strength of that sentence. The number that decides it lives in the firmware as
+     * `OTA_SILENCE_MS`, so this reads it out of `src/bt_ota.cpp` and compares: changing one side
+     * without the other fails here rather than stranding a resumable install (on the bench on
+     * 2026-11-02 the unit closed an install at 60 s while the phone still showed it as paused).
+     * The second half is the write ceiling against the unit's ACK cadence: if the phone ever waited
+     * for more unconfirmed bytes than the unit ever reports, a well-behaved transfer would wait
+     * forever on an ACK that is never sent.
+     */
+    @Test
+    fun resumeWindowAndPacingMatchTheFirmware() {
+        val firmware = firmwareSource("src/bt_ota.cpp")
+        val silence = Regex("""OTA_SILENCE_MS\s*=\s*(\d+)""").find(firmware)
+            ?: error("OTA_SILENCE_MS not found in src/bt_ota.cpp")
+        assertEquals("the app's resume window must be the unit's silence window",
+            silence.groupValues[1].toLong(), OtaController.RESUME_WINDOW_MS)
+        // The same promise, in words, in the sentence a driver reads.
+        assertTrue(OtaErrors.explain("link_lost").contains("two minutes"))
+
+        val ack = Regex("""OTA_ACK_BYTES\s*=\s*(\d+)""").find(firmware)
+            ?: error("OTA_ACK_BYTES not found in src/bt_ota.cpp")
+        assertTrue(
+            "the phone waits for ${OtaController.OUTSTANDING_BYTES} unconfirmed bytes, but the unit " +
+                "acks every ${ack.groupValues[1]} — the transfer would stall waiting for an ACK",
+            ack.groupValues[1].toInt() < OtaController.OUTSTANDING_BYTES,
+        )
+    }
+
+    /** Finds the firmware source from wherever the tests happen to run (module dir or repo root). */
+    private fun firmwareSource(relative: String): String {
+        val parts = relative.split('/')
+        var dir: java.io.File? = java.io.File(System.getProperty("user.dir"))
+        while (dir != null) {
+            var candidate = dir
+            for (p in parts) candidate = java.io.File(candidate, p)
+            if (candidate.isFile) return candidate.readText()
+            dir = dir.parentFile
+        }
+        error("could not find $relative walking up from ${System.getProperty("user.dir")}")
     }
 
     private fun assertFalseTerminal(result: Boolean) {

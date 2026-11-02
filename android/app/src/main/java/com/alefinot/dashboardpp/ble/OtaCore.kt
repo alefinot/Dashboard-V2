@@ -184,6 +184,22 @@ fun nextSegment(total: Int, chunk: Int, off: Int): OtaSegment? {
     return OtaSegment(off, minOf(chunk, total - off))
 }
 
+/**
+ * The offset to continue from when a `begin_ok` turns up while a transfer is running.
+ *
+ * `ota.begin` is answered twice by the unit: in the RPC reply, and again as a `begin_ok` event on
+ * the OTA characteristic. The reply has already been applied before the loop starts, so the event
+ * is a duplicate that arrives one write later. Re-adopting its offset then moves the phone back
+ * behind bytes the unit already has on flash, and the unit ends the install with
+ * `offset_mismatch` — measured on a bench unit on 2026-11-02, where a duplicate `begin_ok` at 0
+ * arrived 0.4 s into a 1.5 MB install and killed it at 496 bytes. Before the first write nothing
+ * has been sent, so the event is still the authoritative resume answer and is taken; after it, the
+ * phone's own position stands. A unit that genuinely restarted mid-transfer is caught by the
+ * ACK/`ota.status` recovery in the loop, which pulls the offset back from the unit when the unit
+ * is behind.
+ */
+fun adoptBeginOkOffset(sentTo: Int, eventOff: Int): Int = if (sentTo == 0) eventOff else sentTo
+
 /** One message the unit sends about an install (`BT_F_OTA` on the RPC characteristic). */
 sealed interface OtaEvent {
     /** The unit opened the install; [chunk] is the write size to use, [off] where to continue. */
@@ -277,7 +293,7 @@ object OtaErrors {
             "The bytes that arrived do not match the file you picked — something was lost in the " +
             "air. The unit is still running the firmware it had. Press START to send the file again."
         "link_lost" ->
-            "The Bluetooth link dropped. The unit holds the install open for 60 seconds for the " +
+            "The Bluetooth link dropped. The unit holds the install open for two minutes for the " +
             "phone to come back; reconnect on the link card and press RESUME inside that window."
         "stalled" -> "The unit heard nothing for too long and gave the install back. The unit is still running what it was."
         "aborted" -> "The install was cancelled. The unit is still running what it was."

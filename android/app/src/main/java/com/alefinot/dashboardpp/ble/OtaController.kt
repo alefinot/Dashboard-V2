@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,8 +51,34 @@ object OtaController {
     /** Silence to wait for the unit's next ACK before asking it where it stands. */
     const val STALL_SILENCE_MS = 12_000L
 
-    /** How long the unit is expected to hold an install open across a link drop. */
-    const val RESUME_WINDOW_MS = 60_000L
+    /**
+     * How long the unit is expected to hold an install open across a link drop.
+     *
+     * This is the unit's window, not the phone's: `OTA_SILENCE_MS` in `src/bt_ota.cpp` is the same
+     * number, and the card's wording is derived from it so a person reading "about 2 minutes" is
+     * reading the truth. It has to be long enough for a human to notice a pause, look at the card
+     * and press RESUME; 60 s measured too tight on the bench on 2026-11-02, where the unit closed a
+     * resumable install while the phone was still showing it as paused.
+     */
+    const val RESUME_WINDOW_MS = 120_000L
+
+    /**
+     * How far the phone may run ahead of the bytes the unit has confirmed on flash.
+     *
+     * WRITE_TYPE_NO_RESPONSE means a completed write only says the phone's stack took the bytes, not
+     * that the unit has them. Without a ceiling the phone buffers a couple of hundred kilobytes into
+     * Android's outgoing queue in a few seconds, the card then reports a number far behind what is
+     * really on flash, and the first hiccup wedges a queue nobody can flush. Pacing against the
+     * unit's own ACK keeps the outstanding window small and the progress figure honest. It must stay
+     * above the unit's ACK cadence (`OTA_ACK_BYTES`, 16 KiB), or the two sides deadlock.
+     */
+    const val OUTSTANDING_BYTES = 32 * 1024
+
+    /** Write attempts in a row before the transfer gives up and offers RESUME. */
+    const val MAX_WRITE_FAILURES = 3
+
+    /** Backoff between those attempts, so a busy unit gets a moment rather than another write. */
+    const val WRITE_RETRY_DELAY_MS = 300L
 
     /** How long to wait for the unit's verdict after the last byte went out. */
     const val VERIFY_WINDOW_MS = 60_000L
@@ -260,34 +287,84 @@ object OtaController {
 
             var lastAckMs = now()
             var lastPublishMs = 0L
+            var writeFailures = 0
 
             while (true) {
                 val seg = nextSegment(img.size, chunk, nextOff) ?: break
-                if (!link.otaWrite(OtaFrames.data(seg.offset, data, seg.offset, seg.length))) {
-                    // The link stopped taking writes. The unit keeps what it already has and
-                    // waits for the phone; that is a pause, not a failure, and the difference is
-                    // worth showing because RESUME is a real option for the next minute.
-                    _view.update {
-                        it.copy(
-                            stage = OtaStage.Paused,
-                            note = "The link stopped at " + tracker.acked + " of " + img.size +
-                                " bytes. The unit holds the install open for " +
-                                resumeWindowWords() + ": reconnect on the link card, then press " +
-                                "RESUME and it continues from where the unit actually is.",
-                        )
+
+                // Pace against the unit, not against the phone's own speed. The write callback only
+                // says Android took the bytes; the unit's ACK is the only thing that says they are
+                // on flash. Running further ahead than this buffers the image into the stack, makes
+                // the progress figure lag reality by a couple of hundred KB, and leaves a queue that
+                // cannot be flushed when the link hiccups.
+                if (nextOff - tracker.acked >= OUTSTANDING_BYTES) {
+                    val paceUntil = now() + STALL_SILENCE_MS
+                    while (nextOff - tracker.acked >= OUTSTANDING_BYTES && now() < paceUntil) {
+                        val ev = withTimeoutOrNull(400L) { events.receive() } ?: continue
+                        if (tracker.apply(ev)) {
+                            publish(tracker, img)
+                            return
+                        }
+                        if (ev is OtaEvent.Ack) lastAckMs = now()
                     }
-                    return
+                    // Falls through whether or not an ACK arrived: the stall check below asks the
+                    // unit where it is if the silence has run long enough.
                 }
+
+                if (!link.otaWrite(OtaFrames.data(seg.offset, data, seg.offset, seg.length))) {
+                    writeFailures++
+                    // A write the stack did not complete is not a dead link, and on this bench a
+                    // busy unit (flash writes stall both CPUs) can hold the callback past the
+                    // timeout with the radio perfectly healthy. Ask the unit where it actually is:
+                    // its answer is the offset to continue from, which covers both the write that
+                    // landed late and the one that never left the phone.
+                    val status = api.otaStatus()
+                    if (writeFailures >= MAX_WRITE_FAILURES || !status.ok ||
+                        link.state.value !is BleLinkState.Ready
+                    ) {
+                        val live = link.state.value is BleLinkState.Ready
+                        _view.update {
+                            it.copy(
+                                stage = OtaStage.Paused,
+                                note = "The unit has " + tracker.acked + " of " + img.size +
+                                    " bytes on flash" +
+                                    if (live) {
+                                        ". The link is still up; press RESUME and it continues from " +
+                                            "where the unit actually is."
+                                    } else {
+                                        ". The link dropped. The unit holds the install open for " +
+                                            resumeWindowWords() + ": reconnect on the link card, " +
+                                            "then press RESUME and it continues from there."
+                                    },
+                            )
+                        }
+                        return
+                    }
+                    val off = (BleJson.int(status.fields, "off") ?: nextOff).coerceIn(0, img.size)
+                    nextOff = off
+                    tracker.apply(OtaEvent.Ack(off))
+                    lastAckMs = now()
+                    publish(tracker, img)
+                    delay(WRITE_RETRY_DELAY_MS)
+                    continue
+                }
+                writeFailures = 0
                 tracker.wrote(seg.offset + seg.length)
                 nextOff = seg.offset + seg.length
 
                 while (true) {
                     val event = events.tryReceive().getOrNull() ?: break
                     if (event is OtaEvent.BeginOk) {
-                        // A second begin_ok means the unit opened a fresh install under us. Its
-                        // offset is authoritative, so the loop restarts from it.
-                        chunk = event.chunk.coerceIn(1, OtaFrames.maxChunk(mtu))
-                        if (event.off < nextOff) nextOff = event.off
+                        // The unit answers `ota.begin` twice - in the RPC reply (already applied
+                        // above) and as a `begin_ok` event on the OTA characteristic. Only the
+                        // second answer before the first write is worth adopting; after that the
+                        // event is an echo, and taking its offset back would put the phone behind
+                        // bytes the unit already has on flash (see `adoptBeginOkOffset`).
+                        val adopted = adoptBeginOkOffset(nextOff, event.off)
+                        if (adopted != nextOff) {
+                            chunk = event.chunk.coerceIn(1, OtaFrames.maxChunk(mtu))
+                            nextOff = adopted.coerceIn(0, img.size)
+                        }
                     }
                     if (tracker.apply(event)) {
                         publish(tracker, img)
@@ -334,7 +411,12 @@ object OtaController {
             // image gate runs inside Update.end(), then otadata flips.
             _view.update { it.copy(stage = OtaStage.Verifying, note = null) }
             api.otaEnd()
-            val deadline = startedAtMs + VERIFY_WINDOW_MS
+            // Measured from the end of the transfer, not from its start. The window has to cover
+            // the unit's own verify-and-flip work, which lands 1-2 s after the last byte - while
+            // the transfer itself ran two minutes. Counting it from the start of the transfer made
+            // every successful install answer "the unit heard nothing": measured on the bench on
+            // 2026-11-02, on an install the unit had in fact accepted, booted and reported.
+            val deadline = now() + VERIFY_WINDOW_MS
             while (now() < deadline) {
                 val event = withTimeoutOrNull(2_000) { events.receive() }
                 if (event == null) {

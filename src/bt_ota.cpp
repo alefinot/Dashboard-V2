@@ -53,12 +53,15 @@
 // ---------------------------------------------------------------------------
 // Limits
 // ---------------------------------------------------------------------------
-// The install is thrown away this long after the last accepted byte. One minute
-// is not a technical limit - it is the time it takes a driver to unlock a
-// tablet, open the app and reach the firmware card after a link drops. Shorter
-// and the resume story is unusable; longer and a unit that has been walked away
-// from sits parked behind an update screen for minutes.
-static const unsigned long OTA_SILENCE_MS = 60000UL;
+// The install is thrown away this long after the last accepted byte. This is not
+// a technical limit - it is the time it takes a driver to notice a pause, unlock a
+// tablet, open the app and reach the firmware card. Two minutes measured out on
+// the bench on 2026-11-02: at 60 s the unit closed an install (`stalled` at
+// 162192/1590912 B) while the phone was still showing it as resumable, and nobody
+// had a chance to press RESUME. The phone's own `RESUME_WINDOW_MS` carries the
+// same number so the card's wording stays true. Longer than this and a unit that
+// has been walked away from sits parked behind an update screen for too long.
+static const unsigned long OTA_SILENCE_MS = 120000UL;
 // A ceiling on the whole install, for a client that opens a session and then
 // forgets to send ota.end: the unit must not stay parked forever.
 static const unsigned long OTA_MAX_MS = 15UL * 60UL * 1000UL;

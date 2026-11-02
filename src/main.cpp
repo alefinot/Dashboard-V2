@@ -946,7 +946,11 @@ void loop() {
         // hand it to, and the restart follows in the next statement.
         otaScreenStage = OTA_SCREEN_DONE;
         showOtaDoneScreen();
-        delay(1200);
+        // Long enough for two things: the driver reading the panel, and the `done`
+        // event actually leaving over BLE. The phone is the one that has to know the
+        // install finished - if the restart beats the notification it can only guess,
+        // and a guess is how a successful install ends up reported as stalled.
+        delay(3000);
         bootinfo_tag_reboot("ota");
         ESP.restart();
       }

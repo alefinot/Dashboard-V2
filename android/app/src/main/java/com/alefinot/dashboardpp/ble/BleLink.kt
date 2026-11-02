@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -320,12 +321,43 @@ class BleLink(context: Context) {
         gatt = client
 
         try {
-            val up = try {
+            var up = try {
                 withTimeout(CONNECT_TIMEOUT_MS) { connected.await() }
             } catch (e: TimeoutCancellationException) {
                 false
             } finally {
                 connectDone = null
+            }
+
+            if (!up) {
+                // One patient retry. A unit that has just restarted - which is how every
+                // firmware install ends - is advertising again within seconds, but a direct
+                // connect to it comes back GATT_ERROR (133) on the bench (2026-11-02: after a
+                // completed install the link card sat in connect_timeout for minutes while the
+                // unit advertised happily). autoConnect = true asks the stack to wait for the
+                // advertisement instead of demanding a connection now. When the unit is simply
+                // gone this costs the same timeout it would have cost anyway.
+                disconnectInternal()
+                val patient = CompletableDeferred<Boolean>()
+                connectDone = patient
+                val waiting = try {
+                    device.connectGatt(appContext, true, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                } catch (e: SecurityException) {
+                    connectDone = null
+                    return fail("permission")
+                }
+                if (waiting == null) {
+                    connectDone = null
+                    throw IOException("connect_failed")
+                }
+                gatt = waiting
+                up = try {
+                    withTimeout(CONNECT_TIMEOUT_MS) { patient.await() }
+                } catch (e: TimeoutCancellationException) {
+                    false
+                } finally {
+                    connectDone = null
+                }
             }
             if (!up) throw IOException("connect_timeout")
 
@@ -619,20 +651,36 @@ class BleLink(context: Context) {
 
     @SuppressLint("MissingPermission")
     private suspend fun discover(client: BluetoothGatt) {
-        val done = CompletableDeferred<Boolean>()
-        serviceDone = done
-        if (!client.discoverServices()) {
-            serviceDone = null
-            throw IOException("discover_failed")
+        // Retried with a settling pause rather than decided once. A link that came up through the
+        // stack's pending/auto-connect path - which is how the app reconnects after a firmware
+        // install reboots the unit - can refuse a discovery issued the instant it connects:
+        // measured on the bench on 2026-11-02, `discoverServices()` came back false ~150 ms after
+        // a status-0 connection, and the link was thrown away for it. The stack accepts the same
+        // call a moment later.
+        var tries = 0
+        while (true) {
+            val done = CompletableDeferred<Boolean>()
+            serviceDone = done
+            val started = client.discoverServices()
+            val ok = if (!started) {
+                serviceDone = null
+                false
+            } else {
+                try {
+                    withTimeout(DISCOVER_TIMEOUT_MS) { done.await() }
+                } catch (e: TimeoutCancellationException) {
+                    false
+                } finally {
+                    serviceDone = null
+                }
+            }
+            if (ok) return
+            // Someone tore the link down while we were asking; retrying on a dead client is a lie.
+            if (gatt !== client) throw IOException("disconnected")
+            tries++
+            if (tries >= DISCOVER_ATTEMPTS) throw IOException("discover_failed")
+            delay(250L * tries)
         }
-        val ok = try {
-            withTimeout(DISCOVER_TIMEOUT_MS) { done.await() }
-        } catch (e: TimeoutCancellationException) {
-            false
-        } finally {
-            serviceDone = null
-        }
-        if (!ok) throw IOException("discover_failed")
     }
 
     @SuppressLint("MissingPermission")
@@ -839,9 +887,15 @@ class BleLink(context: Context) {
         const val MTU_TIMEOUT_MS = 5_000L
         const val BOND_TIMEOUT_MS = 180_000L
         const val DISCOVER_TIMEOUT_MS = 10_000L
+
+        /**
+         * How many times [discover] asks the stack before giving up on a link that will not
+         * enumerate its services. The pauses between are 250, 500, 750 ms.
+         */
+        const val DISCOVER_ATTEMPTS = 4
         const val DESCRIPTOR_TIMEOUT_MS = 8_000L
         const val WRITE_TIMEOUT_MS = 8_000L
-        const val OTA_WRITE_TIMEOUT_MS = 4_000L
+        const val OTA_WRITE_TIMEOUT_MS = 8_000L
         const val REQUEST_TIMEOUT_MS = 15_000L
     }
 }
