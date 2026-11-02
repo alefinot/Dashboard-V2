@@ -762,11 +762,13 @@ this is the sequence a person follows, and what to do when it does not work.
    the unit's own boot log (`BT: advertising as DPP-B594`), and once a pairing attempt has
    started it is on the panel too.
 2. **In the app: the VEHICLES slot** (the middle of the bar, and the page the app opens on)
-   → **ADD VEHICLE**. The scan list shows only units carrying the Dashboard++ service UUID,
-   with signal strength; if the unit is not in the list, it is not advertising (see below).
-3. **Pick it.** Android starts the pairing. The dashboard starts a fresh 6-digit number,
-   fills the whole screen with it, and says where to type it. The same line appears on COM7
-   at 115200 (`BT: pairing mode: passkey NNNNNN`) for anyone on a cable.
+   → **ADD VEHICLE** → **SEARCH FOR DASHBOARD++** (the same button reads **SEARCH AGAIN** once a
+   sweep has run). The sweep lists only units carrying the Dashboard++ service UUID, with
+   signal strength; a unit missing from the list is not advertising (see below).
+3. **Pick it.** The app asks Android to bond (`createBond()` in `ble/BleLink.kt`, and it watches
+   `ACTION_BOND_STATE_CHANGED`). The dashboard starts a fresh 6-digit number, fills the whole
+   screen with it, and says where to type it. The same line appears on COM7 at 115200
+   (`BT: pairing mode: passkey NNNNNN`) for anyone on a cable.
 4. **Type the number into Android's pairing dialog.** No dialog appears until the stack
    asks for one, so a dialog-free app screen does not mean the unit is fine.
 5. **The panel goes back to the dashboard** when the pairing completes or the window closes.
