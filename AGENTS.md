@@ -26,29 +26,34 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 - The upload layout is repaired by `scripts/fix_upload_layout.py` (a `post:` extra script in `platformio.ini`): it moves the otadata write to this table's real offset (`0x1D000`) and removes PlatformIO's fixed `0xe000` write, which sits **inside `nvs`** here and was destroying two settings pages per flash. Keep that script: without it a wired flash may not boot what it just wrote, and it silently loses NVS settings.
 - If esptool reports `Failed to start stub flasher. There was no response.`, retry once (at 115200 baud if needed); if it keeps failing, hold **BOOT** while tapping **RESET** to force download mode. Confirm the port with `esptool --port COM7 --baud 115200 read_mac`.
 - If COM7 is unreachable / not detected, **stop and ask the user how to continue** — do not auto-fallback to a guessed port or method.
-- **The firmware built from this tree has no Wi-Fi stack** (`platformio.ini`:
-  `build_src_filter = +<*> -<web.cpp` — firmware phase 0b of the BLE-only plan). A unit
-  flashed from it has no SoftAP, no `192.168.4.1`, no REST endpoint and no IP address, so
-  for that unit method 1 below is the only one that exists. Methods 2 and 3 apply only to
-  units still running a Wi-Fi firmware (≤ 1.4.x). `src/web.cpp` and `src/webui.html` are
-  still in the tree; whether the build uses them is a separate in-progress decision — if a
-  task depends on the Web Portal or the HTTP API being live, **ask before assuming it**.
+- **There is no Wi-Fi stack in this tree at all.** `src/web.cpp`, `src/webui.html` and
+  the generated `src/webui_html_gz.h` were deleted on 2026-11-02 (BLE-only plan,
+  step 0 cleanup) — there is no `build_src_filter` for them any more, nothing in
+  `src/` is excluded, and there is nothing to put back. A unit flashed from this
+  build has no SoftAP, no `192.168.4.1`, no REST endpoint and no IP address, so for
+  that unit method 1 below is the only one that exists. Methods 2 and 3 apply only
+  to units still running a Wi-Fi firmware (≤ 1.4.x); the page they talk to lives on
+  those units and in git history, not in the tree — if a task depends on the Web
+  Portal or the HTTP API being live on the bench unit, **ask before assuming it**.
 - When asking, list the available flashing methods:
   1. USB serial (PlatformIO `--upload-port <other COM port>`) — works on every unit
   2. WiFi OTA via PlatformIO: `pio run -t upload --upload-port <ESP_IP>` (device must be on the `Dashboard_Config` SoftAP or a known LAN IP) — Wi-Fi firmwares only (≤ 1.4.x)
   3. Web Portal OTA upload (browser → `http://192.168.4.1` → System Actions → upload `firmware.bin`) — Wi-Fi firmwares only (≤ 1.4.x)
-  4. **The Android app is not an update path, and do not plan one over HTTP.** A phone has
-     no way to reach `POST /api/ota` on a unit with no IP. The current app sources contain
-     **no updater at all** — `UpdateFetcher`, `UpdateRepository` and `UpdateScreens` are
-     deleted, and a grep of `android/app/src` finds no GitHub client, no firmware download,
-     no SHA-256 check and no `DPPVER` marker check. The settings accordion's Firmware card
-     shows the unit's versions and one honest line: "Bluetooth OTA is not in this firmware"
-     (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`). Do not describe
-     the app as shipping an updater, and do not add one over HTTP. The transport under
-     construction is **BLE**: the OTA characteristic and chunk frames (`0x80`-`0x85`) plus the
-     pairing passkey shown on the panel (firmware phases 4c/4d, app phase P6) — see
-     `Implementation plans/BLE-only firmware (phased).md`. There is **no** cloud pull on the
-     unit: it never fetches firmware by itself, and there is no self-update code left.
+  4. **The Android app is the update path, and only over BLE — never over HTTP.** A
+     phone has no way to reach a unit that has no IP, and the HTTP updater was deleted
+     with the server that served it: `UpdateFetcher`, `UpdateRepository` and
+     `UpdateScreens` are gone, and a grep of `android/app/src` finds no GitHub client,
+     no firmware download, no SHA-256 check and no `DPPVER` marker check. The settings
+     accordion's Firmware card shows the unit's versions and one honest line: "Bluetooth
+     OTA is not in this firmware" (`ota.begin` / `ota.abort` answer `not_implemented` in
+     `src/bt_rpc.cpp` while the transport is being built). Do not describe the app as
+     shipping an updater, and do not add one over HTTP. The transport under construction
+     is **BLE**: the OTA characteristic (`d9a1f003-…`) plus the pairing passkey shown
+     on the panel — the transfer is phase **2b** of
+     `Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md` (§4.7 defines the frames: a
+     JSON `begin` carrying size + CRC32, `offset + payload` writes, `ack` every 16 KB,
+     then `end`). There is **no** cloud pull on
+     the unit: it never fetches firmware by itself, and there is no self-update code left.
 
 ## 6. Implementation Plans — Never in Git
 - All implementation plans must be written/exported into the `Implementation plans/` folder at the repo root.
@@ -62,17 +67,24 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 - Ship the **debug build** (per the distribution decision in the app implementation plan): from `android/`, run `gradlew.bat assembleDebug` → APK lands in `android/app/build/outputs/apk/debug/`.
 - A code-only change that was not built into an APK is incomplete.
 
-## 9. WebUI Changes — Always Rebuild the Firmware at the End
-- The WebUI source is `src/webui.html`; it gets gzipped into the firmware at build time by the pre-script `scripts/gzip_webui.py`.
-- Whenever the WebUI is touched, **end the process by building the ESP firmware** (`pio run`) so the new WebUI is compiled into the ESP firmware binary.
-  (On the current build the portal is **not** embedded at all — `web.cpp` is out of the build, see rule 5 — so the rebuild only keeps the generated header honest. The rule still binds Wi-Fi firmwares (≤ 1.4.x) and any build that puts `web.cpp` back.)
-- WebUI work is incomplete until the firmware build succeeds with the new UI embedded.
+## 9. There Is No WebUI — the Settings Surface Is the Schema Pipeline (retired 2026-11-02)
+- `src/webui.html`, `src/web.cpp`, `src/webui_html_gz.h` and `scripts/gzip_webui.py` are
+  **deleted**: nothing is gzipped into the firmware and the unit serves no page. Do not
+  reintroduce an embedded page, an HTTP server or a `src_filter` that excludes one without
+  asking first (rule 1).
+- The settings surface today is the **Android app rendering a generated schema**:
+  `android/app/src/main/assets/config_schema.json`, produced from the `CFG_TABLE` in
+  `src/config.cpp` plus `scripts/config_schema_presentation.json` by
+  `scripts/gen_config_schema.py`.
+- Touching that pipeline is not done until: `python scripts/gen_config_schema.py --check`
+  is green, the app's unit tests pass, the APK builds (rule 8) and `pio run` passes
+  (rule 25). Group icons come from the same tree via `scripts/icons_to_drawables.py`.
 
 ## 10. Pins Are Sacred
 - The README pinout matrix reflects the real board wiring. No GPIO reassignment or repurposing without user approval.
 
 ## 11. FreeRTOS Task Map
-- Respect the core split: Core 0 = GNSS + network, Core 1 = vehicle sensors + display.
+- Respect the core split: Core 0 = GNSS + the BLE link (`GpsTaskCore0`, `BtTaskCore0`), Core 1 = vehicle sensors + display (`SensorTaskCore1`); one CPU probe per core.
 - Protect shared state with `g_stateMutex`; never block in ISRs.
 
 ## 12. NVS Wear Discipline
@@ -87,23 +99,27 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 - Watch the build size — 4 MB flash with the custom `partitions.csv` layout.
 
 ## 15. Generated Files Are Off-Limits
-- Never hand-edit generated files: `src/webui_html_gz.h` (from `scripts/gzip_webui.py`) or `include/*_vlw.h` (from `scripts/vlw_to_header.py`).
-- Always regenerate via `pio run`.
+- Never hand-edit generated files: `android/app/src/main/assets/config_schema.json` (from `scripts/gen_config_schema.py`), `android/app/src/main/res/drawable/ic_grp_*.xml` (from `scripts/icons_to_drawables.py`) or `include/*_vlw.h` (from `scripts/vlw_to_header.py`).
+- Always regenerate them: the schema and icons by running their script, the fonts via `pio run`. (`src/webui_html_gz.h` and `scripts/gzip_webui.py` were deleted with the WebUI — rule 9.)
 
 ## 16. English Only in Code
 - All code comments, log strings, and UI text in English.
 
-## 17. REST API Compatibility
-- The WebUI and the Android app depend on the REST endpoints. Changing/renaming/removing an endpoint requires updating every consumer and the README endpoint table in the same change.
+## 17. BLE RPC Compatibility
+- The Android app depends on the BLE link: RPC method names, the frame types in `src/bt_proto.h` (`BT_F_REQ` … `BT_F_CHUNK`, 1–10, mirrored verbatim in `android/app/src/main/java/com/alefinot/dashboardpp/ble/BleProtocol.kt`), the 8-byte frame header, the FIRST/LAST reassembly rules and every field inside a telemetry snapshot. Changing/renaming/adding/removing one requires updating **every consumer in the same change** — `src/bt.cpp` / `src/bt_rpc.cpp` / `src/bt_proto.h` on the unit, `BleProtocol.kt` / `BleLink.kt` / `BleApi.kt` in the app, the protocol tests on both sides, and the README method table.
+- The REST endpoint table in the README is **historical**: it describes units still running a Wi-Fi firmware (≤ 1.4.x). Nothing in this tree serves HTTP; do not add an endpoint.
 
 ## 18. New NVS Config Param Checklist
-- A new config param needs **all four in one commit**: default in `config.cpp`, backup-JSON template, WebUI control, README reference.
+- A new config param needs **all of these in one commit**: default + `CFG_TABLE` row in `src/config.cpp`, an entry in `scripts/config_schema_presentation.json` (label, group, control type), the regenerated `config_schema.json` asset (rule 15), and a README reference. Backups need no template — a backup file is written from the table itself.
+- New NVS keys are renamed-and-carried, not silently re-defaulted: follow `cfgCarryRenamedKeys()` in `src/config.cpp` when a key changes name so an owner's stored value survives the upgrade.
 
-## 19. Self-Contained WebUI
-- No external CDN / network assets in `webui.html` — the dashboard works offline.
+## 19. The Settings UI Carries Its Own Data
+- The app renders its settings form from the bundled schema asset — it must never fetch UI structure, labels or icons over the network. Weather is the one deliberate network exception: the phone fetches it and pushes the result to the unit (`weather.set`), because the unit has no radio.
+- (The old rule was "no external CDN in `webui.html`" — that file is deleted, rule 9.)
 
 ## 20. Keep Demo Mode Working
 - Simulation / demo mode is the primary no-hardware test path; UI/sensor changes must not break it.
+- It is enabled through the app (Dashboard settings → **System & General** → **General** card → *Enable Sensor Demo Mode*, key `ENABLE_DEMO_MODE`) or a `config.set` over the BLE link — not through a Web page.
 
 ## 21. No Secrets in the Repo
 - Never commit credentials, WiFi passwords, or API keys.
@@ -126,7 +142,7 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 
 ## 27. Release Assets — Always Ship firmware.bin and the APK
 - Every GitHub release must attach **both** artifacts: the ESP firmware binary (`.pio/build/esp32dev/firmware.bin`) and the Android app debug APK (`android/app/build/outputs/apk/debug/app-debug.apk`). A release missing either is incomplete.
-- **Do not attach a `.sig` asset** — no device can verify one (rule 3). Ship exactly **one** `.bin` asset per release: the pull path takes the first `.bin` it sees.
+- **Do not attach a `.sig` asset** — no device can verify one (rule 3). Ship exactly **one** `.bin` asset per release: a second one only makes a human guessing which image to flash.
 
 ## 28. GitHub Release Title Format
 - Release titles are **just `Vx.x.x`** (e.g. `V1.3.3`) — no extra text, matching how they were titled before.
@@ -151,12 +167,14 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 
 ## Project Quick Reference
 - **Firmware:** ESP32 WROOM-32, PlatformIO project in repo root (`platformio.ini`, env `esp32dev`), Arduino framework, LovyanGFX 4.0" ILI9488 480×320 display.
-- **Build:** `pio run` (pre-scripts gzip the web UI and compile VLW fonts — run `pio run`, not a plain compile).
+- **Build:** `pio run` (the pre-script compiles the VLW fonts into headers; the post-script repairs the upload layout and reports the image tag — run `pio run`, not a plain compile).
 - **Version:** `FW_VERSION` in `src/config.cpp` (see rule 3).
-- **Docs:** `README.md` is the full technical reference (architecture, pinout, REST API, NVS params, changelog).
+- **Docs:** `README.md` is the full technical reference (architecture, pinout, BLE RPC reference, historical REST table for ≤ 1.4.x units, NVS params, changelog).
 - **Plans:** `Implementation plans/` — local-only (never committed/pushed; see rule 6).
 - **Android app:** `android/` — companion app (Kotlin/Compose, Gradle). Always finish with a debug APK build (rule 8).
-- **Config backups:** NVS backup/restore handled via Web UI; reference template in code.
-- **Demo mode:** Web UI → System & Modes → enable; synth telemetry for bench testing.
+- **Transport:** BLE GATT service `d9a1f000-6c1e-4b8a-9f2d-3e7c1a5b9d40`, characteristics `…f001` telemetry (notify), `…f002` RPC (write + notify), `…f003` OTA (write-nr); framed by `src/bt.cpp` with the wire format in `src/bt_proto.h`, methods served by `src/bt_rpc.cpp`.
+- **Settings schema:** `android/app/src/main/assets/config_schema.json` — generated from `CFG_TABLE` + `scripts/config_schema_presentation.json` (rules 9, 15, 18).
+- **Config backups:** NVS backup/restore through the Android app; a backup file is written from `CFG_TABLE`, there is no hand-kept template.
+- **Demo mode:** app → Dashboard settings → **System & General** → **General** card → *Enable Sensor Demo Mode*; synth telemetry for bench testing.
 - **Graphify:** `graphify-out/` knowledge graph — local-only, code-only AST updates (`graphify update .`, once per code change; never `graphify . --update` in normal work — rule 29); `graphify-watch.bat` runs the live AST watcher.
 - **Hardware:** `hardware/` — 85×55 mm carrier PCB generated by `hardware/scripts/make_pcb.py` (board + `footprints/dpp.pretty` + DRC report in one run). Board-side reference: `hardware/PINOUT.md`. Rules referee = KiCad DRC (rule 30).
