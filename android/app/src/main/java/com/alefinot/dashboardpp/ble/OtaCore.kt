@@ -35,22 +35,23 @@ object OtaFrames {
     /**
      * The largest payload one OTA write may carry, whatever the MTU says.
      *
-     * An ATT write carries `MTU - 3` bytes (opcode + 2-byte handle), so a 517-byte MTU allows
-     * 514. 512 is the biggest 16-byte multiple at or under that, and keeping the number fixed
-     * means a phone that negotiated a different MTU still sends the same chunks it was tested
-     * with.
+     * An ATT write carries `MTU - 3` bytes (opcode + 2-byte handle), and 4 of those belong to the
+     * offset that opens every OTA frame — so at a 517-byte MTU the ceiling is 510, and the
+     * biggest 16-byte multiple at or under it is 496. Getting this wrong by four bytes is not a
+     * performance problem: the stack rejects the write (or, on some phones, quietly fragments
+     * it) and the transfer stalls with a write timeout.
      */
     const val CHUNK_CAP = 512
 
     /** The biggest chunk a link at [mtu] can carry, aligned and at least one byte. */
     fun maxChunk(mtu: Int): Int {
-        val usable = mtu - 3
+        val usable = mtu - 3 - OFFSET_BYTES
         if (usable < 1) return 1
         val capped = minOf(usable, CHUNK_CAP)
         val aligned = (capped / CHUNK_ALIGN) * CHUNK_ALIGN
-        // A 23-byte MTU leaves 20 usable, which is not a whole 16-byte step. Staying under the
-        // ceiling matters more than staying aligned, so an odd remainder is allowed rather than
-        // rounding up past what the link can carry.
+        // A 23-byte MTU leaves 16 usable, and a 19-byte link leaves 12, which is not a whole
+        // 16-byte step. Staying under the ceiling matters more than staying aligned, so an odd
+        // remainder is allowed rather than rounding up past what the link can carry.
         return if (aligned < 1) minOf(usable, CHUNK_ALIGN) else aligned
     }
 

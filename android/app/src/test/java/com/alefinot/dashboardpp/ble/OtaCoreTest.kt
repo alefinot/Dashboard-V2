@@ -24,28 +24,40 @@ class OtaCoreTest {
     // ------------------------------------------------------------------
 
     /**
-     * A chunk bigger than the ATT payload does not fail loudly — the stack fragments it, and on
-     * some phones fragmented long writes are the slow path or the broken one. 23 bytes is what a
-     * link is worth before negotiation and 517 is what it is worth after, so both ends of that
-     * range are worth pinning.
+     * A chunk that does not fit the ATT payload does not fail cleanly — the stack rejects the
+     * write, or on some phones fragments it, and either way the transfer stalls. Four of the
+     * payload bytes belong to the offset that opens the frame, so the ceiling is `MTU - 7`
+     * rather than `MTU - 3`. 23 bytes is what a link is worth before negotiation and 517 is what
+     * it is worth after, so both ends of that range are worth pinning.
      */
     @Test
     fun chunkSizeFollowsTheMtu() {
-        assertEquals(512, OtaFrames.maxChunk(517))
+        assertEquals(496, OtaFrames.maxChunk(517))
         assertEquals(240, OtaFrames.maxChunk(247))
         assertEquals(16, OtaFrames.maxChunk(23))
         // A link that never negotiated: keep the frame legal rather than refuse to send.
-        assertEquals(2, OtaFrames.maxChunk(5))
+        assertEquals(1, OtaFrames.maxChunk(5))
         // Never zero, or a transfer would spin without advancing.
         assertTrue(OtaFrames.maxChunk(0) >= 1)
     }
 
-    /** Alignment is a throughput nicety; staying inside the ATT payload is not. */
+    /**
+     * Alignment is a throughput nicety; staying inside the ATT payload is not. The offset prefix
+     * must be counted in the byte that goes over the air, which is the arithmetic this whole
+     * test exists to keep honest.
+     */
     @Test
     fun chunkSizeNeverRoundsPastTheLinkOrBelowOneByte() {
-        assertEquals(15, OtaFrames.maxChunk(18))
-        assertEquals(16, OtaFrames.maxChunk(19))
-        assertTrue(OtaFrames.maxChunk(18) <= 18 - 3)
+        assertEquals(11, OtaFrames.maxChunk(18))
+        assertEquals(12, OtaFrames.maxChunk(19))
+        // The frame on the wire is the chunk plus its four offset bytes, and that whole thing
+        // must fit an ATT write at every MTU a link can actually negotiate.
+        for (mtu in intArrayOf(23, 27, 65, 185, 247, 251, 512, 517)) {
+            val chunk = OtaFrames.maxChunk(mtu)
+            assertTrue("chunk $chunk does not fit an ATT write at MTU $mtu",
+                chunk + OtaFrames.OFFSET_BYTES <= mtu - 3)
+            assertTrue("chunk $chunk must advance the transfer", chunk >= 1)
+        }
     }
 
     // ------------------------------------------------------------------
