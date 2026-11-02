@@ -310,8 +310,9 @@ const char FW_VERSION[] = FW_VERSION_STR;
 // that image *is* without a human typing it. That is why the update card stopped
 // asking (2026-10-30): the version of the file you just picked is read out of
 // the file. Compiled in as one literal so it appears verbatim in the image;
-// imageVersionTag() keeps it referenced (and GET /api/ota/check echoes it, which
-// is how you confirm from a PC that the build in your hands carries it). The
+// imageVersionTag() keeps it referenced, and the BLE `health` method echoes it
+// as `img` next to `fw` (the compiled-in FW_VERSION) - that is how you confirm
+// from a phone or a PC that the build in your hands carries it. The
 // post-build script scripts/fix_upload_layout.py prints the marker it finds in
 // the built .bin, so a build that somehow lost it is visible at build time.
 __attribute__((used)) static const char kImageVersionTag[] = "DPPVER=" FW_VERSION_STR;
@@ -1013,7 +1014,7 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
 
 // The version this unit IS: the compiled-in build identity. Every version
 // decision reads this and nothing else - the install's same-version and
-// downgrade gates, and the current_version that /api/ota/check reports (issue #72).
+// downgrade gates, and the `fw` field the BLE `health` method reports (issue #72).
 const char *buildVersion() {
   return FW_VERSION;
 }

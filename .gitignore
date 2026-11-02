@@ -83,3 +83,7 @@ hardware/tools/
 
 # pi agent session state (local only)
 .unipi/
+
+# Serial captures taken on the bench (scripts/serial_capture.py output).
+# Local-only, like graphify-out/: they record one run of one unit.
+serial-*.log

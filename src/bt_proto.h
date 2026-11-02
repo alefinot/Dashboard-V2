@@ -37,6 +37,12 @@ enum BtFrameType : uint8_t {
   BT_F_TIME = 5,
   BT_F_PING = 6,
   BT_F_PONG = 7,
+  // Install events, unit -> phone, JSON: {"ev":"begin_ok"|"ack"|"done"|"error"}.
+  // They travel on the RPC characteristic, the only one of the three that can
+  // notify - the OTA data characteristic is write-only, so it has nothing to
+  // answer on. The image bytes never travel this way: they go to the OTA
+  // characteristic as offset(4, little endian) + payload, payload at most
+  // MTU - 3 - 4 (496 B at the 517 B we ask for).
   BT_F_OTA = 8,
   BT_F_LOG = 9,
   // One piece of a streamed config.get. It gets its own type instead of reusing
@@ -66,6 +72,29 @@ size_t btBuildSnapshotJson(char *buf, size_t cap);
 // Bytes left on the BLE task stack at its deepest point since boot; 0 until the
 // task exists. This is the stack the RPC handlers run on.
 uint16_t btStackFree();
+
+// The ATT MTU actually negotiated on this link (what onMtu said), NOT what we
+// asked for - BLEDevice::getMTU() reports the request, so a central that
+// negotiated lower would be handed a chunk size its writes cannot carry.
+uint16_t btLinkMtu();
+
+// The install itself (src/bt_ota.cpp). The control-plane calls run on the BLE
+// task, from the RPC handlers below. btOtaFeed runs on the Bluedroid callback
+// task and only copies - flash work there would stall the GATT stack - and
+// btOtaPoll() (called from the BLE task's loop) drains that ring into flash,
+// folds the CRC-32, sends the ACK events and enforces the resume/silence
+// windows. Every state change therefore happens on one task, and there are no
+// locks between the control plane and the data path.
+bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
+                const char **err);
+bool btOtaEnd(const char **err, uint32_t *off);
+bool btOtaAbort(const char **err);
+void btOtaStatus(char *buf, size_t cap, uint32_t *off, uint32_t *size, bool *active,
+                 const char **stage);
+void btOtaFeed(const uint8_t *data, size_t len);
+void btOtaPoll();
+bool btOtaActive();         // an install is open, resume window included
+bool btOtaImageAccepted();  // verified and activated; the reboot is pending
 
 // Forgets every stored pairing. Called by the factory reset: the GATT
 // permissions require an encrypted link, so a bond left behind by the previous

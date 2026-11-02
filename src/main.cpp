@@ -81,8 +81,9 @@ void otaScreenRelease() {
   forceFullRedraw = true;
 }
 
-// Panel ownership as a word, for /api/ota/check and for any client that has to
-// say what the dashboard is doing. The distinction that matters to a phone: when
+// Panel ownership as a word, for the BLE `ota.status` reply and for any client
+// that has to say what the dashboard is doing. The distinction that matters to a
+// phone: when
 // this is not "off", GPIO25 is not the trip reset, it is the restart hold - so
 // the hold instruction belongs next to the state, not in a string a client
 // invents. "claimed" is the gap where an install holds the panel but no frame has
@@ -241,6 +242,58 @@ static bool applyCpuFreq(int mhz, const char *why) {
   logPrintf("CPU: refused to switch to %dMHz (%s) - still running at %dMHz\n",
             mhz, why, (int)getCpuFrequencyMhz());
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Firmware-update quiet window (BLE install; src/bt_ota.cpp opens and closes it)
+//
+// While an install is in flight the unit's only jobs are the panel, the flash
+// writes and the trip button. Everything else is parked - cooperatively, by
+// checking otaQuietActive at their loop tops, never by suspending a task from
+// outside (that can freeze it inside a g_stateMutex section and stall the
+// display task with it; rule 11). The park is a trade: an idle speed readout
+// costs the write amplification of the GNSS UART and the probe churn sitting
+// next to the flash slot, and behind an update screen nobody reads them.
+//
+// The CPU is pinned to 240 MHz for the window and put back on exit: erase and
+// program time go through the flash driver, and at 80 MHz (what the dynamic
+// scaler settles on when the dashboard is idle - which is exactly what it looks
+// like with the producers parked) the writes are slower and the 60-second
+// silence window gets closer on a slow link.
+// ---------------------------------------------------------------------------
+int otaQuietMhzBefore = 0;  // the clock the window took over, for the log line
+
+void otaQuietEnter(const char *why) {
+  if (otaQuietActive) return;
+
+  // Open the window behind a finished picture. Drawing into the panel while the
+  // flash driver is busy is slow, and the update screen is what tells the driver
+  // the unit is no longer showing speed. Bounded, because a panel that never
+  // answers must not hang the task running the install.
+  for (int i = 0; i < 150 && !otaScreenDrawn; i++) vTaskDelay(pdMS_TO_TICKS(20));
+
+  otaQuietActive = true;
+  otaQuietLastByteMs = millis();
+  otaQuietMhzBefore = (int)getCpuFrequencyMhz();
+  if (otaQuietMhzBefore < 240) applyCpuFreq(240, "firmware update");
+  logPrintf("OTA quiet: open (%s) heap=%lu cpu=%d->%dMHz screen=%s\n", why ? why : "?",
+            (unsigned long)ESP.getFreeHeap(), otaQuietMhzBefore, (int)getCpuFrequencyMhz(),
+            otaScreenDrawn ? "drawn" : "NOT DRAWN");
+}
+
+void otaQuietExit(const char *why) {
+  if (!otaQuietActive) return;
+  const unsigned long heldMs = millis() - otaQuietLastByteMs;
+  otaQuietActive = false;
+  if (getCpuFrequencyMhz() != otaQuietMhzBefore)
+    applyCpuFreq(otaQuietMhzBefore, "after firmware update");
+  // The dashboard has to come back whole: the parked producers left the speed
+  // readout, the trip counter and the clock sitting at whatever they were when
+  // the window opened, and the panel has been showing an update frame.
+  forceFullRedraw = true;
+  logPrintf("OTA quiet: closed (%s) heap=%lu cpu=%dMHz last byte %lums ago\n",
+            why ? why : "?", (unsigned long)ESP.getFreeHeap(), (int)getCpuFrequencyMhz(),
+            heldMs);
 }
 
 void setup() {
@@ -759,22 +812,23 @@ void loop() {
     // statement.
     lastDisplayUpdate = now;
 
-    // Requests from the web task, drawn by the task that owns the panel.
+    // Requests from the BLE task (src/bt_ota.cpp), drawn by the task that owns
+    // the panel.
     static unsigned long otaErrorShownMs = 0;
     // GPIO25 belongs to the screen while the screen is up, and its only gesture
     // is the restart hold (processOtaScreenButton owns its own debounce; the
     // sensor task's trip path is deaf for the whole window). Polled before the
     // frames below so a held button wins the iteration it is detected in: the
     // restart it asks for never returns, and it must not lose a race with a
-    // dwell release or with a frame the web task asked for a moment earlier.
+    // dwell release or with a frame the BLE task asked for a moment earlier.
     if (otaPanelTaken()) processOtaScreenButton();
     if (pendingOtaScreen) {
       pendingOtaScreen = false;
       showUpdatingScreen();
-      // Ack for the web task: the panel is now covered by a finished, static
-      // picture, so a flash write starting now happens behind the screen and
-      // not under it. Nothing else may draw between here and the ack - the
-      // update screen is the only thing a quiet window shows.
+      // Ack for the task running the install: the panel is now covered by a
+      // finished, static picture, so a flash write starting now happens behind
+      // the screen and not under it. Nothing else may draw between here and the
+      // ack - the update screen is the only thing a quiet window shows.
       otaScreenDrawn = true;
     }
     if (pendingOtaDoneScreen) {
@@ -879,6 +933,10 @@ void loop() {
         display.fillRect(barX, 160, fillW, 8, TFT_CYAN);
         display.endWrite();
       }
+      // The bar creeps; the line under it says how far the unit has actually
+      // got, in bytes it accepted itself (the same number it will quote back as
+      // the resume token). It repaints only when that number moved.
+      drawOTAProgressCounters();
       if (otaUpdateSuccess && fillW >= 258 && !otaRebootShown) {
         otaRebootShown = true;
         // Same ending as the push path: the panel says what happened and stays
@@ -921,7 +979,10 @@ void loop() {
       lastCpuProbeCheck = now;
     }
   }
-  if (now - lastCpuScaleCheck >= 1000) {
+  // The update window owns the clock while it is open (pinned at 240 MHz by
+  // otaQuietEnter): the scaler below decides from FPS, and FPS is meaningless
+  // with the producers parked - it would fight the pin.
+  if (!otaQuietActive && now - lastCpuScaleCheck >= 1000) {
     lastCpuScaleCheck = now;
     uint32_t targetFreq;
     float cpuTemp = temperatureRead();

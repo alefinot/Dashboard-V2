@@ -798,6 +798,19 @@ void btRpcHandle(const char *msg, size_t len, uint16_t seq) {
   const uint32_t id = (uint32_t)(doc["id"].is<long>() ? doc["id"].as<long>() : (long)seq);
   JsonVariantConst p = doc["p"];
 
+  // While an install is open the unit has one job. Everything that is not about
+  // that install is refused with a word the app already maps to a sentence, and
+  // the dangerous ones matter most: a config.set writes NVS, and an NVS write
+  // suspends flash-resident code on both cores while the OTA slot is being
+  // programmed. `ping` stays answered so a client can still ask "are you
+  // alive?" while 1.5 MB go past, and ota.* stays answered because that is the
+  // install's own control plane.
+  if (btOtaActive() && strcmp(m, "ping") && strncmp(m, "ota.", 4) != 0) {
+    logPrintf("RPC: '%s' refused, a firmware install is open\n", m);
+    rpcErr(seq, id, "ota_in_progress");
+    return;
+  }
+
   if (!strcmp(m, "ping")) {
     const size_t prefix = rpcBegin(id);
     size_t used = prefix;
@@ -873,10 +886,68 @@ void btRpcHandle(const char *msg, size_t len, uint16_t seq) {
     pendingReboot = true;
     return;
   }
-  if (!strcmp(m, "ota.begin") || !strcmp(m, "ota.abort")) {
-    // Phase 2b: the image travels on the OTA characteristic as framed
-    // BT_F_OTA chunks, so these two are control messages, not JSON payloads.
-    rpcErr(seq, id, "not_implemented");
+  // ---------------------------------------------------------------------------
+  // The install (src/bt_ota.cpp owns the state; these four are its control plane)
+  //
+  // The image bytes never travel through here - they go to the OTA
+  // characteristic as offset(4) + payload. These calls open the slot, finish it,
+  // throw it away, and ask where a half-finished one stands.
+  // ---------------------------------------------------------------------------
+  if (!strcmp(m, "ota.begin")) {
+    // A crc32 travels as a plain decimal (see ble/OtaCore.kt OtaJson), which
+    // needs the 64-bit read: 4294967295 does not fit the signed long ArduinoJson
+    // hands back by default, and reading it wrong would look like a corrupted
+    // transfer at the very end of the run.
+    const uint32_t size = (uint32_t)p["size"].as<uint64_t>();
+    const uint32_t crc32 = (uint32_t)p["crc32"].as<uint64_t>();
+    uint32_t off = 0, chunk = 0;
+    const char *why = nullptr;
+    if (!btOtaBegin(size, crc32, &off, &chunk, &why)) {
+      logPrintf("RPC: ota.begin refused (%lu B, crc %08lx): %s\n", (unsigned long)size,
+                (unsigned long)crc32, why ? why : "?");
+      return rpcErr(seq, id, why ? why : "update_begin_failed");
+    }
+    const size_t prefix = rpcBegin(id);
+    size_t used = prefix;
+    btCatf(s_out, sizeof(s_out) - 1, &used, "{\"off\":%lu,\"chunk\":%lu}", (unsigned long)off,
+           (unsigned long)chunk);
+    rpcFinish(seq, prefix, used - prefix);
+    return;
+  }
+  if (!strcmp(m, "ota.end")) {
+    const char *why = nullptr;
+    uint32_t off = 0;
+    if (!btOtaEnd(&why, &off)) return rpcErr(seq, id, why ? why : "end_failed");
+    const size_t prefix = rpcBegin(id);
+    size_t used = prefix;
+    btCatf(s_out, sizeof(s_out) - 1, &used, "{\"verified\":true,\"off\":%lu}", (unsigned long)off);
+    rpcFinish(seq, prefix, used - prefix);
+    return;
+  }
+  if (!strcmp(m, "ota.abort")) {
+    const char *why = nullptr;
+    if (!btOtaAbort(&why)) return rpcErr(seq, id, why ? why : "no_session");
+    return rpcSend(seq, id, "{\"aborted\":true}");
+  }
+  if (!strcmp(m, "ota.status")) {
+    // The question a phone asks when it is not sure what the unit has - the ACK
+    // that carried the answer may well have been in the air when the link went
+    // away. Everything in the answer is something the app can use to pick up
+    // mid-file: where the unit is, how big the file was said to be, and how long
+    // it has been since it last heard anything.
+    char extra[96];
+    uint32_t off = 0, size = 0;
+    bool active = false;
+    const char *stage = "off";
+    extra[0] = 0;
+    btOtaStatus(extra, sizeof(extra), &off, &size, &active, &stage);
+    const size_t prefix = rpcBegin(id);
+    size_t used = prefix;
+    btCatf(s_out, sizeof(s_out) - 1, &used,
+           "{\"active\":%s,\"off\":%lu,\"size\":%lu,\"stage\":\"%s\"%s%s}",
+           active ? "true" : "false", (unsigned long)off, (unsigned long)size, stage,
+           extra[0] ? "," : "", extra);
+    rpcFinish(seq, prefix, used - prefix);
     return;
   }
 

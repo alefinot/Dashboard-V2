@@ -101,10 +101,12 @@ bool btSendMessage(uint8_t type, uint16_t seq, const char *data, size_t len) {
   case BT_F_PONG:
   case BT_F_LOG:
   case BT_F_CHUNK:
-    out = s_rpc;
-    break;
   case BT_F_OTA:
-    out = s_ota;
+    // Install events ride the RPC characteristic too: it is the only one that
+    // can notify, and the app parses them from the same subscription it gets
+    // answers on (ble/BleLink.kt). The OTA characteristic below is write-only,
+    // so it has nothing to answer on.
+    out = s_rpc;
     break;
   default:
     out = s_telem;
@@ -145,6 +147,11 @@ bool btSendMessage(uint8_t type, uint16_t seq, const char *data, size_t len) {
 }
 
 bool btLinkUp() { return s_connected; }
+
+// What the current link actually negotiated, for the chunk size handed to a
+// phone at ota.begin. BLEDevice::getMTU() reports what we ASKED for, which on a
+// central that exchanged smaller would be an over-large write.
+uint16_t btLinkMtu() { return s_mtu; }
 
 // Feeds one ATT write into the reassembly buffer. Runs on the Bluedroid task,
 // so it copies and returns - the JSON work happens on the BLE task.
@@ -197,21 +204,10 @@ static void btRxFragment(const uint8_t *data, size_t n) {
   }
 }
 
-// OTA state that used to live in web.cpp. The upload path is reimplemented on
-// the OTA characteristic in phase 2b; these are the two symbols the rest of the
-// firmware still reads.
+// OTA state that used to live in web.cpp. The install itself is reimplemented on
+// the OTA characteristic in src/bt_ota.cpp (phase 2b); this one global stays
+// here because it is the display loop's reboot trigger, not install state.
 volatile bool otaUpdateSuccess = false;
-bool otaFlashWriteActive() { return false; }
-
-// The update screen asks these three for "why did the last install stop".
-// Phase 2b's OTA state machine owns them; until then a BLE-only build never
-// starts an install, so the screen can only be reached with nothing to say.
-const char *otaInstallReason() { return "none"; }
-const char *otaInstallDetail() { return ""; }
-void otaInstallBytesSnapshot(long *bytesDone, long *bytesTotal) {
-  *bytesDone = 0;
-  *bytesTotal = 0;
-}
 
 // ----------------------------------------------------------------------------
 // Security
@@ -285,6 +281,19 @@ class BtRpcCallbacks : public BLECharacteristicCallbacks {
     }
     logPrintf("BT: RPC notify #%d status %u rc %u CCCD %d handle 0x%04x\n", s_rpcNotifyLogged,
               (unsigned)s, (unsigned)code, cccdFlag(c), (unsigned)c->getHandle());
+  }
+};
+
+// The OTA data characteristic: raw bytes, no framing - offset(4, little endian)
+// then payload. This callback runs on the Bluedroid task, so it copies into
+// bt_ota.cpp's ring and returns: flash writes, the CRC fold and the ACK events
+// all happen on BtTask, the task that also answers RPC. Doing the write here
+// would stall the GATT stack for the length of an erase-and-program, and the
+// callback task's stack is not sized for the flash driver.
+class BtOtaCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *, esp_ble_gatts_cb_param_t *param) override {
+    if (param->write.is_prep) return;  // prepared writes are not part of this contract
+    btOtaFeed(param->write.value, param->write.len);
   }
 };
 
@@ -456,11 +465,22 @@ static void btTask(void *pvParameters) {
 
     if (now - lastTelem >= 1000) {
       lastTelem = now;
-      if (s_connected && s_telem != nullptr) {
+      // The quiet window stops the dashboard stream: on this link the image and
+      // the dashboard compete for the same airtime, and during an install the
+      // only traffic the phone needs is the install's own (ACK events and the
+      // occasional status question). The snapshot values are parked too, so a
+      // stream here would be a stream of frozen numbers.
+      if (s_connected && s_telem != nullptr && !otaQuietActive) {
         size_t n = btBuildSnapshotJson(telemBuf, sizeof(telemBuf));
         if (n > 0) btSendMessage(BT_F_TELEM, (uint16_t)(now / 1000), telemBuf, n);
       }
     }
+
+    // The install: drain whatever the Bluedroid task copied off the OTA
+    // characteristic into flash, fold the CRC, ACK, and enforce the resume and
+    // total-duration windows. This 10 ms pace is also the fastest a 496 B write
+    // can be consumed at, and the ring is what absorbs a burst between passes.
+    btOtaPoll();
 
     // The phase 2a bench driver is not started from here: it is an RPC method
     // ("bench.run", see the dispatcher in bt_rpc.cpp) so the central measuring it
@@ -587,6 +607,9 @@ void btInit() {
 
   s_ota = svc->createCharacteristic(OTA_UUID, BLECharacteristic::PROPERTY_WRITE_NR);
   s_ota->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+  // Write-only on purpose: no CCCD, because an install never answers on this
+  // characteristic - its events go out on RPC (see btSendMessage).
+  s_ota->setCallbacks(new BtOtaCallbacks());
 
   svc->start();
 

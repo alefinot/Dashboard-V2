@@ -871,6 +871,55 @@ void showUpdatingScreen() {
   ledcWrite(BL_DISPLAY, fadeTarget);
 }
 
+// The receiving frame's numbers line.
+//
+// A bar that creeps along tells the driver an install is happening; it does not
+// tell them how far there is to go, and "is this thing stuck or is it just slow"
+// is the question a person staring at a car dashboard actually asks. The counts
+// come from bt_ota.cpp's counters (the bytes the unit itself accepted, which is
+// also the resume token it will quote back if the link drops), and when nothing
+// has arrived for a while the line says so - because at that moment the phone is
+// the thing that has to do something, and the panel is the only screen in reach.
+//
+// Drawn by the display task from loop(), never by the BLE task; it repaints a
+// fixed band under the bar and only when there is something new to say (a 64 KB
+// milestone), so the flash write path is not interrupted by a text draw every
+// frame. Built-in 5x7 glyphs on purpose: no VLW load, no font swap in the middle
+// of a transfer, and a redraw this cheap can happen often without costing the
+// link its throughput.
+void drawOTAProgressCounters() {
+  long done = 0, total = 0;
+  otaInstallBytesSnapshot(&done, &total);
+  if (total <= 0) return;  // no size declared: the bar is all there is
+
+  char line[48];
+  const unsigned long silentMs = otaQuietActive ? millis() - otaQuietLastByteMs : 0;
+  if (silentMs > 8000) {
+    // Silence, not slowness: a phone that walked away leaves the slot open for
+    // the resume window, and the driver needs to know which of the two it is
+    // looking at.
+    snprintf(line, sizeof(line), "WAITING FOR PHONE %lus", (unsigned long)(silentMs / 1000UL));
+  } else if (done >= total) {
+    snprintf(line, sizeof(line), "%ld / %ld - CHECKING", done, total);
+  } else {
+    snprintf(line, sizeof(line), "%ld / %ld", done, total);
+  }
+
+  static char lastLine[sizeof(line)] = "";
+  if (strcmp(lastLine, line) == 0) return;
+  snprintf(lastLine, sizeof(lastLine), "%s", line);
+
+  const int bandY = 198, bandH = 13;  // under the bar (160) and the warning line (~185)
+  display.startWrite();
+  display.fillRect(DISPLAY_WIDTH / 2 - 132, bandY, 264, bandH, TFT_BLACK);
+  display.setTextFont(1);
+  display.setTextColor(otaQuietActive && silentMs > 8000 ? TFT_ORANGE : TFT_CYAN);
+  const int tw = (int)display.textWidth(line);
+  display.setCursor(DISPLAY_WIDTH / 2 - tw / 2, bandY);
+  display.print(line);
+  display.endWrite();
+}
+
 // Word-wrap a sentence into fixed line slots for the update screens. The VLW
 // fonts are proportional, so the measurement has to be textWidth() and not a
 // character count: 40 characters of this detail string spans 260 px or 400 px

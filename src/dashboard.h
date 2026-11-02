@@ -607,7 +607,7 @@ extern volatile bool pendingOtaErrorScreen;
 bool otaPanelTaken();
 // Ask for a screen / give the panel back. All four only set flags the display
 // loop consumes; none of them touches the panel, so they are safe to call from
-// the web task. otaScreenRelease() also requests a full redraw.
+// the BLE task. otaScreenRelease() also requests a full redraw.
 void otaScreenShowUpdate();
 void otaScreenShowDone();
 void otaScreenShowError();
@@ -615,16 +615,13 @@ void otaScreenRelease();
 // The same ownership as a word for API replies: off | claimed | updating |
 // done | failed. Not "off" means GPIO25 is the restart hold, not the trip reset.
 const char *otaScreenStageName();
-// Install diagnostics for the error screen, owned by the upload handler in
-// web.cpp (the display task only prints them, never writes them).
+// Install diagnostics for the failure frame, owned by the install state machine
+// in bt_ota.cpp (the display task only prints them, never writes them), and read
+// while the failure frame is being drawn so the panel cannot disagree with the
+// log about what just happened.
 const char *otaInstallReason();
 const char *otaInstallDetail();
 void otaInstallBytesSnapshot(long *bytesDone, long *bytesTotal);
-// Record why an install failed, for the failure frame. Written by the path that
-// is installing (the upload handler sets these as it refuses), read once by the
-// display task while it draws. One failure record, so the panel cannot disagree
-// with the log about what just happened.
-void otaInstallSetFailure(const char *reason, const char *detail);
 
 extern bool pendingInvertDisplay;
 // Config-save handoff between the web task and the display loop (issue #10)
@@ -819,6 +816,10 @@ void updateSplashProgress(int targetProgress);
 void releaseSleepPinHolds();
 void showGoodbyeScreen(bool isSleep);
 void showUpdatingScreen();
+// The receiving frame's live numbers line (bytes accepted / declared size, or a
+// waiting note while the resume window runs). Repaints one band under the bar,
+// from the display loop only.
+void drawOTAProgressCounters();
 void showOtaDoneScreen();
 void showOtaErrorScreen(const char *reason, const char *detail, long bytesDone,
                         long bytesTotal);
@@ -892,29 +893,34 @@ extern volatile bool otaMemReleaseRequested;
 extern volatile bool otaMemReleased;
 
 // Firmware-update quiet window. While an install is in flight the panel shows
-// only the update screen and everything that is not the panel, the upload itself
-// or the trip button is parked: GNSS and the CPU probes wait at their loop tops
-// (cooperatively - suspending a task from outside can freeze it inside a
-// g_stateMutex section), weather is aborted, the CPU is pinned to 240 MHz and the
-// web server answers 503 on every endpoint the phone does not need. Entered and
-// left by the web task that runs the install. `true` means the window is open.
-// See Implementation plans/MANUAL_OTA_PHONE_PUSH_PLAN-2026-10-28.md 5.2.
+// only the update screen and everything that is not the panel, the install
+// itself or the trip button is parked: GNSS and the CPU probes wait at their loop
+// tops (cooperatively - suspending a task from outside can freeze it inside a
+// g_stateMutex section), the CPU is pinned to 240 MHz, and deferred NVS writes
+// (the odometer) are held until the slot is closed. Entered and left by the BLE
+// task that runs the install (src/bt_ota.cpp); the window exists because the
+// flash slot and the code running it live on the same chip. `true` means the
+// window is open. See Implementation plans/BLE-OTA-PHASE-2b-2026-11-02.md §5.2.
 extern volatile bool otaQuietActive;
 void otaQuietEnter(const char *why);
 void otaQuietExit(const char *why);
-// Set by the display task once the update screen is actually on the panel, so
-// the web task can open the flash slot behind a finished picture instead of
-// halfway through a screen draw (otaQuietEnter waits on it, bounded).
+// The clock the window took over, restored on exit and printed at both ends so a
+// field log can see the pin and its release.
+extern int otaQuietMhzBefore;
+// Set by the display task once the update screen is actually on the panel, so the
+// task running the install can open the flash slot behind a finished picture
+// instead of halfway through a screen draw (otaQuietEnter waits on it, bounded).
 extern volatile bool otaScreenDrawn;
-// Bytes of the current install seen recently, so the web loop can close a
-// window whose client died mid-transfer (a dropped TCP connection produces no
-// UPLOAD_FILE_END). Published on /api/ota/check as quiet_silent_ms.
+// Last time an install byte was accepted. The BLE loop closes a window whose
+// client died mid-transfer (a link drop sends no last frame) with a `stalled`
+// error once this passes 60 s.
 extern volatile unsigned long otaQuietLastByteMs;
-// Bytes are going into the OTA slot right now (web.cpp). The one condition that
-// makes the hold-to-restart gesture refuse to fire: a reset in the middle of a
-// flash write leaves a half-written slot, which is the failure this whole
+// Bytes are going into the OTA slot right now (bt_ota.cpp). The one condition
+// that makes the hold-to-restart gesture refuse to fire: a reset in the middle of
+// a flash write leaves a half-written slot, which is the failure this whole
 // redesign exists to remove. Asked as a question rather than read as a variable:
-// the interlock behind it is web.cpp's own business and stays file-static there.
+// the interlock behind it is bt_ota.cpp's own business and stays file-static
+// there.
 bool otaFlashWriteActive();
 void processMemSaverRelease();
 extern volatile bool memSaverRequested;
