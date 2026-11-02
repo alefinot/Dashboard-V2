@@ -542,25 +542,49 @@ The complete set as implemented in `src/bt_rpc.cpp`:
 | `log.get` | the 4 KB serial ring, pulled on demand | `GET /api/serial` (which streamed) |
 | `weather.set`, `time.set` | the unit has no radio of its own: the phone supplies the weather widget and the clock | nothing — the unit used to fetch weather itself and sync NTP; both fetchers are deleted |
 | `ping` | keepalive | — |
-| `ota.begin`, `ota.abort` | firmware install control — **`not_implemented` in this build** (see below) | `POST /api/ota` |
+| `ota.begin`, `ota.end`, `ota.status`, `ota.abort` | firmware install control — **implemented in this build** (`src/bt_ota.cpp`; the wire shape is spelled out in *Firmware over the link* below) | `POST /api/ota` (≤ 1.4.x only) |
 
-### Firmware over the link — what this build does and does not do
+### Firmware over the link — how an install runs in this build
 
-> [!IMPORTANT]
-> **A unit built from this tree cannot be updated from the app yet, and there is no HTTP
-> fallback.** The OTA characteristic exists and demands an encrypted write, and `BT_F_OTA`
-> frames are routed to the receive path in `src/bt.cpp`, but the install state machine that
-> consumed them lived in `src/web.cpp` and was deleted with it. `ota.begin` and `ota.abort`
-> answer `not_implemented`, and the panel's Firmware card says exactly that: *"Bluetooth OTA is
-> not in this firmware."* Until the install path lands, **the only way to put firmware on a
-> BLE-only unit is USB serial** (`pio run -t upload --upload-port COM7`). Wi-Fi firmwares
-> (≤ 1.4.x) still take `POST /api/ota` from their own portal.
+A unit built from this tree **can be updated over Bluetooth**, by the Android app or by
+any central that speaks the frames below; the HTTP fallback is gone with the Wi-Fi stack.
+`src/bt_ota.cpp` is the install state machine, `src/bt.cpp` routes the raw OTA-characteristic
+writes into it (copy into a 4-slot ring on the Bluedroid callback task, flash from `BtTask`
+— stalling the GATT callback task stalls the whole stack, including the link the phone is
+still using), and `src/bt_rpc.cpp` serves its four methods.
 
-The design the install path is being rebuilt to — and what the phone can expect while an image
-is moving — is the quiet-window model documented under *Over-The-Air (OTA) Updates* below:
-version and size gates first, the frame clock and the sensor reads parked around the writes,
-the panel showing progress and holding on a "restart?" screen, then a deliberate restart. See
-also `Implementation plans/` for the phased BLE plan.
+| Step | On the wire |
+|---|---|
+| Open | RPC `ota.begin {"size":N,"crc32":N}` → reply `{"off":N,"chunk":N}`, and the same answer a second time as a `begin_ok` event. `off` is where the unit stands — which is what makes an interrupted install resumable, and re-stating the same `begin` **is** the resume handshake |
+| Data | The OTA characteristic (`d9a1f003-…`, write-without-response, encrypted): `offset (4 bytes little-endian) + payload`, at most `chunk` bytes per write. `chunk` is the MTU less the ATT header and the offset prefix, rounded down to 16 and **capped at 512** — 506 B at the negotiated MTU 517, so a bigger MTU is a faster install up to MTU 519 and nothing past it |
+| Progress | `{"ev":"ack","off":N}` sent as a `BT_F_OTA` frame **on the RPC characteristic** every 16 KiB of accepted data and at the last byte — the OTA characteristic is write-only, so it has nothing to answer on. The ACK is the resume token: after a drop the phone asks `ota.status`, gets the offset, and continues from there instead of starting over |
+| Watch | RPC `ota.status` — bytes on flash, declared size, where the unit stands (`opening` / `active` / `rebooting` / `failed` / `off`); `ota.abort` hands the slot back |
+| Close | RPC `ota.end`. The unit CRC-32s what it actually received — the polynomial and chaining written out in `bt_ota.cpp` so the two ends cannot drift, matching `java.util.zip.CRC32` and `crc32(1)` — then `esp_ota_end()` verifies the image (magic, checksum, its own SHA), and the answer is `{"ev":"done","off":N}` or `{"ev":"error","reason":"…","off":N}` |
+
+Windows and limits, each one decided on purpose:
+
+- **120 s of silence closes an install** (`reason: "stalled"`). It was 60 s until 2026-11-02, and on the first bench install after that window was added the unit threw away a healthy transfer (162,192 of 1,590,912 B accepted, and an unusable slot) while the phone sat on its own 60 s resume deadline — the two ends were closing the same door from different rooms. The app carries the same number (`OtaController.RESUME_WINDOW_MS`) so its wording stays true.
+- **15 min** is the ceiling on a whole install — the escape hatch for a client that opens a session and never sends `ota.end`.
+- An image must be **≥ 4 KiB** (smaller is a truncated download or a text file) and **≤ the app slot** (`0x1D0000` = 1,900,544 B). That is why the build gate is **1.80 MB**: a normal build must never ask a question this gate answers with "no".
+- The bytes go to the **inactive** app slot; the running firmware is untouched until the image verifies, and only then does `otadata` flip (`esp_ota_set_boot_partition`). A failed install leaves the unit booting exactly what it booted before — no half-written slot, and no way to brick a dashboard from a phone.
+- On success the panel holds **UPDATE COMPLETE / REBOOTING** for 3 s (the `delay(3000)` the display task takes before `bootinfo_tag_reboot("ota")` + `ESP.restart()`) — long enough for the driver to read it and for the `done` event to leave over BLE, because a restart that beats that event leaves the phone guessing, and a guess is how a finished install gets reported as stalled — then tags the reboot (`lastRebootTag='ota'`) and restarts. A failure frame draws the reason on the panel and the dashboard comes back by itself.
+- While an install is open: the display task replaces the dashboard with the install screen, the speed sprite and the 120 px font are freed for the heap the flash writes need (`otaMemReleaseRequested`, answered by the display task in `ui.cpp`), the RPC plane answers **only `ping` and `ota.*`** — everything else is `ota_in_progress` (the gate at the head of `btRpcHandle()`) — and the panel's hold-to-restart is refused while bytes are going into flash (`otaFlashWriteActive()` inside `processOtaScreenButton()`), because a reset mid-write is exactly the half-written slot this whole flow exists to avoid. A client can always ask "are you alive?" while 1.5 MB go past.
+- **What is deliberately *not* parked: the producers.** The 1 Hz telemetry push and the sensor tasks keep running through an install. The Wi-Fi path stopped them around its flash writes (see *Over-The-Air (OTA) Updates*); the BLE path does not, because its flow control is the phone waiting for each write's callback plus a 4-slot ring, and the bench install ran at ≈12.6 KB/s with the dashboard's producers alive. Parking them is the lever if a future build needs the heap back — it is **not** implemented, and this line is the record that it is not.
+
+**No signature, and no version gate on this path.** The unit checks that the image fits, that
+the bytes match the CRC-32 the client declared, and that what lands in the slot is a valid app
+image. It does not ask *which* version the client meant, and nothing on a device can verify a
+signature — signatures are out of every update path by the maintainer's instruction
+(`AGENTS.md` rule 3). The version judgement belongs to the client that can show both sides:
+the app reads the `DPPVER=x.y.z` marker out of the file it is about to send, prints it next to
+the unit's running version, and wants a second press (`CONFIRM FLASH`) before sending an image
+that claims the version already installed.
+
+Wi-Fi firmwares (≤ 1.4.x) still take `POST /api/ota` from their own portal, and a current-build
+unit still takes a wired `pio run -t upload --upload-port COM7`. *Over-The-Air (OTA) Updates*
+below stays as the Wi-Fi-era quiet-window design; the BLE path implements the same shape —
+gates that live in the unit, a window that always closes, a panel that shows the truth — with
+the frames above. See also `Implementation plans/` for the phased BLE plan.
 
 ---
 
@@ -599,7 +623,7 @@ The management portal features a modern grouped card-based layout:
 - **Real-time performance panel** displaying FPS, CPU frequency/temperature, RAM usage, flash storage utilization, and live serial output monitor
 - **Weather Widget group** with city, latitude/longitude, refresh interval, locale, and a day/night icon
 - **Ambient light calibration** (dark / bright reference points)
-- **OTA firmware upload** via file picker — today this is the Web UI's path alone. The Android app used to reach the same endpoint through its WebView of this page; a Bluetooth-only client cannot (`ota.begin` / `ota.abort` answer `not_implemented` over RPC, and the image path over the OTA characteristic is phase 2b in `src/bt_rpc.cpp`'s comments, not code)
+- **OTA firmware upload** via file picker — on a Wi-Fi unit this was the only upload path. The Android app used to reach the same endpoint through its WebView of this page; a Bluetooth-only client never could. It now does the same job over the link without HTTP at all (`src/bt_ota.cpp`; see *Firmware over the link*)
 - **NVS backup/restore** (export downloads `GET /api/config` as `dashboard_backup.json`, import posts it back to `POST /api/config`)
 
 ### REST API Endpoints
@@ -812,7 +836,7 @@ The parameter table shrank on 2026-11-02, when the portal and the network stack 
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 1.1.0`, `versionCode 42` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 1.6.0`, `versionCode 49` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -948,7 +972,7 @@ Slot 3 draws the unit's configuration in Compose instead of loading the unit's w
 - **Cards flow.** One column below 600 dp, two from 600, three from 900 — the unit page's own breakpoints, 900 being where a tablet's landscape width lands. Cards fill their row in schema order, and a card that carries an action widget (the noise bench, the odometer setter, the firmware panel) takes a row to itself rather than being squeezed into a third of a tablet.
 - **Writes go to the unit as you type, and the unit decides what that cost.** An edit is sent after a 600 ms debounce (the unit's own page autosaves on a 2 s timer; the app is quicker because `SAVE` is sitting in its bar), and `config.set` applies the value live **and** writes it to flash in the same call. When the flash write fails the unit says so — `nvsErrors` — and the row is marked *in RAM only*: it is on the dashboard until it reboots, and the row says that rather than pretending otherwise. `SAVE` is therefore not a commit button; it is a flush — write everything still waiting out its debounce, right now — and its note counts rows written and rows that never reached the unit separately, because a row the unit refused has already reverted and there is nothing to resend. `pending` is measured in rows, not in edits, so a slider dragged through ten values is one thing to save.
 - Rows the unit marks `reboot_required` set `rebootPending`, which is what arms the `RESTART NOW` prompt; `RESTART`, `FACTORY RESET`, `BACKUP` and `RESTORE` sit in the sticky bottom bar because they are not attached to any one row (`reboot`, `factory.reset`, and a `config.get` / `config.set` pair for the backup, its keys split into as many messages as the unit's 8 KiB reassembly ceiling allows, less a 128-byte reserve for the envelope).
-- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The Firmware update card stays in its old position showing the unit's versions and one honest line — **Bluetooth OTA is not in this firmware yet** (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`) — because there is no portal left to update from either: on a current-build unit firmware moves with a USB cable (see *Over-The-Air (OTA) Updates*). The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
+- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The **firmware card drives an install over the link** (`ui/screens/FirmwareOtaControl.kt`): it names the running unit FW / ESP IDF / app image, takes a file picked with Android's Storage Access Framework, prints its real name, size, CRC-32 and the `DPPVER=x.y.z` marker read out of the bytes, refuses to send an image whose CRC it could not compute, asks for a second press (`CONFIRM FLASH`) when the file claims the version already installed, then pushes it and reports progress in bytes and KB/s, the `off` the unit last ACKed, and the reason when the unit refuses (`image too large`, `stalled`, `crc_mismatch`, `ota_in_progress`, …). A picked file the unit has never seen is checked against the unit's own version **before** anything is sent, because the unit itself has no version gate (see *Firmware over the link*). The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
 - The **performance monitor** is one more card in the accordion (`ui/screens/settings/PerfMonitorScreen.kt`), reachable by search like any other section, and its live tick runs only while it is the section in front of the user.
 
 `ui/screens/settings/SettingsLayout.kt` holds those rules as pure functions — open/close, search semantics, column count, card packing, advanced gating, which widget a card carries — with the unit page's behaviour as the test oracle (`SettingsLayoutTest`). `ui/screens/settings/ConfigStore.kt` holds the write model (debounce, mirror, pending, flush), tested in `ConfigStoreTest`.
@@ -1040,7 +1064,7 @@ Dashboard++ for ESP32/
 ├── android/               # The companion app (Kotlin + Compose, Gradle; see Android Companion App)
 │   └── app/src/main/
 │       ├── java/com/alefinot/dashboardpp/
-│       │   ├── ble/           # GATT client: protocol & framing, the link state machine, process-wide runtime
+│       │   ├── ble/           # GATT client: protocol & framing, the link state machine, the OTA installer (OtaCore pure / OtaController live), process-wide runtime
 │       │   ├── vehicles/      # The garage: records, identity matching, photo crop
 │       │   ├── trips/         # Trip recorder, CSV/GPX format, the rules for the unit's 1 Hz stream
 │       │   ├── viewmodel/     # ConnectionCore (the connection ladder) and per-screen state
@@ -1056,7 +1080,8 @@ Dashboard++ for ESP32/
     ├── ui.cpp             # Dirty-rendering dashboard visual layout engine
     ├── bt.cpp             # BLE GATT server: advertising (DPP-####), service & characteristics, bonding, MTU, chunked framing
     ├── bt_proto.h         # The wire protocol shared by the firmware and the app's ble/ package
-    ├── bt_rpc.cpp         # The JSON RPC methods served over that link (config, telemetry, actions; ota.begin/abort answer not_implemented)
+    ├── bt_rpc.cpp         # The JSON RPC methods served over that link (config, telemetry, actions); mid-install it answers only ping and ota.*
+    ├── bt_ota.cpp         # The firmware install state machine: begin/ack/end, CRC-32 written out, spare-slot write, resume window, gate
     ├── noisebench.cpp/.h  # The 4-run ADC noise bench (idle / tft / bl10 / bl90), on demand over the link
     ├── bootinfo.cpp/.h    # Reset-reason forensics, boot-storm detection, last-reboot tag
     ├── otahash.cpp/.h     # SHA-256 over the running image, for the install gates and the boot report
@@ -1195,19 +1220,18 @@ of the install state (`ota_update_in_progress`, `ota_client_hold`, `ota_error`,
 none of those keys is in `CFG_TABLE` any more, and nothing writes them raw), the
 update card in the page, and `scripts/verify_ota_state_line.js`.
 
-*Not built yet*: the transport meant to replace the HTTP upload is the **OTA
-characteristic** (`d9a1f003-6c1e-4b8a-9f2d-3e7c1a5b9d40`), and its message type
-(`BT_F_OTA = 8`) is already declared in `src/bt_proto.h`; only the state machine on top
-of `Update` is missing. The plan defines its frames — `{"op":"begin","size","crc32"}`
-answered by `begin_ok` with the chunk size the unit will accept, then
-`offset (4 bytes LE) + payload` writes, an `{"op":"ack","off":…}` every 16 KB, and an
-`{"op":"end"}` answered by `end_ok` before the reboot. Until that exists, `ota.begin` /
-`ota.abort` answer `not_implemented`, `otaFlashWriteActive()` answers `false`,
-`otaInstallReason()` answers `none`, and the only way to put firmware on a
-current-build unit is a **wired** `pio run -t upload --upload-port COM7`. That state
-machine is phase **2b** of *Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md* (§4.7
-for the protocol, §9 for the gate: a 1.6 MB image in ≤ 5 min on the tablet, CRC
-verified, resume working), not code in this tree yet.
+*Built, and proven on a bench*: the transport that replaced the HTTP upload **is** the **OTA
+characteristic** (`d9a1f003-6c1e-4b8a-9f2d-3e7c1a5b9d40`) carrying raw writes, with `BT_F_OTA = 8`
+events on the RPC characteristic, and the state machine on top of `esp_ota` is `src/bt_ota.cpp`.
+`ota.begin` / `ota.end` / `ota.status` / `ota.abort` are live, `otaFlashWriteActive()` is true
+while bytes go into flash, `otaInstallReason()` names why the unit last restarted. Its frames are
+the ones the plan defined — `ota.begin {size, crc32}` answered by `begin_ok` carrying the chunk
+size the link can carry, `offset (4 bytes LE) + payload` writes, an `{"ev":"ack","off":…}` every
+16 KiB, `ota.end` answered by a CRC-32 check and `esp_ota_end()` and then `{"ev":"done"}` before
+the reboot — spelled out under *Firmware over the link* above. That is phase **2b** of
+*Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md* (§4.7 for the protocol, §9 for the gate: a
+1.6 MB image in ≤ 5 min on the tablet, CRC verified — met: 1,590,912 B in ~2½ min, ≈12.6 KB/s,
+verified and booted into the spare slot).
 
 *What the sections below are*: the Wi-Fi-era design as it worked on ≤ 1.4.x
 units. It stays because it is the specification the BLE transport has to satisfy
@@ -1482,8 +1506,8 @@ guard is its own suite — see *Tests that have to stay green* above.
 The unit **has no self-update path at all** as of this build. There is no manifest
 URL, no outbound HTTPS client for firmware, no background task, no boot check, and
 no build flag that brings any of it back. Firmware arrives from outside — pushed by
-a client that got it somewhere else — and on a current-build unit the only such
-client is **a USB cable and PlatformIO**:
+a client that got it somewhere else — and on a current-build unit the two such clients
+are **the Android app over Bluetooth** and **a USB cable with PlatformIO**:
 
 1. **Wired `pio run -t upload --upload-port COM7`** — the install path that exists
    today: the `firmware.bin` this tree builds, written into `app0` with the layout
@@ -1503,11 +1527,16 @@ client is **a USB cable and PlatformIO**:
    (size, and the `DPPVER=x.y.z` marker the firmware stamps inside its own image), print
    the SHA-256, push it with `multipart/form-data` (`target_version`, `total_bytes`,
    `firmware`), watch `GET /api/ota/check` until the unit reboots, then re-read the
-   identity so the screen says what is running — was never in the shipped app, and is
-   now further away rather than nearer: over Bluetooth the app's only update-shaped RPCs,
-   `ota.begin` and `ota.abort`, answer `not_implemented`. The image path over the OTA
-   characteristic (`BT_F_OTA` framed chunks) is phase 2b in `src/bt_rpc.cpp`'s comments,
-   not code. **A phone carrying only this app cannot update a dashboard today.**
+   identity so the screen says what is running — is what the app now does, over Bluetooth
+   instead of HTTP, and the file is picked rather than downloaded: Android's file picker gives
+   the app a `firmware.bin` (from Files, Downloads, or wherever it landed), the app reads its
+   size, CRC-32 and `DPPVER` marker, pushes it with the frames under *Firmware over the link*,
+   shows the unit's ACKs as progress, and re-reads the identity when the unit comes back — so the
+   version row says what the unit is actually running, not what the card was told to expect.
+   What this path still does **not** do: it never lists the published builds to choose from and
+   never prints a SHA-256 (the app has no GitHub client), and the only integrity check on the
+   wire is the CRC-32 the unit re-computes at the end — **no signing, anywhere** (`AGENTS.md`
+   rule 3). A phone carrying only this app **can** update a dashboard today.
 
 That one path faces the same guards, which live in the unit and cannot be talked around
 from the client: `target_version` present and version-shaped; the identical-version
@@ -1587,6 +1616,81 @@ In Demo Mode:
 
 ## Changelog
 
+### Unreleased — a phone can put firmware on a unit over Bluetooth, end to end (firmware `src/` + app, `versionCode` 44 → 49)
+
+**Still no version stamp** (`AGENTS.md` rule 3): `FW_VERSION` stays **1.5.1**; the bump comes when
+this batch is approved, and the bench unit is running a 1.5.1 image it installed over BLE.
+
+**The unit side** (`c4435951` → `0d1f46f6`, `src/bt_ota.cpp` + the routing in `src/bt.cpp` + the
+methods in `src/bt_rpc.cpp`): the OTA characteristic stopped being a socket with nobody behind it.
+An install is `ota.begin {size, crc32}` → `begin_ok` (offset + the chunk the link can carry) → raw
+`offset + payload` writes copied into a 4-slot ring on the Bluedroid callback task and flashed from
+`BtTask` — the callback task must never wait on flash, or the whole GATT stack including the link
+stalls with it — `ack` every 16 KiB, `ota.status` to ask where it stands, `ota.end` to close. The
+CRC-32 loop is written out in `bt_ota.cpp` rather than borrowed from ROM, because `esp_crc32_le()`'s
+seeding convention is not documented in this core and a mismatch would show up as every install
+dying in the last metre. Bytes go to the **inactive** app slot; `esp_ota_end()` verifies the image
+(magic, checksum, its own SHA) and the CRC matches what the phone declared **before** `otadata`
+flips, so an aborted, stalled or truncated install leaves the unit booting what it booted before.
+Windows: **120 s** of silence (`stalled`), **15 min** ceiling, **4 KiB ≤ size ≤ the slot**. Mid-install
+the RPC plane answers only `ping` and `ota.*` — everything else is `ota_in_progress` — the display
+task takes the panel, and the speed sprite and 120 px font are freed for the heap the flash writes
+need. What did *not* come back from the Wi-Fi design: the producers keep running (the 1 Hz telemetry
+push, the sensor tasks) — the bench install ran with them live, so the flow control is the phone's
+per-write wait, not a parked dashboard. On success the panel holds UPDATE COMPLETE / REBOOTING for **3 s** — long
+enough for the `done` event to leave over BLE and for a driver to read the screen — then tags the
+reboot (`lastRebootTag='ota'`) and restarts. **No signature and no version gate here**, by rule 3:
+the unit checks that the image is an image, fits, and matches the declared CRC; the version judgement
+belongs to the client that can show both versions.
+
+**The phone side** (`c4435951`, `e77133b2`, `e925775a`, `fa6c8f52`; `versionCode` 44 → 49):
+`ble/OtaCore.kt` is the transfer state machine with no Android in it (chunking, ACK tracking, resume,
+the error reasons the unit can answer with, the resume window), `ble/OtaController.kt` drives it on a
+live link, and `ui/screens/FirmwareOtaControl.kt` is the card in the unit's settings: pick a file with
+the Storage Access Framework, see its real name (`pickedName()` reads `DISPLAY_NAME` through every
+provider that will give it — a `file://` URI is not one of them), its size, its CRC-32 and the
+`DPPVER=x.y.z` marker lifted out of the bytes; a second press `CONFIRM FLASH` before sending what the
+unit is already running; progress in bytes, per-cent, KB/s and the last ACKed offset. The card says
+what the unit is for: "written to the unit's spare flash slot, verified, and only then does the unit
+flip to it and restart".
+
+**Surviving the reboot, which is where an install actually fails.** The unit restarts into the new
+slot, so the link dies on purpose, and the phone has to come back by itself. `ConnectionViewModel`
+no longer swallows the ladder's own retry: the guard used to be *a dial is still in flight*, which ate
+the retry reported by the very dial that failed — on the bench the app dialed once, dropped its own
+retry, and stayed silent for four minutes while the unit advertised happily. The guard is now *a link
+that is actually progressing* (`Ready` / `Connecting` / `Pairing`), which is what the guard was for;
+`adoptLiveLink` turns a link that came up on its own (Android reconnecting a bond after the reboot)
+into a session without dialing a second time, and the ladder's backoff is `ReconnectLadder.BACKOFF_MS`
+= 2 s → 5 s → 15 s. `BleLink.discover()` retries with a settling pause instead of throwing when
+`discoverServices()` returns false — measured on the bench, it comes back false ~150 ms after a
+status-0 connection on a link that came up through the stack's auto-connect path, and the app was
+dropping the link it had just won back. `connect()` adds one patient retry with
+`autoConnect = true` after a direct connect answers GATT_ERROR (133), which is what a unit that has
+just restarted looks like. On the unit, the post-install hold is 3 s so the `done` event actually
+leaves before the restart. A duplicate `begin_ok` can no longer rewind a running transfer: once bytes
+have gone, `adoptBeginOkOffset` refuses a smaller offset — that race cost an install at 10%
+(162,192 of 1,590,912 B) before it was fixed.
+
+**Measured on the bench (2026-11-02, tablet over adb at `192.168.1.119:5555`, unit on COM7):** the
+app pushed a 1.52 MB image and the card read `installed — the unit is restarting · 100% · 1.52 MB of
+1.52 MB · 12.6 KB/s`; BluetoothMap's own log shows `DISCONNECTED … reason=8` at 18:09:01.574 and
+`CONNECTED` at 18:09:05.962 — **4.4 s, no user action** — and the version row then read unit FW
+`1.5.1` with the app image `DPPVER 1.5.1`. A second, unsolicited reset — the serial port vanishing
+and reopening at 18:12:00.024 — had the link back up at 18:12:10.776, **≈10.8 s** after the unit came
+back, again with no one touching the phone. The unit's boot banner carries
+`lastRebootTag='ota'`, `FW 1.5.1, image marker DPPVER=1.5.1` — the proof that it booted the slot the
+phone wrote. `./gradlew.bat testDebugUnitTest` is 421 tests; `pio run` is green
+at `RAM 22.3%` (73,196 B) / `Flash 82.5%` (1,568,695 B of the 1,900,544 B slot), inside the 1.80 MB
+install gate.
+
+**What is still not proven on hardware:** a **resume** on a live link — a mid-transfer drop, then
+`RESUME` continuing from the unit's offset. The unit really did close an install at 60 s silence and
+the frames, the resume paths and the window are unit-tested on both ends, but no one has pressed
+`RESUME` against a real unit yet. Also unproven: installing twice in a row (slot flip back), and
+`ota.abort` mid-transfer. The app still cannot obtain a `.bin` by itself — no GitHub client, no
+release list, no SHA-256 — so the file has to reach the phone some other way.
+
 ### Unreleased — the unit keeps one door open and closes all the others (firmware, `src/` + `scripts/`)
 
 **No version stamp yet.** `FW_VERSION` in `src/config.cpp` is still **1.5.1**: these
@@ -1614,9 +1718,10 @@ config.reset factory.reset reboot sleep cal.ambient bench.run log.get
 weather.set time.set ping`), `BT_F_CHUNK` carrying the streamed `config.get`, and
 the `time.set` / `weather.set` ingest — the unit has no radio of its own, so the phone
 supplies the clock once per link-up and the weather widget on demand.
-`BT_F_OTA` and the OTA characteristic are on the profile; their state machine is
-the next step, so `ota.begin` / `ota.abort` answer `not_implemented` and the panel
-says so plainly rather than pretending to be ready.
+`BT_F_OTA` and the OTA characteristic are on the profile, and so is their state machine:
+`src/bt_ota.cpp` answers `ota.begin` / `ota.end` / `ota.status` / `ota.abort`, takes the raw
+chunk writes off the OTA characteristic, and the panel shows the install the phone is pushing
+(*Firmware over the link* above).
 
 **Verified with a PC central, not by eye** (`d2406a10`, `928a7995`):
 `scripts/ble_bench_central.py` (WinRT) drives pairing (passkey read off the unit's
@@ -1803,9 +1908,10 @@ hand. The old `ConfigEditor` hand-maintained
 tree, the REST backup screen and the hand-drawn `PerfScreen` are deleted.
 - **What this deliberately loses, stated where it is met:** firmware older than the BLE
 server (1.4.x and older) cannot be reached from the app at all — the vehicle card says so
-and points at the wired flash / Web Portal path; there is no firmware update over
-Bluetooth (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`), and
-the firmware card says that too; weather is still fetched by the unit itself, because the
+and points at the wired flash / Web Portal path; at that point there was no firmware update over
+Bluetooth (`ota.begin` / `ota.abort` answered `not_implemented` in `src/bt_rpc.cpp`) and the
+firmware card said so — superseded later in this same unreleased batch, see the install entry at the
+top of this changelog; weather is still fetched by the unit itself, because the
 app has no Open-Meteo client and pushing a forecast over the RPC is a feature of its own; and
 `FORGET THIS UNIT` clears the app's binding but Android's bond stays, so the dialog says
 so and offers the system Bluetooth settings.

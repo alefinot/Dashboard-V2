@@ -43,17 +43,23 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
      phone has no way to reach a unit that has no IP, and the HTTP updater was deleted
      with the server that served it: `UpdateFetcher`, `UpdateRepository` and
      `UpdateScreens` are gone, and a grep of `android/app/src` finds no GitHub client,
-     no firmware download, no SHA-256 check and no `DPPVER` marker check. The settings
-     accordion's Firmware card shows the unit's versions and one honest line: "Bluetooth
-     OTA is not in this firmware" (`ota.begin` / `ota.abort` answer `not_implemented` in
-     `src/bt_rpc.cpp` while the transport is being built). Do not describe the app as
-     shipping an updater, and do not add one over HTTP. The transport under construction
-     is **BLE**: the OTA characteristic (`d9a1f003-…`) plus the pairing passkey shown
-     on the panel — the transfer is phase **2b** of
-     `Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md` (§4.7 defines the frames: a
-     JSON `begin` carrying size + CRC32, `offset + payload` writes, `ack` every 16 KB,
-     then `end`). There is **no** cloud pull on
-     the unit: it never fetches firmware by itself, and there is no self-update code left.
+     no firmware download and no SHA-256 check. The app **picks** a `.bin` the phone
+     already has (Storage Access Framework), reads its size / CRC-32 / `DPPVER` marker and
+     pushes it over the OTA characteristic; the card is
+     `ui/screens/FirmwareOtaControl.kt`, the unit's side is `src/bt_ota.cpp`
+     (`ota.begin` / `ota.end` / `ota.status` / `ota.abort`). Do not describe the app as
+     shipping a *downloader*, and never add an HTTP updater. The contract (phase **2b** of
+     `Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md`, §4.7 — now code on both ends):
+     JSON `begin {size, crc32}` → `begin_ok` with the offset and the MTU-capped chunk size,
+     `offset (4 B LE) + payload` writes, `ack` every 16 KB, `end` → CRC-32 + `esp_ota_end()`
+     verify → flip to the spare slot → tagged reboot. **120 s** silence window on both ends
+     (`src/bt_ota.cpp` `OTA_SILENCE_MS` = `OtaController.RESUME_WINDOW_MS`); mid-install the
+     unit answers **only** `ping` and `ota.*` (`ota_in_progress` for the rest); an image must
+     fit the app slot, which is why the build gate is **1.80 MB**. **No signing anywhere**
+     (rule 3) — that CRC-32 is the only integrity check on the wire, and the unit has no
+     version gate: the app shows both versions and asks before reflashing the same one.
+     There is **no** cloud pull on the unit: it never fetches firmware by itself, and there
+     is no self-update code left.
 
 ## 6. Implementation Plans — Never in Git
 - All implementation plans must be written/exported into the `Implementation plans/` folder at the repo root.
