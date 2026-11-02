@@ -251,6 +251,18 @@ void setup() {
   Serial.begin(115200);
   delay(50);
 
+  // Two jobs in one line. It tells you at boot which build this is, and it keeps
+  // the version marker *inside the image file* alive. kImageVersionTag in
+  // src/config.cpp ("DPPVER=1.5.1") is a plain static array, and the only code
+  // that ever read it lived in web.cpp - which is no longer in the build
+  // (build_src_filter in platformio.ini). With no reference left, the linker's
+  // section garbage-collection deleted the literal, so every built .bin stopped
+  // carrying the label that tells a PC what version the file is. The build
+  // notices and says so (scripts/fix_upload_layout.py: "no DPPVER= marker"); a
+  // referenced caller stops the collection, and a boot log is the cheapest caller
+  // that will never be optimised away again.
+  logPrintf("FW %s, image marker %s\n", FW_VERSION, imageVersionTag());
+
   // Deep-sleep pad holds survive the wake-up reset (see releaseSleepPinHolds).
   // Until they are released the backlight and panel control lines cannot be
   // driven, so the unit boots with a dark screen even though everything else
