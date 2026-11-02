@@ -68,17 +68,45 @@ static const unsigned long OTA_MAX_MS = 15UL * 60UL * 1000UL;
 // How much accepted data between ACKs. The ACK is the phone's resume token, so
 // it also bounds how much has to be re-sent after a drop; 16 KB is ~30 writes
 // and roughly one per second on a healthy link.
-static const uint32_t OTA_ACK_BYTES = 16384;
+//
+// It is also, in practice, the phone's IN-FLIGHT ALLOWANCE above the point the
+// unit has actually written: the app stops and waits for the next ACK once it has
+// been told about OTA_ACK_BYTES more data. That makes this number a flow-control
+// limit, not just an ACK cadence, and it has to stay smaller than the unit's
+// handoff ring (OTA_RING_SLOTS below) - see the coupling note there. The old
+// 16 KB was four times that ring: the phone could always be further ahead than
+// the unit could hold, and an erase-heavy stretch ended in a ring overflow
+// reported as `bad_frame`. 4096 B is one flash sector, which is also the
+// granularity at which the drain pays for an erase, and it keeps the resume token
+// on a sector boundary.
+static const uint32_t OTA_ACK_BYTES = 4096;
 // An app slot in partitions.csv (0x1D0000). Larger than this cannot fit, and
 // the build gate (1.80 MB) exists so a normal build never asks.
 static const uint32_t OTA_MAX_IMAGE = 0x1D0000u;
 // Smaller than this is not firmware, it is a truncated download or a text file.
 static const uint32_t OTA_MIN_IMAGE = 4096u;
 
-// The handoff ring from the Bluedroid task to BtTask. Depth 4 is generous: the
-// phone awaits each write's callback before sending the next (that wait IS the
-// flow control), so at most a frame or two is ever in here.
-static const int OTA_RING_SLOTS = 4;
+// The handoff ring from the Bluedroid task to BtTask.
+//
+// Its depth is not a nicety - it is the unit's only cushion for stretches where
+// the flash is slower than the link. Measured on the bench (2026-11-03, full
+// quiet window, 1.52 MB image, 496 B frames): the ring reached its full 3-of-4
+// usable slots - 1,488 B, about 135 ms at 45 ms per frame - while the longest gap
+// between drains was only 60 ms. The drain was not missing passes; it was writing
+// slower than one frame per arrival interval on average, because every 4 KB
+// sector crossed costs an erase. With the phone allowed to run OTA_ACK_BYTES
+// ahead of the drain point, a ring shallower than that allowance is simply the
+// bottleneck of the transfer, and it reports being the bottleneck as `bad_frame`.
+//
+// So the two constants are coupled, and the ring has to be the bigger one:
+//   (OTA_RING_SLOTS - 1) * chunk  >  OTA_ACK_BYTES
+// The phone cannot get more than OTA_ACK_BYTES of data past the last ACK it was
+// given, so if the ring is deeper than that allowance it physically cannot
+// overflow: a slow-flash stretch now backs the phone up at its ACK wait instead of
+// filling the unit's buffer. btOtaBegin() checks the inequality against the chunk
+// size the link actually negotiated, because changing one number without the
+// other re-creates the fault this is meant to remove.
+static const int OTA_RING_SLOTS = 16;
 static const int OTA_RING_MASK = OTA_RING_SLOTS - 1;
 static const int OTA_SLOT_BYTES = 4 + 512;  // offset prefix + max payload
 static const int OTA_MAX_FRAME = OTA_SLOT_BYTES;
@@ -181,6 +209,18 @@ static unsigned long s_drainGapMaxMs = 0;    // longest pause between those pass
 
 static uint16_t s_eventSeq = 0x4000;  // frame seq for our unsolicited events
 
+// ACK cadence for the install in progress: OTA_ACK_BYTES, capped by the depth of
+// this unit's ring so the phone is always held back before the buffer that
+// absorbs flash stalls is half full. Computed in btOtaBegin() from the chunk size
+// the link actually negotiated - at MTU 517 it is 4 KB trimmed to 3,720 B, on a
+// 23-byte-MTU link it comes down to the 512 B floor. See OTA_RING_SLOTS.
+static uint32_t s_ackBytes = OTA_ACK_BYTES;
+
+// Defined below, next to btOtaPoll(). The `end` path needs it before its
+// definition: a length question cannot be answered until the ring's last frames
+// are in flash.
+static void btOtaDrain();
+
 static uint32_t otaReadLE32(const uint8_t *p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -242,6 +282,21 @@ static void otaFail(const char *code, const char *detail) {
   otaQuietExit(s_reason);
   otaScreenShowError();
   otaUpdateInProgress = false;
+
+  // Give the dashboard its big UI buffers back. The install asked for them to be
+  // freed (otaClaimPanel above), and ui.cpp will not re-allocate them while the
+  // request stands - so a unit that refused an image used to run the rest of the
+  // session with the speed readout drawn by neither path: no sprite (it was
+  // freed), and no direct-panel fallback either, because src/ui.cpp:799 gates
+  // that on this same flag. Bench 2026-11-03, after a `bad_length` refusal: the
+  // heartbeat kept reporting sp=0 otaReq=1. Order matters - clear
+  // otaUpdateInProgress first, or ensureSpeedSprite() sees an install still
+  // running and stays asleep. The accepted path never comes here (it reboots
+  // into the new image), and otaQuietExit already set forceFullRedraw, so the
+  // next frame after the failure frame is a whole panel drawn from the rebuilt
+  // sprite.
+  otaMemReleaseRequested = false;
+  otaMemReleased = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +414,24 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_drainGapMaxMs = 0;
   s_ringsOver = false;
 
+  // The coupling that keeps this transfer from becoming its own bottleneck: the
+  // phone may run at most one ACK window past the point the unit has written, so
+  // a ring shallower than that window overflows whenever the flash lags the link
+  // (see OTA_RING_SLOTS). Capping the window at half the usable ring, for the
+  // chunk size this link negotiated, makes the inequality true at every MTU
+  // instead of only at the one measured on the bench. Said out loud rather than
+  // asserted, because the fault it prevents looks exactly like a phone bug.
+  s_ackBytes = OTA_ACK_BYTES;
+  {
+    uint32_t halfRing = (uint32_t)(OTA_RING_SLOTS - 1) * s_chunk / 2u;
+    if (halfRing < 512u) halfRing = 512u;  // never ACK more often than every 512 B
+    if (halfRing < OTA_ACK_BYTES) {
+      s_ackBytes = halfRing;
+      logPrintf("OTA: ack window trimmed to %lu B (ring is %d x %lu B usable)\n",
+                (unsigned long)s_ackBytes, OTA_RING_SLOTS - 1, (unsigned long)s_chunk);
+    }
+  }
+
   *off = 0;
   *chunk = s_chunk;
 
@@ -384,13 +457,30 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
 // board), then and only then otadata.
 bool btOtaEnd(const char **err, uint32_t *off) {
   *err = nullptr;
+
+  // Take the ring's last frames into flash before answering anything. The phone
+  // writes the image on one characteristic and this `end` on another, and while
+  // the link keeps their air order (the app holds one write mutex for both),
+  // btTask's loop picks up the RPC before its next btOtaPoll() pass - so the
+  // frames still sitting in the handoff ring would be invisible to the length
+  // check below. Seen on the bench 2026-11-03: a complete 1,590,912 B file ended
+  // as `bad_length` with 1,590,176 B accepted, short by exactly the two frames
+  // that were in the buffer when `end` arrived.
+  if (s_active) btOtaDrain();
+
   *off = s_accepted;
   if (!s_active) {
     // Already finished. Answering true here is the truth the caller wants - an
     // `end` that arrives twice (a reply it never saw, a phone that retried) gets
     // "yes, it is accepted" rather than an error code it would render as a
-    // failure. A genuinely absent session stays an error.
+    // failure. A genuinely absent session stays an error. And if the drain above
+    // is what ended the session - a flash write that failed on the final frames -
+    // name that fault instead of calling it "no_session".
     if (s_acceptedImage) return true;
+    if (s_reason[0]) {
+      *err = s_reason;
+      return false;
+    }
     *err = "no_session";
     return false;
   }
@@ -591,11 +681,12 @@ static void btOtaDrain() {
     s_accepted += n;
     otaQuietLastByteMs = millis();
 
-    if (s_accepted - s_ackAt >= OTA_ACK_BYTES || s_accepted == s_size) {
+    if (s_accepted - s_ackAt >= s_ackBytes || s_accepted == s_size) {
       s_ackAt = s_accepted;
       otaSendAck();
       updateOTAProgress((int)s_accepted, (int)s_size);
-      if ((s_accepted & 0x1FFFF) < OTA_ACK_BYTES)
+      // One progress line per 128 KB transferred, whatever the ACK cadence is.
+      if (s_accepted / 131072u != (s_accepted - n) / 131072u)
         logPrintf("OTA: %lu/%lu B, heap=%lu\n", (unsigned long)s_accepted,
                   (unsigned long)s_size, (unsigned long)ESP.getFreeHeap());
     }
