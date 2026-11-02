@@ -12,6 +12,26 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
 
 ---
 
+## How to read this manual
+
+Two firmwares are described in these pages at once, and they are not the same product:
+
+- **A current-build unit** — anything built from this tree after firmware phase 0b, i.e.
+  everything in the *Unreleased* Changelog entries on top of V1.5.1 — is **BLE-only**.
+  `platformio.ini` keeps `build_src_filter = +<*> -<web.cpp>`, and `src/web.cpp` holds the
+  SoftAP and station join, every REST handler, the Web Portal, the OTA install route **and
+  the weather-fetch task**. So that unit has no SoftAP, no IP, no `http://192.168.4.1`, no
+  HTTP API, no way to update itself, no weather it fetched, and no code that can scan or
+  connect as a central. Its one door is Bluetooth LE (`6c551b24-4f04-4a2a-9b11-8f6ae03cd7c1`).
+- **A unit still running 1.4.x or older** keeps all of that: Wi-Fi, the portal, the REST
+  API, `POST /api/ota`, and no Bluetooth at all (the GATT server landed after those releases).
+
+So whenever a sentence says "in the Web UI…", "post to `/api/…`", "open `192.168.4.1`" or
+"the unit fetches…", read it as **on a Wi-Fi firmware (≤ 1.4.x)**. On a current-build unit,
+the same settings live in the Android app's dashboard-settings slot over Bluetooth, and the
+rest of that sentence does not apply. Chapters and sections that describe a whole
+Wi-Fi-only subsystem carry the qualifier in their heading.
+
 ## Technical Table of Contents
 1. [Executive Overview](#executive-overview)
 2. [System Architecture & Task Allocation](#system-architecture--task-allocation)
@@ -24,14 +44,15 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
    - [Steinhart-Hart Coolant Temperature Math](#4-steinhart-hart-coolant-temperature-math)
    - [Fuel Economy & Performance Drag Timer](#5-fuel-economy--performance-drag-timer)
    - [Power Management & Dynamic CPU Scaling](#6-power-management--dynamic-cpu-scaling)
-6. [Embedded Web UI & REST API Reference](#embedded-web-ui--rest-api-reference)
+6. [Embedded Web UI & REST API Reference (Wi-Fi firmware ≤ 1.4.x)](#embedded-web-ui--rest-api-reference-wi-fi-firmware--14x)
 7. [NVS Configuration Parameter Reference](#nvs-configuration-parameter-reference)
 8. [Android Companion App](#android-companion-app)
    - [The shell: one bar, one pager, one list](#the-shell-one-bar-one-pager-one-list)
    - [The garage: a card is a vehicle and the unit that belongs to it](#the-garage-a-card-is-a-vehicle-and-the-unit-that-belongs-to-it)
    - [Identity: which dashboard belongs to which card](#identity-which-dashboard-belongs-to-which-card)
    - [Connection: one page, one ladder, and a reason line](#connection-one-page-one-ladder-and-a-reason-line)
-   - [Telemetry: the unit pushes, the app stopped asking](#telemetry-the-unit-pushes-the-app-stopped-asking)
+   - [Pairing a phone to a unit: what you actually do](#pairing-a-phone-to-a-unit-what-you-actually-do)
+- [Telemetry: the unit pushes, the app stopped asking](#telemetry-the-unit-pushes-the-app-stopped-asking)
    - [Dashboard settings: the unit's page, drawn natively](#dashboard-settings-the-units-page-drawn-natively)
    - [Trip log: one file per power session, tagged with the card](#trip-log-one-file-per-power-session-tagged-with-the-card)
    - [Photos: pick, crop, one JPEG per vehicle](#photos-pick-crop-one-jpeg-per-vehicle)
@@ -54,7 +75,7 @@ Dashboard++ replaces legacy analog or basic digital gauges with an automotive-gr
 - **Configurable 7-Segment Digital Fonts:** 120px (sprite) and 28px (direct) seven-segment fonts with background "ghost digit" rendering (888 backdrop effect) and fully user-configurable integer and decimal digit boundaries for all telemetry counters.
 - **Full Sensor Suite Integration:** Precise fuel level monitoring (20-point piecewise linear calibration table + EMA filtering), engine coolant thermistor telemetry (Steinhart-Hart equation), battery voltage divider monitoring, trip fuel economy tracking, **trip average speed**, and a **session max speed (Vmax)** readout display.
 - **FreeRTOS Dual-Core Multitasking:** Strict core isolation — the continuous ~1.1KB/s GNSS UART stream is quarantined in its own Core 0 task (bulk ring-buffer read, bounded per tick, sitting below the WiFi stack), while the vehicle sensor suite and UI rendering run on Core 1, so a GPS stream backlog can never stall the dashboard or freeze any real-time value.
-- **Embedded Web Management Portal:** Embedded single-page Web application accessible over SoftAP or local WiFi network featuring grouped card-based configuration UI with live search, real-time performance telemetry panel (FPS, CPU frequency/temp, RAM, flash storage), interactive sliders, color pickers, NVS backup/restore, web serial terminal stream, and OTA firmware updating by uploading a firmware file (the Web UI's own file picker is the only push path today: the Android app used to open that page in a WebView and upload through it, and since it became a Bluetooth-only client it can no longer reach `POST /api/ota` at all — see *Android Companion App*).
+- **Embedded Web Management Portal (Wi-Fi firmwares ≤ 1.4.x — not compiled into a build from this tree, see *How to read this manual*):** Embedded single-page Web application accessible over SoftAP or local WiFi network featuring grouped card-based configuration UI with live search, real-time performance telemetry panel (FPS, CPU frequency/temp, RAM, flash storage), interactive sliders, color pickers, NVS backup/restore, web serial terminal stream, and OTA firmware updating by uploading a firmware file (the Web UI's own file picker is the only push path today: the Android app used to open that page in a WebView and upload through it, and since it became a Bluetooth-only client it can no longer reach `POST /api/ota` at all — see *Android Companion App*).
 - **Hysteresis-Based Dynamic CPU Scaling:** Three-state frequency governor (240/160/80 MHz) with hysteresis deadbands prevents oscillation, and thermal throttling automatically caps frequency at configurable warning/critical temperature thresholds.
 
 ---
@@ -409,7 +430,7 @@ The line is debounced in software (`powerSenseOffConfirmed()` in `src/sensors.cp
 
 ---
 
-## Embedded Web UI & REST API Reference
+## Embedded Web UI & REST API Reference (Wi-Fi firmware ≤ 1.4.x)
 
 > [!IMPORTANT]
 > **What the build does with this chapter today.** Everything below documents the Wi-Fi
@@ -732,12 +753,49 @@ The ESP reports its **base eFuse MAC** as `perf.mac` over the Bluetooth RPC (upp
 - **Forgetting.** `FORGET THIS UNIT` clears the app's binding and says out loud that Android may still hold the bond, and offers the system Bluetooth settings. There is no hidden un-bonding API in this app.
 - **Everywhere else there is no connect furniture.** The covers on the other pages offer exactly one button - `OPEN VEHICLE PAGE` - and carry no connect vocabulary and no address in either transport's spelling. App Settings cannot run a connection. That is enforced by the guard test `ConnectActionsOnOnePageTest`, whose allowlist is now the single file `VehicleScreen.kt`, and which strips comments first because half of that redesign is written down in doc comments naming the controls it removed.
 
+### Pairing a phone to a unit: what you actually do
+
+The mechanical version is above (*Connection: one page, one ladder, and a reason line*);
+this is the sequence a person follows, and what to do when it does not work.
+
+1. **Power the unit up.** It advertises as `DPP-<last 4 of its own MAC>` — the name is on
+   the unit's own boot log (`BT: advertising as DPP-B594`), and once a pairing attempt has
+   started it is on the panel too.
+2. **In the app: the VEHICLES slot** (the middle of the bar, and the page the app opens on)
+   → **ADD VEHICLE**. The scan list shows only units carrying the Dashboard++ service UUID,
+   with signal strength; if the unit is not in the list, it is not advertising (see below).
+3. **Pick it.** Android starts the pairing. The dashboard starts a fresh 6-digit number,
+   fills the whole screen with it, and says where to type it. The same line appears on COM7
+   at 115200 (`BT: pairing mode: passkey NNNNNN`) for anyone on a cable.
+4. **Type the number into Android's pairing dialog.** No dialog appears until the stack
+   asks for one, so a dialog-free app screen does not mean the unit is fine.
+5. **The panel goes back to the dashboard** when the pairing completes or the window closes.
+   The unit's log says `BT: auth ok` / `BT: auth FAILED (reason N)` / `BT: connected`.
+   Name the card in the editor (**NAME IT**) and the identity is remembered.
+
+**When it does not work:**
+
+| What you see | What it means | What to do |
+|---|---|---|
+| Nothing in the scan list | The unit is not advertising: already connected to a phone (it closes advertising once a link is up), on a firmware with no GATT server (1.4.x and older), or out of range | Move closer; check the unit's boot log for `BT: advertising as …`; if another phone holds the link, disconnect there first |
+| A unit appears but tapping it changes nothing | Usually Android's pairing dialog is behind the app, or the attempt was refused and closed | Pull the dialog up; retry from the card. The unit's log names the reason |
+| No number on the panel | The pairing never started (the panel follows `btPairingActive()`, and it cannot be started from the radio), or the panel code is older than this build | Look at COM7 for `BT: pairing mode: passkey …`; if it is not there, the attempt never reached the unit |
+| The code is refused | The attempt window has closed (the stack's 30 s, and the unit's own 60 s backstop), or the typed number belongs to a different unit | Type the number the panel is showing **now** — a new attempt mints a new one; then retry from the card |
+| Two `DPP-####` in range | Two units advertising | The panel names the unit it is showing, and the scan list shows names plus signal strength |
+| Paired, but the card still says not connected | The bond exists and the GATT link was never made, or it dropped | `CONNECT` on the card dials the stored address; failures retry on the 2 s / 5 s / 15 s ladder and say which step failed. Android may hold a bond to a unit that has since been reflashed — *forget* it in the system Bluetooth settings |
+| The unit is bonded and you reflashed it | The bond is per unit; reflashing does not erase it, and a stale bond breaks pairing | `FORGET THIS UNIT` in the app plus the system Bluetooth settings, then pair again |
+
+The passkey is the part that carries the security: the ESP is `ESP_IO_CAP_OUT` only, so it
+displays and cannot type, and the code the panel shows is the same one the app's instructions
+ask for. It is deliberately not readable over the link — an RPC returning it would hand the
+proof to the side that is supposed to be typing it.
+
 ### Telemetry: the unit pushes, the app stopped asking
 
 The V2 firmware streams a `snapshot` frame on its own characteristic at roughly 1 Hz, and neither the LIVE gauges nor the trip log asks for it. `trips/TelemetryFeed.kt` decides what a frame is worth: a frame whose `up_s` was already seen is a duplicate and does not become a sample, and a link that goes silent for 5 s while still reporting `Ready` gets one `snapshot` request rather than a return to polling. `TripLogService` rides that stream, which retires the one-lane request arbitration that service used to carry when its polling shared a socket with whatever page was open — the app-side twin of the fix the unit's own page needed
 for the same reason (see *V1.4.2 — live readings that never skip a second* in the Changelog).
 
-Around that stream, the link carries three more things: the app pushes the phone's clock once per link-up (`time.set`, the WebUI's own precedent — a unit with no GNSS fix keeps a correct clock this way, and one push per connection is honest about what it can guarantee); the performance monitor reads `perf` / `health` / `boot` and runs the page's live 1 s tick **only while that section is open on screen**; and **weather stays unit-fetched** over the unit's own Wi-Fi — the app has no Open-Meteo client and does not push weather, and that gap is written down here rather than quietly papered over.
+Around that stream, the link carries three more things: the app pushes the phone's clock once per link-up (`time.set`, the WebUI's own precedent — a unit with no GNSS fix keeps a correct clock this way, and one push per connection is honest about what it can guarantee); the performance monitor reads `perf` / `health` / `boot` and runs the page's live 1 s tick **only while that section is open on screen**; and **weather stays unit-fetched** over the unit's own Wi-Fi — the app has no Open-Meteo client and does not push weather, and that gap is written down here rather than quietly papered over. On the current build it is a wider gap than it looks: the fetch task itself lives in `web.cpp` (`weatherFetchTask`), which the build excludes, so a current-build unit has neither Wi-Fi nor a weather client and the widget shows what it cached from an earlier firmware.
 
 ### Dashboard settings: the unit's page, drawn natively
 
@@ -851,7 +909,9 @@ Dashboard++ for ESP32/
     ├── bt.cpp             # BLE GATT server: advertising (DPP-####), service & characteristics, bonding, MTU, chunked framing
     ├── bt_proto.h         # The wire protocol shared by the firmware and the app's ble/ package
     ├── bt_rpc.cpp         # The JSON RPC methods served over that link (config, telemetry, actions; ota.begin/abort answer not_implemented)
-    ├── web.cpp            # SoftAP/STA WiFi manager, REST API handlers, LAN firmware install, embedded Web UI
+    ├── web.cpp            # SoftAP/STA WiFi manager, REST API handlers, LAN firmware install, embedded Web UI, weather-fetch task
+    │                      # ⚠ NOT COMPILED in the current build — build_src_filter in platformio.ini excludes it (firmware
+    │                      #   phase 0b). Source kept for Wi-Fi firmwares and for the day the decision is reversed.
     └── webui.html         # Single-page Web UI source (gzipped at build time by scripts/gzip_webui.py)
 ```
 
@@ -929,7 +989,7 @@ Layout (4 MB flash, ends at exactly `0x400000`):
 
 #### Settings storage budget
 
-Web UI → Performance panel → **Memory & Storage** shows `Settings storage (NVS …): 420 of 2520 entries used, 1974 available`, served by `/api/health`. The figures are entry **slots**, not bytes, because slots are what NVS actually runs out of — a partition can report hundreds of free slots and still refuse a write, since its tidier needs one spare page to move live data into. `available` already subtracts that reserve, so it is the number to watch; it turns amber below 15 % of the total and red below 3 %, where saves start failing. ESP-IDF garbage-collects NVS automatically inside its own write path — there is no public compaction call in arduino-esp32 3.3.x — so this readout is deliberately observation only.
+On a Wi-Fi firmware, Web UI → Performance panel → **Memory & Storage** shows `Settings storage (NVS …): 420 of 2520 entries used, 1974 available`, served by `/api/health`. On the current build the same figures come from `perf.stream` and are drawn by the app's performance-monitor card (`nvsEntriesUsed` / `nvsEntriesTotal`). The figures are entry **slots**, not bytes, because slots are what NVS actually runs out of — a partition can report hundreds of free slots and still refuse a write, since its tidier needs one spare page to move live data into. `available` already subtracts that reserve, so it is the number to watch; it turns amber below 15 % of the total and red below 3 %, where saves start failing. ESP-IDF garbage-collects NVS automatically inside its own write path — there is no public compaction call in arduino-esp32 3.3.x — so this readout is deliberately observation only.
 
 ### Compiling & Flashing via USB
 
@@ -1245,12 +1305,17 @@ compared against `sha256sum firmware.bin`.
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
-every build (`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x28f8c)`),
-the unit reports it at `GET /api/ota/check` as `image_tag`, and a pushing client is
-expected to check the file it is about to send for it — because the release tag and the
-file contents can disagree, and that disagreement is exactly the class of mistake
+every build (`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)`), the
+unit prints it on the console at every boot (`FW 1.5.1, image marker DPPVER=1.5.1` — that
+log line exists because the marker had stopped surviving the link: its only reader lived
+in `web.cpp`, and once `web.cpp` left the build the linker's section garbage-collection
+deleted the literal, which is why every image built for a while carried no tag at all),
+and a Wi-Fi firmware also reports it at `GET /api/ota/check` as `image_tag`. A pushing
+client is expected to check the file it is about to send for it — because the release tag
+and the file contents can disagree, and that disagreement is exactly the class of mistake
 that gets a unit reflashed to something nobody meant. No shipped client does that check
-yet; the marker, the print and the field are what make it possible to add one.
+yet: the app ships no updater at all, so today the marker and the build-time print are
+what make a human able to tell one `.bin` from another.
 
 Deleting the pull path also closes **#71** and **#70** by construction rather than by
 fix: the TLS failures that made it unreliable (the CDN chain the compiled-in CA
@@ -1282,11 +1347,19 @@ paths.
 
 Dashboard++ includes an integrated simulation engine for bench testing UI rendering without requiring connected physical hardware.
 
-To enable Demo Mode:
+To enable Demo Mode on a **current-build** unit (no Web UI in the build):
+1. In the app, open the vehicle and connect.
+2. Go to the dashboard-settings slot (bar glyph "Dashboard settings").
+3. Open the **System & General** group → **General** card → **Enable Sensor Demo Mode**.
+4. Press **SAVE** in the bar (edits are already sent after a 600 ms debounce; `SAVE` flushes whatever is still waiting).
+
+To enable Demo Mode on a **Wi-Fi firmware (≤ 1.4.x)**:
 1. Open the Web UI at `http://192.168.4.1`.
 2. Expand the **System & Modes** section.
 3. Enable **Demo Mode**.
 4. Click **Save Settings** (or wait 2 seconds for autosave).
+
+Both paths write the same row of `CFG_TABLE`: `ENABLE_DEMO_MODE`, NVS key `DEMO_MODE`.
 
 In Demo Mode:
 - Speed oscillates synthetically between 10 km/h and 110 km/h using sinusoidal formulas.
@@ -1296,6 +1369,12 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### Unreleased — the image keeps its version tag, and the manual says which firmware it describes (firmware + docs)
+
+**The `DPPVER=` marker survives the build again.** `kImageVersionTag` is a `static` array whose only reader lived in `web.cpp`; once that file left the build nothing referenced the literal, so the linker's `--gc-sections` removed it from every image — the build said so (`[image tag] WARNING: no DPPVER= marker in firmware.bin`) and every consumer that identifies a `.bin` by reading the file was reading nothing. `setup()` now prints it once at boot, which is a reference that cannot be optimised away. Verified after the change: the build prints `[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)` and the bytes `DPPVER=1.5.1` are present in `.pio/build/esp32dev/firmware.bin`. The panel that shows the pairing number (the entry below, "the pairing number is on the panel") is the other half of making a unit legible without a cable.
+
+**The manual now says which firmware it is talking about** — see *How to read this manual*: the Wi-Fi / REST chapter is qualified as Wi-Fi firmwares ≤ 1.4.x, the file map marks `web.cpp` as not compiled (which also means the current build fetches no weather — that task lives in `web.cpp`), Demo Mode gained the app path, the NVS-slot readout names the app's card, and the `image_tag` claim about the OTA check endpoint is qualified. `AGENTS.md` rule 5 was wrong in the other direction: it described the app's update card as a push path that downloads a release and verifies it; **the app has no updater at all** (no GitHub client, no download, no checksum in the current sources) — fixed to say the app is not an update path. The app's own manual (`android/README.md`) is missing from the tree, was never tracked by git, and has no copy in the Recycle Bin snapshot of the project — an open question for the maintainer, not reconstructed here.
 
 ### Unreleased — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
 

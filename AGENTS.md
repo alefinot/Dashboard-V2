@@ -8,11 +8,13 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 ## 2. Commits
 - **Every change must be committed on `main`.** No feature branches, no PR flow — work and commit directly on `main`.
 - Commit after each logical unit of work so the history is incremental.
+- **Everything outside `Implementation plans/` is tracked.** As of 2026-11-01 the app's own manual (`android/README.md`) is missing from disk and was never committed, so it is unrecoverable from git. If a copy turns up, commit it; do not treat an untracked doc as "local-only" — rule 6 excludes the plans folder and nothing else.
 
 ## 3. Releasing ESP Code
 - When the user says **"release the ESP code"**, bump the version by **+0.0.1** (patch bump, e.g. `1.3.2` → `1.3.3`) unless the user explicitly states the exact target version.
 - The firmware version string is `FW_VERSION` in `src/config.cpp` — **one compiled-in constant**. It is not stored in NVS and nothing fetched from the network can change it. (`VERSION_OVERRIDE` is a separate, user-set label for display and pull testing — not the build identity. The old `OTA_CURRENT_VERSION` / NVS `OTA_VER` pair is gone.)
 - Commit the bump on `main` (per rule 2).
+- **The built image must carry its own label.** `src/config.cpp` embeds `DPPVER=<FW_VERSION>` inside `firmware.bin`, and `scripts/fix_upload_layout.py` reports what it finds (`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)`). If that line ever reads `WARNING: no DPPVER= marker in firmware.bin`, the literal got garbage-collected out of the link again — it happens when nothing in the compiled sources references `imageVersionTag()`; `setup()` printing it at boot is the reference that keeps it alive.
 - **No signing, anywhere.** Updates are not signed, the firmware carries no public key, and the build flags that used to control verification (`-DOTA_REQUIRE_SIG`, `-DOTA_ALLOW_UNSIGNED`) are deleted. The maintainer asked for signatures out of every update path on 2026-10-30; **do not reintroduce signature verification, `.sig` release assets, or those flags without asking first** (rule 1). `scripts/ota_sign.py` stays in the repo as an out-of-band tool only — nothing on a device looks at its output.
 
 ## 4. README on Important Releases
@@ -36,14 +38,17 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
   2. WiFi OTA via PlatformIO: `pio run -t upload --upload-port <ESP_IP>` (device must be on the `Dashboard_Config` SoftAP or a known LAN IP) — Wi-Fi firmwares only (≤ 1.4.x)
   3. Web Portal OTA upload (browser → `http://192.168.4.1` → System Actions → upload `firmware.bin`) — Wi-Fi firmwares only (≤ 1.4.x)
   4. **The Android app is not an update path, and do not plan one over HTTP.** A phone has
-     no way to reach `POST /api/ota` on a unit with no IP, and the app never had
-     Bluetooth. Its update card lists the published GitHub releases, downloads the chosen
-     `firmware.bin`, checks the SHA-256 and the version marker inside it, then stops with
-     "send it to the unit yourself". The transport under construction is **BLE**: the OTA
-     characteristic and chunk frames (`0x80`-`0x85`) plus the pairing passkey shown on the
-     panel (firmware phases 4c/4d, app phase P6) — see
-     `Implementation plans/BLE-only firmware (phased).md`. There is **no** cloud pull on
-     the unit: it never fetches firmware by itself, and there is no self-update code left.
+     no way to reach `POST /api/ota` on a unit with no IP. The current app sources contain
+     **no updater at all** — `UpdateFetcher`, `UpdateRepository` and `UpdateScreens` are
+     deleted, and a grep of `android/app/src` finds no GitHub client, no firmware download,
+     no SHA-256 check and no `DPPVER` marker check. The settings accordion's Firmware card
+     shows the unit's versions and one honest line: "Bluetooth OTA is not in this firmware"
+     (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`). Do not describe
+     the app as shipping an updater, and do not add one over HTTP. The transport under
+     construction is **BLE**: the OTA characteristic and chunk frames (`0x80`-`0x85`) plus the
+     pairing passkey shown on the panel (firmware phases 4c/4d, app phase P6) — see
+     `Implementation plans/BLE-only firmware (phased).md`. There is **no** cloud pull on the
+     unit: it never fetches firmware by itself, and there is no self-update code left.
 
 ## 6. Implementation Plans — Never in Git
 - All implementation plans must be written/exported into the `Implementation plans/` folder at the repo root.
@@ -60,6 +65,7 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 ## 9. WebUI Changes — Always Rebuild the Firmware at the End
 - The WebUI source is `src/webui.html`; it gets gzipped into the firmware at build time by the pre-script `scripts/gzip_webui.py`.
 - Whenever the WebUI is touched, **end the process by building the ESP firmware** (`pio run`) so the new WebUI is compiled into the ESP firmware binary.
+  (On the current build the portal is **not** embedded at all — `web.cpp` is out of the build, see rule 5 — so the rebuild only keeps the generated header honest. The rule still binds Wi-Fi firmwares (≤ 1.4.x) and any build that puts `web.cpp` back.)
 - WebUI work is incomplete until the firmware build succeeds with the new UI embedded.
 
 ## 10. Pins Are Sacred
