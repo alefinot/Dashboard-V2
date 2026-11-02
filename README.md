@@ -16,8 +16,8 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
 
 Two generations are described in these pages, and they are not the same product:
 
-- **A current-build unit** — anything built from this tree, i.e. everything in the
-  *Unreleased* Changelog entries on top of V1.5.1 — is **BLE-only, with no Wi-Fi stack at
+- **A current-build unit** — anything built from this tree, i.e. **V2.0.0** and the Changelog
+  entries it collects on top of V1.5.1 — is **BLE-only, with no Wi-Fi stack at
   all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
   the LAN install route **and the weather-fetch task**), `src/webui.html` and
   `scripts/gzip_webui.py` were **deleted on 2026-11-02**, and there is no build flag that
@@ -838,7 +838,7 @@ The parameter table shrank on 2026-11-02, when the portal and the network stack 
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 1.6.0`, `versionCode 49` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.0`, `versionCode 50` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -1519,7 +1519,7 @@ are **the Android app over Bluetooth** and **a USB cable with PlatformIO**:
    unit only: same endpoint, same gates, for whoever is on that unit's network
    with a PC (or the phone's browser).
 3. **The Android app is no longer a path, and that is a consequence of its own**
-   **move to Bluetooth** (see the Unreleased app entry in the Changelog). It reached this
+   **move to Bluetooth** (see the V2.0.0 app entries in the Changelog). It reached this
    endpoint through the WebView of the unit's own page, which a person used to pick a
    file in; that WebView is gone, and so is every HTTP client in the app — and a
    current-build unit has no HTTP endpoint for them to aim at anyway. The fuller
@@ -1553,8 +1553,8 @@ compared against `sha256sum firmware.bin`.
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
-every build (`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)`), the
-unit prints it on the console at every boot (`FW 1.5.1, image marker DPPVER=1.5.1` — that
+every build (`[image tag] firmware.bin declares itself 2.0.0 (marker at 0x23eb0)`), the
+unit prints it on the console at every boot (`FW 2.0.0, image marker DPPVER=2.0.0` — that
 log line exists because the marker had stopped surviving the link: its only reader lived
 in `web.cpp`, and once `web.cpp` left the build the linker's section garbage-collection
 deleted the literal, which is why every image built for a while carried no tag at all),
@@ -1618,10 +1618,63 @@ In Demo Mode:
 
 ## Changelog
 
-### Unreleased — a phone can put firmware on a unit over Bluetooth, end to end (firmware `src/` + app, `versionCode` 44 → 49)
+### V2.0.0 — the unit has exactly one door: a phone, over Bluetooth (firmware `src/` + app; firmware **1.5.1 → 2.0.0**, app **1.6.0/49 → 2.0.0/50**)
 
-**Still no version stamp** (`AGENTS.md` rule 3): `FW_VERSION` stays **1.5.1**; the bump comes when
-this batch is approved, and the bench unit is running a 1.5.1 image it installed over BLE.
+A major number because the product changed shape, not because a feature was added. A unit cut
+from this tree has **no Wi-Fi stack at all** — no SoftAP, no IP, no Web Portal, no HTTP API, no
+`POST /api/ota`, no weather it fetched by itself — and it can only be updated by **a phone
+pushing the image over Bluetooth LE**. A unit running 1.5.1 or older has all of the Wi-Fi
+door and no Bluetooth. The two are different products, and this manual now says so up front
+(*How to read this manual*). Everything between this entry and **V1.5.1** below is what ships
+in it; the six entries underneath carry the details as they were written, now headed *Shipped in
+V2.0.0*.
+
+What a 2.0.0 unit is, in one pass:
+
+- **One transport.** GATT service `d9a1f000-…` (`src/bt.cpp`, `src/bt_proto.h`, `src/bt_rpc.cpp`):
+  RPC request/response on one characteristic, telemetry pushed at 1 Hz, a pairing passkey shown
+  on the panel. `src/web.cpp`, `src/webui.html` and `scripts/gzip_webui.py` are deleted (2026-11-02)
+  and no build flag compiles any of them back.
+- **One update path, and it is the phone's.** `ota.begin` → `begin_ok` with the MTU-capped chunk
+  size → raw `offset(4, LE) + payload` writes on the OTA characteristic → `ack` on the RPC plane
+  every **4 KiB** (one flash sector: an ACK is a claim about flash, so the unit never ACKs further
+  ahead than it has drained) → `ota.end`, which **drains the 16-frame handoff ring before it counts
+  a byte**, then CRC-32 + `esp_ota_end()` verify, flip to the spare slot, tagged reboot
+  (`lastRebootTag='ota'`). The card that drives it is `ui/screens/FirmwareOtaControl.kt`; the unit's
+  side is `src/bt_ota.cpp`. Spelled out under *Firmware over the link*.
+- **No signing, and no version gate on the unit** (`AGENTS.md` rule 3). CRC-32 is the only
+  integrity check on the wire. A unit will take an older image, or the identical one, without
+  arguing — the app is what refuses to send a file whose `DPPVER=` tag matches the running version
+  unless the operator presses twice, because the unit itself cannot say no.
+- **An install parks the dashboard.** `otaQuietActive` holds `loop()` and the sensor task at their
+  loop tops for the whole session, frees the panel's flash-resident sprite and 120 px font, and
+  the update screen ticks at ~120 ms; the RPC plane answers **only `ping` and `ota.*`
+  (`ota_in_progress` for everything else)**, hold-to-restart is refused while flash is being
+  written, and a refused install puts all of it back. 120 s of silence on either end abandons the
+  install and the old image stays.
+- **Numbers from the bench, this build** (COM7, tablet `192.168.1.119:5555`, MTU 517, chunk 496 B,
+  1,590,912 B image): install **2:23 and 2:26** wall clock — the plan's gate was 1.6 MB in ≤ 5 min,
+  met; handoff ring high-water **2 of 15** slots, longest drain gap **56 ms**; CRC-32 plus
+  `esp_ota_end()` verify **441 ms**; failure drill (app force-stopped mid-transfer) reports
+  `stalled` at 120 s, releases the slot, draws the failure frame and restores the dashboard 15 s
+  later. Build as shipped: flash **1,569,615 B** (82.6 % of the 1,900,544 B app slot — the gate is
+  1.80 MB, and an image has to fit the slot for this path to accept it), RAM **79,436 B** (24.2 %),
+  image marker `DPPVER=2.0.0` present in the `.bin`. Bench unit flashed over USB and verified
+  booting as `FW 2.0.0, image marker DPPVER=2.0.0` at ~62 fps, `heap≈40.6 KB`, sprite up.
+- **Release assets** (rule 27): `firmware.bin` (1,591,952 B) and `app-debug.apk` (11,633,740 B,
+  `versionCode 50`, `versionName 2.0.0`, built by `gradlew.bat assembleDebug`). **No `.sig`
+  asset** — no device can verify one. Unit tests green (`gradlew.bat testDebugUnitTest`).
+
+Not in this release, deliberately: no signature verification anywhere, no HTTP updater, no cloud
+pull on the unit, no Web Portal, no re-pairing of existing units' GATT revision, and no NVS layout
+change (`CFG_VER` unchanged — a 1.5.1 backup restores into a 2.0.0 unit, and its Wi-Fi keys are
+simply never read again).
+
+### Shipped in V2.0.0 — a phone can put firmware on a unit over Bluetooth, end to end (firmware `src/` + app, `versionCode` 44 → 49)
+
+**No version stamp while this was landing** (`AGENTS.md` rule 3): `FW_VERSION` stayed **1.5.1**
+until the batch was approved, and the bump to **2.0.0** is the entry above. The bench unit was
+running a 1.5.1 image it had installed over BLE.
 
 **The unit side** (`c4435951` → `0d1f46f6`, `src/bt_ota.cpp` + the routing in `src/bt.cpp` + the
 methods in `src/bt_rpc.cpp`): the OTA characteristic stopped being a socket with nobody behind it.
@@ -1695,11 +1748,13 @@ the frames, the resume paths and the window are unit-tested on both ends, but no
 `ota.abort` mid-transfer. The app still cannot obtain a `.bin` by itself — no GitHub client, no
 release list, no SHA-256 — so the file has to reach the phone some other way.
 
-### Unreleased — the unit keeps one door open and closes all the others (firmware, `src/` + `scripts/`)
+### Shipped in V2.0.0 — the unit keeps one door open and closes all the others (firmware, `src/` + `scripts/`)
 
-**No version stamp yet.** `FW_VERSION` in `src/config.cpp` is still **1.5.1**: these
-firmware commits are unreleased work-in-progress, and the bump happens when this
-batch is approved for release (`AGENTS.md` rule 3), not before. Everything below is
+**No version stamp while this was landing.** `FW_VERSION` in `src/config.cpp` was still **1.5.1**:
+these
+firmware commits were unreleased work-in-progress, and the bump happens when a
+batch is approved for release (`AGENTS.md` rule 3), not before — it landed as **2.0.0** (entry
+above). Everything below is
 true of a build cut from `main` today, and a board running a released image (≤ 1.5.1)
 still behaves the Wi-Fi way until it is reflashed.
 
@@ -1795,7 +1850,7 @@ free; the BLE build idles around 40 KB and dipped to 33.8 KB during a `config.ge
 stream) — accepted knowingly, because the fix that buys heap back is a smaller
 reassembly ceiling and the plan's own contingency order applies.
 
-### Unreleased — the app finally looks like the unit it drives (Android app, `versionCode` 42 → 43, `versionName` 1.6.0)
+### Shipped in V2.0.0 — the app finally looks like the unit it drives (Android app, `versionCode` 42 → 43, `versionName` 1.6.0)
 
 **No firmware line moved**: this is composition inside `android/`, and the ESP
 behaves exactly as before it. Plan: *Implementation plans/APP-WEBUI-RESTYLE-2026-11-02.md*
@@ -1831,7 +1886,7 @@ glyphs. Verified on the tablet (`192.168.1.119:5555`) with screenshots of every
 page, plus the JVM suite: **395 tests green**, `assembleDebug` producing
 `app-debug.apk` at 11,585,328 B.
 
-### Unreleased — the image keeps its version tag, and the manual says which firmware it describes (firmware + docs)
+### Shipped in V2.0.0 — the image keeps its version tag, and the manual says which firmware it describes (firmware + docs)
 
 **The `DPPVER=` marker survives the build again.** `kImageVersionTag` is a `static` array whose only reader lived in `web.cpp`; once that file left the build nothing referenced the literal, so the linker's `--gc-sections` removed it from every image — the build said so (`[image tag] WARNING: no DPPVER= marker in firmware.bin`) and every consumer that identifies a `.bin` by reading the file was reading nothing. `setup()` now prints it once at boot, which is a reference that cannot be optimised away. Verified after the change: the build prints `[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)` and the bytes `DPPVER=1.5.1` are present in `.pio/build/esp32dev/firmware.bin`. The panel that shows the pairing number (the entry below, "the pairing number is on the panel") is the other half of making a unit legible without a cable.
 
@@ -1840,7 +1895,7 @@ page, plus the JVM suite: **395 tests green**, `assembleDebug` producing
 the older changelog line that said the Android app checks a downloaded `.bin` for the
 `DPPVER=` marker: no app source has ever read that string. `AGENTS.md` rule 5 was wrong in the other direction: it described the app's update card as a push path that downloads a release and verifies it; **the app has no updater at all** (no GitHub client, no download, no checksum in the current sources) — fixed to say the app is not an update path. The app's own manual (`android/README.md`) is missing from the tree, was never tracked by git, and has no copy in the Recycle Bin snapshot of the project — an open question for the maintainer, not reconstructed here.
 
-### Unreleased — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
+### Shipped in V2.0.0 — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
 
 **No firmware line moved by those four commits.** `src/` was untouched by them, `FW_VERSION`
 is unchanged, and the ESP's HTTP API, Web Portal, SoftAP and mDNS behaved exactly as before —
@@ -1947,7 +2002,7 @@ the plan. What was verified here is the build and the 395 plain-JVM tests.
 
 ---
 
-### Unreleased (next release) — the unit can no longer update itself, and the version label is gone (firmware + Web UI + Android app)
+### Shipped in V2.0.0 — the unit can no longer update itself, and the version label is gone (firmware + Web UI + Android app)
 
 - **Issue #72 fixed: `VERSION_OVERRIDE` is a label, nothing more.** Every version
   decision now reads `FW_VERSION` through `buildVersion()` (renamed from
