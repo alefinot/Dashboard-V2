@@ -208,8 +208,9 @@ fun HudToggle(
  * `input[type=text|number]` / `select`: 6px radius, `--bg-input` fill, 6x10
  * padding, 12px text, `transition: all .2s ease`, `#182030` on focus.
  *
- * `#searchBar`'s 40px left padding is room for the `.search-icon` glyph; the app's
- * filter rows have no icon, so they keep the 16px side padding.
+ * `#searchBar`'s 40px left padding is room for the `.search-icon` glyph, so a search
+ * field that is given a [leading] slot (the magnifier) indents its text by the same 40dp
+ * and draws the slot at 14dp, the way the page's absolutely-positioned icon does.
  */
 enum class HudInputStyle { SEARCH, FIELD }
 
@@ -223,6 +224,8 @@ fun HudInput(
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Done,
     onDone: () -> Unit = {},
+    /** `.search-icon`: an 18dp glyph at the field's left edge, never part of the text. */
+    leading: (@Composable () -> Unit)? = null,
 ) {
     val search = style == HudInputStyle.SEARCH
     var focused by remember { mutableStateOf(false) }
@@ -266,20 +269,35 @@ fun HudInput(
                     )
                     .clip(shape)
                     .background(fill)
-                    .border(1.dp, edge, shape)
-                    .padding(
-                        horizontal = if (search) 16.dp else 10.dp,
-                        vertical = if (search) 8.dp else 6.dp,
-                    ),
+                    .border(1.dp, edge, shape),
             ) {
-                if (value.isEmpty() && placeholder.isNotEmpty()) {
-                    Text(
-                        placeholder,
-                        color = HudColors.TextDim,
-                        fontSize = if (search) 13.sp else 12.sp,
-                    )
+                if (leading != null) {
+                    Box(
+                        Modifier.align(Alignment.CenterStart).padding(start = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { leading() }
                 }
-                inner()
+                Box(
+                    Modifier.fillMaxWidth().padding(
+                        start = when {
+                            leading != null -> 40.dp
+                            search -> 16.dp
+                            else -> 10.dp
+                        },
+                        end = if (search) 16.dp else 10.dp,
+                        top = if (search) 8.dp else 6.dp,
+                        bottom = if (search) 8.dp else 6.dp,
+                    ),
+                ) {
+                    if (value.isEmpty() && placeholder.isNotEmpty()) {
+                        Text(
+                            placeholder,
+                            color = HudColors.TextDim,
+                            fontSize = if (search) 13.sp else 12.sp,
+                        )
+                    }
+                    inner()
+                }
             }
         },
     )

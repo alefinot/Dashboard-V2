@@ -196,6 +196,48 @@ object HudIcons {
     }
 
     /**
+     * The magnifier inside `#searchBar`: the page's own glyph (`circle cx=11 cy=11 r=8`
+     * plus the handle to 21,21), on the same 24-unit grid and the same 1.9-unit round
+     * stroke as the bar's icons. Tinted at the call site, because the page paints it
+     * `--text-dim` until the field has focus.
+     */
+    val Search: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudSearch", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            // The circle as two half arcs: one closed subpath, no fill.
+            PathParser().parsePathString(
+                "M19,11 A8,8 0 1 1 3,11 A8,8 0 1 1 19,11 Z",
+            ).toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M21,21 L16.65,16.65").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /**
+     * The accordion's chevron: `polyline 9,18 15,12 9,6`, stroke 2, the same shape the
+     * page's `summary` svg draws. It replaces the `"▾"`/`"▸"` characters the settings
+     * rows used to carry - this tablet's font has no glyph for either, so the rows
+     * showed a tofu box where the arrow should be. The caller rotates it 90 degrees
+     * when the group opens (`.summary-chevron`'s `transform`).
+     */
+    val Chevron: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudChevron", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString("M9,18 L15,12 L9,6").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = 2f,
+            strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /**
      * Vehicles: a car seen from the side - sill line with its shoulders, a roofline,
      * two wheels drawn as arcs under the sill.
      *
