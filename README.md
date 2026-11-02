@@ -991,7 +991,7 @@ Layout (4 MB flash, ends at exactly `0x400000`):
 
 #### Settings storage budget
 
-On a Wi-Fi firmware, Web UI → Performance panel → **Memory & Storage** shows `Settings storage (NVS …): 420 of 2520 entries used, 1974 available`, served by `/api/health`. On the current build the same figures come from `perf.stream` and are drawn by the app's performance-monitor card (`nvsEntriesUsed` / `nvsEntriesTotal`). The figures are entry **slots**, not bytes, because slots are what NVS actually runs out of — a partition can report hundreds of free slots and still refuse a write, since its tidier needs one spare page to move live data into. `available` already subtracts that reserve, so it is the number to watch; it turns amber below 15 % of the total and red below 3 %, where saves start failing. ESP-IDF garbage-collects NVS automatically inside its own write path — there is no public compaction call in arduino-esp32 3.3.x — so this readout is deliberately observation only.
+On a Wi-Fi firmware, Web UI → Performance panel → **Memory & Storage** shows `Settings storage (NVS …): 420 of 2520 entries used, 1974 available`, served by `/api/health`. On the current build the same figures come over BLE from the `perf` method (`nvs_entries_used` / `nvs_entries_available` / `nvs_entries_total`), parsed in `ui/screens/settings/UnitDiag.kt` and drawn by the app's performance-monitor card (`ui/screens/settings/PerfMonitorScreen.kt`). The figures are entry **slots**, not bytes, because slots are what NVS actually runs out of — a partition can report hundreds of free slots and still refuse a write, since its tidier needs one spare page to move live data into. `available` already subtracts that reserve, so it is the number to watch; it turns amber below 15 % of the total and red below 3 %, where saves start failing. ESP-IDF garbage-collects NVS automatically inside its own write path — there is no public compaction call in arduino-esp32 3.3.x — so this readout is deliberately observation only.
 
 ### Compiling & Flashing via USB
 
@@ -1376,7 +1376,10 @@ In Demo Mode:
 
 **The `DPPVER=` marker survives the build again.** `kImageVersionTag` is a `static` array whose only reader lived in `web.cpp`; once that file left the build nothing referenced the literal, so the linker's `--gc-sections` removed it from every image — the build said so (`[image tag] WARNING: no DPPVER= marker in firmware.bin`) and every consumer that identifies a `.bin` by reading the file was reading nothing. `setup()` now prints it once at boot, which is a reference that cannot be optimised away. Verified after the change: the build prints `[image tag] firmware.bin declares itself 1.5.1 (marker at 0x202e4)` and the bytes `DPPVER=1.5.1` are present in `.pio/build/esp32dev/firmware.bin`. The panel that shows the pairing number (the entry below, "the pairing number is on the panel") is the other half of making a unit legible without a cable.
 
-**The manual now says which firmware it is talking about** — see *How to read this manual*: the Wi-Fi / REST chapter is qualified as Wi-Fi firmwares ≤ 1.4.x, the file map marks `web.cpp` as not compiled (which also means the current build fetches no weather — that task lives in `web.cpp`), Demo Mode gained the app path, the NVS-slot readout names the app's card, and the `image_tag` claim about the OTA check endpoint is qualified. `AGENTS.md` rule 5 was wrong in the other direction: it described the app's update card as a push path that downloads a release and verifies it; **the app has no updater at all** (no GitHub client, no download, no checksum in the current sources) — fixed to say the app is not an update path. The app's own manual (`android/README.md`) is missing from the tree, was never tracked by git, and has no copy in the Recycle Bin snapshot of the project — an open question for the maintainer, not reconstructed here.
+**The manual now says which firmware it is talking about** — see *How to read this manual*: the Wi-Fi / REST chapter is qualified as Wi-Fi firmwares ≤ 1.4.x, the file map marks `web.cpp` as not compiled (which also means the current build fetches no weather — that task lives in `web.cpp`), Demo Mode gained the app path, the NVS-slot readout names the app's card (and its real BLE method, `perf`, not
+`perf.stream`), and the `image_tag` claim about the OTA check endpoint is qualified — as is
+the older changelog line that said the Android app checks a downloaded `.bin` for the
+`DPPVER=` marker: no app source has ever read that string. `AGENTS.md` rule 5 was wrong in the other direction: it described the app's update card as a push path that downloads a release and verifies it; **the app has no updater at all** (no GitHub client, no download, no checksum in the current sources) — fixed to say the app is not an update path. The app's own manual (`android/README.md`) is missing from the tree, was never tracked by git, and has no copy in the Recycle Bin snapshot of the project — an open question for the maintainer, not reconstructed here.
 
 ### Unreleased — the Android app has one way to a unit: Bluetooth (Android app, `versionCode` 39 → 42)
 
@@ -1542,8 +1545,13 @@ the plan. What was verified here is the build and the 395 plain-JVM tests.
 - **Every firmware image now describes itself.** `src/config.cpp` embeds
   `kImageVersionTag` — the literal `DPPVER=` followed by the version string — so a
   `.bin` on disk carries its own version. `scripts/fix_upload_layout.py` prints it
-  after every build, `GET /api/ota/check` reports it as `image_tag`, and the Android
-  app checks a downloaded file for it before offering to install it.
+  after every build, and a Wi-Fi firmware reports it at `GET /api/ota/check` as
+  `image_tag`.
+  *(As shipped, this entry also claimed "the Android app checks a downloaded file for it
+  before offering to install it" — that was never true of a shipped app, and the update
+  card it describes has since been deleted: no Kotlin source mentions `DPPVER=` or
+  `image_tag`. The marker's live consumers are the build script, the boot line on COM7
+  (`FW x.y.z, image marker DPPVER=x.y.z`), and whoever reads the bytes of a `.bin`.)*
 - **`/api/ota/check` loses the pull-era fields** `enabled`, `url`, `ca_bundle`,
   `ca_mode` and `version_override`, and keeps/gains the identity trio
   `current_version`, `build_version`, `image_tag`. Checked against both consumers:
