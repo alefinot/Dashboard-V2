@@ -190,13 +190,6 @@ class TripRecorder(
         return TripEvent.NONE
     }
 
-    /** Wi-Fi / LAN went away: the device cannot answer, so close the trip now. */
-    fun onNetworkLost(): TripEvent {
-        if (openTrip == null) return TripEvent.NONE
-        seal("network-lost")
-        return TripEvent.SEALED
-    }
-
     /** Service stopping: seal, leaving a complete file. */
     fun stop(): TripEvent {
         if (openTrip == null) return TripEvent.NONE

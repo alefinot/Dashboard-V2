@@ -208,7 +208,8 @@ TaskHandle_t gpsTaskHandle = NULL;
 // dead sensors. Now every start is checked, retried once on half the requested stack
 // (a reduced stack is usually enough and beats a missing subsystem), and recorded in
 // failedTasksMask so the boot log names exactly what is missing.
-static uint8_t failedTasksMask = 0; // bit0 sensor, bit1 gps, bit2 web, bits3-4 probes
+static uint8_t failedTasksMask = 0; // bit0 sensor, bit1 gps, bits3-4 probes
+                                    // (bit2 is unused now: the web task is gone)
 
 static bool startTask(const char *name, TaskFunction_t fn, uint32_t stackBytes,
                       UBaseType_t prio, BaseType_t core, void *param,

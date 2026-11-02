@@ -126,11 +126,17 @@ class ConfigSchemaTest {
         }
     }
 
-    /** A hidden key is one the V2 unit cannot act on. Drawing it would be a lie. */
+    /**
+     * A hidden key is one the unit has in NVS but cannot act on. Drawing it would
+     * be a lie, so the renderer must never reach one. The list is empty as of the
+     * BLE-only cleanup (`7104bf96` deleted the 14 dead V2 keys out of `CFG_TABLE`
+     * instead of hiding them), and this test stays as the guard for the day the
+     * generator lists one again — a key retired from the firmware but left in a
+     * backup is exactly the case it catches.
+     */
     @Test
     fun noHiddenKeyReachesAGroup() {
         val schema = SettingsFixtures.asset
-        assertTrue("the asset hides nothing", schema.hidden.isNotEmpty())
         for (item in schema.allItems) {
             assertTrue("hidden key ${item.key} is rendered", !schema.isHidden(item.key))
             item.keyY?.let { assertTrue("hidden key $it is rendered", !schema.isHidden(it)) }
