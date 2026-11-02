@@ -8,29 +8,36 @@
 
 **Dashboard++** is an ultra-high-performance, production-grade automotive digital instrument cluster and telemetry solution designed for motorcycles, cars, and custom electric/combustion vehicles powered by the **ESP32 WROOM-32** dual-core microcontroller.
 
-Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 MHz SPI bus using **LovyanGFX** with PROGMEM-mapped VLW fonts, Dashboard++ blends real-time multi-sensor fusion algorithms, sprite-based anti-aliased digit rendering, dirty-rendering optimizations, hysteresis-based dynamic CPU frequency scaling, persistent NVS configuration management, an Open-Meteo live weather widget, and a complete single-page Web application served over WiFi with REST API control, NVS backup/restore, and firmware updates pushed to it over the LAN.
+Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 MHz SPI bus using **LovyanGFX** with PROGMEM-mapped VLW fonts, Dashboard++ blends real-time multi-sensor fusion algorithms, sprite-based anti-aliased digit rendering, dirty-rendering optimizations, hysteresis-based dynamic CPU frequency scaling, persistent NVS configuration management, and a **Bluetooth LE link** to the companion Android app, which carries the whole settings page, 1 Hz telemetry pushes, NVS backup/restore, the weather printed on the panel (fetched by the phone and handed over), and firmware updates. A build from this tree has **no Wi-Fi stack of any kind** — see *How to read this manual*.
 
 ---
 
 ## How to read this manual
 
-Two firmwares are described in these pages at once, and they are not the same product:
+Two generations are described in these pages, and they are not the same product:
 
-- **A current-build unit** — anything built from this tree after firmware phase 0b, i.e.
-  everything in the *Unreleased* Changelog entries on top of V1.5.1 — is **BLE-only**.
-  `platformio.ini` keeps `build_src_filter = +<*> -<web.cpp>`, and `src/web.cpp` holds the
-  SoftAP and station join, every REST handler, the Web Portal, the OTA install route **and
-  the weather-fetch task**. So that unit has no SoftAP, no IP, no `http://192.168.4.1`, no
-  HTTP API, no way to update itself, no weather it fetched, and no code that can scan or
-  connect as a central. Its one door is Bluetooth LE (`6c551b24-4f04-4a2a-9b11-8f6ae03cd7c1`).
+- **A current-build unit** — anything built from this tree, i.e. everything in the
+  *Unreleased* Changelog entries on top of V1.5.1 — is **BLE-only, with no Wi-Fi stack at
+  all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
+  the LAN install route **and the weather-fetch task**), `src/webui.html` and
+  `scripts/gzip_webui.py` were **deleted on 2026-11-02**, and there is no build flag that
+  compiles any of it back: a unit flashed from here has no SoftAP, no IP, no
+  `http://192.168.4.1`, no HTTP API, no page on the panel, and no weather it fetched by
+  itself. Its one door is Bluetooth LE (GATT service `d9a1f000-6c1e-4b8a-9f2d-3e7c1a5b9d40`,
+  `src/bt.cpp` + `src/bt_proto.h` + `src/bt_rpc.cpp`), and its only flashing path is USB
+  serial.
 - **A unit still running 1.4.x or older** keeps all of that: Wi-Fi, the portal, the REST
   API, `POST /api/ota`, and no Bluetooth at all (the GATT server landed after those releases).
+  The Android app cannot reach such a unit at all — it speaks GATT and nothing else — so those
+  units are configured and flashed from their own portal or over the wire.
 
 So whenever a sentence says "in the Web UI…", "post to `/api/…`", "open `192.168.4.1`" or
 "the unit fetches…", read it as **on a Wi-Fi firmware (≤ 1.4.x)**. On a current-build unit,
 the same settings live in the Android app's dashboard-settings slot over Bluetooth, and the
 rest of that sentence does not apply. Chapters and sections that describe a whole
-Wi-Fi-only subsystem carry the qualifier in their heading.
+Wi-Fi-only subsystem carry the qualifier in their heading. The deleted sources are in git
+history (`git show 7104bf96^:src/web.cpp`, `…:src/webui.html`) if a Wi-Fi-era unit ever has
+to be understood in detail.
 
 ## Technical Table of Contents
 1. [Executive Overview](#executive-overview)
@@ -40,11 +47,13 @@ Wi-Fi-only subsystem carry the qualifier in their heading.
 5. [Software Architecture & Mathematical Models](#software-architecture--mathematical-models)
    - [Dual-Source Speed Fusion & Odometer Engine](#1-dual-source-speed-fusion--odometer-engine)
    - [Anti-Aliased GFX Engine & 7-Segment Fonts](#2-anti-aliased-gfx-engine--7-segment-fonts)
-   - [Piecewise Linear Fuel Calibration & Filtering](#3-piecewise-linear-fuel-calibration--filtering)
+   - [Marine Resistive Fuel Sender: Divider, Ohm-Domain Table & Filtering](#3-marine-resistive-fuel-sender-divider-ohm-domain-table--filtering)
    - [Steinhart-Hart Coolant Temperature Math](#4-steinhart-hart-coolant-temperature-math)
    - [Fuel Economy & Performance Drag Timer](#5-fuel-economy--performance-drag-timer)
    - [Power Management & Dynamic CPU Scaling](#6-power-management--dynamic-cpu-scaling)
-6. [Embedded Web UI & REST API Reference (Wi-Fi firmware ≤ 1.4.x)](#embedded-web-ui--rest-api-reference-wi-fi-firmware--14x)
+6. [The BLE Link: GATT, Framing and RPC Methods](#the-ble-link-gatt-framing-and-rpc-methods)
+   - [Noise Bench](#noise-bench)
+   - [Historical: the Web Portal and REST API (units running ≤ 1.4.x)](#historical-the-web-portal-and-rest-api-units-running--14x)
 7. [NVS Configuration Parameter Reference](#nvs-configuration-parameter-reference)
 8. [Android Companion App](#android-companion-app)
    - [The shell: one bar, one pager, one list](#the-shell-one-bar-one-pager-one-list)
@@ -74,8 +83,8 @@ Dashboard++ replaces legacy analog or basic digital gauges with an automotive-gr
 - **Dirty-Rendering Frame Pipeline:** Element state tracking ensures only mutated visual regions are drawn to the SPI bus, with dedicated per-element refresh rate throttles for speed, satellite count, timer, battery, fuel economy, and average speed.
 - **Configurable 7-Segment Digital Fonts:** 120px (sprite) and 28px (direct) seven-segment fonts with background "ghost digit" rendering (888 backdrop effect) and fully user-configurable integer and decimal digit boundaries for all telemetry counters.
 - **Full Sensor Suite Integration:** Precise fuel level monitoring (20-point piecewise linear calibration table + EMA filtering), engine coolant thermistor telemetry (Steinhart-Hart equation), battery voltage divider monitoring, trip fuel economy tracking, **trip average speed**, and a **session max speed (Vmax)** readout display.
-- **FreeRTOS Dual-Core Multitasking:** Strict core isolation — the continuous ~1.1KB/s GNSS UART stream is quarantined in its own Core 0 task (bulk ring-buffer read, bounded per tick, sitting below the WiFi stack), while the vehicle sensor suite and UI rendering run on Core 1, so a GPS stream backlog can never stall the dashboard or freeze any real-time value.
-- **Embedded Web Management Portal (Wi-Fi firmwares ≤ 1.4.x — not compiled into a build from this tree, see *How to read this manual*):** Embedded single-page Web application accessible over SoftAP or local WiFi network featuring grouped card-based configuration UI with live search, real-time performance telemetry panel (FPS, CPU frequency/temp, RAM, flash storage), interactive sliders, color pickers, NVS backup/restore, web serial terminal stream, and OTA firmware updating by uploading a firmware file (the Web UI's own file picker is the only push path today: the Android app used to open that page in a WebView and upload through it, and since it became a Bluetooth-only client it can no longer reach `POST /api/ota` at all — see *Android Companion App*).
+- **FreeRTOS Dual-Core Multitasking:** Strict core isolation — the continuous ~1.1KB/s GNSS UART stream is quarantined in its own Core 0 task (bulk ring-buffer read, bounded per tick, sitting below the BLE stack), while the vehicle sensor suite and UI rendering run on Core 1, so a GPS stream backlog can never stall the dashboard or freeze any real-time value.
+- **Bluetooth LE link to the companion app (all builds from this tree):** one GATT service with three characteristics — telemetry (notify, the same 1 Hz snapshot JSON), RPC (write, the JSON request/response methods that replaced every REST endpoint, including NVS backup as a `config.get` chunk stream and restore as `config.set`), and OTA (write/notify, the firmware image path — see *The BLE Link*). Pairing is LE Secure Connections with a 6-digit passkey shown full-screen on the panel; every characteristic demands an encrypted, bonded link, and a factory reset clears the bonds. The panel's weather widget is fed by the phone (the unit has no radio to fetch it with), as is the clock (`time.set` once per link-up).
 - **Hysteresis-Based Dynamic CPU Scaling:** Three-state frequency governor (240/160/80 MHz) with hysteresis deadbands prevents oscillation, and thermal throttling automatically caps frequency at configurable warning/critical temperature thresholds.
 
 ---
@@ -86,48 +95,56 @@ The system leverages the ESP32's Xtensa dual-core processor via FreeRTOS tasks t
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                            ESP32 WROOM-32 DUAL-CORE                             │
+│                             ESP32 WROOM-32 DUAL-CORE                            │
 ├────────────────────────────────────────┼────────────────────────────────────────┤
-│    CORE 0  (GNSS Stream & Network)     │  CORE 1  (Vehicle Sensors & Display)   │
+│    CORE 0  (GNSS Stream & BLE Link)    │  CORE 1  (Vehicle Sensors & Display)   │
 ├────────────────────────────────────────┼────────────────────────────────────────┤
 │┌──────────────────────────────────────┐│┌──────────────────────────────────────┐│
-││ Task: GpsTaskCore0 (Prio 2, 10KB)    │││ Task: SensorTaskCore1 (Prio 2, 10KB) ││
+││ Task: GpsTaskCore0 (Prio 2, 4KB)     │││ Task: SensorTaskCore1 (Prio 2, 4KB)  ││
 ││                                      │││                                      ││
 ││• UART2 @ 115200 bulk ring drain      │││• Hall Sensor GPIO33 ISR              ││
-││  (readBytes() batch, 1024 B/tick cap)│││• ADC: Fuel (32), Temp (36), Bat (35) ││
-││• TinyGPS++ NMEA + UBX NAV-PVT parse  │││• Fuel Economy & Accel Timer          ││
+││  (readBytes() batch, 1024 B cap)     │││• ADC: Fuel 32, Temp 36, Bat 35       ││
+││• TinyGPS++ NMEA + UBX NAV-PVT        │││• Fuel Economy & Accel Timer          ││
 ││• Speed Fusion & Odometer calc        │││• Trip Average Speed                  ││
-││• GNSS Epoch Time Sync -> settimeofday│││• Safe Thread Sync via g_stateMutex   ││
-││• Safe Thread Sync via g_stateMutex   │││                                      ││
-││                                      │││• Safe Thread Sync via g_stateMutex   ││
-││──────────────────────────────────────│││──────────────────────────────────────││
-││ Task: WebTaskCore0 (Prio 1, 12KB)    │││ Main Loop (Priority 1)               ││
+││• GNSS epoch -> settimeofday          │││• Safe sync via g_stateMutex          ││
+││• Safe sync via g_stateMutex          │││                                      ││
 ││                                      │││                                      ││
-││• SoftAP (Dashboard_Config) & STA     │││• Dirty-Rendering Frame Pipeline      ││
-││• WebServer HTTP Handlers             │││• LovyanGFX SPI Driver (60 MHz)       ││
-││• ArduinoOTA Firmware Listener        │││• Sprite-Based Speed (120px VLW)      ││
-││• Serial Log Streaming API            │││• Hysteresis CPU Scaling (80/160/240) ││
-│└──────────────────────────────────────┘││• Auto Night-Mode Backlight PWM       ││
-│                                        ││• Ignition Deep Sleep State Machine   ││
-│                                        ││• Telemetry Logging to 4KB Ring       ││
-│                                        │└──────────────────────────────────────┘│
+││──────────────────────────────────────│││──────────────────────────────────────││
+││ Task: BtTaskCore0 (Prio 1, 8KB)      │││ Main Loop (Priority 1)               ││
+││                                      │││                                      ││
+││• BLE GATT server (DPP-#### adv)      │││• Dirty-Rendering Frame Pipeline      ││
+││• LE SC pairing, passkey on panel     │││• LovyanGFX SPI Driver (60 MHz)       ││
+││• Frame reassembly / fragmenting      │││• Sprite-Based Speed (120px VLW)      ││
+││• RPC methods, OTA image path         │││• Hysteresis CPU 80/160/240 MHz       ││
+││• 1 Hz telemetry pump (TELEM)         │││• Auto Night-Mode Backlight PWM       ││
+││ • OTA frames ride the OTA char.      │││• Ignition Deep Sleep State Mach.     ││
+││• 3 s hold, then restart              │││• Telemetry Logging to 4KB Ring       ││
+││                                      │││                                      ││
+││──────────────────────────────────────│││──────────────────────────────────────││
+││ Task: NoiseBench (Prio 1, 4KB)       │││ CPUProbe0 (Core 0) + CPUProbe1       ││
+││ Task: CPUProbe0 (Prio 1, 2 KB)       │││ (Prio 1, 2 KB each): idle + freq     ││
+││→ perf and the frequency governor     │││ sampling behind the perf method      ││
+│└──────────────────────────────────────┘│└──────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 > [!NOTE]
-> The GNSS task sits on Core 0 **below** the WiFi/HTTPD/LWIP stack on purpose: the module streams
+> The GNSS task sits on Core 0 **below** the BLE stack on purpose: the module streams
 > ~1.1KB/s continuously and the drain is I/O-gated at the byte arrival rate, so it can never
-> out-run the stream. GPS is 1Hz-tolerant data, so if the network preempts the drain, only GPS
-> values lag — the vehicle sensors and the screen are never touched.
+> out-run the stream. GPS is 1Hz-tolerant data, so if the radio preempts the drain, only GPS
+> values lag — the vehicle sensors and the screen are never touched. `btTask` is the one task
+> that can be given work in bulk (a config save, an image write), and it runs at priority 1 so
+> the two sensor tasks outrank it.
 
 > [!NOTE]
-> The **weather fetch task** (Core 0, spawned by `startWeatherFetch()` on Core 1) polls the Open-Meteo
-> API on a configurable interval (`WEATHER_REFRESH_MIN`) and stores the result in a dedicated
-> `g_weatherData` struct. A 30 s guard asks a stuck fetch to abort (the fetch polls
-> `weatherAbort` at its checkpoints and HTTP calls carry 8 s connect/read timeouts) so it unwinds
-> and deletes itself rather than being killed with `vTaskDelete()`; while an aborted fetch is still
-> alive, `startWeatherFetch()` refuses to stack a second one. A config save triggers an
-> instant refetch with a 2 s retry backoff.
+> **There is no weather fetch task.** The unit has no radio, so the panel's weather widget is
+> fed from the phone: the app sends `weather.set` over the link (`BT_F_WEATHER` on the RPC
+> characteristic) with temperature, humidity, wind, sunrise/sunset as epoch seconds (converted
+> to `HH:MM` through `TZ_OFFSET_HOURS` + `TZ_DST_RULE`), the city label and a `valid` flag, and
+> the result lands in `g_weatherData`. Nothing on the unit asks for it, retries it or caches an
+> HTTP response — a unit that has never been told shows the widget off (or its last received
+> values until they go stale). The same applies to the clock: the app pushes `time.set` once per
+> link-up, and a GNSS fix sets it too.
 
 > [!NOTE]
 > Every FreeRTOS task is started through `startTask()` in `src/main.cpp`, which checks the
@@ -135,7 +152,7 @@ The system leverages the ESP32's Xtensa dual-core processor via FreeRTOS tasks t
 > stack usually fits and beats a missing subsystem) and, if that fails too, records the task in a
 > `failedTasksMask` and logs it with the free heap. A task that cannot start is therefore named in
 > the boot log instead of silently missing — the failure that used to show up only as a frozen
-> heartbeat, no Web UI or dead sensors.
+> heartbeat, a dead link or dead sensors.
 
 ---
 
@@ -308,7 +325,7 @@ a falling (European) sender are both handled without a mode switch.
 #### Sender fault detection
 The failure that makes a self-built sender useless is an open line that still
 looks like a plausible reading, so the input is classified every sample and shown
-in the Web UI instead of being turned into a tank level:
+in the app's settings page instead of being turned into a tank level:
 
 | Condition | Reported as |
 | :--- | :--- |
@@ -323,7 +340,7 @@ divider math and fault band are exercised with no hardware fitted (rule 20).
 #### Excitation resistor sizing
 $R_{\text{exc}}$ is a trade: the geometric mean of the sender range spreads the
 span over the most volts, but pushes more current through the sender element. The
-Web UI suggests the best E12 value for the entered range under a **15 mA** sender
+app suggests the best E12 value for the entered range under a **15 mA** sender
 current budget and keeps the top of the span below 2.6 V, because a reading
 pinned near the rail is indistinguishable from an open circuit. For the shipped
 10–180 Ω default that suggestion is 220 Ω — the same value the firmware ships
@@ -348,8 +365,8 @@ $$T_{\text{Kelvin}} = \left( \frac{1}{\beta} \cdot \ln\left(\frac{R_{\text{ntc}}
 $$T_{\text{Celsius}} = T_{\text{Kelvin}} - 273.15$$
 where $R_{\text{room}} =$ `NTC_R25` (default=10,000 $\Omega$), $T_{\text{room}} = 298.15\text{ K}$ ($25^\circ\text{C}$), and $\beta =$ `NTC_BETA` (default=3950). A fixed `NTC_TEMP_OFFSET` (°C, default=0.0) is added to the result to correct a systematic reading bias.
 
-#### WebUI Sensor Calibration
-The **Sensors Tuning** WebUI card calibrates the two analog sensors against a reference, using the live `/api/live` snapshot the page polls once per second (no raw-ADC conversion needed):
+#### Sensor Calibration in the App
+The **Sensors Tuning** cards on the app's dashboard-settings page calibrate the two analog sensors against a reference, reading the 1 Hz frames the unit already pushes on its telemetry characteristic (`live` / `snapshot` — no raw-ADC conversion needed). On a ≤ 1.4.x unit the same cards were in the portal and polled `GET /api/live`:
 - **Fuel level Sensor** — the live sender resistance (Ω) is shown next to a fault state (`open` / `shorted` / `out of range` / `no sender`). Two ways to build the table (`fuelCalOhms`): **Fill from empty/full ohm** pre-fills a linear ramp from `FUEL_OHM_EMPTY` to `FUEL_OHM_FULL` (a good start, no driving needed), or drive the tank through its levels and **Capture** the live reading into each slot — slot `0` = empty, slot `N-1` = full. Changing the point count regenerates the ramp. The card is titled without the pin number (issue #55), and the excitation-resistor suggestion is computed from the empty/full ohms on the page plus the fixed 3.3 V rail.
 - **Speedometer** — `SPEED_SOURCE_MODE`, `SPEED_SOURCE_HOLD_MS`, the two hall-vs-GPS deviation bands (`GPS_MIN_DEV_KMH`, `MAX_SPEED_DELTA_KMH`), the GPS start/stop pair (`GPS_START_KMH`, `GPS_STOP_SETTLE_MS`) and the wheel-signal filters (`HALL_MEDIAN_SAMPLES`, `HALL_PERIOD_GUARD`, `HALL_PULSE_MIN_US`), in that order (issue #56). The GNSS hardware rows (baud, satellite counts) stay in the GPS block.
 - **Engine Temperature** — the live reading is shown; type a reference temperature and press **Apply** to set `NTC_TEMP_OFFSET`. `NTC_R25`, `NTC_R_BALANCE` and `NTC_BETA` are under **Advanced**.
@@ -430,19 +447,134 @@ The line is debounced in software (`powerSenseOffConfirmed()` in `src/sensors.cp
 
 ---
 
-## Embedded Web UI & REST API Reference (Wi-Fi firmware ≤ 1.4.x)
+## The BLE Link: GATT, Framing and RPC Methods
 
 > [!IMPORTANT]
-> **What the build does with this chapter today.** Everything below documents the Wi-Fi
-> portal and the HTTP API as they are implemented in `src/web.cpp` / `src/webui.html`, and
-> both files are still in the tree. The current build **excludes them**: `platformio.ini`
-> has `build_src_filter = +<*> -<web.cpp` (firmware phase 0b of the BLE-only plan, commit
-> `cef3c99`). A unit flashed from this tree therefore has no `Dashboard_Config` hotspot, no
-> `192.168.4.1`, no REST endpoint and no IP address — it is reached over Bluetooth only, and
-> flashed over USB only. Units still running a Wi-Fi firmware (1.4.x and older) behave
-> exactly as this chapter describes. Whether the portal comes back, stays out, or is
-> replaced by the BLE RPC surface is phase 2 of that plan and has not been decided; if a
-> task depends on the HTTP API being reachable on a current build, ask before assuming it.
+> **This is the only door into a current-build unit.** Everything a phone can do to a unit
+> built from this tree travels over one GATT service: settings, live data, calibration,
+> odometer, factory reset, the weather the panel prints, the clock, log reads and firmware.
+> There is no HTTP server, no IP and no hotspot to fall back on. The implementation is
+> `src/bt.cpp` (profile, pairing, framing, reassembly, the BLE task), `src/bt_proto.h`
+> (the wire format, shared verbatim with the app) and `src/bt_rpc.cpp` (the JSON methods).
+
+### The GATT profile
+
+| Object | UUID | Properties | Access |
+| :--- | :--- | :--- | :--- |
+| Service | `d9a1f000-6c1e-4b8a-9f2d-3e7c1a5b9d40` | — | — |
+| Telemetry (unit → phone) | `d9a1f001-6c1e-4b8a-9f2d-3e7c1a5b9d40` | `notify` (+ CCCD) | read/notify encrypted |
+| RPC (both ways) | `d9a1f002-6c1e-4b8a-9f2d-3e7c1a5b9d40` | `write`, `write-nr`, `notify` (+ CCCD) | `ESP_GATT_PERM_WRITE_ENC_MITM` |
+| OTA (firmware image) | `d9a1f003-6c1e-4b8a-9f2d-3e7c1a5b9d40` | `write-nr` | `ESP_GATT_PERM_WRITE_ENC_MITM` |
+
+- **Advertised name `DPP-####`**, the last four hex digits of the unit's eFuse base MAC — the
+  same identity the app binds a garage card to. The name is written explicitly into both the
+  advertisement and the scan response: left to Bluedroid, the primary packet (flags + TX power
+  + 128-bit service UUID + name) overflows the 31-byte limit and the name is silently dropped,
+  which is what a Windows scanner reported as "no `DPP-*` advertising".
+- **The CCCD (`BLE2902`) is mandatory on both notify characteristics.** Without it a central has
+  nothing to write to switch notifications on, and every answer the unit sends — responses and
+  config chunks both travel on RPC — is dropped (Windows answers "Write Not Permitted" on
+  subscribe). The RPC characteristic also needs `setCallbacks()`: without it the ATT layer
+  acknowledges the write and the bytes never reach the reassembler.
+- **Pairing is LE Secure Connections with a 6-digit passkey** shown full-screen on the panel
+  (`Just Works` is refused). The bond is what makes the link usable: every characteristic
+  requires an encrypted, MITM-protected write, so an unpaired central can see the service and
+  nothing else. `factory.reset` clears the bonds, and a unit whose passkey nobody can read
+  (panel dead, backlight off) cannot be paired — that is by design.
+- **`BtTaskCore0`** (Core 0, priority 1, 8 KB stack) owns the radio: Bluedroid's callbacks run on
+  it, request handling runs on it, and the 1 Hz telemetry pump runs on it. Priority 1 is
+  deliberate — the GNSS and vehicle-sensor tasks outrank it, so a config save or an image write
+  can never starve a real reading.
+
+### The wire format (`src/bt_proto.h`)
+
+Every message is an 8-byte header plus a payload; a message larger than one MTU is split into
+fragments that all carry the same `seq`, with `FIRST` on the first piece and `LAST` on the
+last. The receiver reassembles by `seq` and refuses a second open message, so a lost fragment
+can never grow an unbounded buffer.
+
+```
+0  version   1
+1  type      see BtFrameType
+2  flags     bit0 FIRST, bit1 LAST
+3  reserved  must be 0
+4  seq       message id, little endian
+6  len       payload bytes in this fragment, little endian
+```
+
+Payload per fragment = negotiated MTU − 3 − 8; at the negotiated MTU of **517** that is **506
+bytes**. `BT_MAX_MSG` (**8192 B**) caps what the firmware will reassemble in either direction —
+a full config export is the biggest thing either side sends as a single message.
+
+| Type | Name | Direction / meaning |
+| :---: | :--- | :--- |
+| 1 | `BT_F_REQ` | phone → unit, one JSON request |
+| 2 | `BT_F_RESP` | unit → phone, one complete JSON response |
+| 3 | `BT_F_TELEM` | unit → phone, the 1 Hz snapshot, unprompted |
+| 4 | `BT_F_WEATHER` | phone → unit, the weather the panel shows |
+| 5 | `BT_F_TIME` | phone → unit, epoch clock set |
+| 6/7 | `BT_F_PING` / `BT_F_PONG` | link keepalive |
+| 8 | `BT_F_OTA` | firmware image frames on the OTA characteristic |
+| 9 | `BT_F_LOG` | unit → phone, serial-ring log lines |
+| 10 | `BT_F_CHUNK` | one slice of a streamed `config.get` |
+
+A `config.get` answer is streamed as `BT_F_CHUNK` frames carrying
+`{"id":req,"i":n,"last":bool,"d":{…}}` and the stream closes with an ordinary `BT_F_RESP`
+carrying `{"chunks":n,"keys":n}`. It gets its own frame type so the app never has to guess from
+the shape of a JSON object whether it is looking at a complete answer or one more slice.
+
+### The RPC methods
+
+One JSON request per write (`{"m":"<name>","p":{…},"id":n}`), one `BT_F_RESP` per answer
+(`{"ok":true,"v":…}` / `{"ok":false,"e":"<reason>"}`), matched back to the request by `id`.
+The complete set as implemented in `src/bt_rpc.cpp`:
+
+| Method | What it does | Replaces |
+| :--- | :--- | :--- |
+| `snapshot`, `live`, `sensors`, `fuel`, `ambient`, `noise`, `perf`, `health`, `boot` | the read-only surfaces, same JSON bodies as the old `GET /api/…` endpoints (`perf.mac` is still the identity the app binds a card to) | `GET /api/snapshot`, `/api/live`, `/api/sensors`, `/api/fuel`, `/api/ambient`, `/api/noisematrix`, `/api/perf`, `/api/health`, `/api/boot` |
+| `config.get` | full NVS export, streamed as `BT_F_CHUNK` frames | `GET /api/config` (backup download) |
+| `config.set` | apply a config object; a save whose NVS writes partly failed answers with `nvsErrors`, `nvsFailedKeys`, `nvsAvailable` | `POST /api/config` (restore upload) |
+| `config.reset`, `factory.reset` | reset the settings / clear settings **and** bonds | `POST /api/reset` |
+| `odo.get`, `odo.set`, `trip.reset` | odometer read/write, trip zero (same reset as the GPIO25 button) | `/api/odo`, `/api/trip/reset` |
+| `reboot`, `sleep` | graceful restart, immediate deep sleep | `/api/reboot`, `/api/sleep` |
+| `cal.ambient` (`dark`/`bright`) | ambient-light calibration points | `/api/ambient/cal-dark`, `-bright` |
+| `bench.run`, `noise` | start the 4-run ADC noise bench / read its last result | `POST`/`GET /api/noisematrix` |
+| `log.get` | the 4 KB serial ring, pulled on demand | `GET /api/serial` (which streamed) |
+| `weather.set`, `time.set` | the unit has no radio of its own: the phone supplies the weather widget and the clock | nothing — the unit used to fetch weather itself and sync NTP; both fetchers are deleted |
+| `ping` | keepalive | — |
+| `ota.begin`, `ota.abort` | firmware install control — **`not_implemented` in this build** (see below) | `POST /api/ota` |
+
+### Firmware over the link — what this build does and does not do
+
+> [!IMPORTANT]
+> **A unit built from this tree cannot be updated from the app yet, and there is no HTTP
+> fallback.** The OTA characteristic exists and demands an encrypted write, and `BT_F_OTA`
+> frames are routed to the receive path in `src/bt.cpp`, but the install state machine that
+> consumed them lived in `src/web.cpp` and was deleted with it. `ota.begin` and `ota.abort`
+> answer `not_implemented`, and the panel's Firmware card says exactly that: *"Bluetooth OTA is
+> not in this firmware."* Until the install path lands, **the only way to put firmware on a
+> BLE-only unit is USB serial** (`pio run -t upload --upload-port COM7`). Wi-Fi firmwares
+> (≤ 1.4.x) still take `POST /api/ota` from their own portal.
+
+The design the install path is being rebuilt to — and what the phone can expect while an image
+is moving — is the quiet-window model documented under *Over-The-Air (OTA) Updates* below:
+version and size gates first, the frame clock and the sensor reads parked around the writes,
+the panel showing progress and holding on a "restart?" screen, then a deliberate restart. See
+also `Implementation plans/` for the phased BLE plan.
+
+---
+
+## Historical: the Web Portal and REST API (units running ≤ 1.4.x)
+
+> [!IMPORTANT]
+> **Nothing in this section exists in a current build.** `src/web.cpp` (SoftAP + station join,
+> every REST handler, the portal, the LAN install route, the weather-fetch task),
+> `src/webui.html` and `scripts/gzip_webui.py` were **deleted on 2026-11-02** and there is no
+> `build_src_filter` line left to put them back — a unit flashed from this tree has no
+> `Dashboard_Config` hotspot, no `192.168.4.1`, no REST endpoint and no IP address. The
+> sections below stay because units in the field still run 1.4.x and behave exactly as
+> described; the sources are recoverable from git (`git show 7104bf96^:src/web.cpp`,
+> `…:src/webui.html`). Read them as a reference for those units, not as the current API.
 
 Dashboard++ embeds a single-page management portal directly into flash memory (`index_html`).
 
@@ -526,18 +658,19 @@ resistor across `FUEL_SNS` to GND (100 Ω is a sane reference) so the pin is not
 floating. Do not change settings or touch the power wiring during a job — a
 brightness change or a connector wiggle is itself a disturbance.
 
-**From the WebUI (no PC needed):** open the dashboard page from any browser on
-the device's AP or LAN, expand **Sensors Tuning** and press **Run Noise Test**
-in the Noise Bench card. The card shows progress and then the full table — per
-input, the mean, the wobble (σ), the extra wobble against the quiet baseline
-(green at the target, amber above it) and the worst jump. The result lives in
-RAM, so it is gone after a reboot.
+**From the app (no PC needed):** connect to the unit, open its dashboard
+settings, expand **Sensors Tuning** and press the noise-bench action in that
+card. The app sends `bench.run`, then polls `noise`; the card shows progress and
+then the full table — per input, the mean, the wobble (σ), the extra wobble
+against the quiet baseline (green at the target, amber above it) and the worst
+jump. The result lives in RAM, so it is gone after a reboot.
 
-**From the API / serial (automation):** put the device on WiFi so it has an IP
-address, start a job with `Invoke-RestMethod -Method Post -Uri
-http://<ip>/api/noisematrix` (or `curl -X POST http://<ip>/api/noisematrix`),
-then poll `Invoke-RestMethod http://<ip>/api/noisematrix` until `status` is
-`done` — or watch the serial log on COM7 at 115200 baud: the job prints one
+**From the link / serial (automation):** `scripts/ble_bench_central.py` is a
+desktop BLE central for exactly this kind of bench work: write
+`{"m":"bench.run","id":1}` to the RPC characteristic, then read `{"m":"noise"}`
+until `status` is `done`. On a ≤ 1.4.x unit the same job was
+`POST /api/noisematrix` and `GET /api/noisematrix`. Either way, watching the
+serial log on COM7 at 115200 baud needs no client at all: the job prints one
 `NB <run> <channel>: …` line per channel per run, then `NB DONE`.
 
 **Reading the numbers:** `sigma_mv` is the wobble (the number to compare
@@ -556,7 +689,7 @@ numbers before and after a board change (respin, new harness) and compare.
 
 ## NVS Configuration Parameter Reference
 
-Dashboard++ keeps every configuration parameter as one row of a single table, `CFG_TABLE` in `src/config.cpp`: the C++ global, the JSON key, the NVS key, the default, the allowed band and the kind (`CK_INT` / `CK_UINT` / `CK_FLT` / `CK_BOOL` / `CK_STR` / `CK_SECRET`) all on one line. `processConfig()` walks that table in its three modes — boot load, JSON serialize (`GET /api/config`) and restore/save (`POST /api/config`) — across 197 parameters (192 regular + 5 WiFi secrets), plus the fuel-calibration table kept beside it.
+Dashboard++ keeps every configuration parameter as one row of a single table, `CFG_TABLE` in `src/config.cpp`: the C++ global, the JSON key, the NVS key, the default, the allowed band and the kind (`CK_INT` / `CK_UINT` / `CK_FLT` / `CK_BOOL` / `CK_STR` / `CK_SECRET`) all on one line. `processConfig()` walks that table in its three modes — boot load, export (`config.get`, streamed as `BT_F_CHUNK` frames; `GET /api/config` on a ≤ 1.4.x unit) and apply/restore (`config.set`; there, `POST /api/config`) — across **179 parameters**, plus the fuel-calibration table kept beside it. The `CK_SECRET` kind still exists in the struct but **no row uses it**: the five Wi-Fi / hotspot secrets left with the Wi-Fi stack on 2026-11-02, so a config export carries no credential of any kind and a backup file is safe to mail.
 
 ### Numeric Range Validation (issue #21)
 
@@ -566,7 +699,7 @@ Every numeric parameter carries an explicit **known-good band** in its `CFG_TABL
 - **Cross-field rules** are repaired after the per-field clamps, in one place (`sanitizeConfigPairs()`): `TEMP_BAR_MIN < TEMP_BAR_MAX`, `TEMP_BAR_MIN <= TEMP_WARN_LOW <= TEMP_WARN_YEL <= TEMP_WARN_RED <= TEMP_BAR_MAX` (the three temp color fade points, repaired cold→hot so a band can never flip direction), `FUEL_WARN_RED <= FUEL_WARN_YEL` (fuel is mirrored — it turns red *below* its marker), `LIGHT_SENSOR_DARK_VAL < LIGHT_SENSOR_BRIGHT_VAL`, `MIN_SATELLITES <= OPTIMAL_SATELLITES`, `CPU_THROTTLE_TEMP_WARN <= CPU_THROTTLE_TEMP_CRIT`.
 - **Enumerated parameters** are snapped to the nearest legal step: `GPS_BAUD` to a standard u-blox rate (1200…921600), `MANUAL_CPU_FREQ` to 80 / 160 / 240 MHz. `DISPLAY_ROTATION` is masked to 0–3, `WHEEL_CIRCUMFERENCE_MM` has always been floored at 1 (it is a divisor).
 - **Fuel calibration table** (`fuelCalOhms`) cells are clamped to the sender band 0–100000 Ω on load and on restore. The table is in **ohms** since issue #18 (it used to be raw ADC codes under the name `touchTable`); old `touchTable` values in a backup are ignored rather than re-injected as ohms. The table is also required to be **monotonic in one direction** (the direction its first and last entries already imply): out-of-order points are sorted by `repairFuelTable()` on boot load and on save, written back to NVS, and named in the log, because a gap in the ramp would otherwise freeze the needle (issue #19). The gauge walk in `src/sensors.cpp` carries a second layer — a reading that matches no segment parks on the nearer end and logs once every 5 s instead of leaving the last value in place.
-- The **WebUI mirrors the same bands** so a bad entry is caught before it is posted: numeric inputs get `min`/`max` from a `FIRMWARE_LIMITS` table generated out of `config.cpp` (`python scripts/make_webui_limits.py` regenerates it after any band change), an out-of-range entry is corrected in the box and listed in the save message, and an emptied numeric box falls back to its default instead of posting a blank (which the device used to read as `0`).
+- The **app's settings page mirrors the same bands** so a bad entry is caught before it is sent: every numeric field takes its `min`/`max` from `android/app/src/main/assets/config_schema.json`, which `python scripts/gen_config_schema.py` generates out of `config.cpp` (labels, groups and icon data come from `scripts/config_schema_presentation.json` in the same run). Regenerate the asset after any band change — it is generated, never hand-edited. An out-of-range entry is clamped in the field, and an emptied numeric box falls back to the row's default instead of sending a blank (which the device used to read as `0`).
 
 Bands are also checked offline by `python scripts/verify_config_ranges.py`: every numeric parameter must have a band, no shipped default may fall outside its own band, and the cross-field rules must hold for the factory values.
 
@@ -577,28 +710,28 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 - Every namespace open now goes through **`NvsSession`** (`src/dashboard.h`): an RAII wrapper that holds `prefsMux` for the whole `begin()`/`end()` pair, logs when a namespace cannot be opened, and closes on scope exit so an early return cannot leak the handle. It skips the lock while `prefsMux` is still `NULL` (early boot, single-threaded). The long-lived `preferences` object for the `dashboard` namespace keeps its explicit `prefsMux` pairs.
 - **Write results are checked.** `nvsWriteFailed(key, esp_err_t)` logs the failing key with `esp_err_to_name()`; the table-driven save counts them (`cfgApply()` bumps `cfgNvsWriteErrors` for every row that fails) and a save ends with `Config save: N parameter(s) failed to reach NVS … they will revert on reboot` instead of pretending nothing happened. The same check covers the fuel-table writes, the factory-reset credential restore, the bootinfo writes and the ambient calibrations.
 - **A failed read is not a default.** Where an unreadable NVS would previously have produced "no value" and triggered a factory seed, the seed is now skipped with a log line — a flash that cannot be read must never be answered by overwriting it.
-- **Factory defaults are the table.** On first boot (`CFG_VER` missing or below 5) the seed writes each `CFG_TABLE` default straight into NVS and RAM (`cfgSeedDefaults()`, one `NvsSession` for the whole pass) — there is no second copy of the defaults in flash and no `JsonDocument` to build one. The WiFi credentials are deliberately not seeded, so a lost `CFG_VER` stamp can never strand a unit without a network, and the fuel ramp is rebuilt from the seeded `FUEL_OHM_EMPTY`/`FUEL_OHM_FULL` only when the stored table is not already the factory ramp.
+- **Factory defaults are the table.** On first boot (`CFG_VER` missing or below 5) the seed writes each `CFG_TABLE` default straight into NVS and RAM (`cfgSeedDefaults()`, one `NvsSession` for the whole pass) — there is no second copy of the defaults in flash and no `JsonDocument` to build one. There is nothing secret left to seed, so a lost `CFG_VER` stamp can only ever restore settings, and the fuel ramp is rebuilt from the seeded `FUEL_OHM_EMPTY`/`FUEL_OHM_FULL` only when the stored table is not already the factory ramp.
 - `prefsMux` is a plain (non-recursive) mutex: nothing inside a locked NVS region may open NVS itself.
 
 ### Key Configuration Categories
 
 #### System & Performance
-- `TARGET_FPS` (default=60): Desired display refresh rate, **5–120 FPS** (band-checked on load and in the Web UI). It sets the derived `DISPLAY_REFRESH_MS` frame budget (120 → 8 ms, 60 → 16 ms, 5 → 200 ms); values above what the SPI panel can carry simply drop the FPS counter rather than saturating the display core (issue #36).
-- `SPI_BUS_SPEED` (default=60000000): SPI bus frequency in Hz. Accepted range **1000000–80000000** (1–80 MHz; WebUI shows MHz). Out-of-range values are clamped on load/save — a `0` or a negative (wrapped) value would otherwise feed LovyanGFX a degenerate clock divider and blank the panel. The read clock is derived as `SPI_BUS_SPEED × 8/5`, computed in 64-bit and clamped to the same band.
+- `TARGET_FPS` (default=60): Desired display refresh rate, **5–120 FPS** (band-checked on load and in the app). It sets the derived `DISPLAY_REFRESH_MS` frame budget (120 → 8 ms, 60 → 16 ms, 5 → 200 ms); values above what the SPI panel can carry simply drop the FPS counter rather than saturating the display core (issue #36).
+- `SPI_BUS_SPEED` (default=60000000): SPI bus frequency in Hz. Accepted range **1000000–80000000** (1–80 MHz; the app shows MHz). Out-of-range values are clamped on load/save — a `0` or a negative (wrapped) value would otherwise feed LovyanGFX a degenerate clock divider and blank the panel. The read clock is derived as `SPI_BUS_SPEED × 8/5`, computed in 64-bit and clamped to the same band.
 - `ENABLE_DYNAMIC_CPU` (default=false): Toggles automatic CPU frequency scaling (hysteresis-based).
 - `MANUAL_CPU_FREQ` (default=240): Fixed CPU clock frequency (80, 160, or 240 MHz) used when `ENABLE_DYNAMIC_CPU` is off. The value is snapped to the nearest legal step, and every `setCpuFrequencyMhz()` call now checks its result — a refused switch logs `CPU: refused to switch to …MHz` instead of claiming a frequency the chip never switched to (issue #34).
 - `ENABLE_CPU_THROTTLE` (default=true): Enables thermal frequency capping.
 - `CPU_THROTTLE_TEMP_WARN` (default=60): Warning temperature threshold in °C.
 - `CPU_THROTTLE_TEMP_CRIT` (default=70): Critical temperature threshold in °C.
 
-#### Web UI
-- `POWER_SENSE_OFF_MS` (default=10000): How long `POWER_SENSE_PIN` (GPIO4) must stay continuously LOW before the unit plays the goodbye screen and deep-sleeps (500–120000 ms). Any HIGH restarts the window, so ignition bounce and supply dips cannot stall the GPS task or sleep the dash (issue #26). Only used when `ENABLE_POWER_SENSE` is on. The Web UI row (**Sleep After Power Loss**) is shown and edited in **seconds** (0.5–120, in 0.5 s steps) and converted on save; NVS, config backups and the firmware keep milliseconds (issue #57).
-- `ADV_MODE` (default=false): Global “Advanced Mode” toggle in the Web UI. When enabled, advanced and technical settings (CPU, GPS, Polling Rates, technical display options, advanced WiFi, and sensor-calibration internals) are shown as normal rows in their groups; when disabled they are hidden.
+#### Power, Sleep & Advanced Mode
+- `POWER_SENSE_OFF_MS` (default=10000): How long `POWER_SENSE_PIN` (GPIO4) must stay continuously LOW before the unit plays the goodbye screen and deep-sleeps (500–120000 ms). Any HIGH restarts the window, so ignition bounce and supply dips cannot stall the GPS task or sleep the dash (issue #26). Only used when `ENABLE_POWER_SENSE` is on. The app row (**Sleep After Power Loss**) is shown and edited in **seconds** (0.5–120, in 0.5 s steps) and converted on save; NVS, config backups and the firmware keep milliseconds (issue #57).
+- `ADV_MODE` (default=false): the global **Advanced Mode** switch at the top of the app's dashboard-settings page. When on, advanced and technical settings (CPU, GPS, Polling Rates, technical display options and sensor-calibration internals) appear as normal rows in their groups; when off they stay hidden, so the common setup path stays short. It is an NVS row, so the choice follows the unit rather than the phone.
 
 #### Display & Visual Design
 - `DISPLAY_ROTATION` (default=3): Screen rotation (0, 1, 2, 3).
-- `BACKLIGHT_BRIGHTNESS` (default=100): Backlight duty cycle (**0–100%**, clamped on load/save). The percent is turned into the 8-bit LEDC duty in one place (`backlightDuty()` / `applyBacklight()` in `src/main.cpp`), so no path — WebUI slider, night mode, boot splash, sleep/wake fade or auto-brightness — can put an out-of-range duty on the panel (issue #20).
-- `BL_PWM_HZ` (default=12000): Backlight LEDC PWM frequency in Hz (**1000–40000**, clamped on load/save). The 12 kHz default sits above the audible range — the old fixed 1 kHz was audible as a whine off the panel wiring. Boot attaches with the stored value; a config save retunes the live channel at a frame gap (`ledcChangeFrequency()` in `processConfigApply()`, `src/main.cpp`) and re-asserts the duty, so the panel never blinks off mid-save. Shown in the Web UI in kHz (1–40).
+- `BACKLIGHT_BRIGHTNESS` (default=100): Backlight duty cycle (**0–100%**, clamped on load/save). The percent is turned into the 8-bit LEDC duty in one place (`backlightDuty()` / `applyBacklight()` in `src/main.cpp`), so no path — the app's slider, night mode, boot splash, sleep/wake fade or auto-brightness — can put an out-of-range duty on the panel (issue #20).
+- `BL_PWM_HZ` (default=12000): Backlight LEDC PWM frequency in Hz (**1000–40000**, clamped on load/save). The 12 kHz default sits above the audible range — the old fixed 1 kHz was audible as a whine off the panel wiring. Boot attaches with the stored value; a config save retunes the live channel at a frame gap (`ledcChangeFrequency()` in `processConfigApply()`, `src/main.cpp`) and re-asserts the duty, so the panel never blinks off mid-save. Shown in the app in kHz (1–40).
 - `TFT_DRIVE` (default=0): Display-ribbon output drive strength (**0–3**). 0 = the ESP32 chip default, untouched — the shipped setting, so nothing changes unless you opt in. 1/2/3 select the 5 / 10 / 20 mA pad drivers (`GPIO_DRIVE_CAP_0/1/2`, `gpio_set_drive_capability()` in `src/main.cpp`) on the five panel outputs — SCLK GPIO18, MOSI GPIO23, DC GPIO27, CS GPIO5, RST GPIO14 — because weaker drivers mean slower edges and less radiated noise into the analog corridor that runs beside the display ribbon. **Bench-gated:** the weaker levels are experimental until a display test (full-frame fill, no artifacts) passes. For reference, the ILI9488 datasheet rates the serial interface at 20 MHz (50 ns minimum write cycle); this board has run the 60 MHz default (`SPI_BUS_SPEED`) reliably since bring-up, so the drive knob is an emissions tool, not a clock change.
 - `NIGHT_BACKLIGHT` (default=29): Night-mode backlight duty cycle (0–100%), applied while night mode is active.
 - `ENABLE_ANTIALIASING` (default=true): Anti-aliased line rendering toggle.
@@ -606,18 +739,18 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 - `GHOST_COLOR_STR` (default="#212021"): Hex color code for inactive 7-segment digit background.
 - `COLOR_TEMP_NORM` (default=`#00ff00`), `COLOR_TEMP_WARN` (default=`#ffff00`), `COLOR_TEMP_CRIT` (default=`#ff0000`): the three colors of the engine temperature sidebar ramp, one per color fade point below.
 - `TEMP_BAR_MIN` / `TEMP_BAR_MAX` (default=10 / 110): the two ends of the engine-temp sidebar bar in °C. **Scale only** — since the three-fade-point ramp they carry no color; what sits below the first fade point and above the last one is flat (issue #46 follow-up).
-- `TEMP_WARN_LOW` (default=20): **color fade point 1** — °C where the bar leaves flat `COLOR_TEMP_NORM` and starts fading toward `COLOR_TEMP_WARN`. Below it the cold color is held (this is the Web UI row *Color fade point 1*). The width of this first band is `TEMP_WARN_YEL - TEMP_WARN_LOW`, which is the knob for a short or long cold hop.
+- `TEMP_WARN_LOW` (default=20): **color fade point 1** — °C where the bar leaves flat `COLOR_TEMP_NORM` and starts fading toward `COLOR_TEMP_WARN`. Below it the cold color is held (this is the app row *Color fade point 1*). The width of this first band is `TEMP_WARN_YEL - TEMP_WARN_LOW`, which is the knob for a short or long cold hop.
 - `TEMP_WARN_YEL` (default=45): **color fade point 2** — °C where the ramp reaches `COLOR_TEMP_WARN`; the `COLOR_TEMP_WARN`→`COLOR_TEMP_CRIT` fade starts there.
 - `TEMP_WARN_RED` (default=90): **color fade point 3** — °C where the ramp reaches `COLOR_TEMP_CRIT`. **Above it the bar stays flat `COLOR_TEMP_CRIT`** all the way to `TEMP_BAR_MAX`; there is no fourth stop and `TEMP_BAR_MAX` no longer turns the bar red. Kept ordered `TEMP_BAR_MIN <= TEMP_WARN_LOW <= TEMP_WARN_YEL <= TEMP_WARN_RED <= TEMP_BAR_MAX`; equal neighbours collapse a band to a hard switch. The three stops are blended in RGB565 (`rampColor3()` over `blendColorLinear()`), so a yellow→red band walks through orange on its own, while a cyan low stop blended to amber goes through a muddy green that is in neither endpoint — which is why the shipped defaults stay on the green→yellow→red arc (issue #46). The dead `TEMP_WARN_GRN` marker removed in issue #29 is what `TEMP_WARN_LOW` replaces, this time stored in NVS, present in backups and editable in the Web UI.
-- `COLOR_FUEL_NORM`, `COLOR_FUEL_WARN`, `COLOR_FUEL_CRIT`: Hex color strings for fuel status bar — the same three-stop model, mirrored: `COLOR_FUEL_NORM` at 100%, fades down through `FUEL_WARN_YEL` (Web UI *Color fade point 1*) and `FUEL_WARN_RED` (*Color fade point 2*), flat `COLOR_FUEL_CRIT` below the last one. Its drawing code (`src/ui.cpp`) is unchanged.
+- `COLOR_FUEL_NORM`, `COLOR_FUEL_WARN`, `COLOR_FUEL_CRIT`: Hex color strings for fuel status bar — the same three-stop model, mirrored: `COLOR_FUEL_NORM` at 100%, fades down through `FUEL_WARN_YEL` (app *Color fade point 1*) and `FUEL_WARN_RED` (*Color fade point 2*), flat `COLOR_FUEL_CRIT` below the last one. Its drawing code (`src/ui.cpp`) is unchanged.
 
 #### Sensors & Vehicle Calibration
 - `WHEEL_CIRCUMFERENCE_MM` (default=1650.0): Tire rolling circumference in millimeters.
 - `FUEL_FILTER_ALPHA` (default=0.08): EMA filter coefficient applied to the raw fuel ADC code.
 - `FUEL_INPUT_ENABLED` (default=false): Turns the resistive fuel sender input on. Leave it off until a sender is actually wired to GPIO32 — with no sender the pin floats and the gauge reports "no input" and stays at 0 (issue #18).
 - `FUEL_OHM_EMPTY` / `FUEL_OHM_FULL` (defaults=10.0 / 180.0): Sender resistance at empty and full, in ohms. Any standard works — 10–180 Ω (SAE), 240–33 Ω (European/VDO), 0–90 Ω (GM). Used to size the excitation resistor, define the fault band and pre-fill the calibration ramp.
-- `FUEL_EXC_RES_OHM` (default=220): Resistor from 3V3 to GPIO32 that the sender forms a divider against. The Web UI suggests the best E12 value for the entered range (15 mA sender current budget, top of span below 2.6 V).
-- `FUEL_ADC_VREF` (default=3.30): ADC reference / actual rail voltage in volts, used to turn the code into a divider voltage. It is no longer a Web UI field — the divider hangs off the 3.3 V rail and typing a different value only corrupted the excitation-resistor suggestion (issue #55). The parameter keeps its NVS key and its slot in config backups, so an existing backup still restores; a rail measured to be off should be corrected in the wiring, not here.
+- `FUEL_EXC_RES_OHM` (default=220): Resistor from 3V3 to GPIO32 that the sender forms a divider against. The app suggests the best E12 value for the entered range (15 mA sender current budget, top of span below 2.6 V).
+- `FUEL_ADC_VREF` (default=3.30): ADC reference / actual rail voltage in volts, used to turn the code into a divider voltage. It is not an app field either — the divider hangs off the 3.3 V rail and typing a different value only corrupted the excitation-resistor suggestion (issue #55). The parameter keeps its NVS key and its slot in config backups, so an existing backup still restores; a rail measured to be off should be corrected in the wiring, not here.
 - `FUEL_OVERSAMPLE` (default=16): ADC conversions averaged into one sample (1–64). The ESP32 converter only delivers ~9–10 usable bits; oversampling is what buys the resolution back for a sender whose useful span can be a few hundred codes.
 - `FUEL_TOUCH_POINTS` (default=8): Number of valid entries in the fuel calibration table (`fuelCalOhms`): index 0 = empty, index `N-1` = full, so the number of tank slots is one per litre for the shipped 1 L-per-step default. Changing this regenerates the table as a linear ramp between `FUEL_OHM_EMPTY` and `FUEL_OHM_FULL`.
 - `TRIP_RESET_HOLD_MS` (default=1500): How long the physical trip-reset button on GPIO25 must be held to zero the trip stats (200–10000 ms). Shorter holds are ignored so a knock on the dash cannot wipe a trip. Refuelling no longer resets anything by itself (issue #17).
@@ -637,30 +770,36 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 - `HALL_PULSE_MIN_US` (default=150): Layer 1 pulse-width qualification window in microseconds — a pulse whose measured `rise − fall` width is below this is dropped as EMI. Clamped to 10…1000 µs. Raise it when ignition EMI gets through; a genuine magnet pass is hundreds of µs wide, so 150 µs costs nothing. Measured from the stamped edges since 1.3.x (issue #30) — it no longer costs interrupt time.
 - `ACCEL_MAX_TIME` (default=30.0): Acceleration timer maximum duration in seconds before auto-finish.
 
-#### Weather Widget (Open-Meteo)
+#### Weather Widget (phone-fed)
 - `SHOW_ELEMENT_WEATHER` (default=true): Toggle the weather widget on/off.
-- `WEATHER_CITY` (default=""): City label shown in the widget (GPS-geocoded when empty).
-- `WEATHER_LAT` (default=0.0) and `WEATHER_LON` (default=0.0): Fallback coordinates for the Open-Meteo forecast request. While the unit has a GPS fix it uses the **live position** instead and these two are ignored; they are what the widget uses when there is no fix (no antenna, parked underground, GNSS off). With no fix **and** no coordinates set, no weather request is made at all. `WEATHER_CITY` is only the label, never the source of the coordinates.
-- `WEATHER_REFRESH_MIN` (default=15): Refresh interval in minutes.
-- `WEATHER_LOCALE` (default="it"): ISO locale code for the **city name** — the language the widget spells it in. With a live GPS fix the reverse-geocode (BigDataCloud) returns the name in this language. With no fix, the typed `WEATHER_CITY` is resolved on Open-Meteo's geocoding service and re-spelled in this language when that place has a name in it (`Milan` → `Mailand` for `de`, `München` → `Monachium` for `pl`); a name the service does not know (`Casa di NONNA`) or a match more than 150 km from the configured position is displayed exactly as typed, and the lookup is cached per name+locale so it costs one request per change, not per refresh. The service matches names *in the requested language*, so an exonym it doesn't index in that language (typing `Milano` while set to `de`) leaves the label untouched rather than swapping in a same-named town. Localization also needs coordinates to anchor on: with no fix and no `WEATHER_LAT`/`WEATHER_LON`, the typed name is shown as written. The localized spelling never overwrites the stored `WEATHER_CITY`. Only the Latin-script codes (`it en fr de es pt nl pl tr`) are localized on the panel — the Conthrax font subset has no verified glyphs for Cyrillic/Greek/CJK/RTL, so those keep the typed spelling (the WebUI has no such limit). The forecast itself is not translated. Saving a new value re-fetches the weather straight away, so the name changes without a reboot.
 - `WEATHER_WIDTH` (default=480) and `WEATHER_HEIGHT` (default=28): Weather card size in pixels — width 160–480, height 20–120, set with the **Widget Size** sliders under *UI Layout → Weather Widget*. The card is anchored on its **centre**, so `OFFSET_WEATHER_X/Y` stay the point the card grows out from and a resized card does not slide sideways or down. The shipped defaults are the size the widget was before this was a setting, so a unit that never touches the sliders gets exactly the picture it had. The stat icons stay 16 px at any height (only `Conthrax_SemiBold_16px` and `28px` are compiled in), and the text stays 16 px: a taller card gives the rows more breathing room rather than bigger glyphs. **Rows:** the card keeps everything on one line whenever it fits, which is why the default 480×28 looks exactly as it always did. When a narrow card cannot hold the stats beside the city name it wraps them onto extra rows instead of dropping them, and each extra row costs about 20 px of height: a card at least ~40 px tall can use a second row, ~60 px a third. With a short city name and typical values, 240×48 shows city + temp + humidity on the first line and wind + sunset on the second, 160 px width needs ~60 px of height for all four stats, and a 160×20 card only has room for city + temp + humidity. Sunset is the group dropped first and wind second, and only when there is no row left to put them on; the exact cut depends on the city name and the current values, which are measured at draw time.
+- **Gone with the Wi-Fi stack (2026-11-02):** `WEATHER_CITY`, `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_REFRESH_MIN` and `WEATHER_LOCALE` left the parameter table, the settings page and the backup template. A unit from this tree has no radio, so it never picks a place to ask about, never geocodes, never re-spells a city name into another language and never re-fetches on an interval. The widget is fed from outside: the phone sends `weather.set` (`BT_F_WEATHER`) with the values it fetched itself, the label it chose, sunrise/sunset as epoch seconds and a `valid` flag. A backup that still carries the old keys restores without them, and `CFG_VER` is deliberately **not** bumped over the removal — bumping it would wipe every other setting on units that already exist.
 
 #### Time, Date & Daylight Saving
-- `NTP_ENABLED` (default=true): Sync the system clock from NTP once the WiFi station is up. `configTime()` is armed and then polled **once per web-loop iteration** over a 5 s window — the old `delay(500)` retry loop ran inside the web task and left the config page and API unreachable for up to 5 s after every Wi-Fi join (issue #43). A missed sync is logged; a GPS fix or `POST /api/time` can still set the clock.
-- `NTP_SERVER` (default="pool.ntp.org"): NTP host used for that sync.
 - `TZ_OFFSET_HOURS` (default=1): Zone offset in whole hours — **the standard (winter) offset**, range −14…14. With DST on, this is the offset the clock uses outside the DST period; the rule below adds the extra hour. New York is `-5`, Paris is `+1`, Athens is `+2`.
 - `TZ_DST_ENABLED` (default=true): Master switch for daylight saving. When off the clock keeps `TZ_OFFSET_HOURS` all year.
 - `TZ_DST_RULE` (default=1): Which calendar `TZ_DST_ENABLED` applies (issue #22). `0` = none, `1` = **EU/EEA** (last Sunday of March and October, both at 01:00 UTC), `2` = **US/Canada** (second Sunday of March, first Sunday of November, both at 02:00 local wall clock — converted to UTC through `TZ_OFFSET_HOURS`, so a GMT−6 zone springs forward at 08:00 UTC and a GMT−5 zone at 07:00 UTC). The rules are integer arithmetic on the UTC date (no zone database); `scripts/verify_dst_rules.py` checks them against the published 2024–2026 transition instants. Before this parameter the DST half was hard-wired to the EU calendar, so a US zone was wrong for roughly three weeks a year.
-#### WiFi
-- `AP_PASSWORD` (default="12345678"): Password of the `Dashboard_Config` SoftAP (the configuration portal). Set in the WebUI (System & General → Wifi → Device Config AP). Must be **empty** (open network, not recommended) or **8–63 characters**: the Wi-Fi stack rejects 1–7 character passphrases, so a shorter value is refused at load/save time and the shipped default is restored instead (logged as `Config: AP_PASSWORD too short`). The WebUI warns while the default password is still in use.
-- **Not parameters any more:** the search policy is fixed to *search forever* and TX power is fixed at `WIFI_POWER_19_5dBm` (19.5 dBm — the maximum the classic ESP32 accepts). `WIFI_RETRY_MODE`, `WIFI_RETRY_SECONDS` and `WIFI_TX_POWER_DBM` are gone from the parameter table, the WebUI and the backup template; a backup that still carries the old `WIFI_RETRY_M` / `WIFI_RETRY_S` / `WIFI_TXP` keys restores without them.
-- `WIFI_ATTEMPT_SECONDS` (default=12, range 5–60): How long one network gets per try — the window covers the driver’s scan plus association, 4-way handshake and DHCP. A dead network is dropped earlier as soon as the driver reports its `STA_DISCONNECTED` reason (`NO_AP_FOUND`, wrong password, auth timeout), so this window only decides how long a *silent* network (in range but not answering, or a stalled DHCP lease) is waited for before the next slot is tried.
-- **Not parameters any more:** `OTA_PULL_ENABLED` **and** `OTA_PULL_URL` are gone — from the parameter table, the WebUI and the backup template. They configured the path by which the unit fetched firmware from GitHub by itself, and that path was **deleted on 2026-10-31**: firmware now only ever arrives through `POST /api/ota`, pushed by the Web UI file picker (the Android app pushed it that way too until it became a Bluetooth-only client — see the Unreleased app entry above). A backup that still carries the old `OTA_PULL_EN` / `OTA_PULL_URL` keys restores without them, exactly as the retired `WIFI_RETRY_M` / `WIFI_TXP` keys do, and `CFG_VER` is deliberately not bumped over them — bumping it would wipe every other setting on units that already exist.
-- **Not a parameter any more:** `VERSION_OVERRIDE` (NVS key `VER_OVR`) was removed outright in this unreleased build. It was a hand-typed display label sitting next to the real build identity, and the moment the firmware moved on it contradicted that identity; issue #72 is the story of what it did to the update gates. The key is simply never read again — same treatment as the fuel table's legacy `TCH_n` keys — and `CFG_VER` is not bumped over it. The unit's version is `FW_VERSION`, compiled in, and `GET /api/ota/check` reports it as `current_version` and `build_version`.
+- **The unit never inherits a timezone from the phone:** these three rows are the whole clock policy, applied in firmware.
+- **Gone with the Wi-Fi stack (2026-11-02):** `NTP_ENABLED` (`NTP_EN`) and `NTP_SERVER` (`NTP_SRV`). With no network there is no SNTP client. The clock is set by a GNSS fix (`UBX NAV-PVT` / NMEA epoch → `settimeofday()`), or pushed by the phone through `time.set` (`BT_F_TIME`) once per link-up. On a ≤ 1.4.x unit, NTP ran as soon as the station joined and a browser could post `/api/time`.
+
+#### Settings deleted with the Wi-Fi stack
+The parameter table shrank on 2026-11-02, when the portal and the network stack went out of the tree (`git show 7104bf96`). **No row was replaced by a Bluetooth equivalent** — the link carries no settings of its own to store:
+
+| Deleted JSON key(s) | NVS key(s) | What it used to do |
+| :--- | :--- | :--- |
+| `WIFI_SSID`, `WIFI_PASSWORD` | `WIFI_SSID`, `WIFI_PWD` | the station credentials the unit joined (plus the multi-slot list on older builds) |
+| `AP_PASSWORD` | `AP_PWD` | the `Dashboard_Config` hotspot passphrase |
+| `WIFI_ATTEMPT_SECONDS` | `WIFI_ATTEM_S` | how long one network got per join try |
+| `NTP_ENABLED`, `NTP_SERVER` | `NTP_EN`, `NTP_SRV` | the SNTP client |
+| `WEATHER_CITY`, `WEATHER_LAT`, `WEATHER_LON`, `WEATHER_REFRESH_MIN`, `WEATHER_LOCALE` | `WEATH_CITY`, `WEATH_LAT`, `WEATH_LON`, `WEATH_RFR`, `WEATH_LOCALE` | the unit's own Open-Meteo forecast |
+
+- **Retired earlier, same behaviour:** `WIFI_RETRY_MODE`, `WIFI_RETRY_SECONDS` and `WIFI_TX_POWER_DBM` (search policy fixed to *search forever*, TX fixed at 19.5 dBm), `OTA_PULL_ENABLED` / `OTA_PULL_URL` (the self-fetch path deleted 2026-10-31), and `VERSION_OVERRIDE` (`VER_OVR`), a hand-typed display label that is not a parameter at all any more.
+- **What a restore does with a key it does not know:** it ignores it. The table walk only ever applies keys present in `CFG_TABLE`, so an old `dashboard_backup.json` restores cleanly into a BLE-only unit and quietly drops the settings that no longer exist. Nothing is migrated into a replacement key, because no deleted setting has one.
+- **One exception — renamed, not deleted:** the Wi-Fi status icon became the **Bluetooth** icon and its three settings kept their meaning: `SHOW_ELEMENT_WIFI` → `SHOW_ELEMENT_BLE` (`SH_WIFI` → `SH_BLE`), `OFFSET_WIFI_ICON_X/Y` → `OFFSET_BLE_ICON_X/Y` (`O_WIFI_X`/`O_WIFI_Y` → `O_BLE_X`/`O_BLE_Y`). `cfgCarryRenamedKeys()` in `src/config.cpp` copies an existing unit's stored values across once at boot; it fires only when the new key is absent (`getType()` answering `PT_INVALID` — the only way to tell "never stored" from "stored as `false` / `0`") and the old key is present, so a unit that already has real values under the new names is never overwritten and the copy never runs twice.
 
 #### Ambient Light (Auto-Brightness)
-- `LIGHT_SENSOR_DARK_VAL`: Dark-reference ambient light value (calibrated via `/api/ambient/cal-dark`).
-- `LIGHT_SENSOR_BRIGHT_VAL`: Bright-reference ambient light value (calibrated via `/api/ambient/cal-bright`).
+- `LIGHT_SENSOR_DARK_VAL`: Dark-reference ambient light value — set through the `cal.ambient` RPC method (`dark`), or `POST /api/ambient/cal-dark` on a ≤ 1.4.x unit.
+- `LIGHT_SENSOR_BRIGHT_VAL`: Bright-reference ambient light value — set through the `cal.ambient` RPC method (`bright`), or `POST /api/ambient/cal-bright` on a ≤ 1.4.x unit.
 
 #### Digit Boundaries (Configurable 7-Segment Formatting)
 - `SPEED_DIGITS`, `SAT_DIGITS`, `TMR_INT_DIGITS`, `TMR_DEC_DIGITS`, `BAT_INT_DIGITS`, `BAT_DEC_DIGITS`, `INST_INT_DIGITS`, `INST_DEC_DIGITS`, `AVG_INT_DIGITS`, `AVG_DEC_DIGITS`, `AVG_SPEED_INT_DIGITS`, `AVG_SPEED_DEC_DIGITS`, `MAX_SPEED_INT_DIGITS`, `MAX_SPEED_DEC_DIGITS`, `FUEL_INT_DIGITS`, `FUEL_DEC_DIGITS`, `ODO_INT_DIGITS`, `ODO_DEC_DIGITS`: Configurable integer and decimal digit limits for all UI numerical readouts. These values size fixed 16-slot cell arrays in the display renderer, so they are range-checked on every load and save (issue #6): integer counts `1..14` (1-4 for `SPEED_DIGITS`, 1-3 for `SAT_DIGITS`), decimal counts `0..4`, and per readout `int + dec + 1 <= 16` (+1 is the decimal-point slot). Out-of-range values are clamped on load (boot, `POST /api/config`, config restore) and logged; the renderer keeps a hard bounds guard as a second line of defence. A readout also caps its *value* to what its configured digits can print (e.g. `FUEL_INT_DIGITS=1` + `FUEL_DEC_DIGITS=1` shows at most `9.5`; raise the int count to `2` in the WebUI — "Fuel & Battery" card → Fuel LTRS → Integer Digits — for two-digit litres), so a value with more digits than the cells never draws outside its cell array (issue #7). `SAT_DIGITS` (1–3) sizes the satellite readout the same way since issue #41: the count is capped to what N digits can print and the erase box is measured from N × `'8'` instead of a hardcoded two-digit string — before that the parameter was stored, exported, adjustable in the WebUI and documented, but no code ever read it. Separately, every digit loop resolves its character through `digitIndex()` in `src/ui.cpp` before touching the per-glyph metric tables (`digitWidth[10]`, `ds15_digitXOff[10]`, …): a character outside `'0'..'9'` returns `-1`, the cell is skipped and keeps whatever the ghost/erase pass already painted, instead of indexing a 10-entry table with `-3` (issue #31).
@@ -803,13 +942,13 @@ Around that stream, the link carries three more things: the app pushes the phone
 
 Slot 3 draws the unit's configuration in Compose instead of loading the unit's web page in a WebView. The page has the same shape as the unit's own settings page, because that page is the reference the driver already has.
 
-- **The schema is generated, not retyped.** `scripts/gen_config_schema.py` reads the 198 rows of `CFG_TABLE` in `src/config.cpp` plus the labels, groups, cards and help text from `src/webui.html`, and writes `android/app/src/main/assets/config_schema.json`: control types, bounds, units, formats, `reboot_required`, the advanced gate, the action widgets, and the 14 keys that are dead in V2 and must not be drawn. `--check` re-derives the file and reports any drift instead of writing it. That check is run by hand — nothing in Gradle calls the generator — so keeping the asset and the firmware together is a discipline on whoever touches `CFG_TABLE`, not a build gate. Group badges come from `scripts/icons_to_drawables.py`, which converts the page's own `iconSVG` paths into `VectorDrawable`s (`res/drawable/ic_grp_*.xml`, five of them); the schema carries only the icon *name*, so there is one source for each picture and one for each path.
+- **The schema is generated, not retyped.** `scripts/gen_config_schema.py` reads the 179 rows of `CFG_TABLE` in `src/config.cpp` (through `scripts/cfg_table.py`, so every generator parses the table the same way) plus the labels, groups, cards, help text and icon names from `scripts/config_schema_presentation.json`, and writes `android/app/src/main/assets/config_schema.json`: control types, bounds, units, formats, `reboot_required`, the advanced gate, the action widgets, and the `hidden` list of keys that exist in the table but must not be drawn — it is empty today, because the 14 dead V2 keys it used to name were deleted with the rest of the Wi-Fi settings rather than hidden. The file carries `rows: 179`, `schemaVersion` and the `firmware` version it was generated against. `--check` re-derives the file and reports any drift instead of writing it. That check is run by hand — nothing in Gradle calls the generator — so keeping the asset and the firmware together is a discipline on whoever touches `CFG_TABLE`, not a build gate. Group badges come from `scripts/icons_to_drawables.py`, which reads the same presentation file and converts its `iconSVG` paths into `VectorDrawable`s (`res/drawable/ic_grp_*.xml`, five of them); the schema carries only the icon *name*, so there is one source for each picture and one for each path. Until 2026-11-02 both generators read their presentation data out of `src/webui.html`; when the page was deleted that data moved to the JSON file rather than being rewritten by hand.
 - **An accordion, not a tab strip.** Five groups under the unit page's own titles — System & General, Display, Sensors Tuning, UI Layout, and *More settings* for the rows the page does not label — each with the badge the page draws above its heading, one group open at a time, and an advanced switch gated on the schema *naming* `ADV_MODE` rather than on that key having a card row (it has none: the gate belongs to the page header in both implementations). The old app had six group pills plus a separate tools page; standing on the System tab and typing "gps" found nothing, on a page that could not say the rows were one tap away.
 - **Search behaves like the unit page's.** The matcher is word-prefix, not substring (`GPS` finds `GPS Module`, `exc` finds `EXC_RES_OHM`, `cu` does not find "fuel"), and typing a query opens the groups it finds and **hides** the groups it does not, with each group header naming how many other groups have hits. A row is searchable by its label, its key (and the second key of an `x`/`y` pair) and its unit — not by its help sentence, and not by its current value, because those are not what a person sees on the row they are looking for. A card whose title matches keeps all of its rows (typing "noise" asks for the noise bench, not one row of it), and a search can never walk through the advanced gate: the gate is a statement about the row, not about how hard someone looked.
 - **Cards flow.** One column below 600 dp, two from 600, three from 900 — the unit page's own breakpoints, 900 being where a tablet's landscape width lands. Cards fill their row in schema order, and a card that carries an action widget (the noise bench, the odometer setter, the firmware panel) takes a row to itself rather than being squeezed into a third of a tablet.
 - **Writes go to the unit as you type, and the unit decides what that cost.** An edit is sent after a 600 ms debounce (the unit's own page autosaves on a 2 s timer; the app is quicker because `SAVE` is sitting in its bar), and `config.set` applies the value live **and** writes it to flash in the same call. When the flash write fails the unit says so — `nvsErrors` — and the row is marked *in RAM only*: it is on the dashboard until it reboots, and the row says that rather than pretending otherwise. `SAVE` is therefore not a commit button; it is a flush — write everything still waiting out its debounce, right now — and its note counts rows written and rows that never reached the unit separately, because a row the unit refused has already reverted and there is nothing to resend. `pending` is measured in rows, not in edits, so a slider dragged through ten values is one thing to save.
 - Rows the unit marks `reboot_required` set `rebootPending`, which is what arms the `RESTART NOW` prompt; `RESTART`, `FACTORY RESET`, `BACKUP` and `RESTORE` sit in the sticky bottom bar because they are not attached to any one row (`reboot`, `factory.reset`, and a `config.get` / `config.set` pair for the backup, its keys split into as many messages as the unit's 8 KiB reassembly ceiling allows, less a 128-byte reserve for the envelope).
-- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The Firmware update card stays in its WebUI position showing the unit's versions and one honest line — **Bluetooth OTA is not in this firmware** (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`), updates happen from the unit's own settings page, and this app ships no updater. The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
+- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The Firmware update card stays in its old position showing the unit's versions and one honest line — **Bluetooth OTA is not in this firmware yet** (`ota.begin` / `ota.abort` answer `not_implemented` in `src/bt_rpc.cpp`) — because there is no portal left to update from either: on a current-build unit firmware moves with a USB cable (see *Over-The-Air (OTA) Updates*). The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
 - The **performance monitor** is one more card in the accordion (`ui/screens/settings/PerfMonitorScreen.kt`), reachable by search like any other section, and its live tick runs only while it is the section in front of the user.
 
 `ui/screens/settings/SettingsLayout.kt` holds those rules as pure functions — open/close, search semantics, column count, card packing, advanced gating, which widget a card carries — with the unit page's behaviour as the test oracle (`SettingsLayoutTest`). `ui/screens/settings/ConfigStore.kt` holds the write model (debounce, mirror, pending, flush), tested in `ConfigStoreTest`.
@@ -874,10 +1013,16 @@ Dashboard++ for ESP32/
 │       ├── Conthrax_SemiBold_16px.vlw # 16px label font
 │       └── Conthrax_SemiBold_10px.vlw # 10px micro label font
 ├── scripts/
-│   ├── gzip_webui.py      # Pre-gzips webui.html -> webui_html_gz.h (~93 KB raw -> ~20 KB)
 │   ├── vlw_to_header.py   # Compiles .vlw font files into PROGMEM C headers
-│   ├── gen_config_schema.py # CFG_TABLE + WebUI labels -> android config_schema.json (--check guards drift)
-│   ├── icons_to_drawables.py # WebUI iconSVG paths -> android VectorDrawable group badges
+│   ├── cfg_table.py       # Reads CFG_TABLE out of src/config.cpp so every generator shares one source of truth
+│   ├── cfg_table_migration.py # The rename/carry table behind cfgCarryRenamedKeys() (old NVS key -> new)
+│   ├── config_schema_presentation.json # The ONE copy of labels, groups, hints and icon paths for the app's settings page
+│   ├── gen_config_schema.py # CFG_TABLE + the presentation JSON -> android config_schema.json (--check guards drift)
+│   ├── icons_to_drawables.py # iconSVG paths in the presentation JSON -> android VectorDrawable group badges
+│   ├── size_report.py     # Post-build: bin size, partition fit, the ≤ 1.80 MB gate, the DPPVER= image tag
+│   ├── verify_config_ranges.py / verify_dst_rules.py / verify_fuel_ohms.py / verify_ubx_parser.py
+│   │                      # Offline guards for the parameter bands, DST calendars, fuel ohms, UBX framing
+│   ├── ota_sign.py        # Out-of-band tool only: nothing on a device verifies its output (no signing anywhere)
 │   ├── fix_upload_layout.py  # post: build step - otadata at this table's real offset, never 0xe000 (inside nvs)
 │   ├── ble_bench_central.py  # A desktop BLE central for the RPC link (bench work, not part of any build)
 │   └── preview_icon.py    # Generates + geometry-checks the Android icon layers (android/app/src/main/res/drawable/)
@@ -904,17 +1049,21 @@ Dashboard++ for ESP32/
 └── src/
     ├── dashboard.h        # Central global header, structure definitions, API declarations
     ├── main.cpp           # System setup(), dual FreeRTOS task spawns, main display loop
-    ├── config.cpp         # One CFG_TABLE row per NVS parameter (global, keys, default, band); load/serialize/restore
+    ├── config.cpp         # One CFG_TABLE row per NVS parameter (global, keys, default, band); load/export/restore,
+    │                      #   renamed-key carry on boot, and the NVS backup-JSON template
     ├── gfx.cpp            # LovyanGFX display device class, PROGMEM VLW font loader, AA primitives, icons
     ├── sensors.cpp        # Core 0 GPS task (bulk UART drain, TinyGPS++/UBX parser, speed fusion, odo, time-sync) + Core 1 sensor task (Hall ISR, ADC sensors, snapshot)
     ├── ui.cpp             # Dirty-rendering dashboard visual layout engine
     ├── bt.cpp             # BLE GATT server: advertising (DPP-####), service & characteristics, bonding, MTU, chunked framing
     ├── bt_proto.h         # The wire protocol shared by the firmware and the app's ble/ package
     ├── bt_rpc.cpp         # The JSON RPC methods served over that link (config, telemetry, actions; ota.begin/abort answer not_implemented)
-    ├── web.cpp            # SoftAP/STA WiFi manager, REST API handlers, LAN firmware install, embedded Web UI, weather-fetch task
-    │                      # ⚠ NOT COMPILED in the current build — build_src_filter in platformio.ini excludes it (firmware
-    │                      #   phase 0b). Source kept for Wi-Fi firmwares and for the day the decision is reversed.
-    └── webui.html         # Single-page Web UI source (gzipped at build time by scripts/gzip_webui.py)
+    ├── noisebench.cpp/.h  # The 4-run ADC noise bench (idle / tft / bl10 / bl90), on demand over the link
+    ├── bootinfo.cpp/.h    # Reset-reason forensics, boot-storm detection, last-reboot tag
+    ├── otahash.cpp/.h     # SHA-256 over the running image, for the install gates and the boot report
+    └── units.h            # km/mi and °C/°F helpers shared by the panel and the payloads
+    # web.cpp and webui.html are GONE - deleted 2026-11-02 (`git show 7104bf96^:src/web.cpp`
+    # and `…^:src/webui.html`). There is no HTTP server, no portal source, and no build flag
+    # that brings either back.
 ```
 
 ---
@@ -929,7 +1078,7 @@ Dashboard++ for ESP32/
 The project uses a custom `partitions.csv` with:
 - An **80 KB NVS partition** (`0x14000`, 20 pages) — 4× the 20 KB shipped until 1.4.0, see the changelog entry on NVS exhaustion
 - Two OTA app slots (0x1D0000 each)
-- A 256 KB LittleFS partition (0x40000), retained only for `/api/health` byte reporting (fonts are now PROGMEM)
+- A 256 KB LittleFS partition (0x40000), kept only so `health`/`perf` can report its bytes honestly (fonts are PROGMEM in the app image, and nothing is uploaded to that partition any more)
 
 Layout (4 MB flash, ends at exactly `0x400000`):
 
@@ -942,7 +1091,7 @@ Layout (4 MB flash, ends at exactly `0x400000`):
 | `spiffs` | `0x3C0000` | `0x40000` (256 KB) |
 
 > [!WARNING]
-> A partition-table change is **not** delivered by an OTA update — OTA replaces the app slot, never the table. A unit that updates over the air keeps whatever table it was last flashed with, and the boot log line `NVS 'nvs' <bytes> bytes: …` is how you tell which one it is. Moving a board onto the new table needs a wired re-flash (`pio run -t erase` then `pio run -t upload`), and **the erase wipes NVS**: WiFi credentials, odometer and calibration have to be entered again.
+> A partition-table change is **not** delivered by an OTA update — OTA replaces the app slot, never the table. A unit that updates over the air keeps whatever table it was last flashed with, and the boot log line `NVS 'nvs' <bytes> bytes: …` is how you tell which one it is. Moving a board onto the new table needs a wired re-flash (`pio run -t erase` then `pio run -t upload`), and **the erase wipes NVS**: the settings, the odometer and both calibrations have to be entered again (there are no network credentials left to retype).
 
 > [!NOTE]
 > **A wired flash now always boots the image it wrote, and it no longer eats NVS
@@ -975,12 +1124,15 @@ Layout (4 MB flash, ends at exactly `0x400000`):
 > Proved on the bench with two builds whose compiled-in version strings differ, so
 > the slot is unmistakable: under the old layout a wired flash of the `1.5.1` build
 > left a `9.9.9` image booting from `app1`; under the fixed layout the same
-> `pio run -t upload --upload-port COM7` ended with `/api/ota/check` reporting
-> `build_version: 1.5.1`, `previous_version: 9.9.9`, and no further NVS keys
-> missing.
+> `pio run -t upload --upload-port COM7` ended with the boot report
+> — that proof was read from `/api/ota/check`, on a Wi-Fi build, at the time —
+> carrying `build_version: 1.5.1`, `previous_version: 9.9.9`, and no further NVS
+> keys missing. Today the same facts come off the link: `perf`'s entry for the
+> running app slot, `previous_version` in `perf`/`boot`, and the console line
+> `FW 1.5.1, image marker DPPVER=1.5.1`.
 >
 > Which slot is running is still worth checking rather than assuming — the boot log
-> line `BOOTINFO: reset=… firmware v…`, and `/api/perf` → `partitions` (the running
+> line `BOOTINFO: reset=… firmware v…`, and `perf`'s `partitions` array (the running
 > app slot reports `used` equal to its full size).
 >
 > **Serial flakiness is separate from any of this.** `Failed to start stub flasher.
@@ -1011,27 +1163,71 @@ platformio device monitor
 ```
 
 > [!NOTE]
-> Fonts are compiled into flash as PROGMEM arrays at build time (`scripts/vlw_to_header.py`), so no `uploadfs` step is needed for text. The LittleFS partition remains in `partitions.csv` (used only for `/api/health` byte reporting).
+> Fonts are compiled into flash as PROGMEM arrays at build time (`scripts/vlw_to_header.py`), so no `uploadfs` step is needed for text. The LittleFS partition remains in `partitions.csv` (read only to report its bytes in `health`/`perf`).
 
 ### Over-The-Air (OTA) Updates
 
-> [!IMPORTANT]
-> **Both paths below need a unit that has a Wi-Fi address**, which a unit flashed from the
-> current tree does not — `web.cpp` (the HTTP server, the SoftAP and the station connection)
-> is out of the build, see the note at the top of *Embedded Web UI & REST API Reference*. On
-> a current-build unit the only install path is a wired `pio run -t upload`; the wireless
-> path being built for it is Bluetooth (the OTA characteristic and the chunk frames
-> `0x80`-`0x85`, firmware phases 4c/4d, with the pairing passkey shown on the panel). What
-> follows documents the Wi-Fi paths as they exist in the source and on 1.4.x units.
+#### What is live in a current build, and what is history
 
-#### Via PlatformIO CLI
-Ensure your host machine is connected to the `Dashboard_Config` WiFi network or local network:
+**Read this before the rest of the chapter.** The half of the update machinery
+that protects the panel is live; the half that carried the bytes is deleted.
+
+*Live in the tree right now* — the panel and safety side of an install, in
+`src/main.cpp`, `src/gfx.cpp`, `src/bootinfo.cpp`, `src/otahash.cpp`:
+
+- the three update frames (updating / complete-and-rebooting / failed), their
+  stages (`otaScreenStage`, `OTA_SCREEN_*`), the 15 s failure-frame dwell and the
+  automatic return to the dashboard afterwards;
+- the quiet-window flags the other tasks park on (`otaUpdateInProgress`,
+  `otaQuietActive`, `otaQuietLastByteMs`, `otaScreenDrawn`) and the CPU pin that
+  goes with them;
+- the GPIO25 rules during an install — trip reset dropped rather than queued, a
+  3 s hold (`OTA_HOLD_RESTART_MS`) to restart the unit, and that hold refused
+  while a flash write is in flight (`otaFlashWriteActive()`);
+- the identity machinery: `FW_VERSION` compiled in, the `DPPVER=` tag baked into
+  `firmware.bin`, the boot report of running vs previous version, the boot-storm
+  forensics, and the SHA-256 helpers.
+
+*Deleted with `src/web.cpp` on 2026-11-02*: `POST /api/ota` and its multipart
+handler, `GET /api/ota/check`, the REST allow-list and its `503`, the NVS mirror
+of the install state (`ota_update_in_progress`, `ota_client_hold`, `ota_error`,
+`ota_ip`, `ota_port`, `ota_last_reason`, `ota_last_detail`, `ota_prev_ver` —
+none of those keys is in `CFG_TABLE` any more, and nothing writes them raw), the
+update card in the page, and `scripts/verify_ota_state_line.js`.
+
+*Not built yet*: the transport meant to replace the HTTP upload is the **OTA
+characteristic** (`d9a1f003-6c1e-4b8a-9f2d-3e7c1a5b9d40`), and its message type
+(`BT_F_OTA = 8`) is already declared in `src/bt_proto.h`; only the state machine on top
+of `Update` is missing. The plan defines its frames — `{"op":"begin","size","crc32"}`
+answered by `begin_ok` with the chunk size the unit will accept, then
+`offset (4 bytes LE) + payload` writes, an `{"op":"ack","off":…}` every 16 KB, and an
+`{"op":"end"}` answered by `end_ok` before the reboot. Until that exists, `ota.begin` /
+`ota.abort` answer `not_implemented`, `otaFlashWriteActive()` answers `false`,
+`otaInstallReason()` answers `none`, and the only way to put firmware on a
+current-build unit is a **wired** `pio run -t upload --upload-port COM7`. That state
+machine is phase **2b** of *Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md* (§4.7
+for the protocol, §9 for the gate: a 1.6 MB image in ≤ 5 min on the tablet, CRC
+verified, resume working), not code in this tree yet.
+
+*What the sections below are*: the Wi-Fi-era design as it worked on ≤ 1.4.x
+units. It stays because it is the specification the BLE transport has to satisfy
+— the gates, the quiet window, the stall timer and the panel rules are still
+what this product needs — and because those units are still out there. Every
+claim below is true of a Wi-Fi firmware and of nothing else.
+
+So, on a current-build unit: `pio run`, then `pio run -t upload --upload-port
+COM7`. `scripts/fix_upload_layout.py` is what makes that upload boot the image
+it just wrote and keeps it out of the `nvs` partition (see *Partition Table*
+above). There is no portal to open and no IP address to point an uploader at.
+
+#### Via PlatformIO CLI over the network (≤ 1.4.x only)
+On a Wi-Fi unit the same `upload` target can run over the network instead of a cable: put the host on the same network as the unit — its `Dashboard_Config` hotspot or the LAN:
 
 ```bash
 platformio run -t upload --upload-port 192.168.4.1
 ```
 
-#### Via Web Management Portal
+#### Via Web Management Portal (≤ 1.4.x only)
 1. Open a browser and navigate to `http://192.168.4.1` (or your assigned STA IP).
 2. Open the **System Actions** section.
 3. Choose `firmware.bin` from a release, confirm the version it says it is
@@ -1046,7 +1242,7 @@ OTA partition, and an upload whose byte count is inconsistent or whose ESP image
 header does not look like firmware (magic `0xE9`, plausible segment count, at
 least 4 KB) is discarded instead of activated.
 
-#### LAN install (`POST /api/ota`)
+#### LAN install (`POST /api/ota`) — the Wi-Fi-era request shape
 
 
 The image arrives over the same unauthenticated LAN HTTP server the dashboard
@@ -1124,21 +1320,28 @@ heap and core 0:
 |---|---|
 | Panel | Shows only the update screen. The screen is drawn **before** the first flash write and never redrawn; it reads no flash and allocates nothing, which is what makes it safe to leave up (the display driver's `loadVLWFont()` selects compiled-in font arrays, not LittleFS files) |
 | GNSS task | Waits at its loop top. Parked cooperatively, never `vTaskSuspend()`ed — suspending a task that happens to hold `g_stateMutex` would stall the display task with it (rule 11). Nothing watches this task's liveness, so the park cannot trip a watchdog; the cost is a speed/GPS readout frozen behind a screen that already hides it |
-| CPU probes | Sleep 250 ms instead of 1 ms per core, so the frequency governor and the idle path stop making decisions around the flash writes (`/api/perf` reads ~100 % busy for the window, which is the truth) |
-| Weather | An in-flight fetch is asked to drop its result and new fetches are refused — an HTTPS call to a host nobody here controls is exactly the multi-second TLS burst the window exists to keep away |
+| CPU probes | Sleep 250 ms instead of 1 ms per core, so the frequency governor and the idle path stop making decisions around the flash writes (`perf` reads ~100 % busy for the window, which is the truth) |
+| Weather (≤ 1.4.x) | An in-flight fetch is asked to drop its result and new fetches are refused — an HTTPS call to a host nobody here controls is exactly the multi-second TLS burst the window exists to keep away. A current build has nothing it could ask the network for, so this is one less producer to park |
 | CPU clock | Pinned to 240 MHz (dynamic frequency scaling is allowed to drop the chip to 80 MHz whenever it looks idle, and that decision can land mid-write). The previous setting is restored on the way out; a user's `MANUAL_CPU_FREQ` is not rewritten in NVS |
 | Speed sprite + 120 px font | Freed by the display task before the window opens, same handshake the weather fetch uses |
-| REST API | Everything outside the allow-list answers `503 {"error":"ota update in progress"}` |
+| REST API (≤ 1.4.x) | Everything outside the allow-list answers `503 {"error":"ota update in progress"}` |
 
-The allow-list is deliberately three entries: `/api/ota*` (the install and its
-progress endpoint — whose handlers already answer busy themselves), `/api/health`
-(so a client can tell *alive but busy* from *dead*), and `/` (so opening the WebUI
-mid-update shows a page rather than an error).
+On a Wi-Fi unit that allow-list was deliberately three entries: `/api/ota*` (the
+install and its progress endpoint — whose handlers already answer busy
+themselves), `/api/health` (so a client can tell *alive but busy* from *dead*),
+and `/` (so opening the WebUI mid-update showed a page rather than an error).
 Everything else — `/api/live`, `/api/config`, `/api/snapshot`, `/api/sensors`,
-`/api/perf`, `/api/serial` — is closed, because a route added next month is
+`/api/perf`, `/api/serial` — was closed, because a route added next month is
 closed by default: the failure mode of a gate like this should be *someone could
 not open the sensors page during an update*, never *a new endpoint silently
 allocated heap in the middle of a flash write*.
+
+Translated to the link, the same rule reads **stop the producers, answer the
+control plane honestly**: while an install runs, the unit stops pushing its 1 Hz
+frames and refuses everything except the OTA frames and the few small reads a
+pushing client needs to watch progress and recovery (`perf`, `health`, the
+install state). Anything else, including a method added next month, is refused
+by default — for exactly the reason the routes were closed on the Wi-Fi build.
 
 **What a client actually sees mid-push (bench, 1.75 MB over Wi-Fi).** The `503` is
 the polite answer, and the polite answer is not always what arrives: while the
@@ -1168,11 +1371,12 @@ endpoints answer again; the panel gets the same sentence as a failure frame
 rather than quietly falling back to the dashboard, because the phone that was
 pushing the update is not always in the same room as the car.
 
-Three read-only fields on `/api/ota/check` let a client mirror this instead of
-guessing: `quiet` (the window is open), `quiet_silent_ms` (bytes have been silent
-this long while it is open), and `screen` — which frame the panel is showing:
-`off`, `claimed` (an install holds the panel but no frame has been drawn yet),
-`updating`, `done`, `failed`.
+Three read-only answers let a client mirror this instead of guessing — on a
+Wi-Fi build they came from `GET /api/ota/check`: `quiet` (the window is open),
+`quiet_silent_ms` (how long bytes have been silent while it is open), and
+`screen` — which frame the panel is showing: `off`, `claimed` (an install holds
+the panel but no frame has been drawn yet), `updating`, `done`, `failed`. Those
+three answers are what an install has to expose over the link too.
 
 #### What the panel shows, and what the trip button does during an update
 
@@ -1203,7 +1407,10 @@ The hold is **ignored while bytes are going into the flash slot** — a reset
 between two writes is a half-written image in the inactive slot, the exact failure
 this flow exists to remove. Everywhere else (handshake, verification, the done
 frame, an error frame) it works. `otaFlashWriteActive()` is the accessor that
-decides it; the interlock behind it stays private to `web.cpp`.
+decides it, and the interlock behind it stays private to whoever owns the
+transport. On a Wi-Fi build that was `web.cpp`; in a current build nothing is
+writing the slot, so the accessor answers `false` and the hold is never blocked
+by it — which is the hole the BLE state machine has to fill.
 
 A failure frame is information, not a cell: after 15 s it hands the panel back,
 because a refused image never touched the slot the unit boots from and a
@@ -1262,26 +1469,34 @@ reports an install, **5 s** while the card is open and idle, **8 s** when the ca
 collapsed or the tab is hidden. The endpoint is cheap, but the web loop is also the
 one serving the upload.
 
-`scripts/verify_ota_state_line.js` checks that decision chain — 13 cases, each one
-sliced out of `src/webui.html` at run time rather than duplicated here, and it can
-be pointed at a running unit (`node scripts/verify_ota_state_line.js
-http://192.168.1.116/`) so the check covers the page the device actually serves and
-not just the source it came from.
+That decision chain used to have its own guard: `scripts/verify_ota_state_line.js`
+ran 13 cases over logic sliced out of `src/webui.html` at run time (no duplicated
+logic to drift), and could be pointed at a running unit
+(`node scripts/verify_ota_state_line.js http://192.168.1.116/`) so it checked the
+page the device actually served. It went out with the page on 2026-11-02
+(`git show 7104bf96^:scripts/verify_ota_state_line.js`). The app's equivalent
+guard is its own suite — see *Tests that have to stay green* above.
 
 #### How firmware reaches the unit: nothing fetches it
 
 The unit **has no self-update path at all** as of this build. There is no manifest
 URL, no outbound HTTPS client for firmware, no background task, no boot check, and
-no build flag that brings any of it back. `POST /api/ota` is the one way new
-firmware gets in, and the thing that posts it is a client with internet:
+no build flag that brings any of it back. Firmware arrives from outside — pushed by
+a client that got it somewhere else — and on a current-build unit the only such
+client is **a USB cable and PlatformIO**:
 
-1. **The Web UI file picker** (Settings -> *Firmware Update*) — today this is the only
-   push path that exists: same endpoint, same gates, for whoever is on the dashboard's
-   network with a PC (or with the phone's browser).
-2. **The Android app is no longer a path, and that is a consequence of its own**
+1. **Wired `pio run -t upload --upload-port COM7`** — the install path that exists
+   today: the `firmware.bin` this tree builds, written into `app0` with the layout
+   the `post:` script repairs. Same version identity, same image tag, no network
+   involved.
+2. **The Web UI file picker** (Settings -> *Firmware Update*) — on a **≤ 1.4.x**
+   unit only: same endpoint, same gates, for whoever is on that unit's network
+   with a PC (or the phone's browser).
+3. **The Android app is no longer a path, and that is a consequence of its own**
    **move to Bluetooth** (see the Unreleased app entry in the Changelog). It reached this
    endpoint through the WebView of the unit's own page, which a person used to pick a
-   file in; that WebView is gone, and so is every HTTP client in the app. The fuller
+   file in; that WebView is gone, and so is every HTTP client in the app — and a
+   current-build unit has no HTTP endpoint for them to aim at anyway. The fuller
    flow this section used to describe — read the release list from GitHub on the phone,
    show every published build with its version, date and notes, let a person pick one,
    download its `firmware.bin` to app cache, check it against what the release claims
@@ -1371,6 +1586,141 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### Unreleased — the unit keeps one door open and closes all the others (firmware, `src/` + `scripts/`)
+
+**No version stamp yet.** `FW_VERSION` in `src/config.cpp` is still **1.5.1**: these
+firmware commits are unreleased work-in-progress, and the bump happens when this
+batch is approved for release (`AGENTS.md` rule 3), not before. Everything below is
+true of a build cut from `main` today, and a board running a released image (≤ 1.5.1)
+still behaves the Wi-Fi way until it is reflashed.
+
+**The BLE link is the transport now** (`cef3c998`, `34a508c7`, `e1a13cae`).
+`src/bt.cpp` runs a GATT server — service `d9a1f000-6c1e-4b8a-9f2d-3e7c1a5b9d40`
+with telemetry (notify), RPC (write + notify + CCCD) and OTA (write-nr)
+characteristics, each gated on `ESP_GATT_PERM_WRITE_ENC_MITM` /
+`ReadEnc` — advertising as `DPP-####` from the last two MAC bytes with the service
+UUID in the advertisement so a client can filter without a name match. Pairing is
+LE Secure Connections with a 6-digit passkey drawn full-screen on the panel
+(`btPairingActive()` / `btPairingPasskey()`), bonds survive a reflash of the same
+unit, and `factory.reset` clears them (`btClearBonds()`) because an old bond would
+lock the new owner out for good. Messages are 8-byte-framed (`src/bt_proto.h`:
+version, type, FIRST/LAST, seq, length) and reassembled per `seq`, with one open
+message per direction and an 8 KiB ceiling; MTU is negotiated to 517, so a fragment
+carries 506 payload bytes. Over that framing sit: the 1 Hz `BT_F_TELEM` snapshot,
+the 24 RPC methods that replaced every REST endpoint (`snapshot live sensors fuel
+ambient noise perf health boot odo.get odo.set trip.reset config.get config.set
+config.reset factory.reset reboot sleep cal.ambient bench.run log.get
+weather.set time.set ping`), `BT_F_CHUNK` carrying the streamed `config.get`, and
+the `time.set` / `weather.set` ingest — the unit has no radio of its own, so the phone
+supplies the clock once per link-up and the weather widget on demand.
+`BT_F_OTA` and the OTA characteristic are on the profile; their state machine is
+the next step, so `ota.begin` / `ota.abort` answer `not_implemented` and the panel
+says so plainly rather than pretending to be ready.
+
+**Verified with a PC central, not by eye** (`d2406a10`, `928a7995`):
+`scripts/ble_bench_central.py` (WinRT) drives pairing (passkey read off the unit's
+own log), 1 Hz telemetry, every RPC method, and a `config.get` → `config.set` →
+restore round-trip with the client's key set compared against the unit's — 24/24
+checks green on unit `DPP-B594`. It holds DTR/RTS low while mirroring the serial
+log, because the default pulse hits the auto-reset circuit and rebooted the unit
+mid-run (that was the "the ESP keeps rebooting" mystery, not a firmware fault).
+The defects that verification found and fixed are tabulated in
+*The BLE Link* chapter.
+
+**The Wi-Fi stack and the Web Portal are deleted** (`7104bf96`). Out went
+`src/web.cpp`, `src/webui.html`, the generated `src/webui_html_gz.h`,
+`scripts/gzip_webui.py` and the WebUI-only build/verify scripts, with no
+`build_src_filter` left to mention and no flag that compiles any of it back. A unit
+flashed from this tree has no SoftAP, no `192.168.4.1`, no HTTP API, no page on the
+panel and no weather it fetched by itself. Deleted with them: the station
+credentials (`WIFI_SSID`, `WIFI_PASSWORD`), the hotspot passphrase (`AP_PASSWORD`),
+the join window (`WIFI_ATTEMPT_SECONDS`), the SNTP pair (`NTP_ENABLED`,
+`NTP_SERVER`) and the unit's own forecast settings (`WEATHER_CITY`, `WEATHER_LAT`,
+`WEATHER_LON`, `WEATHER_REFRESH_MIN`, `WEATHER_LOCALE`). `CFG_TABLE` is **179 rows**,
+down from 198 — 19 keys went, five of them `CK_SECRET`, and no row was replaced by a
+Bluetooth equivalent; the `CK_SECRET` kind survives in the struct with no row using it,
+so a config export carries no credential of any kind. The backup JSON template lost
+those keys too, and `CFG_VER` was
+deliberately **not** bumped — bumping it would have wiped every other setting on
+units that already exist. A restore into an unknown key ignores it, so an old
+`dashboard_backup.json` still loads.
+
+**The icon slot was renamed, not removed.** The Wi-Fi status icon became the
+**Bluetooth** icon: `SHOW_ELEMENT_WIFI` → `SHOW_ELEMENT_BLE` (`SH_WIFI` → `SH_BLE`),
+`OFFSET_WIFI_ICON_X/Y` → `OFFSET_BLE_ICON_X/Y` (`O_WIFI_X`/`O_WIFI_Y` →
+`O_BLE_X`/`O_BLE_Y`), so an existing unit keeps the icon exactly where its owner put
+it. `cfgCarryRenamedKeys()` (`src/config.cpp`) copies the old values across once at
+boot, and only when the new key is absent (`getType()` answering `PT_INVALID`) while
+the old one is present — so it never overwrites real values and never runs twice.
+
+**The generators no longer read the deleted page.** The labels, groups, cards,
+hints and icon paths that used to be scraped out of `src/webui.html` moved to
+`scripts/config_schema_presentation.json`, which `scripts/gen_config_schema.py` and
+`scripts/icons_to_drawables.py` both read. `android/app/src/main/assets/config_schema.json`
+and the five `res/drawable/ic_grp_*.xml` badges were regenerated from it (asset now
+carries `rows: 179`, `groups: 5`, an empty `hidden` list — the 14 dead V2 keys it
+used to hide were deleted rather than hidden). Also cleaned up while in there:
+`TripRecorder.onNetworkLost()` (dead since the HTTP transport went),
+`scripts/scan_lan.ps1` (subnet sweep for a network the product no longer joins),
+and `scripts/ota_sign.py`, which keeps `keygen` / `sign` / `verify` but lost its
+public-key-header emitter (`pubkey`, and `include/ota_pubkey.h` with it) — nothing on a
+device verifies its output (rule 3: no signing anywhere) and a release must not ship a
+`.sig` asset (rule 27), so the script now says so in its own output. Deleting the dead
+keys also broke one app test, and it is fixed with this entry:
+`ConfigSchemaTest.noHiddenKeyReachesAGroup` asserted the asset's `hidden` list was
+non-empty as a guard that the fixture meant something; with the keys deleted the list is
+correctly empty, so the assertion is gone and the real invariant (no hidden key is ever
+rendered) stays as the guard for the next retirement.
+
+**Size and tooling at this point** — `pio run` green, 0 warnings:
+`RAM 21.6 %` (70,844 B of 327,680 B), `Flash 81.2 %` (1,543,971 B of the 1,900,544 B
+OTA slot), `firmware.bin` **1,565,776 B** (the ≤ 1.80 MB gate of the BLE-only plan,
+~235 KB of slot headroom), and the image tag survives the link:
+`[image tag] firmware.bin declares itself 1.5.1 (marker at 0x1fda8)`.
+`scripts/size_report.py` writes the per-symbol delta to
+`Implementation plans/size-7104bf96.txt`. The app half: `gradlew testDebugUnitTest
+assembleDebug` green, **395** plain-JVM tests, debug APK **11,585,328 B**.
+The one gate this tree misses is the plan's heap floor (phase 0b asked for ≥ 50 KB
+free; the BLE build idles around 40 KB and dipped to 33.8 KB during a `config.get`
+stream) — accepted knowingly, because the fix that buys heap back is a smaller
+reassembly ceiling and the plan's own contingency order applies.
+
+### Unreleased — the app finally looks like the unit it drives (Android app, `versionCode` 42 → 43, `versionName` 1.6.0)
+
+**No firmware line moved**: this is composition inside `android/`, and the ESP
+behaves exactly as before it. Plan: *Implementation plans/APP-WEBUI-RESTYLE-2026-11-02.md*
+(local-only), four commits — `eb3e003e` scaffold, `15847d52` dashboard settings,
+`203f6960` the rest of the pages, `90c4d1ed` version.
+
+The verdict that started it was "the interface is garbage", with the unit's own
+settings page as the target, and four named defects found in photographs of the app
+on the SM-T590 (1920×1200):
+
+- **No content column.** Every page spanned the full 1920 px, so a 13 sp label sat at
+  the far left of a 1900 px line with its switch 1800 px away. New
+  `ui/components/HudPage.kt`: `Width = 920.dp`, `Modifier.hudContentColumn()`,
+  `HudPageFrame(...)` — the same cap the unit's page used (`max-width: 920px`,
+  centred), applied to Vehicles, Trips, Live, Dashboard settings and App settings.
+- **No page header.** `HudPageHeader(title, pill, subtitle, trailing)` centres a
+  gradient heading over an `.ip-banner`-shaped pill, replacing a left-aligned title
+  with `unit V1.5.1 · schema V1.5.1` crammed beside it.
+- **Accordion rows were wrong.** 11 sp uppercase, a bare 18 dp icon with no badge,
+  4 dp corners, and `"▾"` / `"▸"` as *text* — which Android 9 drew as tofu (`�-`).
+  Now: 32 dp cyan icon badges (from the generated `ic_grp_*` vectors), 14 sp/700
+  normal-case titles, 12 dp corners, card shadow, and a real circular chevron that
+  rotates 90° (`HudIcons.kt`).
+- **The settings action bar was off screen** — a functional bug, not a style note.
+  `LazyColumn(fillMaxSize)` above `BottomBar` in a `Column` consumed the whole
+  height, so `SAVE` / `RESTART` / `BACKUP` / `RESTORE` / `FACTORY RESET` were
+  unreachable on the tablet. `15847d52` rebuilt `DashboardSettingsScreen.kt` around
+  the scaffold so the bar is sticky and the list scrolls inside the column.
+
+The palette was already the unit's (colours, type tokens, radii, `hudCard`,
+`hudGlass`, `HudButton`) — what changed is layout, spacing, header treatment and the
+glyphs. Verified on the tablet (`192.168.1.119:5555`) with screenshots of every
+page, plus the JVM suite: **395 tests green**, `assembleDebug` producing
+`app-debug.apk` at 11,585,328 B.
 
 ### Unreleased — the image keeps its version tag, and the manual says which firmware it describes (firmware + docs)
 
