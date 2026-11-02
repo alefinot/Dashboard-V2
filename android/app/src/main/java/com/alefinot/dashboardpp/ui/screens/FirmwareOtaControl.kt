@@ -88,7 +88,7 @@ internal fun FirmwareUpdateControl(
             context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         armed = false
-        OtaController.pick(context, uri, uri.lastPathSegment ?: "firmware.bin")
+        OtaController.pick(context, uri, pickedName(context, uri))
     }
 
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -219,6 +219,27 @@ internal fun FirmwareUpdateControl(
             )
         }
     }
+}
+
+/**
+ * The picked file's own name, the way the provider that handed it over spells it.
+ *
+ * `uri.lastPathSegment` is a document id, not a name. For a file picked out of Downloads on the
+ * test tablet it came back as `msf:152` (a MediaStore download id), and that is what sat in the
+ * card's summary line, where a person is supposed to be able to see which file they chose. The
+ * provider knows the display name, so it is asked first; the path segment is only the fallback
+ * for a provider that will not answer the query.
+ */
+private fun pickedName(context: Context, uri: Uri): String {
+    val fromProvider = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null, null, null,
+        )?.use { c -> if (c.moveToFirst() && c.columnCount > 0) c.getString(0) else null }
+    }.getOrNull()
+    return fromProvider?.takeIf { it.isNotBlank() }
+        ?: uri.lastPathSegment ?: "firmware.bin"
 }
 
 /**
