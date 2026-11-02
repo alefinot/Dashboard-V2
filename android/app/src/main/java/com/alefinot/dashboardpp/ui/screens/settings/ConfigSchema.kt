@@ -76,8 +76,8 @@ data class SchemaItem(
     val maxY: Double? = null,
     /**
      * The window the control offers, narrower than the band on purpose: the old
-     * page's sliders never spanned the whole firmware band (`WEATHER_REFRESH_MIN`
-     * slides 1..60 while the row allows 1..1440), and a number field sometimes
+     * page's sliders never spanned the whole firmware band (`FADE_DURATION_MS`
+     * slides 100..5000 while the row allows 0..10000), and a number field sometimes
      * quotes a friendlier range than the column's. In device units.
      */
     val uiMin: Double? = null,

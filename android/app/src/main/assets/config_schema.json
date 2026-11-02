@@ -1,8 +1,8 @@
 {
- "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and src/webui.html (configMap).",
+ "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and scripts/config_schema_presentation.json (labels, grouping).",
  "schemaVersion": 1,
  "firmware": "1.5.1",
- "rows": 198,
+ "rows": 179,
  "groups": [
   {
    "id": "system_general",
@@ -279,120 +279,6 @@
         {
          "value": 14,
          "label": "(GMT+14:00) Kiritimati"
-        }
-       ]
-      }
-     ]
-    },
-    {
-     "title": "Weather Widget",
-     "items": [
-      {
-       "key": "WEATHER_CITY",
-       "kind": "text",
-       "default": "",
-       "label": "City Name",
-       "maxLength": 48
-      },
-      {
-       "key": "WEATHER_LAT",
-       "kind": "float",
-       "default": 0.0,
-       "label": "Location Latitude (Fallback)",
-       "min": -90.0,
-       "max": 90.0
-      },
-      {
-       "key": "WEATHER_LON",
-       "kind": "float",
-       "default": 0.0,
-       "label": "Location Longitude (Fallback)",
-       "min": -180.0,
-       "max": 180.0
-      },
-      {
-       "key": "WEATHER_REFRESH_MIN",
-       "kind": "int",
-       "default": 1,
-       "label": "Refresh Interval",
-       "min": 1,
-       "max": 1440,
-       "unit": "min",
-       "slider": true,
-       "uiMin": 1,
-       "uiMax": 60,
-       "step": 1
-      },
-      {
-       "key": "WEATHER_LOCALE",
-       "kind": "text",
-       "default": "it",
-       "label": "City Name Language",
-       "maxLength": 16,
-       "options": [
-        {
-         "value": "it",
-         "label": "Italiano"
-        },
-        {
-         "value": "en",
-         "label": "English"
-        },
-        {
-         "value": "fr",
-         "label": "Français"
-        },
-        {
-         "value": "de",
-         "label": "Deutsch"
-        },
-        {
-         "value": "es",
-         "label": "Español"
-        },
-        {
-         "value": "pt",
-         "label": "Português"
-        },
-        {
-         "value": "nl",
-         "label": "Nederlands"
-        },
-        {
-         "value": "pl",
-         "label": "Polski"
-        },
-        {
-         "value": "ru",
-         "label": "Русский"
-        },
-        {
-         "value": "tr",
-         "label": "Türkçe"
-        },
-        {
-         "value": "el",
-         "label": "Ελληνικά"
-        },
-        {
-         "value": "ar",
-         "label": "العربية"
-        },
-        {
-         "value": "he",
-         "label": "עברית"
-        },
-        {
-         "value": "ja",
-         "label": "日本語"
-        },
-        {
-         "value": "zh",
-         "label": "中文"
-        },
-        {
-         "value": "ko",
-         "label": "한국어"
         }
        ]
       }
@@ -1072,11 +958,6 @@
        "advanced": true
       }
      ]
-    },
-    {
-     "title": "Noise Bench",
-     "items": [],
-     "widget": "noiseBench"
     }
    ]
   },
@@ -1086,7 +967,7 @@
    "icon": "layout",
    "cards": [
     {
-     "title": "System",
+     "title": "UI Layout",
      "items": [
       {
        "key": "BIG_CENTER_X",
@@ -1161,12 +1042,7 @@
         -75
        ],
        "section": "Signature"
-      }
-     ]
-    },
-    {
-     "title": "Speed & Odometer",
-     "items": [
+      },
       {
        "key": "SHOW_ELEMENT_TMR",
        "kind": "bool",
@@ -1419,12 +1295,7 @@
         126
        ],
        "section": "Odometer"
-      }
-     ]
-    },
-    {
-     "title": "Fuel & Battery",
-     "items": [
+      },
       {
        "key": "SHOW_ELEMENT_AVG_KML",
        "kind": "bool",
@@ -1600,12 +1471,7 @@
         123
        ],
        "section": "Battery"
-      }
-     ]
-    },
-    {
-     "title": "Clock & Date",
-     "items": [
+      },
       {
        "key": "SHOW_ELEMENT_TIME",
        "kind": "bool",
@@ -1649,12 +1515,7 @@
         -91
        ],
        "section": "Date"
-      }
-     ]
-    },
-    {
-     "title": "WiFi & Satellites",
-     "items": [
+      },
       {
        "key": "SHOW_ELEMENT_SAT",
        "kind": "bool",
@@ -1689,15 +1550,15 @@
        "section": "Satellites"
       },
       {
-       "key": "SHOW_ELEMENT_WIFI",
+       "key": "SHOW_ELEMENT_BLE",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "WiFi Icon"
+       "section": "Bluetooth Icon"
       },
       {
-       "key": "OFFSET_WIFI_ICON_X",
-       "keyY": "OFFSET_WIFI_ICON_Y",
+       "key": "OFFSET_BLE_ICON_X",
+       "keyY": "OFFSET_BLE_ICON_Y",
        "kind": "xy",
        "label": "Position",
        "min": -4096,
@@ -1708,7 +1569,7 @@
         204,
         -108
        ],
-       "section": "WiFi Icon"
+       "section": "Bluetooth Icon"
       }
      ]
     },
@@ -1762,12 +1623,7 @@
        "uiMin": 20,
        "uiMax": 120,
        "step": 1
-      }
-     ]
-    },
-    {
-     "title": "Sidebars",
-     "items": [
+      },
       {
        "key": "SHOW_ELEMENT_SIDEBAR_TEMP",
        "kind": "bool",
@@ -1985,22 +1841,7 @@
    ]
   }
  ],
- "hidden": [
-  "AP_PASSWORD",
-  "NTP_ENABLED",
-  "NTP_SERVER",
-  "WIFI_ATTEMPT_SECONDS",
-  "WIFI_PASSWORD",
-  "WIFI_PASSWORD_1",
-  "WIFI_PASSWORD_2",
-  "WIFI_PASSWORD_3",
-  "WIFI_PASSWORD_4",
-  "WIFI_SSID",
-  "WIFI_SSID_1",
-  "WIFI_SSID_2",
-  "WIFI_SSID_3",
-  "WIFI_SSID_4"
- ],
+ "hidden": [],
  "advancedKey": "ADV_MODE",
  "extras": {
   "fuelCalOhms": {
@@ -2041,8 +1882,6 @@
   "DISPLAY_ROTATION",
   "DISPLAY_WIDTH",
   "DISPLAY_HEIGHT",
-  "GPS_BAUD",
-  "NTP_ENABLED",
-  "NTP_SERVER"
+  "GPS_BAUD"
  ]
 }

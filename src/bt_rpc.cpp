@@ -1009,29 +1009,28 @@ void btRunSelfTest() {
   logPrintf("CFGVERIFY: %d of %d table key(s) mirrored, %d missing\n", rows - missing, rows,
             missing);
 
-  // 3. SET has to land where GET can see it. WEATHER_LAT is the inert choice:
-  // nothing on the unit reads it any more (the phone fetches weather itself),
-  // and a plain number survives the JSON round trip without escaping.
-  const float latWas = acc["WEATHER_LAT"] | 0.0f;
+  // 3. SET has to land where GET can see it. TZ_OFFSET_HOURS is the inert
+  // choice: a plain integer that survives the JSON round trip without escaping,
+  // and the value is written back the moment the check is done.
+  const int tzWas = acc["TZ_OFFSET_HOURS"] | 1;
   acc.clear();
   {
     char req[96];
-    snprintf(req, sizeof(req), "{\"m\":\"config.set\",\"id\":9001,\"p\":{\"WEATHER_LAT\":12.5}}");
+    snprintf(req, sizeof(req), "{\"m\":\"config.set\",\"id\":9001,\"p\":{\"TZ_OFFSET_HOURS\":7}}");
     btRpcHandle(req, strlen(req), 9001);
   }
   verifyConfigMirror(acc, "after set");
-  const float latNow = acc["WEATHER_LAT"] | -999.0f;
-  logPrintf("CFGVERIFY: config.set %s - WEATHER_LAT %.3f -> %.3f\n",
-            (latNow == 12.5f) ? "mirrored" : "FAILED", (double)latWas, (double)latNow);
+  const int tzNow = acc["TZ_OFFSET_HOURS"] | -999;
+  logPrintf("CFGVERIFY: config.set %s - TZ_OFFSET_HOURS %d -> %d\n",
+            (tzNow == 7) ? "mirrored" : "FAILED", tzWas, tzNow);
   acc.clear();
   {
     char req[96];
-    snprintf(req, sizeof(req), "{\"m\":\"config.set\",\"id\":9002,\"p\":{\"WEATHER_LAT\":%.2f}}",
-             (double)latWas);
+    snprintf(req, sizeof(req), "{\"m\":\"config.set\",\"id\":9002,\"p\":{\"TZ_OFFSET_HOURS\":%d}}", tzWas);
     btRpcHandle(req, strlen(req), 9002);
   }
   verifyConfigMirror(acc, "restore");
-  logPrintf("CFGVERIFY: WEATHER_LAT restored to %.3f\n", (double)(acc["WEATHER_LAT"] | -999.0f));
+  logPrintf("CFGVERIFY: TZ_OFFSET_HOURS restored to %d\n", acc["TZ_OFFSET_HOURS"] | -999);
 
   logPrintf("CFGVERIFY: done. heap %lu B now (was %lu at start), low-water since boot %lu; "
             "telemetry %d frame(s) %d bad; frames %d ok %d bad\n",

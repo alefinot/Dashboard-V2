@@ -74,7 +74,9 @@ def openssl():
 
 def write_pubkey_header():
     """Emit include/ota_pubkey.h from the public key PEM. Generated file - never
-    edit by hand (same rule as webui_html_gz.h and the *_vlw.h font headers)."""
+    edit by hand (same rule as the *_vlw.h font headers). Nothing in the firmware
+    includes it any more: signature verification was removed on 2026-10-30, and
+    this subcommand is kept only so the keypair can be regenerated out of band."""
     if not os.path.exists(PUB_KEY):
         raise SystemExit("%s missing - run 'keygen' first" % PUB_KEY)
     pem = open(PUB_KEY, "r", encoding="utf-8").read().strip().splitlines()

@@ -124,8 +124,11 @@ int SIDEBAR_BAR_HEIGHT = 190;
 
 int OFFSET_HALL_ICON_X = 0;
 int OFFSET_HALL_ICON_Y = -100;
-int OFFSET_WIFI_ICON_X = 204;
-int OFFSET_WIFI_ICON_Y = -108;
+// The icon in this slot is Bluetooth now (BLE-ONLY-ARCHITECTURE-PLAN.md SS6), so
+// the three keys that drive it are renamed - and cfgCarryRenamedKeys() copies an
+// existing unit's values across once, so a moved or hidden icon stays put.
+int OFFSET_BLE_ICON_X = 204;
+int OFFSET_BLE_ICON_Y = -108;
 int OFFSET_INST_KML_X = 60;
 int OFFSET_INST_KML_Y = -25;
 int OFFSET_AVG_KML_X = 160;
@@ -152,7 +155,7 @@ bool SHOW_ELEMENT_SPEED = true;
 bool SHOW_ELEMENT_SPEED_UNIT = true;
 bool SHOW_ELEMENT_SIGNATURE = true;
 bool SHOW_ELEMENT_SPEED_SOURCE = true;
-bool SHOW_ELEMENT_WIFI = true;
+bool SHOW_ELEMENT_BLE = true;
 bool SHOW_ELEMENT_TIME = true;
 bool SHOW_ELEMENT_DATE = true;
 bool SHOW_ELEMENT_ODO = true;
@@ -174,11 +177,6 @@ int OFFSET_WEATHER_Y = 146;
 // that never touches the new sliders keeps the picture it already has.
 int WEATHER_WIDTH = 480;
 int WEATHER_HEIGHT = 28;
-char WEATHER_CITY[48] = "";
-float WEATHER_LAT = 0.0f;
-float WEATHER_LON = 0.0f;
-int WEATHER_REFRESH_MIN = 1;
-char WEATHER_LOCALE[16] = "it";
 WeatherData g_weatherData;
 bool ENABLE_POWER_SENSE = false;
 int POWER_SENSE_OFF_MS = 10000;
@@ -259,30 +257,13 @@ float ADC_VOLTS_FACTOR;
 bool showFpsCounter = true;
 bool showGpsDebug = false;
 
-char WIFI_SSID[64] = "";
-char WIFI_PASSWORD[64] = "";
-char WIFI_SSID_1[64] = "";
-char WIFI_PASSWORD_1[64] = "";
-char WIFI_SSID_2[64] = "";
-char WIFI_PASSWORD_2[64] = "";
-char WIFI_SSID_3[64] = "";
-char WIFI_PASSWORD_3[64] = "";
-char WIFI_SSID_4[64] = "";
-char WIFI_PASSWORD_4[64] = "";
-// Shipped hotspot passphrase. Also the fallback used whenever a stored
-// AP_PASSWORD is unusable (see sanitizeStringParams() below), so it is named
-// once instead of being repeated as a literal in three places.
-const char AP_PASSWORD_DEFAULT[] = "12345678";
-char AP_PASSWORD[64] = "12345678";
-// How long one network gets before the search gives up on it and tries the next
-// slot. A WPA2 join on a cold radio is a band scan (1-3s) plus authentication,
-// association and DHCP; the compiled-in 5s window used to cut off attempts that
-// were still working, which showed up as a timeout followed by a refused config
-// change for the next network.
-int WIFI_ATTEMPT_SECONDS = 12;
-
-bool NTP_ENABLED = true;
-char NTP_SERVER[64] = "pool.ntp.org";
+// There is no radio stack on this build (BLE-ONLY-ARCHITECTURE-PLAN.md SS2.1/SS6):
+// no stored station credentials, no hotspot passphrase, no join window and no
+// SNTP client. Those keys - and the weather city/lat/lon/refresh/locale settings
+// the phone now supplies through weather.set - are deleted with the web server
+// that used to feed them. Old NVS images and old backup files that still carry
+// them are simply ignored, the same way OTA_PULL_URL and the fuel table's
+// capacitive-era keys were left behind.
 int TZ_OFFSET_HOURS = 1;
 bool TZ_DST_ENABLED = true;
 // Which calendar TZ_DST_ENABLED applies: 0 none, 1 EU/EEA, 2 US/Canada.
@@ -760,9 +741,9 @@ static const CfgParam CFG_TABLE[] = {
 
   { &OFFSET_HALL_ICON_Y, "OFFSET_HALL_ICON_Y", "O_HALL_Y", nullptr, -4096, 4096, -100, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
-  { &OFFSET_WIFI_ICON_X, "OFFSET_WIFI_ICON_X", "O_WIFI_X", nullptr, -4096, 4096, 204, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+  { &OFFSET_BLE_ICON_X, "OFFSET_BLE_ICON_X", "O_BLE_X", nullptr, -4096, 4096, 204, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
-  { &OFFSET_WIFI_ICON_Y, "OFFSET_WIFI_ICON_Y", "O_WIFI_Y", nullptr, -4096, 4096, -108, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+  { &OFFSET_BLE_ICON_Y, "OFFSET_BLE_ICON_Y", "O_BLE_Y", nullptr, -4096, 4096, -108, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &OFFSET_INST_KML_X, "OFFSET_INST_KML_X", "O_INST_X", nullptr, -4096, 4096, 60, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
@@ -798,7 +779,7 @@ static const CfgParam CFG_TABLE[] = {
 
   { &SHOW_ELEMENT_SPEED_SOURCE, "SHOW_ELEMENT_SPEED_SOURCE", "SH_SPD_SRC", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
-  { &SHOW_ELEMENT_WIFI, "SHOW_ELEMENT_WIFI", "SH_WIFI", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
+  { &SHOW_ELEMENT_BLE, "SHOW_ELEMENT_BLE", "SH_BLE", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
   { &SHOW_ELEMENT_TIME, "SHOW_ELEMENT_TIME", "SH_TIME", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
@@ -837,16 +818,6 @@ static const CfgParam CFG_TABLE[] = {
   { &WEATHER_WIDTH, "WEATHER_WIDTH", "WEATH_W", nullptr, 160, 480, 480, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &WEATHER_HEIGHT, "WEATHER_HEIGHT", "WEATH_H", nullptr, 20, 120, 28, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &WEATHER_CITY, "WEATHER_CITY", "WEATH_CITY", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WEATHER_CITY), CK_STR },
-
-  { &WEATHER_LAT, "WEATHER_LAT", "WEATH_LAT", nullptr, 0, 0, 0, -90.0f, 90.0f, 0.0f, 0, CK_FLT },
-
-  { &WEATHER_LON, "WEATHER_LON", "WEATH_LON", nullptr, 0, 0, 0, -180.0f, 180.0f, 0.0f, 0, CK_FLT },
-
-  { &WEATHER_REFRESH_MIN, "WEATHER_REFRESH_MIN", "WEATH_RFR", nullptr, 1, 1440, 1, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &WEATHER_LOCALE, "WEATHER_LOCALE", "WEATH_LOCALE", "it", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WEATHER_LOCALE), CK_STR },
 
   { &ENABLE_POWER_SENSE, "ENABLE_POWER_SENSE", "PWR_SNS", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
@@ -934,39 +905,11 @@ static const CfgParam CFG_TABLE[] = {
 
   { &ODO_DEC_DIGITS, "ODO_DEC_DIGITS", "ODO_DEC", nullptr, 0, 4, 1, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
-  { &WIFI_SSID, "WIFI_SSID", "WIFI_SSID", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_SSID), CK_STR },
-
-  { &WIFI_SSID_1, "WIFI_SSID_1", "WIFI_S1", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_SSID_1), CK_STR },
-
-  { &WIFI_SSID_2, "WIFI_SSID_2", "WIFI_S2", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_SSID_2), CK_STR },
-
-  { &WIFI_SSID_3, "WIFI_SSID_3", "WIFI_S3", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_SSID_3), CK_STR },
-
-  { &WIFI_SSID_4, "WIFI_SSID_4", "WIFI_S4", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_SSID_4), CK_STR },
-
-  { &AP_PASSWORD, "AP_PASSWORD", "AP_PWD", AP_PASSWORD_DEFAULT, 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(AP_PASSWORD), CK_STR },
-
-  { &WIFI_ATTEMPT_SECONDS, "WIFI_ATTEMPT_SECONDS", "WIFI_ATTEM_S", nullptr, 5, 60, 12, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &NTP_ENABLED, "NTP_ENABLED", "NTP_EN", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
-
-  { &NTP_SERVER, "NTP_SERVER", "NTP_SRV", "pool.ntp.org", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(NTP_SERVER), CK_STR },
-
   { &TZ_OFFSET_HOURS, "TZ_OFFSET_HOURS", "TZ_OFFSET", nullptr, -14, 14, 1, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &TZ_DST_ENABLED, "TZ_DST_ENABLED", "TZ_DST", nullptr, 0, 0, 1, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
   { &TZ_DST_RULE, "TZ_DST_RULE", "TZ_RULE", nullptr, 0, 2, 1, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &WIFI_PASSWORD, "WIFI_PASSWORD", "WIFI_PWD", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_PASSWORD), CK_SECRET },
-
-  { &WIFI_PASSWORD_1, "WIFI_PASSWORD_1", "WIFI_P1", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_PASSWORD_1), CK_SECRET },
-
-  { &WIFI_PASSWORD_2, "WIFI_PASSWORD_2", "WIFI_P2", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_PASSWORD_2), CK_SECRET },
-
-  { &WIFI_PASSWORD_3, "WIFI_PASSWORD_3", "WIFI_P3", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_PASSWORD_3), CK_SECRET },
-
-  { &WIFI_PASSWORD_4, "WIFI_PASSWORD_4", "WIFI_P4", "", 0, 0, 0, 0.0f, 0.0f, 0.0f, (uint16_t)sizeof(WIFI_PASSWORD_4), CK_SECRET },
 };
 
 static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
@@ -1388,9 +1331,56 @@ void sanitizeConfigPairs() {
                 (int)(sizeof(CPU_MHZ) / sizeof(CPU_MHZ[0])), 80, 240);
 }
 
+// Renamed NVS keys, carried over once. The glyph in the old Wi-Fi-icon slot is
+// Bluetooth on this build, so the three keys that drive it change names (and the
+// schema labels with them); a unit that had moved the icon or switched it off
+// keeps that choice instead of silently reverting to the shipped default.
+// Copied on the boot load only, only when the new name is absent and the old one
+// is present, so it costs at most one write per key per unit and never runs in a
+// loop (rule 12). The old names are then never read again - the same way the
+// fuel table's capacitive-era keys were left behind in place.
+static const struct {
+  const char *was;   // NVS name the unit may already hold
+  const char *now;   // NVS name this build reads
+} CFG_RENAMED_KEYS[] = {
+    {"SH_WIFI", "SH_BLE"}, {"O_WIFI_X", "O_BLE_X"}, {"O_WIFI_Y", "O_BLE_Y"},
+};
+
+static void cfgCarryRenamedKeys(Preferences &pref) {
+  for (const auto &r : CFG_RENAMED_KEYS) {
+    // getType() answers PT_INVALID for a key NVS does not have, which is the only
+    // way to tell "never stored" from "stored as false / stored as 0".
+    if (pref.getType(r.now) != PT_INVALID) continue;
+    if (pref.getType(r.was) == PT_INVALID) continue;
+    for (const CfgParam &p : CFG_TABLE) {
+      if (strcmp(p.nvsKey, r.now) != 0) continue;
+      switch (p.kind) {
+      case CK_BOOL:
+        pref.putBool(p.nvsKey, pref.getBool(r.was, p.di != 0));
+        break;
+      case CK_INT:
+      case CK_UINT:
+        pref.putInt(p.nvsKey, pref.getInt(r.was, p.di));
+        break;
+      case CK_FLT:
+        pref.putFloat(p.nvsKey, pref.getFloat(r.was, p.df));
+        break;
+      case CK_STR:
+      case CK_SECRET: {
+        char buf[128];
+        if (pref.getString(r.was, buf, sizeof(buf))) pref.putString(p.nvsKey, buf);
+        break;
+      }
+      }
+      logPrintf("Config: %s carried over from the old NVS name %s\n", p.nvsKey, r.was);
+      break;
+    }
+  }
+}
+
 void processConfig(int mode, JsonDocument *doc) {
-  // The "cfg" namespace is opened by the boot load, by the Web UI save (web
-  // task) and by the GNSS baud autodetect (sensor task). Every NVS session now
+  // The "cfg" namespace is opened by the boot load, by a config.set over the BLE
+  // link, and by the GNSS baud autodetect (sensor task). Every NVS session now
   // holds prefsMux for its whole begin()/end() pair, so a save can no longer
   // interleave with another task's open and lose writes (issue #32).
   NvsSession session("cfg", false, (mode == 0 || mode == 2));
@@ -1404,11 +1394,17 @@ void processConfig(int mode, JsonDocument *doc) {
   // count is only known after the CFG_* block below has run.
   const int prevFuelPoints = FUEL_TOUCH_POINTS;
 
+  // Before the load, so a carried-over value lands in RAM through the same
+  // clamping path as any other stored value.
+  if (mode == 0) cfgCarryRenamedKeys(pref);
+
   // Every scalar parameter, in the order the CFG_* calls used to run.
   cfgApply(mode, pref, doc);
 
-  // The five Wi-Fi passphrases are CK_SECRET rows at the end of CFG_TABLE:
-  // never serialized back, and a blank posted value keeps the stored one.
+  // A CK_SECRET row is streamed out as an empty string and a blank posted value
+  // keeps whatever is stored. No CK_SECRET row is in the table today (the five
+  // Wi-Fi passphrases went with the radio); the kind stays so a secret that comes
+  // back has a path that does not echo it.
 
   if (mode == 0 || mode == 2) {
     sanitizeDigitCounts();
@@ -1417,26 +1413,6 @@ void processConfig(int mode, JsonDocument *doc) {
     // left here is the validation that needs more than one parameter, plus the
     // string checks that no numeric band can express.
     sanitizeConfigPairs();
-
-    // The Dashboard_Config hotspot is started on every boot, and the Wi-Fi
-    // stack refuses a 1-7 character passphrase outright (framework-
-    // arduinoespressif32 3.3.12, libraries/WiFi/src/AP.cpp: "passphrase too
-    // short!" -> softAP() returns false). A short password would therefore
-    // kill the only way back into a misconfigured unit, with nothing but a
-    // Serial log line to show for it. Empty means an open network, which is
-    // allowed but warned about in the WebUI. Reject 1-7 characters on both
-    // load and save, fall back to the shipped default, and say why.
-    size_t apPwdLen = strlen(AP_PASSWORD);
-    if (apPwdLen > 0 && apPwdLen < 8) {
-      logPrintf("Config: AP_PASSWORD too short (%d chars) - using default\n",
-                (int)apPwdLen);
-      strncpy(AP_PASSWORD, AP_PASSWORD_DEFAULT, sizeof(AP_PASSWORD) - 1);
-      AP_PASSWORD[sizeof(AP_PASSWORD) - 1] = 0;
-      // Mode 2 already wrote the rejected value to NVS through CFG_STR,
-      // so overwrite it here rather than re-sanitizing on every boot.
-      if (mode == 2 && nvsWriteFailed("AP_PWD", pref.putString("AP_PWD", AP_PASSWORD)))
-        cfgNvsWriteErrors++;
-    }
   }
 
   // The fuel table moved to the ohm domain with issue #18 and got fresh NVS keys
@@ -1541,29 +1517,16 @@ void processConfig(int mode, JsonDocument *doc) {
 // clamp it went through was a no-op). The blob was a second copy of data the
 // table already holds, and the copy was the half that could drift.
 //
-// WiFi credentials are deliberately absent from the seed: a factory-default
-// seed must not strand a unit without a network - the same reason
-// factoryResetConfig() puts the SSID/password keys back after wiping NVS, and
-// the reason the password keys were already left out. Listing the SSIDs as
-// empty strings meant every boot that found CFG_VER < 5 cleared all five SSIDs
-// in RAM and NVS, and because the CFG_VER stamp was never verified a lost stamp
-// repeated that wipe on every boot: passwords survived, SSIDs did not.
-static const char *const CFG_NO_SEED[] = {
-    "WIFI_SSID", "WIFI_SSID_1", "WIFI_SSID_2", "WIFI_SSID_3", "WIFI_SSID_4",
-    "AP_PASSWORD"};
-
-static bool cfgNoSeed(const char *name) {
-  for (const char *k : CFG_NO_SEED)
-    if (strcmp(k, name) == 0) return true;
-  return false;
-}
+// Nothing is excluded from the seed any more: the keys that used to be left out
+// on purpose (the five Wi-Fi SSIDs and the hotspot passphrase, so a factory reset
+// could not strand a unit without a network) went with the radio stack.
 
 // Defaults go to RAM as well as NVS: the seed runs after the boot load, and a
 // unit that had lost its CFG_VER stamp used to come back up with factory values
 // in this boot too, not only in the next one.
 static void cfgSeedDefaults(Preferences &pref) {
   for (const CfgParam &p : CFG_TABLE) {
-    if (p.kind == CK_SECRET || cfgNoSeed(p.name)) continue;
+    if (p.kind == CK_SECRET) continue;
     bool failed = false;
     switch (p.kind) {
     case CK_INT:
@@ -1638,27 +1601,6 @@ void seedNVSWithFactoryDefaults() {
     logPrintf("Config v5 seed: %d write(s) failed - see the NVS lines above\n", cfgNvsWriteErrors);
   else
     logPrintf("Config v5: NVS seeded with factory defaults (dashboard_backup.json)\n");
-}
-
-// Boot-time answer to "did the network credentials actually get stored?": the
-// SSIDs as NVS handed them back, plus whether each password slot is filled. The
-// passwords themselves are never logged.
-void logStoredWifiProfiles() {
-  const char *ssids[5] = {WIFI_SSID, WIFI_SSID_1, WIFI_SSID_2, WIFI_SSID_3, WIFI_SSID_4};
-  const char *pwds[5] = {WIFI_PASSWORD, WIFI_PASSWORD_1, WIFI_PASSWORD_2,
-                         WIFI_PASSWORD_3, WIFI_PASSWORD_4};
-  char line[192];
-  int n = 0;
-  line[0] = 0;
-  for (int i = 0; i < 5; i++) {
-    int written = snprintf(line + n, sizeof(line) - n, " [%d]=%s%s", i,
-                           ssids[i][0] ? ssids[i] : "(no SSID)",
-                           pwds[i][0] ? "/pw set" : "/pw empty");
-    if (written < 0 || (size_t)written >= sizeof(line) - n) break;
-    n += written;
-  }
-  logPrintf("WiFi credentials from NVS:%s\n", line);
-  logNvsStats();
 }
 
 void recalculateDerivedParams() {
@@ -1827,9 +1769,9 @@ static bool cfgAppendRow(char *buf, size_t cap, size_t *used, const CfgParam &p)
     break;
   }
   case CK_SECRET: {
-    // The five Wi-Fi passphrases leave the unit as empty strings, exactly as
-    // GET /api config sent them. Nothing on the settings side needs to see a
-    // stored passphrase; it only ever writes one.
+    // Streamed out as an empty string, exactly as the old GET /api/config sent
+    // it: a settings screen never needs to read a stored secret, it only writes
+    // one. No CK_SECRET row is in the table today.
     const size_t l = cfgJsonString(buf + w, cap - w, "");
     if (!l) return false;
     w += l;

@@ -577,11 +577,11 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   }
   int currentBleState = (cachedBleState < 0) ? 0 : cachedBleState;
 
-  if (SHOW_ELEMENT_WIFI &&
+  if (SHOW_ELEMENT_BLE &&
       (currentBleState != lastBleState || forceDraw)) {
     lastBleState = currentBleState;
-    int bleX = BIG_CENTER_X + OFFSET_WIFI_ICON_X;
-    int bleY = BIG_CENTER_Y + OFFSET_WIFI_ICON_Y;
+    int bleX = BIG_CENTER_X + OFFSET_BLE_ICON_X;
+    int bleY = BIG_CENTER_Y + OFFSET_BLE_ICON_Y;
     display.fillRect(bleX, bleY - 3, 21, 18, TFT_BLACK);
     if (currentBleState == 1) {
       drawBleIcon(bleX, bleY, TFT_WHITE, false);
@@ -2096,7 +2096,7 @@ if (!vlw120Ready) {
   bool weatherNight = weatherIsNight(displaySnap);
   bool weatherNightChanged = (weatherNight != lastWeatherNight);
 
-  const char *dispCitySrc = (g_weatherData.cityName[0] != 0) ? g_weatherData.cityName : WEATHER_CITY;
+  const char *dispCitySrc = g_weatherData.cityName;
 
   if ((lastWx != wx || lastWy != wy || lastWeatherShow != showWeather ||
        weatherSizeChanged || forceDraw) && lastWeatherShow) {
@@ -2389,7 +2389,7 @@ void drawWeatherWidget(int wx, int wy, const SensorSnapshot &snap, bool forceDra
   display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
 
   char dispCity[48];
-  const char *citySrc = (g_weatherData.cityName[0] != 0) ? g_weatherData.cityName : WEATHER_CITY;
+  const char *citySrc = g_weatherData.cityName;
   // UTF-8-safe copy: a localized name longer than the field is cut on a
   // character boundary, not through a multi-byte sequence.
   copyFixed(dispCity, sizeof(dispCity), citySrc);

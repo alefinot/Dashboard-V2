@@ -599,25 +599,8 @@ void drawLocationIcon(int x, int y, uint16_t color) {
   drawSatelliteIcon(x, y, color);
 }
 
-void drawWifiIcon(int x, int y, uint16_t color, bool filled) {
-  int cx = x + 8, cy = y + 8;
-  drawAALine(display, (float)cx, (float)(cy + 5), (float)(cx - 6), (float)(cy - 4), color);
-  drawAALine(display, (float)cx, (float)(cy + 5), (float)(cx + 6), (float)(cy - 4), color);
-  drawAALine(display, (float)(cx - 6), (float)(cy - 4), (float)(cx - 4), (float)(cy - 5), color);
-  drawAALine(display, (float)(cx - 4), (float)(cy - 5), (float)(cx - 2), (float)(cy - 5.5f), color);
-  drawAALine(display, (float)(cx - 2), (float)(cy - 5.5f), (float)cx, (float)(cy - 6), color);
-  drawAALine(display, (float)cx, (float)(cy - 6), (float)(cx + 2), (float)(cy - 5.5f), color);
-  drawAALine(display, (float)(cx + 2), (float)(cy - 5.5f), (float)(cx + 4), (float)(cy - 5), color);
-  drawAALine(display, (float)(cx + 4), (float)(cy - 5), (float)(cx + 6), (float)(cy - 4), color);
-  if (filled) {
-    display.fillTriangle(cx, cy + 5, cx - 6, cy - 4, cx + 6, cy - 4, color);
-    display.drawFastHLine(cx - 4, cy - 5, 9, color);
-    display.drawFastHLine(cx - 2, cy - 6, 5, color);
-  }
-}
-
 // Bluetooth rune: a vertical stem crossed by the two diagonals. Same 16x16
-// footprint as the Wi-Fi glyph it replaces, so stored icon offsets still land.
+// footprint as the Wi-Fi glyph it replaced, so stored icon offsets still land.
 void drawBleIcon(int x, int y, uint16_t color, bool filled) {
   int cx = x + 8, cy = y + 8;
   drawAALine(display, (float)cx, (float)(cy - 7), (float)cx, (float)(cy + 7), color);

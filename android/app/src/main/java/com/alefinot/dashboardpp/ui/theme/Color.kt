@@ -3,13 +3,15 @@ package com.alefinot.dashboardpp.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * The palette of the ESP's own Web UI, copied from the CSS custom properties in
- * `src/webui.html` (`--bg-base`, `--bg-card`, `--border-color`, `--accent-*`,
- * `--text-*`). The app and the page are meant to read as one product, so the
- * values come from the page rather than from a matching guess.
+ * The palette of the ESP's own Web UI, copied from the CSS custom properties that
+ * were in `src/webui.html` (`--bg-base`, `--bg-card`, `--border-color`,
+ * `--accent-*`, `--text-*`). The app and the page are meant to read as one
+ * product, so the values came from the page rather than from a matching guess.
  *
- * Keep this in step with `webui.html`: when a token changes there, it changes
- * here in the same commit (the line numbers below are where each was read).
+ * The page is deleted (BLE-only firmware), so these values are the surviving copy
+ * and this file is now the source of the palette. The line numbers below are where
+ * each was read, in the last revision that had the page (recoverable with
+ * `git show HEAD^:src/webui.html` before the step 0 cleanup).
  */
 object HudColors {
     /** `--bg-base` (#000) - the page body, and now the app's background too. */

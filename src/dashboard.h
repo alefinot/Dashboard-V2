@@ -219,8 +219,8 @@ extern int SIDEBAR_BAR_HEIGHT;
 
 extern int OFFSET_HALL_ICON_X;
 extern int OFFSET_HALL_ICON_Y;
-extern int OFFSET_WIFI_ICON_X;
-extern int OFFSET_WIFI_ICON_Y;
+extern int OFFSET_BLE_ICON_X;
+extern int OFFSET_BLE_ICON_Y;
 extern int OFFSET_INST_KML_X;
 extern int OFFSET_INST_KML_Y;
 extern int OFFSET_AVG_KML_X;
@@ -250,7 +250,7 @@ extern bool SHOW_ELEMENT_SPEED;
 extern bool SHOW_ELEMENT_SPEED_UNIT;
 extern bool SHOW_ELEMENT_SIGNATURE;
 extern bool SHOW_ELEMENT_SPEED_SOURCE;
-extern bool SHOW_ELEMENT_WIFI;
+extern bool SHOW_ELEMENT_BLE;
 extern bool SHOW_ELEMENT_TIME;
 extern bool SHOW_ELEMENT_DATE;
 extern bool SHOW_ELEMENT_ODO;
@@ -355,26 +355,10 @@ extern float ADC_VOLTS_FACTOR;
 extern bool showFpsCounter;
 extern bool showGpsDebug;
 
-extern char WIFI_SSID[64];
-extern char WIFI_PASSWORD[64];
-extern char WIFI_SSID_1[64];
-extern char WIFI_PASSWORD_1[64];
-extern char WIFI_SSID_2[64];
-extern char WIFI_PASSWORD_2[64];
-extern char WIFI_SSID_3[64];
-extern char WIFI_PASSWORD_3[64];
-extern char WIFI_SSID_4[64];
-extern char WIFI_PASSWORD_4[64];
-extern char AP_PASSWORD[64];
-// Per-network join window. The search policy itself is deliberately not a
-// parameter: the STA search keeps cycling through the saved networks forever
-// (a dashboard drives in and out of range all day, so an expired window only
-// guarantees it stays offline until the next reboot), and TX power is fixed at
-// the module maximum - see webServerTask() in web.cpp.
-extern int WIFI_ATTEMPT_SECONDS;
-
-extern bool NTP_ENABLED;
-extern char NTP_SERVER[64];
+// No radio stack and no SNTP client: the Wi-Fi station slots, the hotspot
+// passphrase, the per-network join window and the NTP settings are deleted with
+// the web server that used to serve them (BLE-ONLY-ARCHITECTURE-PLAN.md SS2.1,
+// SS6). The clock comes from the phone through time.set / the RTC.
 extern int TZ_OFFSET_HOURS;
 extern bool TZ_DST_ENABLED;
 extern int TZ_DST_RULE;  // which rule TZ_DST_ENABLED applies: see TZ_DST_RULE_*
@@ -550,9 +534,6 @@ inline bool nvsStringWriteFailed(const char *key, const char *value, size_t writ
 
 
 
-// Logs what the WiFi credentials NVS actually handed back at boot: SSIDs and
-// whether each password slot is filled - never the passwords themselves.
-void logStoredWifiProfiles();
 
 // Latest GPS state published by gpsTask after each NMEA commit. TinyGPS++
 // location accessors are single-consumer (lat()/lng() clear the one-shot
@@ -819,7 +800,6 @@ void drawClockIcon(int x, int y, uint16_t color);
 void drawStopwatchIcon(int x, int y, uint16_t color);
 void drawSatelliteIcon(int x, int y, uint16_t color);
 void drawLocationIcon(int x, int y, uint16_t color);
-void drawWifiIcon(int x, int y, uint16_t color, bool filled = false);
 void drawBleIcon(int x, int y, uint16_t color, bool filled = false);
 void drawBadge(const char *text, int offsetX, int offsetY, uint16_t color, int fixedW = 0);
 
@@ -966,7 +946,7 @@ struct WeatherData {
   // worst show one garbled label; it can never dangle, leak or overrun.
   char sunsetTime[8] = ""; // "HH:MM"
   char sunriseTime[8] = "";
-  char cityName[48] = "";  // same width as WEATHER_CITY
+  char cityName[48] = "";  // the label the phone pushes in weather.set
   bool valid = false;
   unsigned long lastUpdated = 0;
 };
@@ -977,15 +957,12 @@ extern int OFFSET_WEATHER_X;
 extern int OFFSET_WEATHER_Y;
 extern int WEATHER_WIDTH;   // card size in pixels, centre-anchored on the offsets
 extern int WEATHER_HEIGHT;
-extern char WEATHER_CITY[48];
-extern float WEATHER_LAT;
-extern float WEATHER_LON;
-extern int WEATHER_REFRESH_MIN;
-extern char WEATHER_LOCALE[16];
+// The city/lat/lon/refresh/locale settings are gone: the phone fetches the
+// weather and pushes it through weather.set, label included.
 
-// Bounded, UTF-8-safe text copy for the weather strings (defined in web.cpp):
-// truncation never splits a multi-byte character, so the display never sees a
-// dangling continuation byte where a glyph should be.
+// Bounded, UTF-8-safe text copy (defined in config.cpp): truncation never splits
+// a multi-byte character, so the display never sees a dangling continuation byte
+// where a glyph should be.
 void copyFixed(char *dst, size_t n, const char *src);
 
 // ----------------------------------------------------------------------------

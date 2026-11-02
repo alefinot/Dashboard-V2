@@ -1,0 +1,1231 @@
+{
+  "_about": "Presentation half of the settings schema: labels, grouping, cards, sections, options, unit scales and group icons. Extracted once from src/webui.html by `python scripts/gen_config_schema.py --dump-presentation` and edited by hand from here on. Structure, kind, band and default come from CFG_TABLE in src/config.cpp.",
+  "configMap": [
+    {
+      "title": "System & General",
+      "icon": {
+        "__ref": "iconSVG.system"
+      },
+      "items": [
+        {
+          "type": "card_header",
+          "label": "General"
+        },
+        {
+          "id": "TARGET_FPS",
+          "label": "Target Refresh Rate",
+          "unit": "FPS"
+        },
+        {
+          "id": "ENABLE_DEMO_MODE",
+          "label": "Enable Sensor Demo Mode"
+        },
+        {
+          "id": "ENABLE_POWER_SENSE",
+          "label": "Enable Power Sensing"
+        },
+        {
+          "id": "POWER_SENSE_OFF_MS",
+          "label": "Sleep After Power Loss",
+          "unit": "s",
+          "step": 0.5
+        },
+        {
+          "id": "SHOW_ELEMENT_BOUNDS",
+          "label": "Show UI Element Bounds (Debug)"
+        },
+        {
+          "id": "UNITS_IMPERIAL",
+          "label": "Use Imperial Units"
+        },
+        {
+          "type": "card_header",
+          "label": "Trip Reset",
+          "content": "\n        <div class=\"cfg-toolbar end\">\n            <button onclick=\"resetTripStats()\" class=\"btn-secondary btn-sm\">Reset Trip Stats Now</button>\n        </div>"
+        },
+        {
+          "id": "TRIP_RESET_HOLD_MS",
+          "label": "Button Hold Time",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "type": "card_header",
+          "label": "CPU",
+          "advanced": true
+        },
+        {
+          "id": "MANUAL_CPU_FREQ",
+          "label": "Manual CPU Frequency",
+          "type": "select",
+          "options": [
+            {
+              "value": 80,
+              "label": "80 MHz"
+            },
+            {
+              "value": 160,
+              "label": "160 MHz"
+            },
+            {
+              "value": 240,
+              "label": "240 MHz"
+            }
+          ]
+        },
+        {
+          "id": "ENABLE_DYNAMIC_CPU",
+          "label": "Enable Dynamic CPU Frequency"
+        },
+        {
+          "id": "ENABLE_CPU_THROTTLE",
+          "label": "Enable Thermal Throttling"
+        },
+        {
+          "id": "CPU_THROTTLE_TEMP_WARN",
+          "label": "Throttle to 160 MHz At",
+          "unit": "\u00b0C"
+        },
+        {
+          "id": "CPU_THROTTLE_TEMP_CRIT",
+          "label": "Throttle to 80 MHz At",
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "card_header",
+          "label": "Time Settings"
+        },
+        {
+          "id": "TZ_DST_ENABLED",
+          "label": "Enable Automatic DST"
+        },
+        {
+          "id": "TZ_DST_RULE",
+          "label": "DST Rule",
+          "type": "select",
+          "options": [
+            {
+              "value": 0,
+              "label": "None (fixed offset all year)"
+            },
+            {
+              "value": 1,
+              "label": "EU / EEA u2014 last Sunday of Mar & Oct, 01:00 UTC"
+            },
+            {
+              "value": 2,
+              "label": "US / Canada u2014 2nd Sun Mar, 1st Sun Nov, 02:00 local"
+            }
+          ]
+        },
+        {
+          "id": "TZ_OFFSET_HOURS",
+          "label": "Time Zone (standard / winter offset)",
+          "type": "select",
+          "options": [
+            {
+              "value": -12,
+              "label": "(GMT-12:00) Baker Island"
+            },
+            {
+              "value": -11,
+              "label": "(GMT-11:00) American Samoa, Niue"
+            },
+            {
+              "value": -10,
+              "label": "(GMT-10:00) Honolulu, Papeete"
+            },
+            {
+              "value": -9,
+              "label": "(GMT-09:00) Anchorage"
+            },
+            {
+              "value": -8,
+              "label": "(GMT-08:00) Los Angeles, Vancouver, Tijuana"
+            },
+            {
+              "value": -7,
+              "label": "(GMT-07:00) Denver, Calgary, Phoenix"
+            },
+            {
+              "value": -6,
+              "label": "(GMT-06:00) Chicago, Mexico City, Winnipeg"
+            },
+            {
+              "value": -5,
+              "label": "(GMT-05:00) New York, Toronto, Bogota"
+            },
+            {
+              "value": -4,
+              "label": "(GMT-04:00) Santiago, Caracas, Halifax"
+            },
+            {
+              "value": -3,
+              "label": "(GMT-03:00) Buenos Aires, Sao Paulo, Montevideo"
+            },
+            {
+              "value": -2,
+              "label": "(GMT-02:00) Fernando de Noronha"
+            },
+            {
+              "value": -1,
+              "label": "(GMT-01:00) Azores, Cape Verde"
+            },
+            {
+              "value": 0,
+              "label": "(GMT+00:00) London, Dublin, Lisbon, Accra"
+            },
+            {
+              "value": 1,
+              "label": "(GMT+01:00) Paris, Berlin, Rome, Madrid, Lagos"
+            },
+            {
+              "value": 2,
+              "label": "(GMT+02:00) Cairo, Athens, Helsinki, Kyiv"
+            },
+            {
+              "value": 3,
+              "label": "(GMT+03:00) Moscow, Istanbul, Nairobi, Baghdad"
+            },
+            {
+              "value": 4,
+              "label": "(GMT+04:00) Dubai, Baku, Muscat"
+            },
+            {
+              "value": 5,
+              "label": "(GMT+05:00) Karachi, Tashkent, Yekaterinburg"
+            },
+            {
+              "value": 6,
+              "label": "(GMT+06:00) Dhaka, Almaty, Omsk"
+            },
+            {
+              "value": 7,
+              "label": "(GMT+07:00) Bangkok, Jakarta, Ho Chi Minh"
+            },
+            {
+              "value": 8,
+              "label": "(GMT+08:00) Beijing, Singapore, Perth, Taipei"
+            },
+            {
+              "value": 9,
+              "label": "(GMT+09:00) Tokyo, Seoul, Pyongyang"
+            },
+            {
+              "value": 10,
+              "label": "(GMT+10:00) Sydney, Melbourne, Guam"
+            },
+            {
+              "value": 11,
+              "label": "(GMT+11:00) Solomon Islands, Noumea"
+            },
+            {
+              "value": 12,
+              "label": "(GMT+12:00) Auckland, Fiji, Kamchatka"
+            },
+            {
+              "value": 13,
+              "label": "(GMT+13:00) Apia, Nuku'alofa"
+            },
+            {
+              "value": 14,
+              "label": "(GMT+14:00) Kiritimati"
+            }
+          ]
+        },
+        {
+          "type": "card_header",
+          "label": "Custom Signatures"
+        },
+        {
+          "id": "SPLASH_SIGNATURE",
+          "label": "Boot Screen Signature"
+        },
+        {
+          "id": "REBOOT_SIGNATURE",
+          "label": "Reboot Screen Signature"
+        },
+        {
+          "id": "DASHBOARD_SIGNATURE",
+          "label": "Main Dashboard Watermark"
+        },
+        {
+          "type": "card_header",
+          "label": "Firmware Update",
+          "content": "\n        <div class=\"cfg-toolbar spread\" style=\"margin-bottom:2px;\">\n            <span class=\"cfg-state is-idle\" id=\"ota-state-line\">Update state: idle.</span>\n        </div>\n        <div class=\"cfg-state-hint\" id=\"ota-state-hint\" style=\"margin-bottom:8px;\"></div>\n        <div class=\"cfg-row\">\n            <label>Firmware File</label>\n            <div class=\"cfg-controls\">\n                <span class=\"cfg-live\" id=\"ota-file-name\">none chosen</span>\n                <input type=\"file\" id=\"otaFile\" accept=\".bin\" style=\"display:none\" onchange=\"otaFileChosen(this)\">\n                <button id=\"otaPickBtn\" onclick=\"otaPickFile()\" class=\"btn-secondary btn-sm\">Choose</button>\n            </div>\n        </div>\n        <div class=\"cfg-help\" id=\"ota-ver-line\" style=\"margin-bottom:6px;\"></div>\n        <div class=\"cfg-row\">\n            <label>Install</label>\n            <div class=\"cfg-controls\">\n                <input type=\"text\" id=\"otaVer\" placeholder=\"1.5.2\" oninput=\"otaVerChanged()\" style=\"display:none\">\n                <button id=\"otaBtn\" onclick=\"doOta()\" class=\"btn-secondary btn-sm\" disabled>Install</button>\n            </div>\n        </div>"
+        },
+        {
+          "type": "status",
+          "id": "build_version",
+          "label": "Firmware Build (compiled in)"
+        },
+        {
+          "type": "status",
+          "id": "core_version",
+          "label": "ESP Core FW"
+        }
+      ]
+    },
+    {
+      "title": "Display",
+      "icon": {
+        "__ref": "iconSVG.display"
+      },
+      "items": [
+        {
+          "type": "subtitle",
+          "label": "Display"
+        },
+        {
+          "id": "DISPLAY_ROTATION",
+          "label": "Screen Rotation (0-3)"
+        },
+        {
+          "id": "DISPLAY_WIDTH",
+          "label": "Display Width",
+          "unit": "px",
+          "advanced": true
+        },
+        {
+          "id": "DISPLAY_HEIGHT",
+          "label": "Display Height",
+          "unit": "px",
+          "advanced": true
+        },
+        {
+          "id": "SPI_BUS_SPEED",
+          "label": "SPI Bus Frequency",
+          "unit": "MHz",
+          "min": 1,
+          "max": 80,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "id": "BL_PWM_HZ",
+          "label": "Backlight PWM Frequency",
+          "unit": "kHz",
+          "min": 1,
+          "max": 40,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "id": "TFT_DRIVE",
+          "label": "Display Drive Strength (0=default, 1=weakest, 3=20 mA)",
+          "min": 0,
+          "max": 3,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "id": "DISPLAY_INVERT_COLORS",
+          "label": "Invert Display Colors",
+          "advanced": true
+        },
+        {
+          "id": "ENABLE_ANTIALIASING",
+          "label": "Enable Anti-Aliased Rendering",
+          "advanced": true
+        },
+        {
+          "id": "AA_SHARPNESS",
+          "label": "AA Sharpness",
+          "type": "range",
+          "min": 0.2,
+          "max": 1.0,
+          "step": 0.1,
+          "advanced": true
+        },
+        {
+          "type": "subtitle",
+          "label": "Brightness Control"
+        },
+        {
+          "id": "BACKLIGHT_BRIGHTNESS",
+          "label": "Backlight Brightness",
+          "type": "range",
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "id": "FADE_DURATION_MS",
+          "label": "Fade Duration",
+          "type": "range",
+          "min": 100,
+          "max": 5000,
+          "step": 100,
+          "unit": "ms"
+        },
+        {
+          "type": "card_header",
+          "label": "Auto Brightness",
+          "content": "<div class=\"cfg-toolbar spread\" style=\"margin-bottom:10px;\">\n        <span class=\"cfg-live\">Reading: <strong id=\"ambient-reading\">--</strong></span>\n        <div class=\"cfg-toolbar\">\n            <button onclick=\"calibrateDark()\" class=\"btn-secondary btn-sm\">Capture Dark</button>\n            <button onclick=\"calibrateBright()\" class=\"btn-secondary btn-sm\">Capture Bright</button>\n        </div>\n    </div>"
+        },
+        {
+          "id": "ENABLE_AUTO_BRIGHTNESS",
+          "label": "Enable Auto Brightness"
+        },
+        {
+          "id": "LIGHT_SENSOR_DARK_VAL",
+          "label": "Dark Value (ADC)",
+          "type": "number"
+        },
+        {
+          "id": "LIGHT_SENSOR_BRIGHT_VAL",
+          "label": "Bright Value (ADC)",
+          "type": "number"
+        },
+        {
+          "id": "AUTO_BRIGHT_DARK",
+          "label": "Brightness When Dark",
+          "type": "range",
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "id": "AUTO_BRIGHT_LIGHT",
+          "label": "Brightness When Bright",
+          "type": "range",
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "id": "AUTO_BRIGHT_FADE_MS",
+          "label": "Transition Speed",
+          "type": "range",
+          "min": 100,
+          "max": 5000,
+          "step": 100,
+          "unit": "ms"
+        },
+        {
+          "id": "ENABLE_NIGHT_MODE",
+          "label": "Enable Night Mode"
+        },
+        {
+          "id": "NIGHT_MODE_START_HOUR",
+          "label": "Start Time",
+          "unit": "Hour"
+        },
+        {
+          "id": "NIGHT_MODE_END_HOUR",
+          "label": "End Time",
+          "unit": "Hour"
+        },
+        {
+          "id": "NIGHT_BACKLIGHT",
+          "label": "Night Backlight",
+          "type": "range",
+          "min": 0,
+          "max": 100,
+          "step": 1
+        }
+      ]
+    },
+    {
+      "title": "Sensors Tuning",
+      "icon": {
+        "__ref": "iconSVG.sensors"
+      },
+      "items": [
+        {
+          "type": "card_header",
+          "label": "Fuel level Sensor",
+          "content": "<div class=\"cfg-help\" style=\"margin-bottom:8px;\">Wired on GPIO32 (fixed - see the README pinout). A series resistor from 3V3 feeds the sender to ground; the ADC reads the tap.</div>"
+        },
+        {
+          "id": "FUEL_INPUT_ENABLED",
+          "label": "Sender connected - read the fuel level"
+        },
+        {
+          "id": "FUEL_OHM_EMPTY",
+          "label": "Sender resistance when EMPTY (ohm)"
+        },
+        {
+          "id": "FUEL_OHM_FULL",
+          "label": "Sender resistance when FULL (ohm)"
+        },
+        {
+          "id": "FUEL_EXC_RES_OHM",
+          "label": "Excitation resistor from 3V3 (ohm)"
+        },
+        {
+          "id": "FUEL_OVERSAMPLE",
+          "label": "ADC samples averaged per reading",
+          "advanced": true
+        },
+        {
+          "type": "note",
+          "label": "<span id=\"fuel-exciter-hint\" class=\"cfg-help\"></span>"
+        },
+        {
+          "type": "touch-table",
+          "label": "Fuel Tank Calibration",
+          "pointCount": "FUEL_TOUCH_POINTS",
+          "arrayId": "fuelCalOhms",
+          "liveId": "fuel-reading",
+          "rows": [
+            {
+              "id": "FUEL_FILTER_ALPHA",
+              "label": "Smoothing Factor"
+            }
+          ]
+        },
+        {
+          "type": "card_header",
+          "label": "Engine Temperature",
+          "content": "\n        <div class=\"cfg-toolbar spread\" style=\"margin-bottom:8px;\">\n            <span class=\"cfg-live\">Reading: <strong id=\"temp-reading\">--</strong> \u00b0C</span>\n        </div>\n        <div class=\"cfg-toolbar\">\n            <input type=\"number\" id=\"temp-ref\" step=\"0.1\" placeholder=\"Reference (\u00b0C)\" style=\"flex:1;min-width:0;text-align:center;\">\n            <button onclick=\"applyTempCal()\" class=\"btn-secondary btn-sm\">Apply</button>\n        </div>"
+        },
+        {
+          "id": "NTC_TEMP_OFFSET",
+          "label": "Offset",
+          "unit": "\u00b0C",
+          "advanced": true
+        },
+        {
+          "id": "NTC_R25",
+          "label": "R25",
+          "unit": "\u03a9",
+          "advanced": true
+        },
+        {
+          "id": "NTC_R_BALANCE",
+          "label": "Balance",
+          "unit": "\u03a9",
+          "advanced": true
+        },
+        {
+          "id": "NTC_BETA",
+          "label": "Beta",
+          "advanced": true
+        },
+        {
+          "type": "card_header",
+          "label": "Battery Voltage",
+          "content": "\n        <div class=\"cfg-toolbar spread\" style=\"margin-bottom:8px;\">\n            <span class=\"cfg-live\">Reading: <strong id=\"bat-reading\">--</strong> V</span>\n        </div>\n        <div class=\"cfg-toolbar\">\n            <input type=\"number\" id=\"bat-ref\" step=\"0.01\" placeholder=\"Reference (V)\" style=\"flex:1;min-width:0;text-align:center;\">\n            <button onclick=\"applyBatCal()\" class=\"btn-secondary btn-sm\">Apply</button>\n        </div>"
+        },
+        {
+          "id": "BATTERY_OFFSET",
+          "label": "Offset",
+          "unit": "V",
+          "advanced": true
+        },
+        {
+          "id": "BATTERY_SCALE",
+          "label": "Scale",
+          "unit": "\u00d7",
+          "advanced": true
+        },
+        {
+          "type": "card_header",
+          "label": "Acceleration Timer"
+        },
+        {
+          "id": "ACCEL_START_SPEED",
+          "label": "Timer Start Speed",
+          "unit": "km/h"
+        },
+        {
+          "id": "ACCEL_TARGET_SPEED",
+          "label": "Timer Target Speed",
+          "unit": "km/h"
+        },
+        {
+          "id": "ACCEL_MAX_TIME",
+          "label": "Timer Max Time (0 = off)",
+          "unit": "sec"
+        },
+        {
+          "id": "ACCEL_BADGE_LINE1",
+          "label": "Badge Line 1 (e.g., '0-50')"
+        },
+        {
+          "id": "ACCEL_BADGE_LINE2",
+          "label": "Badge Line 2 (e.g., 'km/h')"
+        },
+        {
+          "type": "card_header",
+          "label": "Odometer",
+          "content": "<div class=\"cfg-toolbar spread\" style=\"margin-bottom:10px;\">\n        <span class=\"cfg-live\">Current value: <strong id=\"odo-reading\">--</strong> ODO_UNIT</span>\n    </div>\n    <div class=\"cfg-toolbar\">\n        <input type=\"number\" id=\"ODO_SET\" step=\"0.1\" min=\"0\" placeholder=\"Set odometer\" style=\"flex:1;min-width:0;\">\n        <button onclick=\"setOdometer()\" class=\"btn-secondary btn-sm\">Set Value</button>\n    </div>"
+        },
+        {
+          "id": "WHEEL_CIRCUMFERENCE_MM",
+          "label": "Wheel Circumference",
+          "unit": "mm"
+        },
+        {
+          "id": "MIN_SPEED_THRESHOLD",
+          "label": "Minimum Speed Threshold",
+          "unit": "km/h"
+        },
+        {
+          "type": "subtitle",
+          "label": "Polling Rates",
+          "advanced": true
+        },
+        {
+          "id": "REFRESH_SPEED_MS",
+          "label": "Speed",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "id": "REFRESH_BAT_MS",
+          "label": "Battery Voltage",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "id": "REFRESH_INST_MS",
+          "label": "Instant KML",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "id": "REFRESH_MAX_SPEED_MS",
+          "label": "Max Speed",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "id": "REFRESH_FUEL_MS",
+          "label": "Fuel LTRS",
+          "type": "number",
+          "unit": "ms"
+        },
+        {
+          "type": "subtitle",
+          "label": "GPS",
+          "advanced": true
+        },
+        {
+          "id": "GPS_BAUD",
+          "label": "GNSS Baud Rate",
+          "unit": "baud"
+        },
+        {
+          "id": "MIN_SATELLITES",
+          "label": "Minimum Satellites Required"
+        },
+        {
+          "id": "OPTIMAL_SATELLITES",
+          "label": "Optimal Satellites Count"
+        },
+        {
+          "type": "card_header",
+          "label": "Speedometer",
+          "content": "<div class=\"cfg-help\" style=\"margin-bottom:8px;\">Which sensor the speed comes from, how far the hall sensor and GPS are allowed to disagree, and how much filtering the wheel signal gets.</div>"
+        },
+        {
+          "id": "SPEED_SOURCE_MODE",
+          "label": "Speed Source",
+          "type": "select",
+          "options": [
+            {
+              "value": 0,
+              "label": "Hall only"
+            },
+            {
+              "value": 1,
+              "label": "GPS only"
+            },
+            {
+              "value": 2,
+              "label": "Sensor Fusion (default)"
+            }
+          ]
+        },
+        {
+          "id": "SPEED_SOURCE_HOLD_MS",
+          "label": "Speed Source Hold Time",
+          "unit": "ms"
+        },
+        {
+          "id": "GPS_MIN_DEV_KMH",
+          "label": "Min Deviation Hall vs GPS",
+          "unit": "km/h"
+        },
+        {
+          "id": "MAX_SPEED_DELTA_KMH",
+          "label": "Max Deviation Hall vs GPS",
+          "unit": "km/h"
+        },
+        {
+          "id": "GPS_START_KMH",
+          "label": "GPS Start Speed",
+          "unit": "km/h"
+        },
+        {
+          "id": "GPS_STOP_SETTLE_MS",
+          "label": "GPS Stop Settle Time",
+          "unit": "ms"
+        },
+        {
+          "id": "HALL_MEDIAN_SAMPLES",
+          "label": "Hall Speed Window (samples, 1 = raw)"
+        },
+        {
+          "id": "HALL_PERIOD_GUARD",
+          "label": "Hall Period Guard (1 = off)"
+        },
+        {
+          "id": "HALL_PULSE_MIN_US",
+          "label": "Hall Min Pulse Width (10-1000)",
+          "unit": "us"
+        },
+        {
+          "id": "GPS_DEBUG_DEFAULT",
+          "label": "Show GPS Debug Overlay",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "title": "UI Layout",
+      "icon": {
+        "__ref": "iconSVG.layout"
+      },
+      "items": [
+        {
+          "type": "section_header",
+          "label": "Viewport Center"
+        },
+        {
+          "type": "xy",
+          "idX": "BIG_CENTER_X",
+          "idY": "BIG_CENTER_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Ghost Digits"
+        },
+        {
+          "id": "SHOW_GHOST_DIGITS",
+          "label": "Show Ghost Digits"
+        },
+        {
+          "id": "GHOST_COLOR_STR",
+          "label": "Ghost Digit Color",
+          "type": "color"
+        },
+        {
+          "type": "section_header",
+          "label": "FPS Counter"
+        },
+        {
+          "id": "SHOW_FPS_COUNTER_DEFAULT",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_FPS_X",
+          "idY": "OFFSET_BIG_FPS_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Signature"
+        },
+        {
+          "id": "SHOW_ELEMENT_SIGNATURE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SIGNATURE_X",
+          "idY": "OFFSET_BIG_SIGNATURE_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Acceleration Timer"
+        },
+        {
+          "id": "SHOW_ELEMENT_TMR",
+          "label": "Visible"
+        },
+        {
+          "id": "TMR_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "TMR_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_TMR_X",
+          "idY": "OFFSET_BIG_TMR_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Speed Source Icon"
+        },
+        {
+          "id": "SHOW_ELEMENT_SPEED_SOURCE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_HALL_ICON_X",
+          "idY": "OFFSET_HALL_ICON_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Main Speed Number"
+        },
+        {
+          "id": "SHOW_ELEMENT_SPEED",
+          "label": "Visible"
+        },
+        {
+          "id": "SPEED_DIGITS",
+          "label": "Digits",
+          "min": 1,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SPEED_NUM_X",
+          "idY": "OFFSET_BIG_SPEED_NUM_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Speed Unit"
+        },
+        {
+          "id": "SHOW_ELEMENT_SPEED_UNIT",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SPEED_UNIT_X",
+          "idY": "OFFSET_BIG_SPEED_UNIT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Average Speed"
+        },
+        {
+          "id": "SHOW_ELEMENT_AVG_SPEED",
+          "label": "Visible"
+        },
+        {
+          "id": "AVG_SPEED_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "AVG_SPEED_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_AVG_SPEED_X",
+          "idY": "OFFSET_AVG_SPEED_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Max Speed"
+        },
+        {
+          "id": "SHOW_ELEMENT_MAX_SPEED",
+          "label": "Visible"
+        },
+        {
+          "id": "MAX_SPEED_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "MAX_SPEED_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_MAX_SPEED_X",
+          "idY": "OFFSET_MAX_SPEED_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Odometer"
+        },
+        {
+          "id": "SHOW_ELEMENT_ODO",
+          "label": "Visible"
+        },
+        {
+          "id": "ODO_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "ODO_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_ODO_X",
+          "idY": "OFFSET_BIG_ODO_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Average KML"
+        },
+        {
+          "id": "SHOW_ELEMENT_AVG_KML",
+          "label": "Visible"
+        },
+        {
+          "id": "AVG_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "AVG_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_AVG_KML_X",
+          "idY": "OFFSET_AVG_KML_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Instant KML"
+        },
+        {
+          "id": "SHOW_ELEMENT_INST_KML",
+          "label": "Visible"
+        },
+        {
+          "id": "INST_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "INST_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_INST_KML_X",
+          "idY": "OFFSET_INST_KML_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Fuel LTRS"
+        },
+        {
+          "id": "SHOW_ELEMENT_FUEL_LTRS",
+          "label": "Visible"
+        },
+        {
+          "id": "FUEL_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "FUEL_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_FUEL_LTRS_X",
+          "idY": "OFFSET_FUEL_LTRS_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Battery"
+        },
+        {
+          "id": "SHOW_ELEMENT_BAT",
+          "label": "Visible"
+        },
+        {
+          "id": "BAT_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "BAT_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_BAT_X",
+          "idY": "OFFSET_BIG_BAT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Clock"
+        },
+        {
+          "id": "SHOW_ELEMENT_TIME",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_TIME_X",
+          "idY": "OFFSET_BIG_TIME_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Date"
+        },
+        {
+          "id": "SHOW_ELEMENT_DATE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_DATE_X",
+          "idY": "OFFSET_BIG_DATE_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Satellites"
+        },
+        {
+          "id": "SHOW_ELEMENT_SAT",
+          "label": "Visible"
+        },
+        {
+          "id": "SAT_DIGITS",
+          "label": "Digits",
+          "min": 1,
+          "max": 3
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SAT_X",
+          "idY": "OFFSET_BIG_SAT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Bluetooth Icon"
+        },
+        {
+          "id": "SHOW_ELEMENT_BLE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BLE_ICON_X",
+          "idY": "OFFSET_BLE_ICON_Y",
+          "label": "Position"
+        },
+        {
+          "type": "card_header",
+          "label": "Weather Widget"
+        },
+        {
+          "id": "SHOW_ELEMENT_WEATHER",
+          "label": "Show Weather Widget on Dashboard"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_WEATHER_X",
+          "idY": "OFFSET_WEATHER_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Widget Size"
+        },
+        {
+          "id": "WEATHER_WIDTH",
+          "label": "Width",
+          "type": "range",
+          "min": 160,
+          "max": 480,
+          "step": 1,
+          "unit": "px"
+        },
+        {
+          "id": "WEATHER_HEIGHT",
+          "label": "Height",
+          "type": "range",
+          "min": 20,
+          "max": 120,
+          "step": 1,
+          "unit": "px"
+        },
+        {
+          "type": "section_header",
+          "label": "Left Bar (Engine Temp)"
+        },
+        {
+          "id": "SHOW_ELEMENT_SIDEBAR_TEMP",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "SIDEBAR_LEFT_X",
+          "idY": "SIDEBAR_LEFT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Engine Temperature Color Ramp"
+        },
+        {
+          "id": "TEMP_BAR_MIN",
+          "label": "Bar min (scale)",
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Color fade point 1",
+          "colorId": "COLOR_TEMP_NORM",
+          "valueId": "TEMP_WARN_LOW",
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Color fade point 2",
+          "colorId": "COLOR_TEMP_WARN",
+          "valueId": "TEMP_WARN_YEL",
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Color fade point 3",
+          "colorId": "COLOR_TEMP_CRIT",
+          "valueId": "TEMP_WARN_RED",
+          "unit": "\u00b0C"
+        },
+        {
+          "id": "TEMP_BAR_MAX",
+          "label": "Bar max (scale)",
+          "unit": "\u00b0C"
+        },
+        {
+          "type": "section_header",
+          "label": "Right Bar (Fuel)"
+        },
+        {
+          "id": "SHOW_ELEMENT_SIDEBAR_FUEL",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "SIDEBAR_RIGHT_X",
+          "idY": "SIDEBAR_RIGHT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "section_header",
+          "label": "Fuel Level Color Ramp"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Full (color at 100%)",
+          "colorId": "COLOR_FUEL_NORM"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Color fade point 1",
+          "colorId": "COLOR_FUEL_WARN",
+          "valueId": "FUEL_WARN_YEL",
+          "unit": "%"
+        },
+        {
+          "type": "threshold-row",
+          "label": "Color fade point 2",
+          "colorId": "COLOR_FUEL_CRIT",
+          "valueId": "FUEL_WARN_RED",
+          "unit": "%"
+        },
+        {
+          "type": "section_header",
+          "label": "Bar Dimensions"
+        },
+        {
+          "id": "SIDEBAR_BAR_WIDTH",
+          "label": "Width",
+          "unit": "px"
+        },
+        {
+          "id": "SIDEBAR_BAR_HEIGHT",
+          "label": "Height",
+          "unit": "px"
+        }
+      ]
+    }
+  ],
+  "unitScale": {
+    "SPI_BUS_SPEED": 1000000.0,
+    "BL_PWM_HZ": 1000.0,
+    "POWER_SENSE_OFF_MS": 1000.0
+  },
+  "unitFieldTypes": {
+    "CPU_THROTTLE_TEMP_WARN": "temp",
+    "CPU_THROTTLE_TEMP_CRIT": "temp",
+    "TEMP_BAR_MIN": "temp",
+    "TEMP_WARN_YEL": "temp",
+    "TEMP_WARN_RED": "temp",
+    "TEMP_WARN_LOW": "temp",
+    "TEMP_BAR_MAX": "temp",
+    "ACCEL_START_SPEED": "speed",
+    "ACCEL_TARGET_SPEED": "speed",
+    "MIN_SPEED_THRESHOLD": "speed",
+    "GPS_START_KMH": "speed",
+    "MAX_SPEED_DELTA_KMH": "speed",
+    "GPS_MIN_DEV_KMH": "speed",
+    "WHEEL_CIRCUMFERENCE_MM": "length"
+  },
+  "iconSVG": {
+    "system": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z\"/></svg>",
+    "wifi": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12.55a11 11 0 0 1 14.08 0\"/><path d=\"M1.42 9a16 16 0 0 1 21.16 0\"/><path d=\"M8.53 16.11a6 6 0 0 1 6.95 0\"/><circle cx=\"12\" cy=\"20\" r=\"1\"/></svg>",
+    "display": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\" ry=\"2\"/><line x1=\"8\" y1=\"21\" x2=\"16\" y2=\"21\"/><line x1=\"12\" y1=\"17\" x2=\"12\" y2=\"21\"/></svg>",
+    "sensors": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"4\" y1=\"21\" x2=\"4\" y2=\"14\"/><line x1=\"4\" y1=\"10\" x2=\"4\" y2=\"3\"/><line x1=\"12\" y1=\"21\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"8\" x2=\"12\" y2=\"3\"/><line x1=\"20\" y1=\"21\" x2=\"20\" y2=\"16\"/><line x1=\"20\" y1=\"12\" x2=\"20\" y2=\"3\"/><line x1=\"1\" y1=\"14\" x2=\"7\" y2=\"14\"/><line x1=\"9\" y1=\"8\" x2=\"15\" y2=\"8\"/><line x1=\"17\" y1=\"16\" x2=\"23\" y2=\"16\"/></svg>",
+    "gnss": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><line x1=\"2\" y1=\"12\" x2=\"22\" y2=\"12\"/><path d=\"M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z\"/></svg>",
+    "layout": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" ry=\"2\"/><line x1=\"3\" y1=\"9\" x2=\"21\" y2=\"9\"/><line x1=\"9\" y1=\"21\" x2=\"9\" y2=\"9\"/></svg>",
+    "weather": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"M4.93 4.93l1.41 1.41\"/><path d=\"M17.66 17.66l1.41 1.41\"/><path d=\"M2 12h2\"/><path d=\"M20 12h2\"/><path d=\"M6.34 17.66l-1.41 1.41\"/><path d=\"M19.07 4.93l-1.41 1.41\"/><circle cx=\"12\" cy=\"12\" r=\"4\"/></svg>"
+  }
+}

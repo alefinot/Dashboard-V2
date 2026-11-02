@@ -5,13 +5,28 @@
     python scripts/gen_config_schema.py --check     # fail if the asset is stale
 
 Inputs (never edited by hand on the app side):
-  * src/config.cpp  - CFG_TABLE. Every writable key, its kind, its firmware band
+  * src/config.cpp - CFG_TABLE. Every writable key, its kind, its firmware band
                       and its compiled default. This is what config.set accepts.
-  * src/webui.html  - const configMap. Human labels, grouping into
-                      groups -> card_header cards -> section_header sections,
-                      units, dropdown options, which rows are advanced, which
-                      cards are driven by a custom widget, and which keys the
-                      WebUI hides.
+  * scripts/config_schema_presentation.json - the presentation tree: human labels,
+                      grouping into groups -> cards -> sections, units, dropdown
+                      options, which rows are advanced, which cards a custom widget
+                      drives, the unit scales and the group icon names.
+
+Output:
+  android/app/src/main/assets/config_schema.json
+
+The JSON is data, not code: the app renders from it and never decides on its own
+which keys exist. Two settings screens that drift apart is exactly the failure
+this file exists to prevent (NATIVE-SETTINGS-BLE-PLAN.md SS4), so the drift alarm
+lives next to the generator: --check rebuilds the schema and compares it byte for
+byte against the checked-in asset, and exits non-zero on any difference.
+
+The presentation tree used to be scraped out of src/webui.html by a small JS reader
+that understood that page's configMap. The unit's web page is gone (BLE-ONLY-
+ARCHITECTURE-PLAN.md SS6), so the tree was extracted once into the JSON named above
+and that reader went away with the page. Labels and grouping are hand-edited there
+now; CFG_TABLE still decides which keys exist at all, and a row the presentation
+never names still reaches the app under a generated label.
 
 Output:
   android/app/src/main/assets/config_schema.json
@@ -35,7 +50,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_CPP = os.path.join(ROOT, "src", "config.cpp")
-WEBUI_HTML = os.path.join(ROOT, "src", "webui.html")
+# The presentation half of the schema, kept in the repo after the unit's web page
+# was deleted (BLE-ONLY-ARCHITECTURE-PLAN.md SS6). `--dump-presentation` writes it
+# out of webui.html; the generator reads this file instead of the page.
+PRESENTATION_JSON = os.path.join(ROOT, "scripts", "config_schema_presentation.json")
 OUT_JSON = os.path.join(ROOT, "android", "app", "src", "main", "assets", "config_schema.json")
 
 # ---------------------------------------------------------------------------
@@ -176,173 +194,32 @@ def parse_cfg_table(path=CONFIG_CPP):
 
 
 # ---------------------------------------------------------------------------
-# 2. const configMap in the WebUI
+# 2. The presentation half: scripts/config_schema_presentation.json
 # ---------------------------------------------------------------------------
-# A small recursive-descent reader for the subset of JavaScript the configMap is
-# written in: object/array literals, single- and double-quoted strings, template
-# literals (kept as opaque text - they are the WebUI's own widget markup, which
-# the app never renders), unquoted identifiers used as object keys, numbers,
-# `true`/`false`/`null`, and a trailing comma. Anything else is a parse error
-# rather than a silent guess.
+# Human labels, grouping into groups -> cards -> sections, units, dropdown
+# options, which rows are advanced, which cards a custom widget drives, the unit
+# scales and the group icon names. All of this used to be scraped out of the unit's
+# web page; the page is gone (BLE-ONLY-ARCHITECTURE-PLAN.md SS6), so the tree lives
+# here as JSON and is edited by hand.
+#
+# CFG_TABLE stays the authority on which keys exist at all, what kind they are and
+# what band they may hold. A key named in the presentation that the table has lost
+# is an error (_base raises). A table row named nowhere still gets a control with a
+# generated label - see build()'s leftovers pass - so a new parameter can never go
+# silently unreachable, which is the failure this generator exists to prevent.
 
-class JsReader:
-    def __init__(self, text):
-        self.t = text
-        self.i = 0
-
-    def err(self, why):
-        line = self.t.count("\n", 0, self.i) + 1
-        raise SystemExit(f"configMap parse error at line {line}: {why}: "
-                         f"{self.t[self.i:self.i + 60]!r}")
-
-    def ws(self):
-        while self.i < len(self.t):
-            c = self.t[self.i]
-            if c.isspace():
-                self.i += 1
-            elif self.t.startswith("//", self.i):
-                nl = self.t.find("\n", self.i)
-                self.i = len(self.t) if nl < 0 else nl + 1
-            elif self.t.startswith("/*", self.i):
-                end = self.t.find("*/", self.i)
-                if end < 0:
-                    self.err("unterminated block comment")
-                self.i = end + 2
-            else:
-                return
-
-    def value(self):
-        self.ws()
-        if self.i >= len(self.t):
-            self.err("unexpected end of input")
-        c = self.t[self.i]
-        if c == "{":
-            return self.object()
-        if c == "[":
-            return self.array()
-        if c in "\"'":
-            return self.string(c)
-        if c == "`":
-            return self.template()
-        m = re.match(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", self.t[self.i:])
-        if m:
-            self.i += m.end()
-            txt = m.group(0)
-            return float(txt) if any(ch in txt for ch in ".eE") else int(txt)
-        m = re.match(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*", self.t[self.i:])
-        if m:
-            word = m.group(0)
-            self.i += m.end()
-            if word == "true":
-                return True
-            if word == "false":
-                return False
-            if word == "null":
-                return None
-            # iconSVG.display and friends: an SVG literal pulled from another
-            # const. Nothing in the schema needs it.
-            return {"__ref": word}
-        self.err("unsupported token")
-
-    def object(self):
-        self.i += 1  # {
-        out = {}
-        while True:
-            self.ws()
-            if self.i < len(self.t) and self.t[self.i] == "}":
-                self.i += 1
-                return out
-            if self.i < len(self.t) and self.t[self.i] == ",":
-                self.i += 1
-                continue
-            if self.t.startswith("...", self.i):
-                self.err("spread inside the configMap is not supported")
-            m = re.match(r"[A-Za-z_$][\w$]*|\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'",
-                         self.t[self.i:])
-            if not m:
-                self.err("expected a key")
-            key = m.group(0)
-            if key[0] in "\"'":
-                key = self.string(key[0])
-            else:
-                self.i += m.end()
-            self.ws()
-            if self.i >= len(self.t) or self.t[self.i] != ":":
-                self.err("expected ':' after a key")
-            self.i += 1
-            out[key] = self.value()
-
-    def array(self):
-        self.i += 1  # [
-        out = []
-        while True:
-            self.ws()
-            if self.i >= len(self.t):
-                self.err("unterminated array")
-            if self.t[self.i] == "]":
-                self.i += 1
-                return out
-            if self.t[self.i] == ",":
-                self.i += 1
-                continue
-            out.append(self.value())
-
-    def string(self, quote):
-        self.i += 1
-        chars = []
-        while self.i < len(self.t):
-            c = self.t[self.i]
-            if c == "\\":
-                nxt = self.t[self.i + 1]
-                chars.append({"n": "\n", "t": "\t", "r": "\r"}.get(nxt, nxt))
-                self.i += 2
-                continue
-            if c == quote:
-                self.i += 1
-                return "".join(chars)
-            chars.append(c)
-            self.i += 1
-        self.err("unterminated string")
-
-    def template(self):
-        """Template literal, read verbatim; ${...} nesting is tracked so a brace
-        inside an interpolation does not end the literal early."""
-        self.i += 1  # `
-        chars = []
-        depth = 0
-        while self.i < len(self.t):
-            c = self.t[self.i]
-            if c == "\\":
-                chars.append(self.t[self.i + 1])
-                self.i += 2
-                continue
-            if c == "`" and depth == 0:
-                self.i += 1
-                return "".join(chars)
-            if self.t.startswith("${", self.i):
-                depth += 1
-                chars.append("${")
-                self.i += 2
-                continue
-            if c == "{" and depth > 0:
-                depth += 1
-            if c == "}" and depth > 0:
-                depth -= 1
-            chars.append(c)
-            self.i += 1
-        self.err("unterminated template literal")
-
-
-def parse_config_map(path=WEBUI_HTML):
-    src = open(path, encoding="utf-8").read()
-    start = src.index("const configMap = [")
-    r = JsReader(src[start + len("const configMap = "):])
-    groups = r.value()
-    # The reader keeps reading past the closing `];`; that is fine, the value it
-    # returns is the array itself.
-    if not isinstance(groups, list) or not groups:
-        raise SystemExit("configMap did not parse to a non-empty array")
-    return groups
+def load_presentation(path=PRESENTATION_JSON):
+    if not os.path.isfile(path):
+        raise SystemExit(
+            f"{path} is missing. It carries the settings labels, grouping, unit "
+            "scales and icon names that used to live in src/webui.html.")
+    doc = json.load(open(path, encoding="utf-8"))
+    for want in ("configMap", "unitScale", "unitFieldTypes", "iconSVG"):
+        if not isinstance(doc.get(want), (list, dict)):
+            raise SystemExit(f"{path} has no usable {want!r}")
+    if not doc["configMap"]:
+        raise SystemExit(f"{path}: configMap is empty")
+    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -350,13 +227,11 @@ def parse_config_map(path=WEBUI_HTML):
 # ---------------------------------------------------------------------------
 # The V2 unit has no radio to join a network with, no hotspot to join it back
 # from, and no SNTP client (BLE-ONLY-ARCHITECTURE-PLAN.md SS2.1). Their rows stay
-# in CFG_TABLE - config.get still streams them, backups still carry them - but a
-# settings screen that offers a field for a feature the unit cannot do is a lie,
-# so the schema lists them under "hidden" and the app renders nothing for them.
-#
-# applyWifiVisibility() is the WebUI's own version of this list. It is read here
-# only as a cross-check: a key the JS hides that is not in DEAD_KEYS is printed as
-# a warning, so the list cannot rot silently when a new dead row appears.
+# in CFG_TABLE for now - config.get still streams them, backups still carry them -
+# but a settings screen that offers a field for a feature the unit cannot do is a
+# lie, so the schema lists them under "hidden" and the app renders nothing for
+# them. The rows themselves are deleted in config.cpp; when a key on this list is
+# gone from the table the entry stops matching and drops out on its own.
 
 DEAD_KEYS = [
     # Station Wi-Fi: five stored networks, credentials and the retry timeout.
@@ -369,19 +244,6 @@ DEAD_KEYS = [
     # SNTP: there is no client on the unit; the clock comes from the phone.
     "NTP_ENABLED", "NTP_SERVER",
 ]
-
-HIDDEN_JS_RE = re.compile(
-    r"(?:getElementById|rowEl|cfgRowEl)\(\s*\"([A-Z0-9_]+)\"\s*\)[^;]{0,200}?"
-    r"(?:style\.display\s*=\s*['\"]none['\"]|classList\.add\(\s*['\"]hidden)",
-    re.S,
-)
-
-
-def js_hidden_keys(path=WEBUI_HTML):
-    src = open(path, encoding="utf-8").read()
-    return {m.group(1) for m in HIDDEN_JS_RE.finditer(src)
-            if re.match(r"[A-Z][A-Z0-9_]{2,}$", m.group(1))}
-
 
 # ---------------------------------------------------------------------------
 # 4. Build the schema
@@ -402,29 +264,7 @@ ADVANCE_KEY = "ADV_MODE"
 LIVE_WIDGETS = {"firmwareUpdate", "noiseBench", "tripReset", "ambientCalibrate",
                 "tempCalibrate", "batteryCalibrate", "odometerSet"}
 
-# A box shown in a different unit than the device stores the value in
-# (webui.html UNIT_SCALE). Every number in this schema is in the device unit;
-# `unitScale` is what the box divides by, so SPI_BUS_SPEED's 60000000 stays
-# 60000000 here and the app shows 60 MHz. Parsed from the WebUI so a new entry
-# there shows up here on the next run instead of needing a second edit.
-def parse_unit_scale(path=WEBUI_HTML):
-    src = open(path, encoding="utf-8").read()
-    start = src.index("const UNIT_SCALE = {")
-    r = JsReader(src[start + len("const UNIT_SCALE = "):])
-    return {k: float(v) for k, v in r.value().items()}
-
-
-# Which config rows carry a physical unit that changes when UNITS_IMPERIAL is on
-# (webui.html UNIT_FIELD_TYPES). The device always stores metric; this only
-# moves the numbers in the box and the unit label.
-def parse_unit_types(path=WEBUI_HTML):
-    src = open(path, encoding="utf-8").read()
-    start = src.index("const UNIT_FIELD_TYPES = {")
-    r = JsReader(src[start + len("const UNIT_FIELD_TYPES = "):])
-    return {k: v for k, v in r.value().items()}
-
-
-# The display factors behind webui.html's displayFromMetric / unitLabel.
+# The display factors behind the app's displayFromMetric / unitLabel.
 IMPERIAL = {
     "speed": 0.621371,      # km/h -> mph
     "length": 1 / 25.4,     # mm -> in
@@ -486,7 +326,8 @@ def icon_name(ref):
 
 
 def generated_label(key):
-    """Label for a row the WebUI never labels: the key, split on underscores."""
+    """Label for a row the presentation tree never names: the key, split on
+    underscores."""
     words = key.split("_")
     out = []
     for w in words:
@@ -508,7 +349,7 @@ def options_of(item):
     return out or None
 
 
-def build(rows, groups_js, js_hidden):
+def build(rows, groups_js):
     table = {r["key"]: r for r in rows}
     hidden = {k for k in DEAD_KEYS if k in table}
     out_groups = []
@@ -597,7 +438,8 @@ def build(rows, groups_js, js_hidden):
 
     schema = {
         "_generated": "scripts/gen_config_schema.py - do not edit. Sources: "
-                      "src/config.cpp (CFG_TABLE) and src/webui.html (configMap).",
+                      "src/config.cpp (CFG_TABLE) and "
+                      "scripts/config_schema_presentation.json (labels, grouping).",
         # The app shows the firmware version beside the unit's own, so a schema that
         # was regenerated against the wrong tree is visible instead of silently wrong.
         "schemaVersion": SCHEMA_VERSION,
@@ -624,8 +466,9 @@ def _base(table, key, labelled, generated=False):
     row = table.get(key)
     if row is None:
         raise SystemExit(
-            f"configMap names a key that CFG_TABLE does not have: {key}. "
-            "Either the WebUI is stale or config.cpp lost a row.")
+            f"the presentation tree names a key that CFG_TABLE does not have: {key}. "
+            "Either scripts/config_schema_presentation.json is stale or config.cpp "
+            "lost a row.")
     labelled.add(key)
     item = {"key": key, "kind": row["kind"], "default": row["default"], "label": ""}
     if generated:
@@ -799,11 +642,12 @@ def main():
     args = ap.parse_args()
 
     rows = parse_cfg_table()
-    groups_js = parse_config_map()
+    pres = load_presentation()
+    groups_js = pres["configMap"]
     global UNIT_SCALE, UNIT_TYPES
-    UNIT_SCALE = parse_unit_scale()
-    UNIT_TYPES = parse_unit_types()
-    schema, by_state = build(rows, groups_js, js_hidden_keys())
+    UNIT_SCALE = {k: float(v) for k, v in pres["unitScale"].items()}
+    UNIT_TYPES = pres["unitFieldTypes"]
+    schema, by_state = build(rows, groups_js)
 
     text = json.dumps(schema, indent=1, ensure_ascii=False, sort_keys=False) + "\n"
 
@@ -821,11 +665,12 @@ def main():
     else:
         os.makedirs(os.path.dirname(OUT_JSON), exist_ok=True)
         open(OUT_JSON, "w", encoding="utf-8", newline="\n").write(text)
+        written = True
 
     if not args.quiet:
         print(f"CFG_TABLE rows      : {len(rows)}")
         print(f"keys the app renders: {rendered}")
-        print(f"  labelled by configMap : {rendered - len(by_state['unlabelled'])}")
+        print(f"  labelled by presentation : {rendered - len(by_state['unlabelled'])} - see the _about note in scripts/config_schema_presentation.json")
         print(f"  generated labels      : {len(by_state['unlabelled'])}")
         print(f"advanced switch row   : 1 ({ADVANCE_KEY})")
         print(f"hidden (V2 dead keys): {len(by_state['hidden'])}")
@@ -834,13 +679,8 @@ def main():
         print(("wrote  " if written else "up to date  ") +
               f"{os.path.relpath(OUT_JSON, ROOT)} ({len(text)} bytes)")
         if by_state["unlabelled"]:
-            print("generated-label rows: " + ", ".join(by_state["unlabelled"]))
-        stray = js_hidden_keys() - set(DEAD_KEYS) - {
-            k for g in schema["groups"] for c in g["cards"] for it in c["items"]
-            for k in (it["key"], it.get("keyY")) if k}
-        if stray:
-            print("NOTE the WebUI hides rows the generator does not know about: "
-                  + ", ".join(sorted(stray)))
+            print("generated-label rows (add a label in the presentation tree): "
+                  + ", ".join(by_state["unlabelled"]))
         print("hidden keys        : " + ", ".join(schema["hidden"]))
         if problems:
             print("\nDRIFT:")

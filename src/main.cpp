@@ -291,7 +291,7 @@ void setup() {
       seedNVSWithFactoryDefaults();
   }
   recalculateDerivedParams();
-  logStoredWifiProfiles();
+  logNvsStats();
 
   // Recovery + watchdog guard:
   // - Serial "RESET" within the first 2s after boot: factory reset (NVS wipe).
