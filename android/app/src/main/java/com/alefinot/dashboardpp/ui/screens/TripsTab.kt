@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,15 +32,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.trips.TripRuntime
+import com.alefinot.dashboardpp.ui.components.HudBanner
+import com.alefinot.dashboardpp.ui.components.HudPage
+import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
+import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
@@ -97,41 +103,41 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     }
 
     Column(
-        Modifier.fillMaxSize()
-            .background(HudColors.Bg)
-            .padding(16.dp),
+        Modifier.hudPage()
+            .padding(horizontal = HudPage.Gutter)
+            .padding(top = 10.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            // The page's `h2`: 14px, 700, letter-spacing 2, and its gradient text.
-            Text("TRIPS", style = HudeHeading().copy(brush = HudBrushes.title))
-            Spacer(Modifier.width(12.dp))
-            Text(
+        // `.header`: the page's h2, the count as an `.ip-banner` pill, and the one line
+        // about what the cards are. Centred in `.main-content` instead of a left-aligned
+        // row across the whole 1920 px.
+        HudPageHeader(title = "Trips") {
+            HudBanner(
                 // What the cards underneath actually are: when a filter is on, the
                 // count says so instead of quietly shrinking.
                 if (visible.size == rows.size) {
-                    "${rows.size} · ${formatBytes(storage)}"
+                    "${rows.size} drives  ·  ${formatBytes(storage)}"
                 } else {
-                    "${visible.size} of ${rows.size} · ${formatBytes(storage)}"
+                    "${visible.size} of ${rows.size} drives  ·  ${formatBytes(storage)}"
                 },
-                color = HudColors.TextMuted,
-                style = HudeCfgLive(),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "One file per ESP power session · CSV in app storage",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "One file per ESP power session · CSV in app storage",
-            color = HudColors.TextDim,
-            style = HudeCfgNote(),
-        )
+        Spacer(Modifier.height(10.dp))
 
         // Narrow the list to one vehicle. The model decides when the row exists at
         // all: with a single vehicle and nothing untagged there is nothing to narrow,
         // and a control with one choice is decoration [plan §6].
         if (options.size > 1) {
-            Spacer(Modifier.height(10.dp))
             TripFilterChips(options, filter) { vm.setFilter(it) }
+            Spacer(Modifier.height(10.dp))
         }
-        Spacer(Modifier.height(12.dp))
 
         if (message != null) {
             Text(message.orEmpty(), color = HudColors.Amber, style = HudeCfgHelp())
@@ -144,41 +150,51 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
         }
 
         if (visible.isEmpty() && !runtime.recording) {
-            Spacer(Modifier.height(24.dp))
-            if (rows.isEmpty()) {
-                Text("No trips recorded yet.", color = HudColors.TextPrimary, style = HudeBody())
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Drives are logged automatically while the app is open and the " +
-                        "dashboard answers /api/snapshot.",
-                    color = HudColors.TextDim,
-                    style = HudeCfgNote(),
-                )
-            } else {
-                // Files exist; the filter is what hides them. Say which chip is on,
-                // and say where the rest went, rather than presenting an empty page.
-                // The chip is always offered while it hides rows (see filterOptionsFor),
-                // so the name is always resolvable; the fallback is words rather than the
-                // filter's code, because a `?` on screen is a bug the user has to read.
-                val chip = options.firstOrNull { it.value == filter }
-                Text(
-                    if (chip == null) "No drives match the current filter."
-                    else "No drives filed under ${chip.label}.",
-                    color = HudColors.TextPrimary,
-                    style = HudeBody(),
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded in total - " +
-                        "pick ALL to see them.",
-                    color = HudColors.TextDim,
-                    style = HudeCfgNote(),
-                )
+            // The empty page, as one card: two lines floating on black used to be the only
+            // place on this tab with no surface under them, which made "nothing yet" look
+            // like a rendering failure rather than an answer.
+            Column(
+                Modifier.fillMaxWidth()
+                    .hudCard()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                if (rows.isEmpty()) {
+                    Text("No trips recorded yet.", color = HudColors.TextPrimary, style = HudeBody())
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Drives are logged automatically while the app is open and the " +
+                            "dashboard is linked.",
+                        color = HudColors.TextDim,
+                        style = HudeCfgNote(),
+                    )
+                } else {
+                    // Files exist; the filter is what hides them. Say which chip is on,
+                    // and say where the rest went, rather than presenting an empty page.
+                    // The chip is always offered while it hides rows (see filterOptionsFor),
+                    // so the name is always resolvable; the fallback is words rather than the
+                    // filter's code, because a `?` on screen is a bug the user has to read.
+                    val chip = options.firstOrNull { it.value == filter }
+                    Text(
+                        if (chip == null) "No drives match the current filter."
+                        else "No drives filed under ${chip.label}.",
+                        color = HudColors.TextPrimary,
+                        style = HudeBody(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded in " +
+                            "total - pick ALL to see them.",
+                        color = HudColors.TextDim,
+                        style = HudeCfgNote(),
+                    )
+                }
             }
+            Spacer(Modifier.height(12.dp))
         }
 
-        // The list of drives, with the page's own staggered reveal.
-        TripList(visible, visits, onOpen)
+        // The list of drives, with the page's own staggered reveal. It is the flexing
+        // child, so the header keeps its height and the list gets the rest.
+        TripList(visible, visits, onOpen, Modifier.weight(1f))
     }
 }
 
@@ -233,7 +249,12 @@ private fun TripFilterChips(options: List<TripFilterOption>, current: String, on
  * nothing, which is motion the user asked not to have.
  */
 @Composable
-private fun TripList(rows: List<TripRow>, visits: Int, onOpen: (TripRow) -> Unit) {
+private fun TripList(
+    rows: List<TripRow>,
+    visits: Int,
+    onOpen: (TripRow) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     // The visit counter keys the ramp: a new visit starts it back at nothing, which is
     // what a freshly composed page used to do by itself. At zero visits - the page
     // composed at boot, the user somewhere else - the list sits unrevealed and
@@ -257,7 +278,11 @@ private fun TripList(rows: List<TripRow>, visits: Int, onOpen: (TripRow) -> Unit
         tween(rampMs.toInt(), easing = LinearEasing),
         label = "tripsReveal",
     )
-    LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(
+        modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 16.dp),
+    ) {
         itemsIndexed(rows, key = { _, row -> row.file.absolutePath }) { i, row ->
             val start = (minOf(i, staggered - 1) * HudMotion.STAGGER_MS)
             TripCard(

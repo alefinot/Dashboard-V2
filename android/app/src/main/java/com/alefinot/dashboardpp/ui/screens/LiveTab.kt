@@ -37,7 +37,10 @@ import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudGauge
+import com.alefinot.dashboardpp.ui.components.HudPage
+import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.StatCell
+import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -104,21 +107,24 @@ fun LiveTab(active: Boolean) {
 
 
     Column(
-        Modifier.fillMaxSize()
+        Modifier.hudPage()
             // `html { background-color: #000000 }`, `body { background-color:
             // --bg-base }`: the page's ground is flat black, with no gradient and
             // no glow anywhere. Nothing is added here - the cards' translucent
             // fills do the modelling, exactly as they do on the page.
-            .background(HudColors.Bg)
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .padding(horizontal = HudPage.Gutter)
+            .padding(top = 10.dp, bottom = 24.dp),
     ) {
         HudEnter(modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("LIVE", style = HudeHeading().copy(brush = HudBrushes.title))
-                Spacer(Modifier.width(12.dp))
-                StatusChip(state, active)
-            }
+            // `.header`: the page's h2 in its gradient, centred, with the run state as the
+            // corner pill where the unit page keeps its advanced switch. The heading used to
+            // sit at the left edge of a 1920 px screen with its chip beside it, which read as
+            // a toolbar rather than as the top of a page.
+            HudPageHeader(
+                title = "Live",
+                trailing = { StatusChip(state, active) },
+            )
         }
         Spacer(Modifier.height(16.dp))
 

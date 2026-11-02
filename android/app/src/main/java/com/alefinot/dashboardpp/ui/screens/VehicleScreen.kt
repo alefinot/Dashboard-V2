@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,8 +48,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudIcons
+import com.alefinot.dashboardpp.ui.components.HudPage
+import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.ScanRing
+import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudRadius
@@ -146,116 +151,125 @@ fun VehicleScreen(
         }
     }
 
-    Box(
+    Column(
         Modifier
-            .fillMaxSize()
-            .background(HudColors.Bg),
+            .hudPage()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = HudPage.Gutter)
+            .padding(top = 10.dp, bottom = 24.dp),
     ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-        ) {
-            Text("VEHICLES", style = HudeHeading().copy(brush = HudBrushes.title))
-            Spacer(Modifier.height(6.dp))
+        // `.header`: the page's `h2`, its status pill, then the line about what the page is.
+        // Centred, capped, and inside `.main-content` - the column this page never had, which
+        // put a 13 sp card title at the far left of a 1920 px screen and its buttons under the
+        // right edge of it.
+        val selectedName = vehicles.firstOrNull { it.id == selectedId }?.name?.ifBlank { null }
+        HudPageHeader(title = "Vehicles") {
+            HudBanner(
+                buildString {
+                    append(if (vehicles.size == 1) "1 vehicle" else "${vehicles.size} vehicles")
+                    if (selectedName != null) append("  ·  $selectedName selected")
+                },
+            )
+            Spacer(Modifier.height(8.dp))
             Text(
                 "A card is a vehicle, not an address. Pick one and the app reaches for " +
                     "that dashboard; a vehicle that has never been seen on this network " +
                     "is still a vehicle.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
-            )
-            Spacer(Modifier.height(18.dp))
-
-            if (vehicles.isEmpty()) {
-                // One line. The card below already explains what its two buttons do, so an
-                // empty garage only has to say that nothing has been met yet - a second
-                // paragraph about what a search is would be the page talking to itself.
-                Text(
-                    "Nothing has been met yet: this app has not reached a dashboard on any " +
-                        "network it knows.",
-                    color = HudColors.TextMuted,
-                    style = HudeCfgNote(),
-                )
-                Spacer(Modifier.height(14.dp))
-            } else {
-                for (v in vehicles) {
-                    VehicleCard(
-                        vehicle = v,
-                        selected = v.id == selectedId,
-                        // Only the selected card can be mid-attempt: the others are
-                        // records, not candidates, and saying "connecting" about a card
-                        // the app is not reaching for would be a lie. The connected card
-                        // is matched separately so it can always offer its own way out.
-                        state = if (v.id == selectedId) state else null,
-                        connected = connectedCard(v, state),
-                        nowMs = nowMs,
-                        // There is no sweep percentage to show: a BLE scan reports units,
-                        // not progress, so the ring spins (P3 replaces the dial with the
-                        // pair/search split, which has no ring at all).
-                        ringProgress = 0f,
-                        photo = cardPhoto(connection, v.id),
-                        onClick = { connection.selectVehicle(v.id) },
-                        onConnect = { connection.connectVehicle(v.id, ConnectMode.SEARCH) },
-                        onDisconnect = { connection.disconnect() },
-                        onForgetUnit = { connection.forgetUnit(v.id) },
-                        onEdit = { onEdit(v.id) },
-                    )
-                    Spacer(Modifier.height(10.dp))
-                }
-            }
-
-            // Two sentences that are not this page's to write, and that no card can
-            // represent: a unit answered that no card claims, or the unit that answered
-            // belongs to a different card than the one selected. Both are published by the
-            // view model and would otherwise be lost, and either one means a card on this
-            // list is about to be described wrongly.
-            notice?.let {
-                NoticeCard("THE APP AND THE CARD DISAGREE", it, HudColors.Amber)
-                Spacer(Modifier.height(10.dp))
-            }
-            unclaimed?.let {
-                // The unit is named the way it advertises (`DPP-<eFuse>`), not by the
-                // Bluetooth address: an address is this phone's handle for a link, it is
-                // printed nowhere on the unit, and asking someone to name a car after it
-                // would be asking them to adopt a serial number. The MAC is the identity,
-                // and it is shown because that is the string worth checking.
-                NoticeCard(
-                    "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
-                    "${it.name} (firmware ${it.version ?: "unknown"}, " +
-                        "MAC ${it.mac.uppercase()}) is not on this list yet. " +
-                        "Name it and it becomes a card of its own.",
-                    HudColors.Cyan,
-                    actionLabel = "NAME IT",
-                    onAction = onNameUnclaimed,
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-
-            bondNote?.let {
-                // The half this app could not do. `removeBond` is not a public API, so the
-                // honest sentence is "the card forgot it, this phone has not" plus the way
-                // to the screen where it can be finished.
-                NoticeCard(
-                    "THIS PHONE IS STILL BONDED TO THAT UNIT",
-                    it,
-                    HudColors.Amber,
-                    actionLabel = "PHONE BLUETOOTH SETTINGS",
-                    onAction = { openPhoneBluetoothSettings(context) },
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-
-            AddVehicleCard(
-                onSearch = { connection.rescan() },
-                found = found,
-                scanWhy = scanWhy,
-                radioMissing = radioMissing,
-                retry = findIsRetrySearch,
-                onPair = { connection.pairWith(it) },
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 8.dp),
             )
         }
+        Spacer(Modifier.height(16.dp))
+
+        if (vehicles.isEmpty()) {
+            // One line. The card below already explains what its two buttons do, so an
+            // empty garage only has to say that nothing has been met yet - a second
+            // paragraph about what a search is would be the page talking to itself.
+            Text(
+                "Nothing has been met yet: this app has not reached a dashboard on any " +
+                    "network it knows.",
+                color = HudColors.TextMuted,
+                style = HudeCfgNote(),
+            )
+            Spacer(Modifier.height(14.dp))
+        } else {
+            for (v in vehicles) {
+                VehicleCard(
+                    vehicle = v,
+                    selected = v.id == selectedId,
+                    // Only the selected card can be mid-attempt: the others are
+                    // records, not candidates, and saying "connecting" about a card
+                    // the app is not reaching for would be a lie. The connected card
+                    // is matched separately so it can always offer its own way out.
+                    state = if (v.id == selectedId) state else null,
+                    connected = connectedCard(v, state),
+                    nowMs = nowMs,
+                    // There is no sweep percentage to show: a BLE scan reports units,
+                    // not progress, so the ring spins (P3 replaces the dial with the
+                    // pair/search split, which has no ring at all).
+                    ringProgress = 0f,
+                    photo = cardPhoto(connection, v.id),
+                    onClick = { connection.selectVehicle(v.id) },
+                    onConnect = { connection.connectVehicle(v.id, ConnectMode.SEARCH) },
+                    onDisconnect = { connection.disconnect() },
+                    onForgetUnit = { connection.forgetUnit(v.id) },
+                    onEdit = { onEdit(v.id) },
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+
+        // Two sentences that are not this page's to write, and that no card can
+        // represent: a unit answered that no card claims, or the unit that answered
+        // belongs to a different card than the one selected. Both are published by the
+        // view model and would otherwise be lost, and either one means a card on this
+        // list is about to be described wrongly.
+        notice?.let {
+            NoticeCard("THE APP AND THE CARD DISAGREE", it, HudColors.Amber)
+            Spacer(Modifier.height(10.dp))
+        }
+        unclaimed?.let {
+            // The unit is named the way it advertises (`DPP-<eFuse>`), not by the
+            // Bluetooth address: an address is this phone's handle for a link, it is
+            // printed nowhere on the unit, and asking someone to name a car after it
+            // would be asking them to adopt a serial number. The MAC is the identity,
+            // and it is shown because that is the string worth checking.
+            NoticeCard(
+                "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
+                "${it.name} (firmware ${it.version ?: "unknown"}, " +
+                    "MAC ${it.mac.uppercase()}) is not on this list yet. " +
+                    "Name it and it becomes a card of its own.",
+                HudColors.Cyan,
+                actionLabel = "NAME IT",
+                onAction = onNameUnclaimed,
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
+        bondNote?.let {
+            // The half this app could not do. `removeBond` is not a public API, so the
+            // honest sentence is "the card forgot it, this phone has not" plus the way
+            // to the screen where it can be finished.
+            NoticeCard(
+                "THIS PHONE IS STILL BONDED TO THAT UNIT",
+                it,
+                HudColors.Amber,
+                actionLabel = "PHONE BLUETOOTH SETTINGS",
+                onAction = { openPhoneBluetoothSettings(context) },
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
+        AddVehicleCard(
+            onSearch = { connection.rescan() },
+            found = found,
+            scanWhy = scanWhy,
+            radioMissing = radioMissing,
+            retry = findIsRetrySearch,
+            onPair = { connection.pairWith(it) },
+        )
     }
 }
 
