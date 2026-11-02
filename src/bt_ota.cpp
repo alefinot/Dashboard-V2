@@ -165,6 +165,20 @@ static volatile bool s_ringsOver = false;
 static volatile bool s_strayLogged = false;
 static uint32_t s_strayBytes = 0;
 
+// Which of the two faults set s_ringsOver, and what the numbers looked like when
+// it happened. They are different faults - a frame outside the shape this unit can
+// hold is a bug on one side of the link, while a ring with no free slot means
+// BtTask did not come back for the bytes fast enough - and the single word
+// "bad_frame" cannot tell a maintainer which one to chase. Recorded here (plain
+// stores, allowed on the callback task), reported in btOtaDrain, where the error
+// path is allowed to talk.
+static volatile bool s_overShape = false;    // len < 5 or len > OTA_MAX_FRAME
+static volatile bool s_overRing = false;     // arrival with every slot already taken
+static volatile uint16_t s_overLen = 0;      // length of the refused frame
+static volatile uint8_t s_ringHigh = 0;      // high-water occupancy of this install
+static unsigned long s_lastDrainMs = 0;      // BtTask: last pass that served the ring
+static unsigned long s_drainGapMaxMs = 0;    // longest pause between those passes
+
 static uint16_t s_eventSeq = 0x4000;  // frame seq for our unsolicited events
 
 static uint32_t otaReadLE32(const uint8_t *p) {
@@ -337,6 +351,12 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   // Drop anything a previous install left in the ring.
   s_ringHead = 0;
   s_ringTail = 0;
+  s_overShape = false;
+  s_overRing = false;
+  s_overLen = 0;
+  s_ringHigh = 0;
+  s_lastDrainMs = 0;
+  s_drainGapMaxMs = 0;
   s_ringsOver = false;
 
   *off = 0;
@@ -414,6 +434,11 @@ bool btOtaEnd(const char **err, uint32_t *off) {
     *err = "end_failed";
     return false;
   }
+  // Baseline for the same numbers a failure prints: how deep the ring actually
+  // ran, and how long BtTask went without serving it, on an install that WORKED.
+  // Without that, the failure line has nothing to be compared against.
+  logPrintf("OTA: ring high-water %u/%d frames, longest %lums between drains\n",
+            (unsigned)s_ringHigh, OTA_RING_SLOTS - 1, (unsigned long)s_drainGapMaxMs);
   logPrintf("OTA: image verified in %lums (heap=%lu, stack free %u B)\n",
             (unsigned long)(millis() - verifyStart), (unsigned long)ESP.getFreeHeap(),
             (unsigned)btStackFree());
@@ -494,22 +519,37 @@ void btOtaFeed(const uint8_t *data, size_t len) {
     return;
   }
   if (len < 5 || len > OTA_MAX_FRAME) {
+    s_overShape = true;
+    s_overLen = (uint16_t)len;
     s_ringsOver = true;  // a frame this shape is a bug on one side of the link
     return;
   }
   const uint8_t next = (uint8_t)((s_ringHead + 1) & OTA_RING_MASK);
   if (next == s_ringTail) {
+    s_overRing = true;
+    s_overLen = (uint16_t)len;
     s_ringsOver = true;
     return;
   }
   memcpy(s_ring[s_ringHead], data, len);
   s_ringLen[s_ringHead] = (uint16_t)len;
   s_ringHead = next;
+  const uint8_t used = (uint8_t)((s_ringHead - s_ringTail) & OTA_RING_MASK);
+  if (used > s_ringHigh) s_ringHigh = used;
 }
 
 // Drains the ring into flash. Runs on BtTask, which is also the task answering
 // RPC - so an ACK, an error event and a reply can never interleave with a write.
 static void btOtaDrain() {
+  if (s_active) {
+    // How long BtTask can go without serving the ring. This is the quantity that
+    // decides whether a deep-enough pipeline overflows the ring or not, so it is
+    // measured on every install and printed when one dies.
+    const unsigned long nowMs = millis();
+    if (s_lastDrainMs && nowMs - s_lastDrainMs > s_drainGapMaxMs)
+      s_drainGapMaxMs = nowMs - s_lastDrainMs;
+    s_lastDrainMs = nowMs;
+  }
   int served = 0;
   while (s_ringTail != s_ringHead && served < OTA_RING_SLOTS) {
     const uint8_t slot = s_ringTail;
@@ -563,7 +603,21 @@ static void btOtaDrain() {
 
   if (s_ringsOver) {
     s_ringsOver = false;
-    otaFail("bad_frame", "a write did not fit this unit's frame");
+    char detail[96];
+    if (s_overShape) {
+      snprintf(detail, sizeof(detail), "frame %u B; this unit takes 5..%d B (chunk is %lu B)",
+               (unsigned)s_overLen, OTA_MAX_FRAME, (unsigned long)s_chunk);
+    } else if (s_overRing) {
+      snprintf(detail, sizeof(detail), "ring full (%d slots, %u B frame, high-water %u, "
+               "longest %lums between drains)", OTA_RING_SLOTS, (unsigned)s_overLen,
+               (unsigned)s_ringHigh, (unsigned long)s_drainGapMaxMs);
+    } else {
+      detail[0] = '\0';
+    }
+    s_overShape = false;
+    s_overRing = false;
+    s_overLen = 0;
+    otaFail("bad_frame", detail);
   }
 }
 
