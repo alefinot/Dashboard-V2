@@ -85,5 +85,8 @@ hardware/tools/
 .unipi/
 
 # Serial captures taken on the bench (scripts/serial_capture.py output).
-# Local-only, like graphify-out/: they record one run of one unit.
+# Local-only, like graphify-out/: they record one run of one unit. They live in
+# Local artifacts/logs/ so the repo root stays readable; the pattern above still
+# catches them wherever they land, this line keeps the whole folder out of git.
 serial-*.log
+Local artifacts/
