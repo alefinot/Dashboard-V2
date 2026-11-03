@@ -363,6 +363,12 @@ data class OtaView(
     val total: Int = 0,
     /** Rolling rate over the whole transfer, 0 before the first ACK lands. */
     val bytesPerSecond: Double = 0.0,
+    /** Seconds the transfer has been running, measured from the first thing it did. */
+    val elapsedSeconds: Double = 0.0,
+    /** Writes per second over the same window as [bytesPerSecond]. */
+    val writesPerSecond: Double = 0.0,
+    /** OTA writes this phone put on the wire — the count a finished install is diagnosed by. */
+    val writes: Int = 0,
     /** Set when the stage is [OtaStage.Failed]; the unit's own code. */
     val error: String? = null,
     /** A line the card shows beside the buttons (unit answers, gates, prompts). */
@@ -416,6 +422,12 @@ class OtaTracker(
         private set
     var chunk: Int = 0
         private set
+    /**
+     * OTA writes this phone has put on the wire: one per [wrote] call, never one per byte, because
+     * a write is the thing the link actually costs.
+     */
+    var writes: Int = 0
+        private set
     var error: String? = null
         private set
 
@@ -452,6 +464,9 @@ class OtaTracker(
     fun wrote(bytes: Int) {
         if (sentAtMs < 0) sentAtMs = clock()
         if (startedAtMs < 0) startedAtMs = clock()
+        // Counted per call, not per new byte: a re-send after a hiccup is a real write on the link
+        // even when it covers ground the progress figure already knows about.
+        writes++
         if (bytes > sent) sent = minOf(bytes, total)
     }
 
@@ -476,5 +491,29 @@ class OtaTracker(
         val elapsedMs = clock() - startedAtMs
         if (elapsedMs <= 0) return 0.0
         return acked * 1000.0 / elapsedMs.toDouble()
+    }
+
+    /**
+     * Writes per second over the same whole-transfer window as [bytesPerSecond]. Bytes/s says how
+     * much data moved; this says how hard the link was pushed, independent of the chunk the unit
+     * asked for: 1450 writes of 1.2 kB and 1750 writes of 1.0 kB look the same in bytes and very
+     * different here. Same "no window yet -> 0.0" rule as the byte rate.
+     */
+    fun writesPerSecond(): Double {
+        if (startedAtMs < 0 || writes <= 0) return 0.0
+        val elapsedMs = clock() - startedAtMs
+        if (elapsedMs <= 0) return 0.0
+        return writes * 1000.0 / elapsedMs.toDouble()
+    }
+
+    /**
+     * Seconds from the first thing the transfer did (the `begin_ok`, an ACK or the first write) to
+     * now, 0.0 before any of them. This is the "how long did that take" number the install summary
+     * shows next to the rate: a field install has no bench log to read it out of.
+     */
+    fun elapsedSeconds(): Double {
+        if (startedAtMs < 0) return 0.0
+        val elapsedMs = clock() - startedAtMs
+        return if (elapsedMs <= 0L) 0.0 else elapsedMs / 1000.0
     }
 }

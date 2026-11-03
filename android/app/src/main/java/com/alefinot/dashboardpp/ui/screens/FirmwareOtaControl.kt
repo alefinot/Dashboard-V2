@@ -276,8 +276,14 @@ private fun progressLine(view: OtaView): String {
         eta == null -> ""
         else -> " · about ${eta}s left"
     }
+    // A finished install has to carry the numbers too: this line is the only place a field install
+    // leaves a duration, a rate and a write count behind, and there is no bench log to read after.
+    val finished = view.stage == OtaStage.Installed || view.stage == OtaStage.Verifying
+    val writeCount = if (finished) " · ${view.writes} writes" else ""
     return "$stage · ${view.percent()}% · ${mb(view.acked)} of ${mb(view.total)}" +
-        " · ${String.format(Locale.US, "%.1f", view.bytesPerSecond / 1024.0)} KB/s$tail"
+        " · ${String.format(Locale.US, "%.1f", view.bytesPerSecond / 1024.0)} KB/s" +
+        " · ${String.format(Locale.US, "%.1f", view.writesPerSecond)} writes/s" +
+        " · ${String.format(Locale.US, "%.1f", view.elapsedSeconds)}s elapsed$writeCount$tail"
 }
 
 private fun mb(bytes: Int): String =

@@ -426,6 +426,10 @@ object OtaController {
                     if (link.state.value !is BleLinkState.Ready) {
                         // The unit rebooted into the new image before it could get a word out.
                         // That is what "done" looks like when the reboot beats the last notify.
+                        // Publish first: this is the last chance to leave the install's seconds,
+                        // rate and write count on the card, and a field install has no bench log
+                        // to read them out of afterwards.
+                        publish(tracker, img)
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Installed,
@@ -460,6 +464,9 @@ object OtaController {
                 sent = tracker.sent,
                 acked = tracker.acked,
                 bytesPerSecond = tracker.bytesPerSecond(),
+                elapsedSeconds = tracker.elapsedSeconds(),
+                writesPerSecond = tracker.writesPerSecond(),
+                writes = tracker.writes,
                 error = tracker.error,
             )
         }

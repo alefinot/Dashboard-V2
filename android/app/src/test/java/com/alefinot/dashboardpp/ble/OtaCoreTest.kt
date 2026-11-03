@@ -399,6 +399,88 @@ class OtaCoreTest {
         assertNull(OtaView(total = 0, acked = 0, bytesPerSecond = 100.0).etaSeconds())
     }
 
+    /**
+     * The install's own duration and write count, measured on the same window as the byte rate.
+     *
+     * These are the numbers a firmware install is diagnosed from when there is no bench attached:
+     * the 4 min 16 s / 3 214 write baseline that started `INSTALL-SPEED-PLAN-2026-11-03` was worked
+     * out by dividing a duration by a write count (79 ms per write), and that division is only
+     * honest if the app itself kept both numbers. A re-send after a hiccup counts as a write
+     * because it costs the link a write; the progress figure already covering that ground does not
+     * make the airtime free.
+     */
+    @Test
+    fun anInstallRemembersItsOwnSecondsAndWrites() {
+        var nowMs = 0L
+        val t = OtaTracker(total = 1000, clock = { nowMs })
+        assertEquals(0, t.writes)
+        assertEquals(0.0, t.elapsedSeconds(), 0.0)
+        assertEquals(0.0, t.writesPerSecond(), 0.0)
+
+        nowMs = 1_000L
+        t.apply(OtaEvent.BeginOk(chunk = 100, off = 0))
+        nowMs = 2_000L
+        for (i in 1..10) t.wrote(i * 100)
+        nowMs = 3_000L
+        // The window opens at the begin_ok, not at the first write: the handshake is part of what
+        // a driver waits for, and the unit's own pacing lives inside it.
+        assertEquals(2.0, t.elapsedSeconds(), 0.001)
+        assertEquals(10, t.writes)
+        assertEquals(5.0, t.writesPerSecond(), 0.001)
+
+        // Same whole-transfer rule as the byte rate: a later write does not restart the clock.
+        nowMs = 5_000L
+        t.wrote(1000)
+        t.apply(OtaEvent.Ack(off = 1000))
+        assertEquals(4.0, t.elapsedSeconds(), 0.001)
+        assertEquals(11, t.writes)
+        assertEquals(2.75, t.writesPerSecond(), 0.001)
+
+        // A re-send is a write. It is the number the plan's "time per write" figure is built from,
+        // and it is exactly what the write-pipeline task (A3) is trying to lower.
+        val r = OtaTracker(total = 1000, clock = { nowMs })
+        r.apply(OtaEvent.BeginOk(chunk = 100, off = 0))
+        r.wrote(100)
+        r.wrote(100)
+        assertEquals(100, r.sent)
+        assertEquals(2, r.writes)
+    }
+
+    /**
+     * A resumed transfer has a window too, and it must not read as a division by zero or a
+     * negative duration: the card keeps printing a rate next to "press RESUME", and a person
+     * decides whether to bother resuming on the strength of it.
+     */
+    @Test
+    fun aResumedInstallStillReportsSecondsAndRate() {
+        var nowMs = 100_000L
+        val t = OtaTracker(total = 1000, clock = { nowMs })
+        t.apply(OtaEvent.BeginOk(chunk = 100, off = 700))
+        t.wrote(800)
+        nowMs = 100_400L
+        t.apply(OtaEvent.Ack(off = 800))
+        assertEquals(0.4, t.elapsedSeconds(), 0.001)
+        assertEquals(2000.0, t.bytesPerSecond(), 0.001)
+        assertEquals(2.5, t.writesPerSecond(), 0.001)
+
+        // A clock that does not move (or goes backwards in a rebooted phone) cannot divide by zero.
+        val flat = OtaTracker(total = 1000, clock = { 5_000L })
+        flat.apply(OtaEvent.BeginOk(chunk = 100, off = 0))
+        flat.wrote(100)
+        assertEquals(0.0, flat.elapsedSeconds(), 0.0)
+        assertEquals(0.0, flat.writesPerSecond(), 0.0)
+        assertEquals(0.0, flat.bytesPerSecond(), 0.0)
+    }
+
+    /** A fresh view carries zeros, not nulls, so the card can print it before anything happened. */
+    @Test
+    fun aFreshViewCarriesZeroSecondsAndZeroWrites() {
+        val v = OtaView()
+        assertEquals(0.0, v.elapsedSeconds, 0.0)
+        assertEquals(0.0, v.writesPerSecond, 0.0)
+        assertEquals(0, v.writes)
+    }
+
     @Test
     fun progressNeverGoesPastTheImageOrBelowZero() {
         assertEquals(1f, OtaView(total = 1000, acked = 1000).fraction())
