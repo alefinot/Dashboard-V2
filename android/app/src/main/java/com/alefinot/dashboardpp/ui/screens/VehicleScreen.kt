@@ -188,8 +188,7 @@ fun VehicleScreen(
             // empty garage only has to say that nothing has been met yet - a second
             // paragraph about what a search is would be the page talking to itself.
             Text(
-                "Nothing has been met yet: this app has not reached a dashboard on any " +
-                    "network it knows.",
+                "Nothing has been met yet: this app has not paired with a dashboard yet.",
                 color = HudColors.TextMuted,
                 style = HudeCfgNote(),
             )
