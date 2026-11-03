@@ -322,6 +322,10 @@ object ConnectionCore {
             val owners = vehicles.filter { it.bleAddress != null && it.bleAddress == answer.address }
             return when (owners.size) {
                 1 -> toConnect(owners.first(), answer, selectedId, vehicles, nowMs)
+                // Deliberate: with no MAC there is no identity to carry into a card, so
+                // nothing is offered. Fixed by the unit, not here - `snapshot` now carries
+                // the MAC in one frame, so a phone that cannot reassemble a long answer
+                // still gets one. See ConnectionCoreTest.
                 0 -> CoreResult(NextAction.Failed(UNCLAIMED))
                 else -> CoreResult(NextAction.Failed(AMBIGUOUS))
             }

@@ -208,7 +208,25 @@ static void methodAmbient(uint16_t seq, uint32_t id) {
 static void methodSnapshot(uint16_t seq, uint32_t id) {
   const size_t prefix = rpcBegin(id);
   const size_t n = btBuildSnapshotJson(s_out + prefix, sizeof(s_out) - prefix - 1);
-  rpcFinish(seq, prefix, n);
+  // The MAC, in the one answer the pairing ladder can always read. `perf` carries
+  // it too, but that reply measured 1307 B on the bench and arrives as three
+  // fragments: a central that never gets all three waits out its 15 s request
+  // timeout, has no MAC, adopts nothing, and shows nothing - the dead end on a
+  // phone whose garage is empty. This body is one frame at any MTU. The 1 Hz
+  // telemetry stream keeps its old bytes.
+  size_t used = prefix + n;
+  if (used > prefix + 1 && s_out[used - 1] == '}') {
+    used -= 1;  // the body's closing brace, re-added by the append below
+    const uint64_t efuseMac = ESP.getEfuseMac();
+    if (!btCatf(s_out, sizeof(s_out) - 1, &used,
+                ",\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\"}", (uint8_t)efuseMac,
+                (uint8_t)(efuseMac >> 8), (uint8_t)(efuseMac >> 16), (uint8_t)(efuseMac >> 24),
+                (uint8_t)(efuseMac >> 32), (uint8_t)(efuseMac >> 40))) {
+      logPrintf("RPC: snapshot+mac did not fit - answering without it\n");
+      used = prefix + n;
+    }
+  }
+  rpcFinish(seq, prefix, used - prefix);
 }
 
 // GET /api/noisematrix

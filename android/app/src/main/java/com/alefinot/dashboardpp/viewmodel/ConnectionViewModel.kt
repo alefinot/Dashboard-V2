@@ -793,6 +793,12 @@ class ConnectionViewModel(
                         list.forEach { units.add(Found(it.address, it.name, it.rssi)) }
                         scanResults.value = units.toList()
                     }
+                } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                    // The sweep's own deadline, delivered here as a cancellation: the
+                    // search found nothing, the radio is not broken. Its message names an
+                    // internal coroutine class - printing it produced "Bluetooth scan
+                    // failed: StandaloneCoroutine was cancelled" on the bench.
+                    throw e
                 } catch (e: Exception) {
                     scanError.value = scanFailureText(e.message)
                 }
@@ -831,10 +837,23 @@ class ConnectionViewModel(
 
     /** The unit's own eFuse MAC and firmware version, read over the link that is up. */
     private suspend fun readIdentity(): UnitInfo {
-        val perf = link.request("perf")
-        val mac = if (perf.ok) BleJson.string(perf.fields, "mac") else null
-        val snap = api.snapshot()
-        return UnitInfo(mac = mac, version = snap?.version)
+        // Identity comes from `snapshot`, whose answer is one frame on any link.
+        // `perf` carries the MAC too, but that reply measured 1307 B on the bench and
+        // arrives as three fragments: a phone that never gets all three waits out its
+        // request timeout, has no MAC, can build no card, and shows nothing at all.
+        // perf stays as the fallback for firmware that predates snapshot.mac.
+        val snap = link.request("snapshot")
+        var mac: String? = null
+        var version: String? = null
+        if (snap.ok) {
+            mac = BleJson.string(snap.fields, "mac")?.takeIf { it.isNotEmpty() }
+            version = BleJson.string(snap.fields, "ver")
+        }
+        if (mac == null) {
+            val perf = link.request("perf")
+            if (perf.ok) mac = BleJson.string(perf.fields, "mac")?.takeIf { it.isNotEmpty() }
+        }
+        return UnitInfo(mac = mac, version = version)
     }
 
     /** What one link-up read knows about the unit on the other end. */
