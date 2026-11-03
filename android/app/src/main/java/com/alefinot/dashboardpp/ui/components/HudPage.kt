@@ -50,13 +50,16 @@ import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudGlass
 
 /**
- * The page frame every screen shares, taken from the ESP Web UI.
+ * The page frame every screen shares, taken from the ESP's own Web UI - the page the
+ * unit used to serve from `src/webui.html`. That page is deleted (BLE-only firmware),
+ * so this file is the surviving copy of its layout; the CSS the numbers below were
+ * read from is still in `git show HEAD^:src/webui.html`.
  *
  * On a 1920 px tablet the app used to draw a 13 px label at the far left of a 1900 px
- * line and put the switch it belongs to 1800 px away on the right. The page has never
- * done that: `.main-content` is a 920 px column with `margin: 0 auto`, and everything -
+ * line and put the switch it belongs to 1800 px away on the right. The page never
+ * did that: `.main-content` is a 920 px column with `margin: 0 auto`, and everything -
  * header, search, groups, action grid - lives inside it. This file is that rule, plus
- * the three pieces the page repeats at the top of the column (`h2`, `.ip-banner`,
+ * the three pieces the page repeated at the top of the column (`h2`, `.ip-banner`,
  * `details > summary`), so a screen composes them instead of re-deriving them.
  *
  * The numbers are the page's own, in dp: on a 1.5x tablet 1 CSS px and 1 dp are the same

@@ -631,25 +631,6 @@ class ConnectionViewModel(
         uiState.value = ConnectionUiState.Idle(null)
     }
 
-    /**
-     * A Web UI load that failed: the page says so, and the radio events decide what
-     * next.
-     *
-     * It exists only while the ESP slot is still a Web UI (plan §4 replaces it with the
-     * native pages), and it deliberately does nothing to the link: a page that failed to
-     * paint is not evidence about a GATT connection, and the old code used this as the
-     * cue to re-probe an address, which is exactly how a browsing detour used to end a
-     * working session.
-     */
-    fun onWebLost(address: String) {
-        scope.launch {
-            uiState.value = ConnectionUiState.Failed(
-                "The page could not be loaded from $address. The unit may be off or " +
-                    "out of range.",
-            )
-        }
-    }
-
     // ------------------------------------------------------------- the attempt loop
 
     private fun startAttempt(

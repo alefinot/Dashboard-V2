@@ -173,7 +173,7 @@ fun VehicleScreen(
             Spacer(Modifier.height(8.dp))
             Text(
                 "A card is a vehicle, not an address. Pick one and the app reaches for " +
-                    "that dashboard; a vehicle that has never been seen on this network " +
+                    "that dashboard; a vehicle that has never been seen by a scan " +
                     "is still a vehicle.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),

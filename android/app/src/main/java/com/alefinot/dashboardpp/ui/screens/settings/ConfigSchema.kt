@@ -7,10 +7,11 @@ import com.alefinot.dashboardpp.ble.BleJson
  *
  * `config.get` answers with values and nothing else: it says `TARGET_FPS = 60` but
  * not that the key is an integer from 5 to 120, called "Target Refresh Rate", whose
- * box counts in FPS. That description lives in two places on the unit — the row
- * table in `src/config.cpp` (kind, band, default, buffer) and the form map in
- * `src/webui.html` (label, group, unit, options) — and `scripts/gen_config_schema.py`
- * joins them into this file's input, `assets/config_schema.json`.
+ * box counts in FPS. That description lives in two places — the row table in
+ * `src/config.cpp` (kind, band, default, buffer) and the presentation tree in
+ * `scripts/config_schema_presentation.json` (label, group, unit, options), which
+ * survived the unit's page being deleted — and `scripts/gen_config_schema.py` joins
+ * them into this file's input, `assets/config_schema.json`.
  *
  * So this class is a loader, not a list of settings someone typed out. A new
  * firmware row appears here the next time the generator runs, and
@@ -61,7 +62,7 @@ data class SchemaItem(
     val control: RowControl,
     val label: String,
     /**
-     * True when the label came from the key, not from the WebUI's form map — which
+     * True when the label came from the key, not from the presentation tree — which
      * is the schema's way of saying "nobody wrote a name for this one". The row is
      * still editable; it is just worth a human's attention.
      */

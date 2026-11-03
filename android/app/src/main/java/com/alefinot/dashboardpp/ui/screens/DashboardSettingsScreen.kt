@@ -382,9 +382,7 @@ fun DashboardSettingsScreen(
             item {
                 Text(
                     if (searching) {
-                        "${shown.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} of " +
-                            "${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} settings " +
-                            "match \"$query\""
+                        SettingsLayout.searchSummary(groups, query, state.advanced)
                     } else {
                         "${groups.size} groups · ${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} " +
                             "settings · tap a group to open it"
@@ -398,11 +396,6 @@ fun DashboardSettingsScreen(
 
             for (group in shown) {
                 val groupOpen = isOpen(group.id)
-                val hits = group.cards.sumOf { card ->
-                    if (SettingsLayout.cardShown(card, query, state.advanced))
-                        SettingsLayout.rowsOf(card, query, state.advanced).size else 0
-                }
-                val total = group.cards.sumOf { it.items.size }
                 // One `details` per group: the summary band and its cards are a single
                 // 12 dp sheet, the way the unit's page draws them. Only the open group is
                 // built, so a 78-row group costs what opening it costs and nothing more.
@@ -418,7 +411,7 @@ fun DashboardSettingsScreen(
                         HudAccordionHeader(
                             title = group.title,
                             badge = groupIcon(group.icon),
-                            meta = if (total == 0) "no settings" else "$hits of $total",
+                            meta = SettingsLayout.groupMeta(group, query, state.advanced),
                             open = groupOpen,
                             onClick = {
                                 if (searching) {

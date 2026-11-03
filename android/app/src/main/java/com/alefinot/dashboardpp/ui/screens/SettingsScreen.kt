@@ -182,8 +182,8 @@ fun SettingsScreen(
             CardHead("Recorded Drives")
             Text(
                 "One CSV per ESP power session, written to the app's own storage " +
-                    "(no SD-card permission). The recorder samples once a second and " +
-                    "stands down while the Web UI is on screen. Open drives are never " +
+                    "(no SD-card permission). The recorder samples once a second while " +
+                    "the link is up and stops when it drops. Open drives are never " +
                     "deleted. Share a trip as CSV or GPX from the Trips tab.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),

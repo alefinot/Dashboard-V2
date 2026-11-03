@@ -5,8 +5,9 @@ import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore.SettingsState
 /**
  * What the settings page shows, and in what order — the decisions, not the pixels.
  *
- * The rules are the unit's own page's rules, copied deliberately. The page a driver has
- * been using for a year (src/webui.html) is a search box over one long list; the app has
+ * The rules are the unit's own page's rules, copied deliberately. The page a driver had
+ * been using for a year (`src/webui.html`, deleted with the Web UI - recoverable with
+ * `git show HEAD^:src/webui.html`) was a search box over one long list; the app has
  * the same list, and an owner who has learned where `FUEL_EXC_RES_OHM` lives on the unit
  * should land in the same place on the phone. Two of those rules are load-bearing enough
  * to be written down as code rather than left to a screen:
@@ -32,7 +33,7 @@ import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore.SettingsState
  */
 object SettingsLayout {
 
-    /** The WebUI's breakpoint (`minmax(min(240px,100%),1fr)`): two cards from 600 dp. */
+    /** The page's breakpoint (`minmax(min(240px,100%),1fr)`): two cards from 600 dp. */
     const val WIDTH_TWO_COLUMNS = 600
 
     /** Three cards from 900 dp, where a tablet's landscape width lands. */
@@ -169,8 +170,9 @@ object SettingsLayout {
         // firmware exactly where it was. The buttons and their answers belong to the control
         // (`FirmwareUpdateControl`); this line is only about what can go wrong.
         "firmwareUpdate" -> "The new image is written to the unit's spare flash slot and put in " +
-            "charge only after it passes the unit's own checks. A cancelled, interrupted or " +
-            "refused install leaves the unit running what it ran before."
+            "charge only after it passes the unit's own checks. Pick firmware.bin from a build " +
+            "or a release; a cancelled, interrupted or refused install leaves the unit running " +
+            "what it ran before."
         else -> null
     }
 
@@ -217,6 +219,55 @@ object SettingsLayout {
     /** Would a search for [query] find anything in this group? */
     fun groupHasHits(group: SchemaGroup, query: String, advanced: Boolean): Boolean =
         group.cards.any { cardShown(it, query, advanced) }
+
+    /**
+     * What a group header says on its right: "18 of 18" while browsing, "4 of 18" under a
+     * query.
+     *
+     * A card with no rows of its own - the firmware installer - matches on its title and
+     * nothing else, so counting rows would print "0 of 18" above a group whose open card is
+     * exactly what the query asked for. It is counted as one card instead: the row count is
+     * a claim about settings, and an install is not a setting.
+     */
+    fun groupMeta(group: SchemaGroup, query: String, advanced: Boolean): String {
+        val total = group.cards.sumOf { it.items.size }
+        if (total == 0) return "no settings"
+        val cards = group.cards.filter { cardShown(it, query, advanced) }
+        val hits = cards.sumOf { rowsOf(it, query, advanced).size }
+        val actions = cards.count { it.items.isEmpty() }
+        if (actions > 0 && hits == 0) return if (actions == 1) "1 card" else "$actions cards"
+        return "$hits of $total"
+    }
+
+    /**
+     * The line above the accordion under a query: what the box found.
+     *
+     * Rows and title-only cards are named separately, and the row total is left out as soon
+     * as a card is part of the answer - "1 of 159 settings" would be a denominator the page
+     * shows nowhere else, and an install is not a setting. Rows alone keep the page's own
+     * "N of M settings".
+     */
+    fun searchSummary(groups: List<SchemaGroup>, query: String, advanced: Boolean): String {
+        val total = groups.sumOf { g -> g.cards.sumOf { it.items.size } }
+        val cards = groups.sumOf { g ->
+            g.cards.count { it.items.isEmpty() && cardShown(it, query, advanced) }
+        }
+        val hits = groups.sumOf { g ->
+            g.cards.sumOf { card ->
+                if (cardShown(card, query, advanced)) rowsOf(card, query, advanced).size else 0
+            }
+        }
+        return when {
+            cards == 0 -> "$hits of $total settings match \"$query\""
+            hits == 0 ->
+                if (cards == 1) "1 card matches \"$query\"" else "$cards cards match \"$query\""
+            else -> {
+                val rowPart = if (hits == 1) "1 setting" else "$hits settings"
+                val cardPart = if (cards == 1) "1 card" else "$cards cards"
+                "$rowPart and $cardPart match \"$query\""
+            }
+        }
+    }
 
     /**
      * A group with no hits is hidden while a query is active — the unit page's

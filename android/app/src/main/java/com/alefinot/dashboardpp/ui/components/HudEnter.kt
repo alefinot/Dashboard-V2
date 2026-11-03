@@ -49,7 +49,7 @@ val LocalEnterActive = staticCompositionLocalOf { true }
  * every pass.
  *
  * The content is composed only while the entrance is up. Where the content has to
- * exist the whole time - a list with a scroll position to keep, a web page with a
+ * exist the whole time - a list with a scroll position to keep, a pager page with a
  * frame to keep - [PageFade] does the same motion without taking the content away.
  */
 @Composable
@@ -101,9 +101,9 @@ fun HudEnter(
 
 /**
  * The same `pageFadeIn` for content that stays composed while it fades: the trips
- * list, which would otherwise lose its scroll position on every visit, and the
- * retained web page, which cannot be torn down and rebuilt without losing its frame
- * (the black hole app 21 removed).
+ * list, which would otherwise lose its scroll position on every visit, and the pager,
+ * which cannot be torn down and rebuilt without losing its frame (the black hole app
+ * 21 removed).
  *
  * [HudEnter] composes its content only once the entrance starts; here the content is
  * always composed and only its alpha and offset move. One motion, one curve, one

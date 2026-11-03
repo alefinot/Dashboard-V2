@@ -374,6 +374,43 @@ class SettingsLayoutTest {
         )
     }
 
+    /**
+     * The counts say what the box found. A card with no rows of its own (the firmware
+     * installer) is not a setting and is not counted as one, but a group whose only hit is
+     * that card must not read "0 of 18" above it either - the card the query named is open
+     * right there.
+     */
+    @Test
+    fun theCountsSayWhatTheQueryFound() {
+        val g = SchemaGroup(
+            "sys", "System & General",
+            listOf(
+                SchemaCard("General", listOf(row("ADV_MODE"))),
+                SchemaCard("Firmware", emptyList(), widget = "firmwareUpdate"),
+            ),
+        )
+        assertEquals(
+            "browsing lost the group's row count",
+            "1 of 1",
+            SettingsLayout.groupMeta(g, "", true),
+        )
+        assertEquals("1 of 1", SettingsLayout.groupMeta(g, "adv", true))
+        assertEquals(
+            "a title-only card was counted as zero settings",
+            "1 card",
+            SettingsLayout.groupMeta(g, "firmware", true),
+        )
+        assertEquals(
+            "the summary counted a rowless card as a row, or counted a whole group instead of its hits",
+            "1 card matches \"firmware\"",
+            SettingsLayout.searchSummary(listOf(g), "firmware", true),
+        )
+        assertEquals(
+            "1 of 1 settings match \"adv\"",
+            SettingsLayout.searchSummary(listOf(g), "adv", true),
+        )
+    }
+
     // -----------------------------------------------------------------------
     // The accordion: one group open, and a search that opens what it finds
     // -----------------------------------------------------------------------

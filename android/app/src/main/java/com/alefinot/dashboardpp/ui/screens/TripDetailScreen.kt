@@ -330,8 +330,7 @@ private fun SummaryGrid(s: TripSummary) {
     if (s.gaps > 0) {
         Text(
             "Gaps are stretches longer than 10 s with no sample — the app was " +
-                "closed, the Wi-Fi dropped, or the Web UI was open on the phone " +
-                "and the logger stood down.",
+                "closed, the link dropped, or recording was switched off.",
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )

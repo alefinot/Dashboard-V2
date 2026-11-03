@@ -195,8 +195,8 @@ fun AppShell(
 
     val pager = rememberPagerState(initialPage = BarLayout.homePage, pageCount = { BarLayout.pages.size })
     val scope = rememberCoroutineScope()
-    // The settled page. The bar's selection, which screen is `active`, and whether
-    // the Web UI may poll all follow this one value.
+    // The settled page. The bar's selection and which screen is `active` both follow
+    // this one value.
     val page = BarLayout.pages.getOrElse(pager.currentPage) { BarLayout.home }
 
     // A cover's one action: go to the page that can do something about it. It moves the
@@ -215,17 +215,17 @@ fun AppShell(
     // only on the vehicle page, because a cover has to name the vehicle it cannot reach -
     // and the store is DataStore-backed, so there is no synchronous read to borrow. The
     // collection is keyed to the view model and the shell only recomposes when a card is
-    // added or edited, which is rare, cheap (the retained Web view and the pager keep their
-    // state), and always something the user did on the vehicle page a moment earlier.
+    // added or edited, which is rare, cheap (the pager keeps its state), and always
+    // something the user did on the vehicle page a moment earlier.
     val garageCards = remember(connection) { connection.vehicleCards() }
     val garageList by garageCards.collectAsStateWithLifecycle(initialValue = emptyList())
     val coverVehicleName = garageList.firstOrNull { it.id == connection.selectedVehicleId.value }?.name
 
-    // Recording needs a device to sample, firmware with the snapshot endpoint, and the
+    // Recording needs a device to sample, firmware that answers the snapshot RPC, and the
     // user's switch - all three, and the first of them is why the service never runs
     // in the offline shell (see ShellRules.recorderWants). It also needs to know whose
     // drive this is, which is what the recorder writes as the file's `#vehicle=` line:
-    // the snapshot endpoint says nothing about who answered, so the app has to say it.
+    // a telemetry frame says nothing about who sent it, so the app has to say it.
     LaunchedEffect(address, conn?.vehicleId, tripsAvailable, recordingEnabled) {
         // The recorder's owner is resolved once, here, and handed over whole: the service
         // cannot ask a pushed frame who sent it, and a trip file outlives the link that
@@ -254,8 +254,8 @@ fun AppShell(
     // settled page shows a half-drawn page sliding in. "Is it the settled page" decides
     // who may put requests on the one link and which page's own 1 s tick runs - that one
     // has to wait for the settle, or two pages would be reading the same GATT connection
-    // at once (the recorder stands down while the live page samples, and the settings
-    // page asks for its mirror only while it is the page on screen). The viewport answer
+    // at once (the settings page asks for its mirror only while it is the page on screen,
+    // and the performance monitor reads diagnostics the same way). The viewport answer
     // is derived: recomputed as the pager moves, but it only changes the moment it flips,
     // so a swipe does not recompose this screen.
     // The bar: the selected slot's glass sheet is measured from the icons, and it

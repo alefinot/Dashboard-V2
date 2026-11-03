@@ -57,14 +57,14 @@ import kotlin.math.PI
 import kotlin.math.cos
 
 /**
- * The breathing half of a live recording state. The page defines `pulseGlow`
+ * The breathing half of a live recording state. The page defined `pulseGlow`
  * (`src/webui.html:70` - `box-shadow: 0 0 12px rgba(0,229,255,.2)` at the ends of
- * the keyframe, `0 0 24px rgba(0,229,255,.5)` in the middle) and, on this reading
- * of the file, never attaches it to a selector: the WebUI has no recording
- * indicator to animate. The app has that state, so the chip borrows the page's own
- * keyframe instead of inventing a motion. The page sets no duration for it, because
- * nothing uses it; 2 s is the app's number, chosen so one breath spans two 1 Hz
- * samples - slow enough to read as a pulse and not as a blink.
+ * the keyframe, `0 0 24px rgba(0,229,255,.5)` in the middle) and, on the last
+ * reading of that file before it was deleted, never attached it to a selector: the
+ * page had no recording indicator to animate. The app has that state, so the chip
+ * borrows the page's own keyframe instead of inventing a motion. The page set no
+ * duration for it, because nothing used it; 2 s is the app's number, chosen so one
+ * breath spans two 1 Hz samples - slow enough to read as a pulse and not as a blink.
  */
 private const val CHIP_PULSE_MS = 2000L
 
@@ -77,10 +77,10 @@ private const val CHIP_PULSE_MS = 2000L
 private const val CHIP_PULSE_STEP_MS = 60L
 
 /**
- * The native live view: the same data the WebUI renders, drawn natively so the
- * app can chart and log it (trip recording plan §5). It is read-only by design —
- * configuration stays in the Web UI, so there is only ever one writer of the
- * ESP's state and no second implementation of the config logic to drift.
+ * The native live view: the same data the unit's deleted web page rendered, drawn
+ * natively so the app can chart and log it (trip recording plan §5). It is read-only
+ * by design - configuration belongs to the settings page, so there is only ever one
+ * writer of the unit's state and no second implementation of the config logic to drift.
  *
  * It reads [TripRuntime] and nothing else. That used to be an optimisation - "one
  * poller only" - and now it is the whole design: the unit pushes one frame a second on
@@ -377,8 +377,8 @@ private fun SnapshotCells(s: Snapshot) {
                 modifier = Modifier.fillMaxWidth(),
             )
         },
-        // "amb" is the ambient LIGHT sensor (raw value, no unit) — the Web UI
-        // shows it as a bare reading, so this does too. Not a temperature.
+        // "amb" is the ambient LIGHT sensor (raw value, no unit) — the page showed
+        // it as a bare reading, so this does too. Not a temperature.
         { StatCell("LIGHT", s.amb.toString(), modifier = Modifier.fillMaxWidth()) },
     )
     RowOf(

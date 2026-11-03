@@ -33,7 +33,6 @@ import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.theme.HudColors
-import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
 
@@ -92,15 +91,6 @@ internal fun FirmwareUpdateControl(
     }
 
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            "sends a firmware file (firmware.bin from a build or a release) to the unit over " +
-                "Bluetooth. It is written to the unit's spare flash slot: the unit keeps running " +
-                "what it runs now until its own checks pass, then restarts into the new one.",
-            style = HudeCfgHelp(),
-            color = HudColors.TextDim,
-            modifier = Modifier.fillMaxWidth(),
-        )
-
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
