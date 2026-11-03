@@ -549,7 +549,7 @@ The complete set as implemented in `src/bt_rpc.cpp`:
 A unit built from this tree **can be updated over Bluetooth**, by the Android app or by
 any central that speaks the frames below; the HTTP fallback is gone with the Wi-Fi stack.
 `src/bt_ota.cpp` is the install state machine, `src/bt.cpp` routes the raw OTA-characteristic
-writes into it (copy into a 16-slot ring on the Bluedroid callback task, flash from `BtTask`
+writes into it (copy into an 8-slot ring on the Bluedroid callback task, flash from `BtTask`
 — stalling the GATT callback task stalls the whole stack, including the link the phone is
 still using), and `src/bt_rpc.cpp` serves its four methods.
 
@@ -564,6 +564,7 @@ still using), and `src/bt_rpc.cpp` serves its four methods.
 Windows and limits, each one decided on purpose:
 
 - **120 s of silence closes an install** (`reason: "stalled"`). It was 60 s until 2026-11-02, and on the first bench install after that window was added the unit threw away a healthy transfer (162,192 of 1,590,912 B accepted, and an unusable slot) while the phone sat on its own 60 s resume deadline — the two ends were closing the same door from different rooms. The app carries the same number (`OtaController.RESUME_WINDOW_MS`) so its wording stays true.
+- **A client is allowed to ask for a faster link, and this app does** (`a7e9f6bb`): while the image is flowing the phone calls Android's `requestConnectionPriority(CONNECTION_PRIORITY_HIGH)` and releases it when the writes stop. Nothing on the unit changes for it, and it is a request rather than a guarantee — the controller gives what it can. Matched runs on the bench: **132.8 s without the request, 76.5 s with it**. A client that never asks still finishes; it just waits twice as long.
 - **15 min** is the ceiling on a whole install — the escape hatch for a client that opens a session and never sends `ota.end`.
 - An image must be **≥ 4 KiB** (smaller is a truncated download or a text file) and **≤ the app slot** (`0x1D0000` = 1,900,544 B). That is why the build gate is **1.80 MB**: a normal build must never ask a question this gate answers with "no".
 - The bytes go to the **inactive** app slot; the running firmware is untouched until the image verifies, and only then does `otadata` flip (`esp_ota_set_boot_partition`). A failed install leaves the unit booting exactly what it booted before — no half-written slot, and no way to brick a dashboard from a phone.
@@ -571,7 +572,8 @@ Windows and limits, each one decided on purpose:
 - While an install is open: the display task replaces the dashboard with the install screen, `otaMemReleaseRequested` tells it to **hand back the panel's flash-resident buffers** for the window — `ensureSpeedSprite()` in `ui.cpp` refuses to build while the flag is up, and `processOtaMemRelease()` frees the sprite and the 120 px VLW font that already exist (bench 2026-11-03: heap 40.7 KB before the window, 48.5 KB at `begin`; heartbeat `otaReq=1 sp=0`). A refused install gets them back — `otaFail()` clears the pair and the dashboard's next frame rebuilds them (post-failure `maxAlloc` came back 13.8 KB against 31.7 KB before the window: that rebuild costs fragmentation, so it happens once per *failed* install, not once per attempt). The RPC plane answers **only `ping` and `ota.*`** — everything else is `ota_in_progress` (the gate at the head of `btRpcHandle()`) — and the panel's hold-to-restart is refused while bytes are going into flash (`otaFlashWriteActive()` inside `processOtaScreenButton()`), because a reset mid-write is exactly the half-written slot this whole flow exists to avoid. A client can always ask "are you alive?" while 1.5 MB go past.
 - **The producers are parked.** From the moment a session opens until it is accepted, refused or timed out, `otaQuietActive` holds `loop()` at its own top: no telemetry snapshot, no clock refresh, no dashboard draw, no night-mode switch, no CPU scaler, no factory-reset button watch — and the sensor task waits at its own loop top, because it carries 6–8 KB of stack and produces data no update screen will ever show. The update screen ticks at **120 ms** rather than 60 frames a second. Measured twice on the bench with the same 1,590,912 B file: **2:23 and 2:26** — parking changed the throughput not at all, because that rate is the link's round trip and not the dashboard's — but the loop stopped competing for the heap and the flash cache, the handoff ring went from full to **2 of 15** usable slots, and a stale dashboard can no longer be drawn underneath an update frame. What does still run inside the window: the memory release above, the panel's frames and progress bar, the trip-button gesture (hold 3 s to force a restart, refused while flash is being written), and the BLE liveness guard. A refused install closes the window and everything comes back on its own.
 - **The window is not allowed to look like a stall.** The heartbeat's `maxFrame=`/`sMaxGap=` watches and the `STALL: loop gap` line are re-seeded by the display task on the window's own way out (it is the task that was parked): before this, one bench install printed **1,064 `STALL` lines** during the transfer and then a **181 s `maxFrame`** in the next heartbeat — numbers that described a parked loop, not a fault.
-- **Measured shape of a finished install** (bench 2026-11-03, 1,590,912 B, MTU 517, chunk 496 B): 2:23–2:26 wall clock, ring high-water **2/15** slots, longest gap between drains **56 ms**, CRC-32 plus `esp_ota_end()` verify **441 ms**, then `image accepted` and a reboot into the other slot (`lastRebootTag='ota'`). A failure of the same path was measured too: kill the phone mid-transfer and the unit reports `stalled` at 120 s, releases the slot, draws the failure frame, and restores the dashboard — sprite and font included — 15 s later.
+- **Measured shape of a finished install** (bench 2026-11-03, `dpp-a53.bin` = 1,593,664 B, MTU 517, chunk 496 B, app `versionCode 57`): **75.4 s / 76.8 s / 79.0 s** wall clock from `START` to *installed*, three runs, no stall and no retry — 3,214 ATT writes in ~74 s of transfer, **42–44 writes/s ≈ 20–21 KB/s**. On the unit: `esp_ota_begin` **5.94–5.99 s** (390 sectors erased up front, before a byte moves), `esp_ota_write` **3,214 calls, mean 3,108 µs, max 15,371 µs, total 9.99 s**, which is ~5.9 µs per byte — page programming, not per-call overhead (~230 µs of it); handoff ring high-water **2 of 7** usable slots, longest gap between drains **123 ms**, longest gap between arrivals **135 ms**; CRC-32 plus `esp_ota_end()` verify **507–510 ms**. The install prints all of it (`OTA: open+erase …` when the slot opens, `OTA: flash … writes mean … max … total …; open+erase …; longest … between arrivals` when it closes, `OTA: ring high-water N/7 frames, longest Nms between drains`), and the ring pair is in the `perf` reply as `ring_high` / `ring_gap_ms` so a soak run leaves those numbers behind without an install failing. What moved that wall clock from the 2:23–2:26 measured for 2.0.0 is one phone-side change: the app asks Android for the fast connection interval for the duration of the chunk phase (`requestConnectionPriority(CONNECTION_PRIORITY_HIGH)` in `ble/OtaController.kt`, `a7e9f6bb`) — 132.8 s → 76.5 s mean on matched runs. Two candidates were measured and reverted: phone-side write pipelining (`850c9ae2` → `f7274ad3`: 140.6 s, and 0-byte sessions) and a unit-side byte FIFO with batched writes (`17f95096` → `5d890308`: 1,781 writes, flash 9.99 → 9.33 s, wall 76.2 / 78.7 s, FIFO at 81 % of depth). Both stay in the history with their numbers.
+- **Where the wall clock still is.** At MTU 517 the chunk is 496 B and the air rate measures 20–21 KB/s, so 60 s carries 1.23 MB — under this build's 1,594,112 B image. The flash side is not the slack: ~9.9 s of page programming sits at the physical floor, and ~6 s of up-front erase is the only sizeable block that is *not* on the data path's critical round trip. Anything below ~70 s means air-side work (connection interval, write scheduling) or a protocol change that moves the erase earlier (`ota.arm`-style, when the file is picked) — neither is in this build.
 
 **No signature, and no version gate on this path.** The unit checks that the image fits, that
 the bytes match the CRC-32 the client declared, and that what lands in the slot is a valid app
@@ -974,7 +976,7 @@ Slot 3 draws the unit's configuration in Compose instead of loading the unit's w
 - **Cards flow.** One column below 600 dp, two from 600, three from 900 — the unit page's own breakpoints, 900 being where a tablet's landscape width lands. Cards fill their row in schema order, and a card that carries an action widget (the noise bench, the odometer setter, the firmware panel) takes a row to itself rather than being squeezed into a third of a tablet.
 - **Writes go to the unit as you type, and the unit decides what that cost.** An edit is sent after a 600 ms debounce (the unit's own page autosaves on a 2 s timer; the app is quicker because `SAVE` is sitting in its bar), and `config.set` applies the value live **and** writes it to flash in the same call. When the flash write fails the unit says so — `nvsErrors` — and the row is marked *in RAM only*: it is on the dashboard until it reboots, and the row says that rather than pretending otherwise. `SAVE` is therefore not a commit button; it is a flush — write everything still waiting out its debounce, right now — and its note counts rows written and rows that never reached the unit separately, because a row the unit refused has already reverted and there is nothing to resend. `pending` is measured in rows, not in edits, so a slider dragged through ten values is one thing to save.
 - Rows the unit marks `reboot_required` set `rebootPending`, which is what arms the `RESTART NOW` prompt; `RESTART`, `FACTORY RESET`, `BACKUP` and `RESTORE` sit in the sticky bottom bar because they are not attached to any one row (`reboot`, `factory.reset`, and a `config.get` / `config.set` pair for the backup, its keys split into as many messages as the unit's 8 KiB reassembly ceiling allows, less a 128-byte reserve for the envelope).
-- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The **firmware card drives an install over the link** (`ui/screens/FirmwareOtaControl.kt`): it names the running unit FW / ESP IDF / app image, takes a file picked with Android's Storage Access Framework, prints its real name, size, CRC-32 and the `DPPVER=x.y.z` marker read out of the bytes, refuses to send an image whose CRC it could not compute, asks for a second press (`CONFIRM FLASH`) when the file claims the version already installed, then pushes it and reports progress in bytes and KB/s, the `off` the unit last ACKed, and the reason when the unit refuses (`image too large`, `stalled`, `crc_mismatch`, `ota_in_progress`, …). A picked file the unit has never seen is checked against the unit's own version **before** anything is sent, because the unit itself has no version gate (see *Firmware over the link*). The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
+- **Actions live in the card they belong to**, where the unit page puts them: trip reset, odometer set, ambient (photoresistor) capture, the noise bench. The **firmware card drives an install over the link** (`ui/screens/FirmwareOtaControl.kt`): it names the running unit FW / ESP IDF / app image, takes a file picked with Android's Storage Access Framework, prints its real name, size, CRC-32 and the `DPPVER=x.y.z` marker read out of the bytes, refuses to send an image whose CRC it could not compute, asks for a second press (`CONFIRM FLASH`) when the file claims the version already installed, then pushes it and reports progress in bytes and KB/s, the `off` the unit last ACKed, and the reason when the unit refuses (`image too large`, `stalled`, `crc_mismatch`, `ota_in_progress`, …), with elapsed seconds and the unit's write count on the finished card (`33899a8d`) so an install can be judged against the last one instead of against a stopwatch. A picked file the unit has never seen is checked against the unit's own version **before** anything is sent, because the unit itself has no version gate (see *Firmware over the link*). The two "match to reference" calibrations (`tempCalibrate`, `batteryCalibrate`) draw no button, because the unit's version subtracts a live reading this page does not have; they name the offset row that is editable instead.
 - The **performance monitor** is one more card in the accordion (`ui/screens/settings/PerfMonitorScreen.kt`), reachable by search like any other section, and its live tick runs only while it is the section in front of the user.
 
 `ui/screens/settings/SettingsLayout.kt` holds those rules as pure functions — open/close, search semantics, column count, card packing, advanced gating, which widget a card carries — with the unit page's behaviour as the test oracle (`SettingsLayoutTest`). `ui/screens/settings/ConfigStore.kt` holds the write model (debounce, mirror, pending, flush), tested in `ConfigStoreTest`.
@@ -1617,6 +1619,60 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### V2.0.1 — a firmware push takes 76 s, not 145 s (firmware `src/` + app; firmware **2.0.0 → 2.0.1**, app **2.0.0/57 → 2.0.1/58**)
+
+One number moved: the bench install of this build's image (**1,594,112 B**, pushed as
+`dpp-a53.bin` = 1,593,664 B payload) went from **2:23–2:26** at 2.0.0 to **75.4 s / 76.8 s /
+79.0 s** — three clean runs, no stall, no retry, the app reporting 100 % and the unit booting
+into the other slot. One phone-side change carries that gain; the rest of the release is heap,
+reliability and measurement discipline.
+
+- **The phone asks for the fast connection interval while the image is flowing** (`a7e9f6bb`,
+  `ble/OtaController.kt`): `requestConnectionPriority(CONNECTION_PRIORITY_HIGH)` for the duration
+  of the chunk phase, released when it ends. Matched runs on the same build: **132.8 s → 76.5 s**
+  mean, ~1.7×. The air round trip was the wall, not the unit.
+- **Install meters, on both ends.** The firmware card now prints elapsed seconds, KB/s and the
+  unit's write count (`33899a8d`), so an install change is judged on the card rather than on a
+  stopwatch. On the unit, `OTA: open+erase …` fires when the slot opens, `OTA: flash N writes mean
+  … max … total …; open+erase …; longest … between arrivals` when it closes (`26eb1d64`), and the
+  handoff ring reports into the `perf` reply as `ring_high` / `ring_gap_ms` (`be25b86a`) so a soak
+  run leaves its numbers behind without an install failing.
+- **Heap given back on the unit**: the handoff ring is trimmed from 15 slots to 8 with the ACK
+  window trimmed to match, printed at `begin` (`0f443c0a`), `config.set` reads its JSON body in
+  place instead of copying it, and the display assets are handed back for the install window
+  (`7154fccb`) — heap gate phases 0–2 (`be25b86a`, `34cfc6d7`, `c39958ed`, `483ee032`). Static
+  RAM for the build falls with it: **79,436 B (24.2 %) at 2.0.0 → 73,380 B (22.4 %)**, 6 KB back
+  where the install window needs it.
+- **A stalled install resumes where the unit really is** (`d4ed258d`): the app reseats on the
+  offset the unit last confirmed on flash, which is what makes a re-stated `ota.begin` the resume
+  handshake the manual claims it is. `2b488b3b` stops the install-status query from growing its
+  own repeating timer, and `209878cd` restyles the Performance Monitor into cards and bars.
+- **Two speedups measured and thrown away.** Phone-side write pipelining (several ATT writes
+  outstanding at once) gave **140.6 s** on one run and 0-byte sessions on another — reverted
+  (`850c9ae2` → `f7274ad3`). A unit-side 4 KB byte FIFO with batched flash writes halved the
+  `esp_ota_write` count (3,214 → 1,781) and the flash total (9.99 → 9.33 s) and changed the wall
+  clock not at all (**76.2 / 78.7 s**, inside the baseline spread), while running the FIFO at 81 %
+  of depth with a 26.7 ms worst-case cache-off window — reverted (`17f95096` → `5d890308`).
+- **Why this is not below 60 s yet**: at MTU 517 the chunk is 496 B and the measured air rate is
+  **42–44 writes/s ≈ 20–21 KB/s**, so 60 s carries 1.23 MB — less than a 1.59 MB image. The flash
+  side is at its floor: `esp_ota_write` costs ~5.9 µs per byte (page programming) with only ~230 µs
+  of per-call overhead, and `esp_ota_begin` erases 390 sectors (**5.94–5.99 s**) before a byte
+  moves. The remaining candidates are air-side, or taking that erase off the critical path
+  (arm the slot when the file is picked) — both are protocol/phone work, not this release.
+- **Release assets** (rule 27): `firmware.bin` (**1,594,112 B**, image marker `DPPVER=2.0.1`
+  present at `0x24240`; build footprint **1,571,891 B of the 1,900,544 B app slot (82.7 %)**, RAM
+  **73,380 B of 327,680 B (22.4 %)**; the build gate stays 1.80 MB) and `app-debug.apk`
+  (**11,650,128 B**, `versionCode 58`, `versionName 2.0.1`, built by `gradlew.bat assembleDebug`). **No `.sig` asset** — no device can verify one. Unit tests green:
+  **436 tests, 0 failures**; `python scripts/gen_config_schema.py --check` green (the bundled
+  schema carried `firmware: 1.5.1` while the firmware said 2.0.0 — regenerated, now 2.0.1). Bench
+  unit flashed over USB (COM7, layout repaired by `scripts/fix_upload_layout.py`, otadata at
+  `0x1D000`, no write at `0xE000`) and driven through installs on the bench.
+
+Not in this release, deliberately: no signing anywhere (rule 3), no HTTP updater, no cloud pull on
+the unit, no `ota.arm`-style erase-ahead, no NVS layout change (`CFG_VER` unchanged — a 2.0.0
+backup restores into a 2.0.1 unit), and no change to the frame types or method names in
+`src/bt_proto.h` / `BleProtocol.kt`.
 
 ### V2.0.0 — the unit has exactly one door: a phone, over Bluetooth (firmware `src/` + app; firmware **1.5.1 → 2.0.0**, app **1.6.0/49 → 2.0.0/50**)
 

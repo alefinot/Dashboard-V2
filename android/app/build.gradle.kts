@@ -12,8 +12,8 @@ android {
         applicationId = "com.alefinot.dashboardpp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 57
-        versionName = "2.0.0"
+        versionCode = 58
+        versionName = "2.0.1"
     }
 
     // Distribution decision (see Dashboard-Android-App-Implementation-Plan.md §15):
