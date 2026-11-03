@@ -1,5 +1,7 @@
 package com.alefinot.dashboardpp.ble
 
+import kotlinx.coroutines.delay
+
 /**
  * The firmware-install transfer, in the parts that can be checked without a radio.
  *
@@ -199,6 +201,39 @@ fun nextSegment(total: Int, chunk: Int, off: Int): OtaSegment? {
  * is behind.
  */
 fun adoptBeginOkOffset(sentTo: Int, eventOff: Int): Int = if (sentTo == 0) eventOff else sentTo
+
+/**
+ * The unit's position in the image, read until it stops moving.
+ *
+ * `ota.status` answers with the bytes BtTask has drained into flash, not with the bytes the radio
+ * delivered: the unit's handoff ring can be holding several frames of everything the phone has
+ * already sent, and a drain pass takes up to ~125 ms on this bench (`OTA: ... longest Nms between
+ * drains`). One reading taken during a hiccup can therefore sit behind reality by a frame or more,
+ * and continuing from it re-sends frames the unit already accepted — which the unit answers with
+ * `offset_mismatch`, killing the install (bench, 2026-11-04: `write at 396304, unit expects 396800`
+ * at 396800 of 1593664 bytes, after a single `ota.status` answered 496 B short).
+ *
+ * So keep reading while the number still moves, and believe it once it stands still. Returns null if
+ * the unit never answered; if it is still moving when the attempts run out, the newest reading is
+ * returned — that is the closest thing to the truth available, and it errs on the side of not
+ * re-sending bytes the unit has.
+ */
+suspend fun settledOffset(
+    read: suspend () -> Int?,
+    attempts: Int = 4,
+    settleMs: Long = 350L,
+): Int? {
+    var last: Int? = null
+    var tries = 0
+    while (tries < attempts) {
+        tries++
+        val off = read() ?: return last
+        if (last != null && off == last) return off
+        last = off
+        if (tries < attempts) delay(settleMs)
+    }
+    return last
+}
 
 /** One message the unit sends about an install (`BT_F_OTA` on the RPC characteristic). */
 sealed interface OtaEvent {

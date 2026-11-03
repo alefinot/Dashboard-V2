@@ -332,9 +332,13 @@ object OtaController {
                     // busy unit (flash writes stall both CPUs) can hold the callback past the
                     // timeout with the radio perfectly healthy. Ask the unit where it actually is:
                     // its answer is the offset to continue from, which covers both the write that
-                    // landed late and the one that never left the phone.
-                    val status = api.otaStatus()
-                    if (writeFailures >= MAX_WRITE_FAILURES || !status.ok ||
+                    // landed late and the one that never left the phone. The answer is read until it
+                    // stops moving - see `settledOffset`.
+                    val unitOff = settledOffset(read = {
+                        val s = api.otaStatus()
+                        if (s.ok) (BleJson.int(s.fields, "off") ?: 0).coerceIn(0, img.size) else null
+                    })
+                    if (writeFailures >= MAX_WRITE_FAILURES || unitOff == null ||
                         link.state.value !is BleLinkState.Ready
                     ) {
                         val live = link.state.value is BleLinkState.Ready
@@ -355,9 +359,13 @@ object OtaController {
                         }
                         return
                     }
-                    val off = (BleJson.int(status.fields, "off") ?: nextOff).coerceIn(0, img.size)
-                    nextOff = off
-                    tracker.apply(OtaEvent.Ack(off))
+                    // Continue exactly where the unit says it is, backwards or forwards: that number
+                    // is the first byte the unit still needs, and it is the only offset the unit's own
+                    // check accepts. Continuing from a stale, too-low reading re-sends frames the unit
+                    // already has, and it answers that with `offset_mismatch` (bench, 2026-11-04,
+                    // `write at 396304, unit expects 396800`).
+                    nextOff = unitOff
+                    tracker.apply(OtaEvent.Ack(unitOff))
                     lastAckMs = now()
                     publish(tracker, img)
                     delay(WRITE_RETRY_DELAY_MS)
@@ -397,8 +405,11 @@ object OtaController {
                     // No ACK for a while. Ask rather than guess: the answer either shows real
                     // progress (ACK frames simply lag the writes) or shows the unit is behind
                     // what the phone thinks it sent.
-                    val status = api.otaStatus()
-                    if (!status.ok) {
+                    val unitOff = settledOffset(read = {
+                        val s = api.otaStatus()
+                        if (s.ok) (BleJson.int(s.fields, "off") ?: 0).coerceIn(0, img.size) else null
+                    })
+                    if (unitOff == null) {
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Paused,
@@ -409,8 +420,10 @@ object OtaController {
                         }
                         return
                     }
-                    val off = (BleJson.int(status.fields, "off") ?: tracker.acked).coerceIn(0, img.size)
-                    if (off < nextOff) {
+                    // The unit's answer wins in both directions. It has settled (read until it stopped
+                    // moving), so it is not sitting behind frames still in the unit's handoff ring.
+                    val off = unitOff
+                    if (off != nextOff) {
                         // The unit is behind: the writes in between never landed. Restarting the
                         // loop at the unit's offset is the only safe move — writing past it would
                         // trip the unit's offset check and kill the install.
