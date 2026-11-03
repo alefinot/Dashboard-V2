@@ -411,7 +411,11 @@ extern uint8_t fuelInputState;
 // ----------------------------------------------------------------------------
 // Logging ring buffer
 // ----------------------------------------------------------------------------
-#define LOG_BUF_SIZE 4096
+// 2 KB, not 4. The heap-recovery plan Phase 1 needed static DRAM back, and this is
+// the cheapest block that costs no capability: the app's log reader asks for at most
+// BT_LOG_TAIL (1,500 B) per poll (methodLogGet), so a full window still comes back.
+// What halves is how far back the log page can scroll.
+#define LOG_BUF_SIZE 2048
 extern char logBuf[LOG_BUF_SIZE];
 extern volatile int logHead;
 extern volatile int logTail;

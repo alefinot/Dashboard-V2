@@ -103,14 +103,19 @@ static const uint32_t OTA_MIN_IMAGE = 4096u;
 // OUTSTANDING_BYTES (32 KB, ble/OtaController.kt) past the last ACK it was given -
 // over four times this ring's capacity - so the ring's own depth is the unit's only
 // cushion, and depth in slots is depth in arrival intervals: a slot is exactly one
-// frame, the largest thing the link can deliver. 15 usable slots at the observed
-// 45 ms per frame is ~670 ms of cushion, and an erase-bound stretch has to fit
-// inside that. The bench run at this depth used 2 of the 15, worst drain gap 56 ms.
+// frame, the largest thing the link can deliver. What the cushion has to cover is a
+// stretch where the consumer is slow, and the bench measures that directly: the
+// heap-plan baseline install (MTU 517, 1.6 MB, 3,218 frames) peaked at 3 of 15 slots
+// with a longest gap of 26 ms between drains, and the earlier 2.0.0 bench run 2 of 15
+// at 56 ms. 8 slots - 7 usable - is ~315 ms of arrival intervals at the observed
+// 45 ms/frame, still 5x the worst gap ever measured, and it hands back 4 KB of DRAM
+// (heap-recovery plan Phase 1). If a future bench ever reports s_ringHigh at 6 or 7,
+// or the install runs >10% slower than the Phase-0 baseline, put the depth back.
 //
 // A ring that does overflow says so out loud now - `bad_frame ring full`, with the
 // depth and how many frames were refused (btOtaPush) - instead of being reported as
 // a malformed frame and chased as a phone bug.
-static const int OTA_RING_SLOTS = 16;
+static const int OTA_RING_SLOTS = 8;
 static const int OTA_RING_MASK = OTA_RING_SLOTS - 1;
 static const int OTA_SLOT_BYTES = 4 + 512;  // offset prefix + max payload
 static const int OTA_MAX_FRAME = OTA_SLOT_BYTES;
