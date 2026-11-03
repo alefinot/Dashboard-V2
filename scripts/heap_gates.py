@@ -62,7 +62,7 @@ HB_RE = re.compile(
     r"sp=(\d+) fallback=(\d+) otaReq=(\d+) memAct=(\d+) bt=(\d+) pair=(\d{6}) "
     r"temp=([\d.]+) maxFrame=(\d+)ms over24=(\d+) sMaxGap=(\d+)ms")
 CONFIGSET_RE = re.compile(
-    r"CONFIGSET keys=(\d+) payload=(\d+) B heap (\d+)->(\d+)\(copied\)->(\d+)\(applied\) "
+    r"CONFIGSET keys=(\d+) payload=(\d+) B heap (\d+)\(entry\)->(\d+)\(applied\) "
     r"maxalloc (\d+)->(\d+) gate_waits=(\d+) gate_ms=(\d+)ms")
 MEM_SAVER_RE = re.compile(r"MEM SAVER: dropped speed sprite")
 MEM_REQUEST_RE = re.compile(r"config\.set: heap \d+ B, requesting memory-saver")
@@ -242,13 +242,13 @@ def evaluate(log, ota_attempted, min_heap_floor, max_stalls, min_fps, min_live_h
                     "no CONFIGSET line in the capture - the save never ran, "
                     "so the gate was never measured"))
     else:
-        waits = [int(m.group(8)) for _, _, m in sets]
+        waits = [int(m.group(7)) for _, _, m in sets]
         worst = max(waits)
-        peak = max(int(m.group(4)) for _, _, m in sets)
+        low = min(int(m.group(4)) for _, _, m in sets)  # heap at the end of the save
         res.append(("G2 config.set gate waits zero", worst == 0,
                     f"{len(sets)} save(s), gate_waits max {worst}, "
-                    f"heap after payload copy min {peak} B"
-                    + (f"; worst: {next(l for _, l, mm in sets if int(mm.group(8)) == worst)}"
+                    f"heap after the save min {low} B"
+                    + (f"; worst: {next(l for _, l, mm in sets if int(mm.group(7)) == worst)}"
                        if worst else "")))
 
     # --- G3: the install completes --------------------------------------------

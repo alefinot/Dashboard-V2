@@ -453,6 +453,16 @@ static void methodConfigGet(uint16_t seq, uint32_t id) {
   logPrintf("RPC: config.get streamed %d chunk(s), %d key(s)\n", chunks, keys);
 }
 
+// How much free heap a settings save needs before it will run. Priced on the bench
+// (heap plan Phase 2.1) instead of inherited from the WebUI era: the payload copy
+// that used to dominate this path cost 11.6 KB on a full 183-key write (33,064 ->
+// 21,456 B), and the save itself costs ~1.1 KB over the request document the RPC
+// layer had already allocated. 12 KB covers that document (~10 KB for the largest
+// write the app sends) plus the NVS session's working set; the old 45,000 threshold
+// asked for four times what the path needs and so dropped the display assets on
+// every save, which is what the app experienced as a failed write.
+static constexpr uint32_t CONFIG_SAVE_HEAP_FLOOR = 12000;
+
 // ---------------------------------------------------------------------------
 // config.set
 // ---------------------------------------------------------------------------
@@ -462,20 +472,19 @@ static void methodConfigGet(uint16_t seq, uint32_t id) {
 // unchanged; the weather-refresh request it also fired is gone with the fetch
 // loop that consumed it.
 static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
-// The save parses an object and rewrites ~90 NVS keys. That document, plus the
-// request document it was copied out of, is the one heap spike on this path, so
-// the old memory-saver gate stays: with the display still holding its sprites
-// the unit does not have room for both.
+// The save parses an object and rewrites ~90 NVS keys. Since Phase 2.1 of the
+// heap-recovery plan it reads the posted keys through a const view of the payload
+// the RPC layer already parsed, so there is no second document on this path; the
+// gate below is what is left of the old memory-saver handshake.
   unsigned long memT0 = millis();
-  // Phase 0 of the heap-recovery plan: the gate threshold (45000) was never
-  // priced against what this path actually needs, and the app pays a silent
-  // retry loop when it is wrong. CONFIGSET lines carry the entry heap, the heap
-  // after the payload copy (the peak), and how many 50 ms waits the gate cost -
-  // gate G2 of the plan is "zero waits", which is not checkable without this.
+  // CONFIGSET lines carry the entry heap, the heap the save ended at, and how many
+  // 50 ms waits the gate cost - gate G2 of the plan is "zero waits", which is not
+  // checkable without this.
   const unsigned long heapEntry = (unsigned long)ESP.getFreeHeap();
   const unsigned long maxAllocEntry = (unsigned long)ESP.getMaxAllocHeap();
   unsigned gateWaits = 0;
-  while (ESP.getFreeHeap() < 45000 && (millis() - memT0) < 3000) {
+  while ((unsigned long)ESP.getFreeHeap() < CONFIG_SAVE_HEAP_FLOOR &&
+         (millis() - memT0) < 3000) {
     if (!memSaverRequested) {
       logPrintf("RPC config.set: heap %lu B, requesting memory-saver\n",
                 (unsigned long)ESP.getFreeHeap());
@@ -485,17 +494,12 @@ static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 
-  // A JsonDocument whose top level IS the config object. processConfig(2) reads
-  // its keys at the root, and copying p into a fresh document is what keeps
-  // {"m","id","p"} from being mistaken for settings.
-  JsonDocument doc;
-  doc.set(p);
-  const unsigned long heapCopied = (unsigned long)ESP.getFreeHeap();
-  const unsigned long maxAllocCopied = (unsigned long)ESP.getMaxAllocHeap();
-
   configSaveStartMs = millis();
   configSaveInProgress = true;
-  processConfig(2, &doc);
+  // No copy: `p` IS the settings object (the request's "p" member), so the root of
+  // the {"m","id","p"} envelope is never mistaken for a key the way it would be if
+  // the whole request document were handed over.
+  processConfigView(2, p);
   const unsigned long heapApplied = (unsigned long)ESP.getFreeHeap();
   recalculateDerivedParams();
   configSaveInProgress = false;
@@ -512,13 +516,18 @@ static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
     btCatf(s_out, sizeof(s_out) - 1, &used, "{\"nvsErrors\":0}");
   rpcFinish(seq, prefix, used - prefix);
 
-  // The measurement above, in one line. `payload` is what the copy is sized by
-  // (measureJson of the request's p object), so a phase-2 change that drops the
-  // copy can be compared against it rather than against a guess.
-  logPrintf("CONFIGSET keys=%u payload=%u B heap %lu->%lu(copied)->%lu(applied) "
+  // The measurement above, in one line. `payload` is the size of the object that is
+  // now read in place instead of copied (measureJson of the request's p).
+  logPrintf("CONFIGSET keys=%u payload=%u B heap %lu(entry)->%lu(applied) "
             "maxalloc %lu->%lu gate_waits=%u gate_ms=%lums\n",
-            (unsigned)p.size(), (unsigned)measureJson(p), heapEntry, heapCopied, heapApplied,
-            maxAllocEntry, maxAllocCopied, gateWaits, (unsigned long)(millis() - memT0));
+            (unsigned)p.size(), (unsigned)measureJson(p), heapEntry, heapApplied,
+            maxAllocEntry, (unsigned long)ESP.getMaxAllocHeap(), gateWaits,
+            (unsigned long)(millis() - memT0));
+
+  // The save asked for the display assets only if the gate actually ran out of
+  // room; hand them back here (after the response is flushed) so a single write
+  // never leaves the panel on the fallback path until the next reboot.
+  memSaverExit();
 
   // Same as the POST handler: the new geometry, digit counts and colours belong
   // together, so repaint the whole panel once they have all landed.

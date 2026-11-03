@@ -208,12 +208,21 @@ void processOtaMemRelease() {
   otaMemReleased = true;
 }
 
-// Same release, triggered by the web task when free heap gets dangerously low
-// (the big buffers starve /api/config and the TLS stack). Once active, the
-// speed sprite stays freed until the next reboot; the 120px
-// font buffer is only re-read lazily if a speed digit actually redraws.
+// Same release, triggered by the settings save when free heap gets dangerously low
+// (the big buffers starve the save and the NVS session). Once active, the
+// speed sprite stays freed until the work that asked for it is finished and the dwell
+// below has run its course - memSaverExit() hands it back, so a single write no
+// longer leaves the panel on the fallback path until the next reboot.
 volatile bool memSaverRequested = false;
 volatile bool memSaverActive = false;
+volatile bool memSaverReleasePending = false;
+static uint32_t memSaverSince = 0;  // when the assets were last taken, 0 = not held
+
+// How long the assets stay gone once they have been taken. Without a floor, a save
+// that brushes the threshold rebuilds a 25 KB sprite and drops it again on the next
+// write, and the panel spends the whole time drawing without its big digits. The
+// floor is not a ceiling: a release nobody hands back still comes back by itself.
+static constexpr uint32_t MEM_SAVER_DWELL_MS = 30000;
 
 void processMemSaverRelease() {
   if (!memSaverRequested || memSaverActive) return;
@@ -224,8 +233,36 @@ void processMemSaverRelease() {
   resetVLWFontCache();
   freeVLWData120();
   memSaverActive = true;
+  memSaverSince = millis();
+  memSaverReleasePending = false;
   logPrintf("MEM SAVER: dropped speed sprite and VLW120 (heap=%lu B)\n",
             (unsigned long)ESP.getFreeHeap());
+}
+
+// Called by the task that asked for the release, once its own work is done and its
+// response is off the wire. It frees nothing here: the sprite and the 120px font
+// belong to the display task, which picks the request up in loop().
+void memSaverExit() { memSaverReleasePending = true; }
+
+// Display task only, paired with processMemSaverRelease() in loop(). Clears the
+// latch and re-arms the lazy builder, then rebuilds at a safe point before any draw
+// - that pass cannot be in the middle of updateBigDisplay.
+void processMemSaverRestore() {
+  if (!memSaverReleasePending) return;
+  const uint32_t held =
+      memSaverSince ? (uint32_t)(millis() - memSaverSince) : MEM_SAVER_DWELL_MS;
+  if (held < MEM_SAVER_DWELL_MS) return;
+  const uint32_t heapBefore = (uint32_t)ESP.getFreeHeap();
+  memSaverReleasePending = false;
+  memSaverRequested = false;
+  memSaverActive = false;
+  memSaverSince = 0;
+  spBuildAttempted = false;  // re-arm ensureSpeedSprite()
+  ensureSpeedSprite();
+  logPrintf("[ms-release] held %lums, heap %lu->%lu B, sprite=%d vlw120=%d\n",
+            (unsigned long)held, (unsigned long)heapBefore,
+            (unsigned long)ESP.getFreeHeap(), speedSpriteValid() ? 1 : 0,
+            isVLW120FontReady() ? 1 : 0);
 }
 
 static void measureDs15Cells(int *cells, int &totalW, int count, int decimalPos) {

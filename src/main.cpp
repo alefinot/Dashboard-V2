@@ -947,9 +947,14 @@ void loop() {
   // is in use between frames). Must run before any TLS work starts.
   processOtaMemRelease();
 
-  // Same release triggered by the web task when free heap gets critically low,
-  // so the big UI buffers never starve the /api/config handler or TLS stack.
+  // Same release triggered by a settings save when free heap gets critically low,
+  // so the big UI buffers never starve the save itself and the NVS session.
   processMemSaverRelease();
+
+  // ...and putting them back once the save that asked is finished (see the dwell in
+  // ui.cpp). Never reached while an install holds the panel: the quiet path above
+  // returns before this line.
+  processMemSaverRestore();
 
   // Bus / CPU-frequency changes requested by the config-save handler, applied at
   // the safe point between frames (issue #10).

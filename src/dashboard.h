@@ -733,6 +733,10 @@ extern SensorSnapshot g_sensorData;
 // ----------------------------------------------------------------------------
 void applyColors();
 void processConfig(int mode, JsonDocument *doc = nullptr);
+// The save path without the payload copy: mode 2 reads the posted keys through a
+// const view of the document the RPC layer already parsed. Peak on a full 183-key
+// write: 11.6 KB less than the processConfig(2, &doc) route measured on the bench.
+void processConfigView(int mode, JsonVariantConst in);
 void seedNVSWithFactoryDefaults();
 void recalculateDerivedParams();
 uint16_t hexToRGB565(const char *hex);
@@ -936,6 +940,13 @@ bool otaFlashWriteActive();
 void processMemSaverRelease();
 extern volatile bool memSaverRequested;
 extern volatile bool memSaverActive;
+// Handing the display assets back. memSaverExit() is safe from any task and only
+// flags the request; processMemSaverRestore() runs in the display task next to
+// processMemSaverRelease(), rebuilds at a safe point, and never sooner than the
+// dwell (30 s) so a burst of saves cannot rebuild the sprite over and over.
+extern volatile bool memSaverReleasePending;
+void memSaverExit();
+void processMemSaverRestore();
 void ensureSpeedSprite();
 bool speedSpriteValid();
 bool isSpeedFallback();

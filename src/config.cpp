@@ -913,7 +913,12 @@ static const CfgParam CFG_TABLE[] = {
   { &TZ_DST_RULE, "TZ_DST_RULE", "TZ_RULE", nullptr, 0, 2, 1, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 };
 
-static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
+// `in` is where a save (mode 2) reads the posted keys; `doc` is where a fetch
+// (mode 1) writes them out. Since Phase 2.1 of the heap-recovery plan the save path
+// reads a const view of the payload the RPC layer already parsed instead of a copy,
+// so mode 2 must not touch `doc` at all - and nothing here does.
+static void cfgApply(int mode, Preferences &pref, JsonDocument *doc,
+                     JsonVariantConst in) {
   for (const CfgParam &p : CFG_TABLE) {
     switch (p.kind) {
     case CK_INT: {
@@ -923,8 +928,8 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
         clampCfgInt(p.name, v, p.lo, p.hi);
       } else if (mode == 1) {
         (*doc)[p.name] = *v;
-      } else if (!(*doc)[p.name].isNull()) {
-        *v = (*doc)[p.name].as<int>();
+      } else if (!in[p.name].isNull()) {
+        *v = in[p.name].as<int>();
         clampCfgInt(p.name, v, p.lo, p.hi);
         if (cfgIntChanged(pref, p.nvsKey, *v) &&
             nvsWriteFailed(p.nvsKey, pref.putInt(p.nvsKey, *v)))
@@ -938,8 +943,8 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
         *v = clampCfgUnsigned(p.name, pref.getInt(p.nvsKey, p.di), p.lo, p.hi);
       } else if (mode == 1) {
         (*doc)[p.name] = *v;
-      } else if (!(*doc)[p.name].isNull()) {
-        *v = clampCfgUnsigned(p.name, (*doc)[p.name].as<long long>(), p.lo,
+      } else if (!in[p.name].isNull()) {
+        *v = clampCfgUnsigned(p.name, in[p.name].as<long long>(), p.lo,
                               p.hi);
         if (cfgIntChanged(pref, p.nvsKey, (int)*v) &&
             nvsWriteFailed(p.nvsKey, pref.putInt(p.nvsKey, (int)*v)))
@@ -954,8 +959,8 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
         clampCfgFloat(p.name, v, p.flo, p.fhi, p.df);
       } else if (mode == 1) {
         (*doc)[p.name] = *v;
-      } else if (!(*doc)[p.name].isNull()) {
-        *v = (*doc)[p.name].as<float>();
+      } else if (!in[p.name].isNull()) {
+        *v = in[p.name].as<float>();
         clampCfgFloat(p.name, v, p.flo, p.fhi, p.df);
         if (cfgFloatChanged(pref, p.nvsKey, *v) &&
             nvsWriteFailed(p.nvsKey, pref.putFloat(p.nvsKey, *v)))
@@ -969,8 +974,8 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
         *v = pref.getBool(p.nvsKey, p.di != 0);
       } else if (mode == 1) {
         (*doc)[p.name] = *v;
-      } else if (!(*doc)[p.name].isNull()) {
-        *v = (*doc)[p.name].as<bool>();
+      } else if (!in[p.name].isNull()) {
+        *v = in[p.name].as<bool>();
         if (cfgBoolChanged(pref, p.nvsKey, *v) &&
             nvsWriteFailed(p.nvsKey, pref.putBool(p.nvsKey, *v)))
           cfgNvsWriteErrors++;
@@ -995,8 +1000,8 @@ static void cfgApply(int mode, Preferences &pref, JsonDocument *doc) {
       } else if (mode == 1) {
         if (p.kind == CK_SECRET) (*doc)[p.name] = "";
         else (*doc)[p.name] = buf;
-      } else if ((*doc)[p.name].is<const char *>()) {
-        const char *v = (*doc)[p.name].as<const char *>();
+      } else if (in[p.name].is<const char *>()) {
+        const char *v = in[p.name].as<const char *>();
         if (p.kind == CK_SECRET && (v == nullptr || v[0] == 0)) continue;
         snprintf(buf, p.size, "%s", v);
         // Unchanged strings are not re-stored: they are the longest items in
@@ -1379,7 +1384,26 @@ static void cfgCarryRenamedKeys(Preferences &pref) {
   }
 }
 
+static void processConfigFrom(int mode, JsonDocument *doc, JsonVariantConst inArg);
+
 void processConfig(int mode, JsonDocument *doc) {
+  processConfigFrom(mode, doc, JsonVariantConst());
+}
+
+// A save whose payload the RPC layer has already parsed: the keys are read through
+// this view, so the 4.4 KB of a full settings write never becomes a second document
+// in RAM. Measured on the bench (heap-plan Phase 2.1): the copy was worth 11.6 KB of
+// peak at the moment the unit is least able to take it.
+void processConfigView(int mode, JsonVariantConst in) {
+  processConfigFrom(mode, nullptr, in);
+}
+
+static void processConfigFrom(int mode, JsonDocument *doc, JsonVariantConst inArg) {
+  // One place decides whether the posted keys live in a document the caller built
+  // (the old path) or arrived as a view (the cheap path).
+  JsonVariantConst fromDoc;
+  if (doc) fromDoc = *doc;  // JsonDocument::operator JsonVariantConst() const
+  const JsonVariantConst in = inArg.isNull() ? fromDoc : inArg;
   // The "cfg" namespace is opened by the boot load, by a config.set over the BLE
   // link, and by the GNSS baud autodetect (sensor task). Every NVS session now
   // holds prefsMux for its whole begin()/end() pair, so a save can no longer
@@ -1400,7 +1424,7 @@ void processConfig(int mode, JsonDocument *doc) {
   if (mode == 0) cfgCarryRenamedKeys(pref);
 
   // Every scalar parameter, in the order the CFG_* calls used to run.
-  cfgApply(mode, pref, doc);
+  cfgApply(mode, pref, doc, in);
 
   // A CK_SECRET row is streamed out as an empty string and a blank posted value
   // keeps whatever is stored. No CK_SECRET row is in the table today (the five
@@ -1436,15 +1460,15 @@ void processConfig(int mode, JsonDocument *doc) {
   } else if (mode == 2) {
     char key[10];  // "FCO_" + 2 digits + NUL: room the compiler can prove
     int written = 0;
-    if (!(*doc)["fuelCalOhms"].isNull()) {
-      JsonArray arr = (*doc)["fuelCalOhms"].as<JsonArray>();
+    if (!in["fuelCalOhms"].isNull()) {
+      JsonArrayConst arr = in["fuelCalOhms"].as<JsonArrayConst>();
       written = (int)arr.size();
       if (written > FUEL_TOUCH_POINTS) written = FUEL_TOUCH_POINTS;
       for (int i = 0; i < written; i++) {
         // Calibration points are sender resistances: a negative or absurd value
         // can never be measured and would silently kill the segment it belongs
         // to (issue #21).
-        float v = (*doc)["fuelCalOhms"][i].as<float>();
+        float v = in["fuelCalOhms"][i].as<float>();
         if (!(v >= 0.0f)) v = 0.0f;  // also catches NaN
         fuelCalOhms[i] = constrain(v, 0.0f, 100000.0f);
         snprintf(key, sizeof(key), "FCO_%u", (unsigned)(uint8_t)i);
