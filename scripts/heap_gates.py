@@ -430,12 +430,25 @@ async def bench(a):
         esp.stop()
     out = a.out or os.path.join("Local artifacts", "logs",
                                 time.strftime("heap-gates-%Y%m%d-%H%M%S.log"))
+    # --out may name a file or a folder (a folder is what you pass when you want the
+    # capture and the verdict side by side).
+    if os.path.isdir(out):
+        out = os.path.join(out, "heap-gates.log")
     log.write(out)
     print(f"\nwrote capture: {out} ({len(log.rows)} line(s))", flush=True)
     res, info = evaluate(log, ota_attempted=bool(a.ota), min_heap_floor=a.min_heap,
                          max_stalls=a.max_stalls, min_fps=a.min_fps,
                          min_live_hb=a.min_live_hb)
     rc = report(res, info)
+    # The same verdict in machine-readable form, so a run can be pasted into the
+    # plan's results ledger instead of retyped from the table.
+    try:
+        with open(out + ".json", "w", encoding="utf-8") as f:
+            json.dump({"gates": [{"name": n, "ok": o, "detail": d} for n, o, d in res],
+                       "info": info, "rc": rc}, f, indent=1, default=str)
+        print(f"wrote gate results: {out}.json", flush=True)
+    except (OSError, TypeError) as e:
+        print(f"could not write the machine-readable verdict: {e}", flush=True)
     return rc or code
 
 
