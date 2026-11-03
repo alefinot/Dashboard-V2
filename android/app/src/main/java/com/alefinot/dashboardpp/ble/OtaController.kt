@@ -193,6 +193,10 @@ object OtaController {
         _view.value = OtaView(stage = OtaStage.Failed, fileName = name, error = "cancelled")
         if (wasRunning && stage in setOf(OtaStage.Handshaking, OtaStage.Sending, OtaStage.Verifying)) {
             scope.launch {
+                // Hand the interval back before the abort: STOP cancels the transfer job, and a job
+                // already past its last suspension point may never reach its `finally`. This launch
+                // is the one thing that is certain to run when a driver hits STOP mid-transfer.
+                runCatching { BleRuntime.link(context).setConnectionPriority(false) }
                 runCatching { BleApi(BleRuntime.link(context)).otaAbort() }
             }
         }
@@ -287,6 +291,14 @@ object OtaController {
             var nextOff = (BleJson.int(ready.fields, "off") ?: 0).coerceIn(0, img.size)
             tracker.apply(OtaEvent.BeginOk(chunk = chunk, off = nextOff))
             publish(tracker, img)
+
+            // Ask for the fast connection interval here, not back at connect time: an install is the
+            // only thing this app does where the interval is the whole story, and holding it past the
+            // chunk phase is what the field reports of links dropping under HIGH are about
+            // (`INSTALL-SPEED-PLAN-2026-11-03`, A2). The answer is deliberately ignored - Android
+            // gives no way to read back the interval that was agreed - so the number that says
+            // whether it worked is the writes/s the card now prints, not this return value.
+            link.setConnectionPriority(true)
 
             var lastAckMs = now()
             var lastPublishMs = 0L
@@ -451,6 +463,11 @@ object OtaController {
             publish(tracker, img)
         } finally {
             collector.cancel()
+            // The ordinary interval comes back whatever ended the chunk phase - done, failed,
+            // paused, aborted, or an exception - because that is precisely the set of paths a call
+            // planted at each `return` forgets one of. A phone left on the fast interval burns
+            // battery for nothing, and some stacks answer a held HIGH with a dropped link.
+            link.setConnectionPriority(false)
         }
     }
 

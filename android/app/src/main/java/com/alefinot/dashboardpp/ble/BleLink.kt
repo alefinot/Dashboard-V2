@@ -444,6 +444,46 @@ class BleLink(context: Context) {
     fun otaAvailable(): Boolean = otaChar != null
 
     /**
+     * Asks the stack for the fast or the ordinary connection interval, and answers whether it asked.
+     *
+     * This is the biggest single multiplier available on a firmware push. `CONNECTION_PRIORITY_BALANCED`
+     * (what Android uses when nobody asks, which is what this app did until now) is a 30-50 ms
+     * interval; `CONNECTION_PRIORITY_HIGH` is 11.25-15 ms. At 496 bytes per write the bench install
+     * ran one write every 79 ms - about half the slots the ordinary interval already offers are
+     * being lost in the app's own write path, and the fast interval would roughly triple what is
+     * there to lose (`INSTALL-SPEED-PLAN-2026-11-03`, task A2).
+     *
+     * It is therefore asked for **for the chunk phase of an install only**, and given back the moment
+     * the install ends, aborts, fails or the link goes away. That is not decoration: there are field
+     * reports of OEM stacks dropping the link outright while HIGH is held, and a dropped install
+     * costs a RESUME press inside the unit's 120 s window rather than the whole image. Android gives
+     * no way to read back the interval that was actually agreed (and some stacks simply ignore the
+     * request), so its effect is measured as writes/s, never observed directly.
+     */
+    @SuppressLint("MissingPermission")
+    private fun applyConnectionPriority(high: Boolean): Boolean {
+        val client = gatt ?: return false
+        if (_state.value !is BleLinkState.Ready) return false
+        return runCatching {
+            client.requestConnectionPriority(
+                if (high) BluetoothGatt.CONNECTION_PRIORITY_HIGH
+                else BluetoothGatt.CONNECTION_PRIORITY_BALANCED,
+            )
+        }.getOrDefault(false)
+    }
+
+    /**
+     * The transfer's entry point to [applyConnectionPriority]: `true` once the unit has opened its
+     * spare slot, `false` when the chunk phase ends.
+     *
+     * Suspended because everything around an install is suspending. [applyConnectionPriority] is
+     * not, because the teardown path that has to hand the ordinary interval back runs on a GATT
+     * callback thread with no coroutine to suspend in - and a fallback that can be skipped by
+     * picking the wrong call site is not a fallback.
+     */
+    suspend fun setConnectionPriority(high: Boolean): Boolean = applyConnectionPriority(high)
+
+    /**
      * Puts one firmware chunk on the wire.
      *
      * `WRITE_TYPE_NO_RESPONSE`, and the write is only issued once the stack reports the previous
@@ -848,6 +888,12 @@ class BleLink(context: Context) {
 
     private fun closeGatt() {
         val client = gatt ?: return
+        // Hand the ordinary connection interval back before the client goes. On a real disconnect
+        // the stack may well refuse - the link is already gone - but this is the one place that
+        // every teardown path runs through, so a phone cannot be left holding HIGH after an install
+        // that ended by dropping the link. The honest guarantee is still the transfer's own
+        // end/abort/failure paths; this is the net under them.
+        applyConnectionPriority(false)
         gatt = null
         telemChar = null
         rpcChar = null
