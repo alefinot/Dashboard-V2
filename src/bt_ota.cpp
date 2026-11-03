@@ -12,16 +12,15 @@
 // Three tasks are involved, and the split is deliberate:
 //
 //   Bluedroid callback task  OTA characteristic writes land here. It does ONE
-//                            thing: check the frame and append its bytes to a FIFO,
-//                            then return. No flash work, no JSON, no notify - a
-//                            long onWrite here stalls the whole GATT stack,
-//                            including the writes still arriving.
+//                            thing: copy the bytes into a ring and return. No
+//                            flash work, no JSON, no notify - a long onWrite
+//                            here stalls the whole GATT stack, including the
+//                            writes still arriving.
 //   BtTask (core 0, 8 KB)    the RPC handlers (ota.begin / end / abort / status)
-//                            AND btOtaPoll(): take the FIFO to flash in one write
-//                            per pass, fold the CRC, send the ACKs, watch the
-//                            clocks. Every state change happens on this one task,
-//                            so there is no lock between the control plane and the
-//                            data path.
+//                            AND btOtaPoll(): drain the ring, write flash, fold
+//                            the CRC, send the ACKs, watch the clocks. Every
+//                            state change happens on this one task, so there is
+//                            no lock between the control plane and the data path.
 //   Display task (core 1)    owns the panel. This file only sets the flags the
 //                            loop already understands (otaUpdateInProgress,
 //                            otaScreenShowUpdate, updateOTAProgress,
@@ -39,7 +38,7 @@
 //                                                        {"ev":"error","reason":"..","off":N}
 //   phone -> unit  RPC  ota.end / ota.status / ota.abort
 //
-// Memory rules (AGENTS.md 14): one static byte FIFO (4 KB), one static detail
+// Memory rules (AGENTS.md 14): one static ring (8 x 516 B), one static detail
 // string, nothing allocated per chunk, no per-chunk JSON beyond a ~40 byte body
 // built on the stack.
 
@@ -67,19 +66,18 @@ static const unsigned long OTA_SILENCE_MS = 120000UL;
 // forgets to send ota.end: the unit must not stay parked forever.
 static const unsigned long OTA_MAX_MS = 15UL * 60UL * 1000UL;
 // How much accepted data between ACKs. The ACK is the phone's resume token, so it
-// also bounds how much has to be re-sent after a drop. 4096 B is the same order of
-// magnitude as the batch the drain writes flash in (one esp_ota_write per ~2 KB of
-// the handoff FIFO, see OTA_WRITE_TARGET), and the cap computed in btOtaBegin() is
-// half the handoff buffer - so the offset a phone resumes from is a boundary the
-// unit has really written to, never a point that only ever existed in RAM.
+// also bounds how much has to be re-sent after a drop. 4096 B is ~8 writes and one
+// flash sector - the same granularity at which the drain pays for an erase - so the
+// offset a phone resumes from is a boundary the unit has really written to, never a
+// point that only ever existed in the handoff ring.
 //
 // What this number is NOT: the phone's in-flight allowance. The unit must not read
 // it that way, because ble/OtaController.kt lets the phone run OUTSTANDING_BYTES
-// (32 KB) past the last ACK it was given - eight times this unit's whole handoff
-// FIFO. What holds the air rate near the drain rate is the link's own flow
+// (32 KB) past the last ACK it was given - more than four times this unit's whole
+// handoff ring. What holds the air rate near the drain rate is the link's own flow
 // control (write-without-response, one write completing before the next is issued);
-// the FIFO's depth is the cushion for the stretches where that still leaves the
-// unit behind, see under OTA_FIFO_BYTES.
+// the ring's depth is the cushion for the stretches where that still leaves the
+// unit behind, see under OTA_RING_SLOTS.
 //
 // The old 16 KB cadence was two problems at once: four times the ring of its day,
 // and an ACK of up to 14 KB that had only ever been seen in RAM - after a drop the
@@ -91,56 +89,36 @@ static const uint32_t OTA_MAX_IMAGE = 0x1D0000u;
 // Smaller than this is not firmware, it is a truncated download or a text file.
 static const uint32_t OTA_MIN_IMAGE = 4096u;
 
-// ---------------------------------------------------------------------------
-// The handoff buffer: a byte FIFO, not a ring of frames
-// ---------------------------------------------------------------------------
-// Until 2026-11-04 this was a ring of 8 frames (8 x 516 B) and the drain wrote
-// flash one frame at a time. The bench counted what that shape costs (install-speed
-// plan, B1): 3 214 esp_ota_write calls for a 1.52 MB image, mean 3 108 us each,
-// 9 989 ms of the install spent inside them. Only part of that is programming the
-// flash - the rest is the per-call cost of taking the flash lock and switching the
-// cache off on the other core, and on an ESP32 that window also silences the BT
-// controller sharing this core with BtTask, which is why the same install showed a
-// 105 ms drain gap and a 135 ms arrival gap. (An earlier note here blamed a per-
-// sector erase inside the writes; measured with the erase accounted for separately,
-// that is not what the numbers say.)
+// The handoff ring from the Bluedroid task to BtTask.
 //
-// A byte FIFO lets the drain take everything that has arrived since its last pass
-// in ONE write: the same bytes in the same order, with roughly a quarter of the
-// flash windows and of the radio holes. Frames stop being the unit of storage - the
-// 4-byte offset prefix is checked as the frame arrives, when the producer knows
-// exactly what the next byte of the image must be, and is then dropped.
+// Its depth is not a nicety - it is the unit's only cushion for stretches where
+// the flash is slower than the link. Measured on the bench (2026-11-03, full
+// quiet window, 1.52 MB image, 496 B frames): the ring reached its full 3-of-4
+// usable slots - 1,488 B, about 135 ms at 45 ms per frame - while the longest gap
+// between drains was only 60 ms. The drain was not missing passes; it was writing
+// slower than one frame per arrival interval on average, because every 4 KB
+// sector crossed costs an erase.
 //
-// RAM (rule 14): 4 096 B for the FIFO replaces 4 128 B of frame slots plus 16 B of
-// per-slot lengths, so this is slightly LESS memory than what it replaces. Depth is
-// marginally better too: 4 096 B holds 8.3 frames at the negotiated 492 B payload,
-// against the 7 usable slots it replaces.
+// Nothing about the ACK cadence protects this ring. The phone may run
+// OUTSTANDING_BYTES (32 KB, ble/OtaController.kt) past the last ACK it was given -
+// over four times this ring's capacity - so the ring's own depth is the unit's only
+// cushion, and depth in slots is depth in arrival intervals: a slot is exactly one
+// frame, the largest thing the link can deliver. What the cushion has to cover is a
+// stretch where the consumer is slow, and the bench measures that directly: the
+// heap-plan baseline install (MTU 517, 1.6 MB, 3,218 frames) peaked at 3 of 15 slots
+// with a longest gap of 26 ms between drains, and the earlier 2.0.0 bench run 2 of 15
+// at 56 ms. 8 slots - 7 usable - is ~315 ms of arrival intervals at the observed
+// 45 ms/frame, still 5x the worst gap ever measured, and it hands back 4 KB of DRAM
+// (heap-recovery plan Phase 1). If a future bench ever reports s_ringHigh at 6 or 7,
+// or the install runs >10% slower than the Phase-0 baseline, put the depth back.
 //
-// Depth still matters: nothing about the ACK cadence protects this buffer (the
-// phone may run OUTSTANDING_BYTES - 32 KB, ble/OtaController.kt - past the last ACK
-// it was given), and the batching policy deliberately lets bytes sit here while a
-// write's worth accumulates. A FIFO that does fill says so out loud - `bad_frame`
-// with "fifo full", the depth reached and the drain statistics - rather than being
-// reported as a malformed frame and chased as a phone bug.
-static const int OTA_FIFO_BYTES = 4096;  // power of two: the indices mask, no divide
-static const int OTA_FIFO_MASK = OTA_FIFO_BYTES - 1;
-
-// The batching policy, in two numbers. The drain writes flash when this many bytes
-// are waiting; if they have not arrived yet it waits for the next pass, unless the
-// FIFO has stopped growing (the phone is quiet), a batch has been waiting
-// OTA_WRITE_WAIT_MS, or the buffer is nearly full. At the measured air rate - one
-// 492 B payload every ~24 ms - reaching 2 KB takes ~100 ms of arrivals and 40 ms of
-// waiting is ~820 B, both comfortably inside the 4 KB buffer, and the phone's
-// progress bar is fed from an ACK every ~2 KB, which is finer than the old 1,736 B.
-static const uint32_t OTA_WRITE_TARGET = 2048;
-static const unsigned long OTA_WRITE_WAIT_MS = 60;
-// Pressure: if this much of the FIFO is full, write now whatever is in it.
-static const uint16_t OTA_FIFO_PRESSURE = OTA_FIFO_BYTES - OTA_FIFO_BYTES / 4;
-
-// The largest OTA frame this link can carry: a 4-byte offset prefix plus the
-// largest payload one ATT write holds at the maximum ATT MTU (517 -> 512). Anything
-// longer is refused at arrival and reported (s_faultShape).
-static const int OTA_MAX_FRAME = 4 + 512;
+// A ring that does overflow says so out loud now - `bad_frame ring full`, with the
+// depth and how many frames were refused (btOtaPush) - instead of being reported as
+// a malformed frame and chased as a phone bug.
+static const int OTA_RING_SLOTS = 8;
+static const int OTA_RING_MASK = OTA_RING_SLOTS - 1;
+static const int OTA_SLOT_BYTES = 4 + 512;  // offset prefix + max payload
+static const int OTA_MAX_FRAME = OTA_SLOT_BYTES;
 
 // ---------------------------------------------------------------------------
 // CRC-32, written out rather than borrowed
@@ -207,67 +185,44 @@ static uint32_t s_chunk = 0;         // what this link can carry per write
 // accepted byte and reads it to decide when to give up.
 static unsigned long s_openedMs = 0;
 
-// The offset the next arriving frame must carry. Owned by the producer (only
-// btOtaFeed writes it) so the arrival-time offset check cannot race with the drain:
-// it advances by exactly the payload bytes appended. It agrees with the unit's
-// written count whenever the FIFO is empty, which is where a phone that dropped the
-// link and came back resumes from (ota.status answers `off` = s_accepted, and the
-// FIFO empties in one 10 ms BtTask pass while a reconnect takes seconds). Nothing
-// here reads BtTask's bookkeeping.
-static uint32_t s_feedExpect = 0;
-
 static char s_reason[24] = "";
 static char s_detail[96] = "";
 
-// The Bluedroid task appends bytes here; BtTask takes them to flash. Single
-// producer, single consumer, and the two indices are byte counts that only ever
-// grow: because OTA_FIFO_BYTES divides 2^16, (uint16_t)(head - tail) is the exact
-// number of bytes waiting however many times they have wrapped. Both are volatile
-// because each task reads the other's, and each task writes only its own.
-static uint8_t s_fifo[OTA_FIFO_BYTES];
-static volatile uint16_t s_fifoHead = 0;  // producer (Bluedroid): bytes handed over
-static volatile uint16_t s_fifoTail = 0;  // consumer (BtTask): bytes written to flash
-
-static inline uint16_t fifoPending() { return (uint16_t)(s_fifoHead - s_fifoTail); }
-
-// Bytes that arrived on the OTA characteristic with no install open: dropped, but
-// counted and reported once, because they mean something on the link is writing
-// when it was never invited to.
+// The Bluedroid task drops a frame here; BtTask consumes it. Single producer,
+// single consumer, indices wrap by mask - no mutex needed, but both indices are
+// volatile because they are written by different tasks.
+static uint8_t s_ring[OTA_RING_SLOTS][OTA_SLOT_BYTES];
+static volatile uint8_t s_ringHead = 0;  // producer (Bluedroid)
+static volatile uint8_t s_ringTail = 0;  // consumer (BtTask)
+static volatile uint16_t s_ringLen[OTA_RING_SLOTS] = {0};
+// Set by the producer when a frame is too long for the ring, or when bytes
+// arrived with no install open. Handled (and reported) on BtTask, where the
+// error path is allowed to talk.
+static volatile bool s_ringsOver = false;
 static volatile bool s_strayLogged = false;
 static uint32_t s_strayBytes = 0;
 
-// Set by the producer when a frame cannot be taken: the wrong shape, no room left
-// in the FIFO, or an offset that is not the next byte of the image. Recorded with
-// plain stores on the callback task, reported (and the install failed) in
-// btOtaDrain, where the error path is allowed to talk.
-static volatile bool s_faultPending = false;
-static volatile bool s_faultShape = false;   // len < 5 or len > OTA_MAX_FRAME
-static volatile bool s_faultFifo = false;    // arrived with no room for it
-static volatile bool s_faultOffset = false;  // not the offset the image is at
+// Which of the two faults set s_ringsOver, and what the numbers looked like when
+// it happened. They are different faults - a frame outside the shape this unit can
+// hold is a bug on one side of the link, while a ring with no free slot means
+// BtTask did not come back for the bytes fast enough - and the single word
+// "bad_frame" cannot tell a maintainer which one to chase. Recorded here (plain
+// stores, allowed on the callback task), reported in btOtaDrain, where the error
+// path is allowed to talk.
+static volatile bool s_overShape = false;    // len < 5 or len > OTA_MAX_FRAME
+static volatile bool s_overRing = false;     // arrival with every slot already taken
 static volatile uint16_t s_overLen = 0;      // length of the refused frame
-static volatile uint32_t s_offGot = 0;       // the offset it carried
-static volatile uint32_t s_offWant = 0;      // and what the unit expected
-static volatile uint16_t s_fifoHigh = 0;     // high-water bytes waiting, this install
-static unsigned long s_lastDrainMs = 0;      // BtTask: last pass that served the FIFO
+static volatile uint8_t s_ringHigh = 0;      // high-water occupancy of this install
+static unsigned long s_lastDrainMs = 0;      // BtTask: last pass that served the ring
 static unsigned long s_drainGapMaxMs = 0;    // longest pause between those passes
-
-// BtTask's own view of the batch it is building - read and written only by the
-// drain, so it needs no sharing with the producer. `s_batchPend` is how many bytes
-// were waiting at the previous pass: if that number did not change, the phone has
-// not sent anything since, which is what "this batch is as full as it is going to
-// get" means in practice (one pass of quiet is not enough: at ~24 ms per frame and
-// a 10 ms loop, a pass with nothing new is normal mid-stream).
-static uint16_t s_batchPend = 0;
-static uint8_t s_batchIdle = 0;
-static unsigned long s_batchMs = 0;          // when this batch started waiting
 
 // What the two ends of an install actually cost, measured rather than assumed:
 // how much of the wall clock goes to flash (the esp_ota_write calls, and the
 // erase that esp_ota_begin does up front), and how the bytes actually arrive from
-// the radio (the gap between frames landing in the FIFO). The install-speed work
+// the radio (the gap between frames landing in the ring). The install-speed work
 // turns on one question - is the wall the link or the flash? - and these numbers
 // answer it. Counted on BtTask around the write, and by the producer on arrival;
-// printed at the end of every install and inside the fifo-full failure line.
+// printed at the end of every install and inside the ring-full failure line.
 static uint32_t s_wrCalls = 0;               // esp_ota_write calls this install
 static uint32_t s_wrUsTotal = 0;             // time spent inside them
 static uint32_t s_wrUsMax = 0;               // the single worst call
@@ -275,23 +230,24 @@ static unsigned long s_beginMs = 0;          // esp_ota_begin cost (= the erase)
 static unsigned long s_lastArriveMs = 0;     // last frame the radio delivered
 static unsigned long s_arriveGapMaxMs = 0;   // longest pause between arrivals
 
-// Read by the perf reply, so a soak run leaves its handoff behaviour visible without
+// Read by the perf reply, so a soak run leaves its ring behaviour visible without
 // waiting for an install to fail. Both are reset by ota.begin (see btOtaBegin).
-uint16_t btOtaFifoHighBytes() { return (uint16_t)s_fifoHigh; }
+uint8_t btOtaRingHighWater() { return (uint8_t)s_ringHigh; }
 unsigned long btOtaDrainGapMaxMs() { return s_drainGapMaxMs; }
 
 static uint16_t s_eventSeq = 0x4000;  // frame seq for our unsolicited events
 
-// ACK cadence for the install in progress: OTA_ACK_BYTES, capped at half of this
-// unit's handoff FIFO so the phone is always held back before the buffer that
+// ACK cadence for the install in progress: OTA_ACK_BYTES, capped by the depth of
+// this unit's ring so the phone is always held back before the buffer that
 // absorbs flash stalls is half full. Computed in btOtaBegin() from the chunk size
-// the link actually negotiated. See OTA_FIFO_BYTES.
+// the link actually negotiated - at MTU 517 it is 4 KB trimmed to 3,720 B, on a
+// 23-byte-MTU link it comes down to the 512 B floor. See OTA_RING_SLOTS.
 static uint32_t s_ackBytes = OTA_ACK_BYTES;
 
 // Defined below, next to btOtaPoll(). The `end` path needs it before its
-// definition: a length question cannot be answered until the FIFO's last bytes are
-// in flash, so that path asks for a flush (every waiting byte, batch rules aside).
-static void btOtaDrain(bool flushAll);
+// definition: a length question cannot be answered until the ring's last frames
+// are in flash.
+static void btOtaDrain();
 
 static uint32_t otaReadLE32(const uint8_t *p) {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -484,19 +440,13 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_detail[0] = 0;
   s_active = true;
   s_strayBytes = 0;
-  // Drop anything a previous install left in the FIFO, and restart the batch view
-  // of this one.
-  s_fifoHead = 0;
-  s_fifoTail = 0;
-  s_feedExpect = 0;
-  s_faultShape = false;
-  s_faultFifo = false;
-  s_faultOffset = false;
+  // Drop anything a previous install left in the ring.
+  s_ringHead = 0;
+  s_ringTail = 0;
+  s_overShape = false;
+  s_overRing = false;
   s_overLen = 0;
-  s_fifoHigh = 0;
-  s_batchPend = 0;
-  s_batchIdle = 0;
-  s_batchMs = 0;
+  s_ringHigh = 0;
   s_lastDrainMs = 0;
   s_drainGapMaxMs = 0;
   s_wrCalls = 0;
@@ -504,23 +454,23 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_wrUsMax = 0;
   s_lastArriveMs = 0;
   s_arriveGapMaxMs = 0;
-  s_faultPending = false;
+  s_ringsOver = false;
 
-  // The ACK window for this session, capped at half the handoff FIFO for the chunk
-  // size this link negotiated. Not flow control - the phone's allowance is 32 KB,
-  // far past this buffer (see OTA_ACK_BYTES) - but honesty about flash: an ACK is a
-  // claim about what the unit has written, and the unit should not make a claim
-  // further ahead than what it has actually drained, or the resume token after a
-  // drop points at bytes that only ever lived in RAM. Said out loud when it bites,
-  // because it changes the progress granularity the phone sees.
+  // The ACK window for this session, capped at half the usable handoff ring for
+  // the chunk size this link negotiated. Not flow control - the phone's allowance
+  // is 32 KB, far past this ring (see OTA_ACK_BYTES) - but honesty about flash:
+  // an ACK is a claim about what the unit has written, and the unit should not make
+  // a claim further ahead than what it has actually drained, or the resume token
+  // after a drop points at bytes that only ever lived in RAM. Said out loud when it
+  // bites, because it changes the progress granularity the phone sees.
   s_ackBytes = OTA_ACK_BYTES;
   {
-    uint32_t halfFifo = (uint32_t)OTA_FIFO_BYTES / 2u;
-    if (halfFifo < 512u) halfFifo = 512u;  // never ACK more often than every 512 B
-    if (halfFifo < OTA_ACK_BYTES) {
-      s_ackBytes = halfFifo;
-      logPrintf("OTA: ack window trimmed to %lu B (handoff FIFO is %d B)\n",
-                (unsigned long)s_ackBytes, OTA_FIFO_BYTES);
+    uint32_t halfRing = (uint32_t)(OTA_RING_SLOTS - 1) * s_chunk / 2u;
+    if (halfRing < 512u) halfRing = 512u;  // never ACK more often than every 512 B
+    if (halfRing < OTA_ACK_BYTES) {
+      s_ackBytes = halfRing;
+      logPrintf("OTA: ack window trimmed to %lu B (ring is %d x %lu B usable)\n",
+                (unsigned long)s_ackBytes, OTA_RING_SLOTS - 1, (unsigned long)s_chunk);
     }
   }
 
@@ -558,17 +508,7 @@ bool btOtaEnd(const char **err, uint32_t *off) {
   // check below. Seen on the bench 2026-11-03: a complete 1,590,912 B file ended
   // as `bad_length` with 1,590,176 B accepted, short by exactly the two frames
   // that were in the buffer when `end` arrived.
-  // Take the FIFO's last bytes into flash before answering anything. The phone
-  // writes the image on one characteristic and this `end` on another, and while
-  // the link keeps their air order (the app holds one write mutex for both),
-  // btTask's loop picks up the RPC before its next btOtaPoll() pass - so the bytes
-  // still sitting in the handoff FIFO would be invisible to the length check below.
-  // Seen on the bench 2026-11-03: a complete 1,590,912 B file ended as `bad_length`
-  // with 1,590,176 B accepted, short by exactly the two frames that were in the
-  // buffer when `end` arrived. One write stops at the array end, so this can need
-  // more than one pass; the loop is bounded, and a session that a drain ends (a
-  // fault on the final frames, an abort) drops out of it on its own.
-  for (int pass = 0; pass < 4 && s_active && fifoPending(); pass++) btOtaDrain(true);
+  if (s_active) btOtaDrain();
 
   *off = s_accepted;
   if (!s_active) {
@@ -626,8 +566,11 @@ bool btOtaEnd(const char **err, uint32_t *off) {
     *err = "end_failed";
     return false;
   }
-  logPrintf("OTA: fifo high-water %u/%d B, longest %lums between drains\n",
-            (unsigned)s_fifoHigh, OTA_FIFO_BYTES, (unsigned long)s_drainGapMaxMs);
+  // Baseline for the same numbers a failure prints: how deep the ring actually
+  // ran, and how long BtTask went without serving it, on an install that WORKED.
+  // Without that, the failure line has nothing to be compared against.
+  logPrintf("OTA: ring high-water %u/%d frames, longest %lums between drains\n",
+            (unsigned)s_ringHigh, OTA_RING_SLOTS - 1, (unsigned long)s_drainGapMaxMs);
   logPrintf("OTA: flash %lu writes mean %lu us max %lu us total %lums; open+erase %lums; "
             "longest %lums between arrivals\n",
             (unsigned long)s_wrCalls,
@@ -702,14 +645,7 @@ void btOtaStatus(char *buf, size_t cap, uint32_t *off, uint32_t *size, bool *act
 // ---------------------------------------------------------------------------
 
 // Called on the Bluedroid callback task. Copy and return - everything that
-// thinks happens on BtTask. What it checks: the frame's shape, that the FIFO has
-// room for the whole payload, and that the frame carries the offset the image is
-// actually at. The offset check lives here now because a byte FIFO has no frame
-// boundaries to check at the far end: this is the one moment the 4-byte prefix
-// exists. It is judged against `s_feedExpect`, which only this task writes (the
-// offset the next arriving frame must carry), so the check cannot race with the
-// drain's bookkeeping; the FIFO is empty, the resync below says the unit's written
-// count is the truth (that is where a phone that reconnects resumes from).
+// thinks happens on BtTask.
 void btOtaFeed(const uint8_t *data, size_t len) {
   if (!s_active) {
     s_strayBytes += (uint32_t)len;
@@ -720,162 +656,116 @@ void btOtaFeed(const uint8_t *data, size_t len) {
     return;
   }
   if (len < 5 || len > OTA_MAX_FRAME) {
-    s_faultShape = true;
+    s_overShape = true;
     s_overLen = (uint16_t)len;
-    s_faultPending = true;  // a frame this shape is a bug on one side of the link
+    s_ringsOver = true;  // a frame this shape is a bug on one side of the link
     return;
   }
-  const uint16_t n = (uint16_t)(len - 4);
-  const uint16_t pend = fifoPending();
-  if ((uint32_t)pend + (uint32_t)n > (uint32_t)OTA_FIFO_BYTES) {
-    s_faultFifo = true;
+  const uint8_t next = (uint8_t)((s_ringHead + 1) & OTA_RING_MASK);
+  if (next == s_ringTail) {
+    s_overRing = true;
     s_overLen = (uint16_t)len;
-    s_faultPending = true;
+    s_ringsOver = true;
     return;
   }
-  const uint32_t got = otaReadLE32(data);
-  if (got != s_feedExpect) {
-    // No rewind, and no skipping: if the phone and the unit disagree about what has
-    // been written, the CRC being folded is not worth anything.
-    s_faultOffset = true;
-    s_offGot = got;
-    s_offWant = s_feedExpect;
-    s_faultPending = true;
-    return;
-  }
-  // Append the payload, wrapped across the array end if it has to be. Room for the
-  // whole payload was checked above; a stale read of s_fifoTail only ever makes
-  // `pend` look bigger than it is, which makes both checks stricter, never looser.
-  const uint16_t idx = (uint16_t)(s_fifoHead & OTA_FIFO_MASK);
-  const uint16_t first = (uint16_t)(OTA_FIFO_BYTES - idx);
-  if (first >= n) {
-    memcpy(s_fifo + idx, data + 4, n);
-  } else {
-    memcpy(s_fifo + idx, data + 4, first);
-    memcpy(s_fifo, data + 4 + first, (uint16_t)(n - first));
-  }
-  s_fifoHead = (uint16_t)(s_fifoHead + n);
-  s_feedExpect += n;
-
+  memcpy(s_ring[s_ringHead], data, len);
+  s_ringLen[s_ringHead] = (uint16_t)len;
+  s_ringHead = next;
   const unsigned long nowArr = millis();
   if (s_lastArriveMs && nowArr - s_lastArriveMs > s_arriveGapMaxMs)
     s_arriveGapMaxMs = nowArr - s_lastArriveMs;
   s_lastArriveMs = nowArr;
-  const uint16_t waiting = (uint16_t)(s_fifoHead - s_fifoTail);
-  if (waiting > s_fifoHigh) s_fifoHigh = waiting;
+  const uint8_t used = (uint8_t)((s_ringHead - s_ringTail) & OTA_RING_MASK);
+  if (used > s_ringHigh) s_ringHigh = used;
 }
 
-// Takes the FIFO to flash. Runs on BtTask, which is also the task answering RPC -
-// so an ACK, an error event and a reply can never interleave with a write. One
-// esp_ota_write covers everything that arrived since the last pass: that is the
-// whole reason the handoff buffer is a byte FIFO and not a ring of frames (see
-// OTA_FIFO_BYTES). `flushAll` asks for the batching rules to be ignored - the
-// `end` path cannot answer a length question while bytes still sit in RAM.
-static void btOtaDrain(bool flushAll) {
+// Drains the ring into flash. Runs on BtTask, which is also the task answering
+// RPC - so an ACK, an error event and a reply can never interleave with a write.
+static void btOtaDrain() {
   if (s_active) {
-    // How long BtTask can go without serving the FIFO. This is the quantity that
-    // decides whether a deep-enough pipeline overflows it or not, so it is measured
-    // on every install and printed when one dies.
+    // How long BtTask can go without serving the ring. This is the quantity that
+    // decides whether a deep-enough pipeline overflows the ring or not, so it is
+    // measured on every install and printed when one dies.
     const unsigned long nowMs = millis();
     if (s_lastDrainMs && nowMs - s_lastDrainMs > s_drainGapMaxMs)
       s_drainGapMaxMs = nowMs - s_lastDrainMs;
     s_lastDrainMs = nowMs;
   }
+  int served = 0;
+  while (s_ringTail != s_ringHead && served < OTA_RING_SLOTS) {
+    const uint8_t slot = s_ringTail;
+    const uint16_t len = s_ringLen[slot];
+    s_ringTail = (uint8_t)((s_ringTail + 1) & OTA_RING_MASK);
+    served++;
 
-  // Report a frame the producer refused - here, because the callback task may not
-  // talk - and end the install. The refused frame never entered the FIFO, and the
-  // bytes already in it belong to a session that is over, so they are dropped
-  // rather than flashed.
-  if (s_faultPending) {
-    s_faultPending = false;
-    const bool isOffset = s_faultOffset;
+    if (!s_active || !s_sessionOpen) {
+      // The install died between the write arriving and this drain (an abort, or
+      // a silence window). The bytes belong to a session that no longer exists.
+      s_active = false;
+      continue;
+    }
+
+    const uint32_t off = otaReadLE32(s_ring[slot]);
+    if (off != s_accepted) {
+      // No rewind, and no skipping. Both mean the phone and the unit disagree
+      // about what has been written, and the CRC the unit is folding is only
+      // worth anything if the bytes it covers are the bytes it says.
+      char detail[64];
+      snprintf(detail, sizeof(detail), "write at %lu, unit expects %lu", (unsigned long)off,
+               (unsigned long)s_accepted);
+      otaFail("offset_mismatch", detail);
+      return;
+    }
+
+    const uint8_t *payload = s_ring[slot] + 4;
+    const uint32_t n = (uint32_t)(len - 4);
+    const uint32_t wrT0 = micros();
+    esp_err_t e = esp_ota_write(s_handle, payload, n);
+    const uint32_t wrUs = (uint32_t)(micros() - wrT0);
+    s_wrCalls++;
+    s_wrUsTotal += wrUs;
+    if (wrUs > s_wrUsMax) s_wrUsMax = wrUs;
+    if (e != ESP_OK) {
+      char detail[80];
+      snprintf(detail, sizeof(detail), "write at %lu: %s", (unsigned long)s_accepted,
+               esp_err_to_name(e));
+      otaFail("write_failed", detail);
+      return;
+    }
+
+    s_crcStored = otaCrcChain(s_crcStored, payload, n);
+    s_accepted += n;
+    otaQuietLastByteMs = millis();
+
+    if (s_accepted - s_ackAt >= s_ackBytes || s_accepted == s_size) {
+      s_ackAt = s_accepted;
+      otaSendAck();
+      updateOTAProgress((int)s_accepted, (int)s_size);
+      // One progress line per 128 KB transferred, whatever the ACK cadence is.
+      if (s_accepted / 131072u != (s_accepted - n) / 131072u)
+        logPrintf("OTA: %lu/%lu B, heap=%lu\n", (unsigned long)s_accepted,
+                  (unsigned long)s_size, (unsigned long)ESP.getFreeHeap());
+    }
+  }
+
+  if (s_ringsOver) {
+    s_ringsOver = false;
     char detail[96];
-    if (s_faultShape)
+    if (s_overShape) {
       snprintf(detail, sizeof(detail), "frame %u B; this unit takes 5..%d B (chunk is %lu B)",
                (unsigned)s_overLen, OTA_MAX_FRAME, (unsigned long)s_chunk);
-    else if (s_faultFifo)
-      snprintf(detail, sizeof(detail), "fifo full (%d B, frame %u B, high-water %u B, longest "
-               "%lums between drains, flash mean %lu us max %lu us)", OTA_FIFO_BYTES,
-               (unsigned)s_overLen, (unsigned)s_fifoHigh, (unsigned long)s_drainGapMaxMs,
+    } else if (s_overRing) {
+      snprintf(detail, sizeof(detail), "ring full (%d slots, %u B frame, high-water %u, "
+               "longest %lums between drains, flash mean %lu us max %lu us)", OTA_RING_SLOTS,
+               (unsigned)s_overLen, (unsigned)s_ringHigh, (unsigned long)s_drainGapMaxMs,
                (unsigned long)(s_wrCalls ? s_wrUsTotal / s_wrCalls : 0), (unsigned long)s_wrUsMax);
-    else
-      snprintf(detail, sizeof(detail), "write at %lu, unit expects %lu", (unsigned long)s_offGot,
-               (unsigned long)s_offWant);
-    s_faultShape = false;
-    s_faultFifo = false;
-    s_faultOffset = false;
+    } else {
+      detail[0] = '\0';
+    }
+    s_overShape = false;
+    s_overRing = false;
     s_overLen = 0;
-    s_fifoTail = s_fifoHead;
-    otaFail(isOffset ? "offset_mismatch" : "bad_frame", detail);
-    return;
-  }
-
-  if (!s_active || !s_sessionOpen) {
-    // The install died between the bytes arriving and this pass (an abort, or a
-    // silence window). The bytes belong to a session that no longer exists.
-    s_active = false;
-    s_fifoTail = s_fifoHead;
-    return;
-  }
-
-  const uint16_t pend = fifoPending();
-  if (pend == 0) {
-    s_batchPend = 0;
-    s_batchIdle = 0;
-    return;
-  }
-  // Batch bookkeeping, all of it BtTask's own: the batch clock starts when bytes
-  // first appear, and "the phone has gone quiet" means passes in a row that brought
-  // nothing new. One quiet pass is not enough - at ~24 ms per frame and a 10 ms
-  // loop, a pass with nothing new is ordinary mid-stream.
-  if (pend == s_batchPend) {
-    s_batchIdle++;
-  } else {
-    if (s_batchPend == 0) s_batchMs = millis();
-    s_batchIdle = 0;
-  }
-  s_batchPend = pend;
-  if (!flushAll && pend < OTA_WRITE_TARGET && pend < OTA_FIFO_PRESSURE && s_batchIdle < 3 &&
-      (millis() - s_batchMs) < OTA_WRITE_WAIT_MS)
-    return;
-
-  // Everything waiting, up to the array end (the tail index wraps). The run stays a
-  // multiple of 4 except when it carries the image's final short frame, which is
-  // what the per-frame writes already handed esp_ota_write, and what its own tail
-  // handling copes with.
-  const uint16_t idx = (uint16_t)(s_fifoTail & OTA_FIFO_MASK);
-  uint16_t run = pend;
-  if (run > (uint16_t)(OTA_FIFO_BYTES - idx)) run = (uint16_t)(OTA_FIFO_BYTES - idx);
-
-  const uint32_t wrT0 = micros();
-  esp_err_t e = esp_ota_write(s_handle, s_fifo + idx, run);
-  const uint32_t wrUs = (uint32_t)(micros() - wrT0);
-  s_wrCalls++;
-  s_wrUsTotal += wrUs;
-  if (wrUs > s_wrUsMax) s_wrUsMax = wrUs;
-  if (e != ESP_OK) {
-    char detail[80];
-    snprintf(detail, sizeof(detail), "write at %lu: %s", (unsigned long)s_accepted,
-             esp_err_to_name(e));
-    s_fifoTail = s_fifoHead;  // the session is over; whatever is waiting is moot
-    otaFail("write_failed", detail);
-    return;
-  }
-
-  s_crcStored = otaCrcChain(s_crcStored, s_fifo + idx, run);
-  s_accepted += run;
-  s_fifoTail = (uint16_t)(s_fifoTail + run);  // published last: the producer's room
-                                              // check reads it
-  otaQuietLastByteMs = millis();
-
-  if (s_accepted - s_ackAt >= s_ackBytes || s_accepted == s_size) {
-    s_ackAt = s_accepted;
-    otaSendAck();
-    updateOTAProgress((int)s_accepted, (int)s_size);
-    // One progress line per 128 KB transferred, whatever the ACK cadence is.
-    if (s_accepted / 131072u != (s_accepted - run) / 131072u)
-      logPrintf("OTA: %lu/%lu B, heap=%lu\n", (unsigned long)s_accepted,
-                (unsigned long)s_size, (unsigned long)ESP.getFreeHeap());
+    otaFail("bad_frame", detail);
   }
 }
 
@@ -897,7 +787,7 @@ static void btOtaClocks() {
 
 // Called from btTask's loop, every pass.
 void btOtaPoll() {
-  if (!s_active && fifoPending() == 0 && !s_faultPending) {
+  if (!s_active && s_ringTail == s_ringHead && !s_ringsOver) {
     if (s_strayLogged && s_strayBytes) {
       logPrintf("OTA: %lu stray byte(s) dropped this window\n", (unsigned long)s_strayBytes);
       s_strayBytes = 0;
@@ -905,7 +795,7 @@ void btOtaPoll() {
     }
     return;
   }
-  btOtaDrain(false);
+  btOtaDrain();
   btOtaClocks();
 }
 

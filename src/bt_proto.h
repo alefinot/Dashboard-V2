@@ -84,12 +84,11 @@ uint16_t btLinkMtu();
 
 // The install itself (src/bt_ota.cpp). The control-plane calls run on the BLE
 // task, from the RPC handlers below. btOtaFeed runs on the Bluedroid callback
-// task and only checks the frame and appends its payload to a byte FIFO - flash
-// work there would stall the GATT stack - and btOtaPoll() (called from the BLE
-// task's loop) takes that FIFO to flash, one write per pass, folds the CRC-32,
-// sends the ACK events and enforces the resume/silence windows. Every state change
-// therefore happens on one task, and there are no locks between the control plane
-// and the data path.
+// task and only copies - flash work there would stall the GATT stack - and
+// btOtaPoll() (called from the BLE task's loop) drains that ring into flash,
+// folds the CRC-32, sends the ACK events and enforces the resume/silence
+// windows. Every state change therefore happens on one task, and there are no
+// locks between the control plane and the data path.
 bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
                 const char **err);
 bool btOtaEnd(const char **err, uint32_t *off);
@@ -99,11 +98,11 @@ void btOtaStatus(char *buf, size_t cap, uint32_t *off, uint32_t *size, bool *act
 void btOtaFeed(const uint8_t *data, size_t len);
 void btOtaPoll();
 
-// Handoff-buffer behaviour of the most recent install (reset by btOtaBegin): the
-// most bytes ever waiting between the radio and flash, and the longest gap between
-// two BtTask drain passes. The perf reply reports both, so a buffer-size change is
-// judged on numbers (heap-recovery plan Phase 1, install-speed plan B1).
-uint16_t btOtaFifoHighBytes();
+// Ring behaviour of the most recent install (reset by btOtaBegin): how many of
+// the OTA_RING_SLOTS-1 usable slots were occupied at the busiest moment, and the
+// longest gap between two BtTask drain passes. The perf reply reports both, so a
+// slot-count change is judged on numbers (heap-recovery plan, Phase 1).
+uint8_t btOtaRingHighWater();
 unsigned long btOtaDrainGapMaxMs();
 bool btOtaActive();         // an install is open, resume window included
 bool btOtaImageAccepted();  // verified and activated; the reboot is pending

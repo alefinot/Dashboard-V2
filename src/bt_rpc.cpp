@@ -273,8 +273,8 @@ static void methodPerf(uint16_t seq, uint32_t id) {
   used += heapDiagStackJson(s_out + used, sizeof(s_out) - used - 1);
   btCatf(s_out, sizeof(s_out) - 1, &used, "},\"heap_diag\":{");
   used += heapDiagHeapJson(s_out + used, sizeof(s_out) - used - 1);
-  btCatf(s_out, sizeof(s_out) - 1, &used, ",\"fifo_high_b\":%u,\"fifo_gap_ms\":%lu},",
-         (unsigned)btOtaFifoHighBytes(), (unsigned long)btOtaDrainGapMaxMs());
+  btCatf(s_out, sizeof(s_out) - 1, &used, ",\"ring_high\":%u,\"ring_gap_ms\":%lu},",
+         (unsigned)btOtaRingHighWater(), (unsigned long)btOtaDrainGapMaxMs());
   btCatf(s_out, sizeof(s_out) - 1, &used,
          "\"mem_saver\":%d,\"heap_size\":%lu,\"psram_size\":%lu,\"psram_free\":%lu,"
          "\"flash_total\":%lu,\"flash_free\":%lu,",
