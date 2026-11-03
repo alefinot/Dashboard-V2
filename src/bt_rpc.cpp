@@ -82,6 +82,15 @@ static size_t rpcBeginChunk(uint32_t id) {
 }
 
 static void rpcFinish(uint16_t seq, size_t prefix, size_t bodyLen) {
+  if (prefix + bodyLen >= sizeof(s_out) - 1) {
+    // A body writer ran into the end of s_out: btCatf clamps rather than failing,
+    // so what sits in the buffer is a sentence cut in half, not JSON. Refuse it
+    // out loud instead of sending text the central can only time out on.
+    logPrintf("RPC: body clamped at %u B (seq %u) - not JSON any more\n",
+              (unsigned)(prefix + bodyLen), (unsigned)seq);
+    rpcErr(seq, 0, "too_large");
+    return;
+  }
   if (prefix + bodyLen + 2 > sizeof(s_out)) {
     rpcErr(seq, 0, "too_large");
     return;

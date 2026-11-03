@@ -125,6 +125,7 @@ bool btSendMessage(uint8_t type, uint16_t seq, const char *data, size_t len) {
   static char frame[BT_FRAME_HDR + 512];
   const size_t chunk = btMaxPayload();
   size_t off = 0;
+  int frames = 0;
   do {
     size_t n = len - off;
     if (n > chunk) n = chunk;
@@ -142,8 +143,15 @@ bool btSendMessage(uint8_t type, uint16_t seq, const char *data, size_t len) {
     out->setValue((const uint8_t *)frame, BT_FRAME_HDR + n);
     out->notify();
     off += n;
+    frames++;
     if (!last) vTaskDelay(pdMS_TO_TICKS(12));
   } while (off < len);
+  // How big an RPC answer actually is, and what it cost to get over: a body that
+  // outgrew its buffer is clamped in silence by btCatf, and a central missing the
+  // LAST fragment waits out its own request timeout and looks like a dead link.
+  if (type == BT_F_RESP)
+    logPrintf("BT: RESP seq %u: %u B over %d frame(s), payload cap %u B\n", (unsigned)seq,
+              (unsigned)len, frames, (unsigned)chunk);
   return true;
 }
 
