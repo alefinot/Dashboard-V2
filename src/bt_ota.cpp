@@ -216,6 +216,20 @@ static volatile uint8_t s_ringHigh = 0;      // high-water occupancy of this ins
 static unsigned long s_lastDrainMs = 0;      // BtTask: last pass that served the ring
 static unsigned long s_drainGapMaxMs = 0;    // longest pause between those passes
 
+// What the two ends of an install actually cost, measured rather than assumed:
+// how much of the wall clock goes to flash (the esp_ota_write calls, and the
+// erase that esp_ota_begin does up front), and how the bytes actually arrive from
+// the radio (the gap between frames landing in the ring). The install-speed work
+// turns on one question - is the wall the link or the flash? - and these numbers
+// answer it. Counted on BtTask around the write, and by the producer on arrival;
+// printed at the end of every install and inside the ring-full failure line.
+static uint32_t s_wrCalls = 0;               // esp_ota_write calls this install
+static uint32_t s_wrUsTotal = 0;             // time spent inside them
+static uint32_t s_wrUsMax = 0;               // the single worst call
+static unsigned long s_beginMs = 0;          // esp_ota_begin cost (= the erase)
+static unsigned long s_lastArriveMs = 0;     // last frame the radio delivered
+static unsigned long s_arriveGapMaxMs = 0;   // longest pause between arrivals
+
 // Read by the perf reply, so a soak run leaves its ring behaviour visible without
 // waiting for an install to fail. Both are reset by ota.begin (see btOtaBegin).
 uint8_t btOtaRingHighWater() { return (uint8_t)s_ringHigh; }
@@ -394,7 +408,16 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   }
 
   esp_ota_handle_t handle = 0;
+  // esp_ota_begin() given the real image size erases the whole staging area here:
+  // IDF 5.5 erases ALIGN_UP(size, sector) up front (and then never erases again
+  // during the writes). It is one dead block on the critical path before the first
+  // byte moves, so it is measured - it is the largest single number in a fast
+  // install (see the end-of-install flash line).
+  const unsigned long beginT0 = millis();
   esp_err_t e = esp_ota_begin(s_slot, size, &handle);
+  s_beginMs = millis() - beginT0;
+  logPrintf("OTA: open+erase %lums (%lu B, %lu sectors)\n", s_beginMs,
+            (unsigned long)((size + 4095u) & ~4095u), (unsigned long)((size + 4095u) / 4096u));
   if (e != ESP_OK) {
     logPrintf("OTA: esp_ota_begin(%s, %lu B) failed: %s\n", s_slot->label, (unsigned long)size,
               esp_err_to_name(e));
@@ -426,6 +449,11 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_ringHigh = 0;
   s_lastDrainMs = 0;
   s_drainGapMaxMs = 0;
+  s_wrCalls = 0;
+  s_wrUsTotal = 0;
+  s_wrUsMax = 0;
+  s_lastArriveMs = 0;
+  s_arriveGapMaxMs = 0;
   s_ringsOver = false;
 
   // The ACK window for this session, capped at half the usable handoff ring for
@@ -543,6 +571,11 @@ bool btOtaEnd(const char **err, uint32_t *off) {
   // Without that, the failure line has nothing to be compared against.
   logPrintf("OTA: ring high-water %u/%d frames, longest %lums between drains\n",
             (unsigned)s_ringHigh, OTA_RING_SLOTS - 1, (unsigned long)s_drainGapMaxMs);
+  logPrintf("OTA: flash %lu writes mean %lu us max %lu us total %lums; open+erase %lums; "
+            "longest %lums between arrivals\n",
+            (unsigned long)s_wrCalls,
+            (unsigned long)(s_wrCalls ? s_wrUsTotal / s_wrCalls : 0), (unsigned long)s_wrUsMax,
+            (unsigned long)(s_wrUsTotal / 1000u), s_beginMs, s_arriveGapMaxMs);
   logPrintf("OTA: image verified in %lums (heap=%lu, stack free %u B)\n",
             (unsigned long)(millis() - verifyStart), (unsigned long)ESP.getFreeHeap(),
             (unsigned)btStackFree());
@@ -638,6 +671,10 @@ void btOtaFeed(const uint8_t *data, size_t len) {
   memcpy(s_ring[s_ringHead], data, len);
   s_ringLen[s_ringHead] = (uint16_t)len;
   s_ringHead = next;
+  const unsigned long nowArr = millis();
+  if (s_lastArriveMs && nowArr - s_lastArriveMs > s_arriveGapMaxMs)
+    s_arriveGapMaxMs = nowArr - s_lastArriveMs;
+  s_lastArriveMs = nowArr;
   const uint8_t used = (uint8_t)((s_ringHead - s_ringTail) & OTA_RING_MASK);
   if (used > s_ringHigh) s_ringHigh = used;
 }
@@ -682,7 +719,12 @@ static void btOtaDrain() {
 
     const uint8_t *payload = s_ring[slot] + 4;
     const uint32_t n = (uint32_t)(len - 4);
+    const uint32_t wrT0 = micros();
     esp_err_t e = esp_ota_write(s_handle, payload, n);
+    const uint32_t wrUs = (uint32_t)(micros() - wrT0);
+    s_wrCalls++;
+    s_wrUsTotal += wrUs;
+    if (wrUs > s_wrUsMax) s_wrUsMax = wrUs;
     if (e != ESP_OK) {
       char detail[80];
       snprintf(detail, sizeof(detail), "write at %lu: %s", (unsigned long)s_accepted,
@@ -714,8 +756,9 @@ static void btOtaDrain() {
                (unsigned)s_overLen, OTA_MAX_FRAME, (unsigned long)s_chunk);
     } else if (s_overRing) {
       snprintf(detail, sizeof(detail), "ring full (%d slots, %u B frame, high-water %u, "
-               "longest %lums between drains)", OTA_RING_SLOTS, (unsigned)s_overLen,
-               (unsigned)s_ringHigh, (unsigned long)s_drainGapMaxMs);
+               "longest %lums between drains, flash mean %lu us max %lu us)", OTA_RING_SLOTS,
+               (unsigned)s_overLen, (unsigned)s_ringHigh, (unsigned long)s_drainGapMaxMs,
+               (unsigned long)(s_wrCalls ? s_wrUsTotal / s_wrCalls : 0), (unsigned long)s_wrUsMax);
     } else {
       detail[0] = '\0';
     }
