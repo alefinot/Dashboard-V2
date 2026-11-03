@@ -130,6 +130,22 @@ class EspCapture(bbc.EspLog):
         self.log.add(line)
         super()._note(line)
 
+    def restart(self):
+        """Read the port again after a stop(); a retried session needs a live reader.
+
+        The reader thread exits when its stop flag is set and releases COMn, so the
+        flag is cleared and a fresh thread opens the port. Lines already captured
+        stay in the log - a retry adds to the capture, it does not replace it.
+        """
+        self.ok = False
+        self._stop.clear()
+        self.start()
+        for _ in range(20):
+            if self.ok:
+                return True
+            time.sleep(0.25)
+        return False
+
 
 class Log:
     """A USB capture in memory, with the timestamps the firmware does not print.
@@ -409,12 +425,10 @@ async def bench(a):
     esp.start()
     code = 0
     try:
-        code = await drive(a, log, esp)
-    except Exception as exc:  # noqa: BLE001 - a broken link still reports gates
-        print(f"run aborted: {type(exc).__name__}: {exc}", flush=True)
-        code = 1
-    esp.stop()
-    out = a.out or os.path.join("Local_artifacts", "logs",
+        code = await drive_with_retries(a, log, esp)
+    finally:
+        esp.stop()
+    out = a.out or os.path.join("Local artifacts", "logs",
                                 time.strftime("heap-gates-%Y%m%d-%H%M%S.log"))
     log.write(out)
     print(f"\nwrote capture: {out} ({len(log.rows)} line(s))", flush=True)
@@ -423,6 +437,36 @@ async def bench(a):
                          min_live_hb=a.min_live_hb)
     rc = report(res, info)
     return rc or code
+
+
+async def drive_with_retries(a, log, esp):
+    """Run the scenario, retrying only while the LINK never came up.
+
+    Windows is the flaky part of this bench: a connection that pairs, connects and
+    then refuses the CCCD write, or comes up at MTU 23 because WinRT skipped the
+    exchange, is a property of its GATT cache and not of the firmware. Retrying the
+    session (fresh scan, fresh client) is what a person at the bench does; giving up
+    on the first hiccup would blame the build under test. Anything that goes wrong
+    AFTER the link is up is not retried - that is the thing being measured.
+    """
+    codes = {2: "never found the unit", 3: "never paired", 4: "link not usable"}
+    code = 9
+    for attempt in range(1, a.sessions + 1):
+        if attempt > 1:
+            print(f"  session {attempt}/{a.sessions}: the link was {codes.get(code, code)} "
+                  f"- rescanning and reconnecting", flush=True)
+            await asyncio.sleep(3.0)
+            esp.restart()
+        try:
+            code = await drive(a, log, esp)
+        except Exception as exc:  # noqa: BLE001 - a broken link still reports gates
+            print(f"run aborted: {type(exc).__name__}: {exc}", flush=True)
+            code = 9
+        if code not in (2, 3, 4):
+            return code
+    print(f"  no usable BLE session in {a.sessions} tries - the gates below still read "
+          f"whatever the unit logged", flush=True)
+    return code
 
 
 async def drive(a, log, esp):
@@ -523,7 +567,10 @@ async def drive(a, log, esp):
                 await client.start_notify(uuid, on_notify)
                 print(f"  subscribed {label}", flush=True)
                 return True
-            except OSError as exc:
+            except Exception as exc:  # noqa: BLE001
+                # Several different objects come back here (OSError with a WinRT
+                # code, BleakError "Not connected" the next try). They mean the
+                # same thing: this connection is not usable yet.
                 print(f"  subscribe {label} try {attempt + 1}: {exc}", flush=True)
                 await asyncio.sleep(1.0 + attempt)
         return False
@@ -534,6 +581,18 @@ async def drive(a, log, esp):
         await client.disconnect(); esp.stop(); return 4
     await asyncio.sleep(2.0)
     print(f"MTU now {client.mtu_size}", flush=True)
+    if client.mtu_size < 100:
+        # WinRT did not run the MTU exchange on this connection. At MTU 23 a
+        # 1.6 MB install is ~79k frames instead of 3.2k, which measures the
+        # Windows GATT cache rather than the firmware - so the session is torn
+        # down and retried, the way a person at the bench would.
+        print("  MTU is still 23 - dropping the link and retrying the session", flush=True)
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        esp.stop()
+        return 4
 
     seqbox = [0]
 
@@ -761,6 +820,8 @@ def main():
     ap.add_argument("--no-reset-first", dest="reset_first", action="store_false",
                     help="do not pulse DTR/RTS to start the run from a clean boot")
     ap.set_defaults(reset_first=True)
+    ap.add_argument("--sessions", type=int, default=3,
+                    help="retries of a session that never got a usable link")
     ap.add_argument("--min-heap", type=int, default=25000,
                     help="G5 floor for the soak's low-water heap, bytes")
     ap.add_argument("--max-stalls", type=int, default=0, help="G5 allowance for STALL lines")
