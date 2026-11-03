@@ -1,6 +1,5 @@
 package com.alefinot.dashboardpp.ble
 
-import android.bluetooth.BluetoothGatt
 import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
@@ -72,10 +71,9 @@ object OtaController {
      * really on flash, and the first hiccup wedges a queue nobody can flush. Pacing against the
      * unit's own ACK keeps the outstanding window small and the progress figure honest. It must stay
      * above the unit's ACK cadence (`OTA_ACK_BYTES` in `src/bt_ota.cpp` — 4 KiB, one flash sector),
-     * or the two sides deadlock. It is not the unit's cushion either, and since A3 it is not the
-     * phone's ceiling either: the cushion is the handoff ring in `bt_ota.cpp` (8 slots, 7 usable),
-     * and the window the pump respects is `OtaPump.paceLimitBytes` — one frame narrower than that
-     * ring, because the frame that fills it is the frame the unit refuses (`bad_frame ring full`).
+     * or the two sides deadlock. It is not the unit's cushion either: that is the 16-slot handoff
+     * ring in `bt_ota.cpp` (measured using 2 of its 15 usable slots on a full install) plus the
+     * link's own write-completion pacing.
      */
     const val OUTSTANDING_BYTES = 32 * 1024
 
@@ -306,116 +304,17 @@ object OtaController {
             var lastPublishMs = 0L
             var writeFailures = 0
 
-            // A3 (`INSTALL-SPEED-PLAN-2026-11-03`): several frames travel at once instead of one.
-            // The bench says the phone, not the radio, was the cost: one write completed every
-            // ~23 ms while the unit's handoff ring held 2-3 of its 7 frames and its flash drain
-            // waited up to 125 ms between passes. The window that keeps that depth safe is the
-            // unit's ring - see `OtaPump`, and `bad_frame ring full` in `src/bt_ota.cpp` for what
-            // happens if it is exceeded.
-            val paceBytes = OtaPump.paceLimitBytes(chunk)
-
-            /**
-             * Wait for the stack to finish sending what it has, bounded by the pipe's own depth.
-             *
-             * Used wherever the phone is about to ask the unit where the image really stands: a
-             * status answer that arrives while our own writes are still queued describes a link that
-             * has not finished talking, and continuing from it re-sends bytes the queued frames are
-             * about to deliver - which the unit answers with `offset_mismatch`.
-             */
-            suspend fun drainPipe() {
-                var drained = 0
-                while (link.otaWritePending() > 0 && drained < OtaPump.PIPE_FRAMES) {
-                    if (link.otaWriteAwait() == null) break
-                    drained++
-                }
-                link.otaPipeReset()
-            }
-
-            /**
-             * A frame the stack would not take, or one whose callback never came.
-             *
-             * The unit's answer is the only thing that says where the image really is, so ask it and
-             * continue from there - or stop and offer RESUME when the link itself looks gone.
-             * Returns true when the caller has to leave the loop.
-             */
-            suspend fun writeAttemptFailed(): Boolean {
-                writeFailures++
-                drainPipe()
-                val unitOff = settledOffset(read = {
-                    val s = api.otaStatus()
-                    if (s.ok) (BleJson.int(s.fields, "off") ?: 0).coerceIn(0, img.size) else null
-                })
-                if (writeFailures >= MAX_WRITE_FAILURES || unitOff == null ||
-                    link.state.value !is BleLinkState.Ready
-                ) {
-                    val live = link.state.value is BleLinkState.Ready
-                    _view.update {
-                        it.copy(
-                            stage = OtaStage.Paused,
-                            note = "The unit has " + tracker.acked + " of " + img.size +
-                                " bytes on flash" +
-                                if (live) {
-                                    ". The link is still up; press RESUME and it continues from " +
-                                        "where the unit actually is."
-                                } else {
-                                    ". The link dropped. The unit holds the install open for " +
-                                        resumeWindowWords() + ": reconnect on the link card, " +
-                                        "then press RESUME and it continues from there."
-                                },
-                        )
-                    }
-                    return true
-                }
-                // The unit's number wins in both directions. It is the first byte the unit still
-                // needs: writing below it re-sends bytes it already accepted (which is how A3's first
-                // run ended, `offset_mismatch`), and writing above it skips bytes it never got.
-                nextOff = unitOff
-                tracker.apply(OtaEvent.Ack(unitOff))
-                lastAckMs = now()
-                publish(tracker, img)
-                delay(WRITE_RETRY_DELAY_MS)
-                return false
-            }
-
             while (true) {
-                // ---- hand the pipe everything it may carry ----
-                var refused: OtaWriteStart? = null
-                while (OtaPump.canIssue(link.otaWritePending(), nextOff - tracker.acked, chunk)) {
-                    val seg = nextSegment(img.size, chunk, nextOff) ?: break
-                    val start = link.otaWriteStart(OtaFrames.data(seg.offset, data, seg.offset, seg.length))
-                    if (start != OtaWriteStart.Started) {
-                        refused = start
-                        break
-                    }
-                    writeFailures = 0
-                    tracker.wrote(seg.offset + seg.length)
-                    nextOff = seg.offset + seg.length
-                }
-                // A full pipe is not a failure - the loop waits for a completion below and tries
-                // again. A write refused while nothing at all is in flight is: the stack is not
-                // busy, it is gone.
-                if (refused == OtaWriteStart.Unavailable ||
-                    (refused == OtaWriteStart.Busy && link.otaWritePending() == 0)
-                ) {
-                    if (writeAttemptFailed()) return
-                    continue
-                }
+                val seg = nextSegment(img.size, chunk, nextOff) ?: break
 
-                // Every byte handed over and the stack has sent all of it: the image is on the wire.
-                // `ota.end` goes to a different characteristic, so its order against writes still in
-                // the queue is not guaranteed - which is exactly why the pipe has to be empty here.
-                if (nextSegment(img.size, chunk, nextOff) == null && link.otaWritePending() == 0) break
-
-                if (nextSegment(img.size, chunk, nextOff) != null &&
-                    nextOff - tracker.acked >= paceBytes && link.otaWritePending() == 0
-                ) {
-                    // Pace against the unit, not against the phone's own speed. The write callback
-                    // only says Android took the bytes; the unit's ACK is the only thing that says
-                    // they are on flash. Running further ahead than this buffers the image into the
-                    // stack, makes the progress figure lag reality by a couple of hundred KB, and
-                    // leaves a queue that cannot be flushed when the link hiccups.
+                // Pace against the unit, not against the phone's own speed. The write callback only
+                // says Android took the bytes; the unit's ACK is the only thing that says they are
+                // on flash. Running further ahead than this buffers the image into the stack, makes
+                // the progress figure lag reality by a couple of hundred KB, and leaves a queue that
+                // cannot be flushed when the link hiccups.
+                if (nextOff - tracker.acked >= OUTSTANDING_BYTES) {
                     val paceUntil = now() + STALL_SILENCE_MS
-                    while (nextOff - tracker.acked >= paceBytes && now() < paceUntil) {
+                    while (nextOff - tracker.acked >= OUTSTANDING_BYTES && now() < paceUntil) {
                         val ev = withTimeoutOrNull(400L) { events.receive() } ?: continue
                         if (tracker.apply(ev)) {
                             publish(tracker, img)
@@ -425,27 +324,48 @@ object OtaController {
                     }
                     // Falls through whether or not an ACK arrived: the stall check below asks the
                     // unit where it is if the silence has run long enough.
-                } else if (link.otaWritePending() > 0) {
-                    // The pipe's tick: wait for the next frame to leave the phone. A completion with
-                    // a non-SUCCESS status, or none at all, is a write that may not have landed -
-                    // the same case the old sequential path treated as a failed write.
-                    val status = link.otaWriteAwait()
-                    if (status == null || status != BluetoothGatt.GATT_SUCCESS) {
-                        if (writeAttemptFailed()) return
-                        continue
-                    }
-                } else {
-                    // Nothing in flight and nothing to issue (the last frame is short, or the unit's
-                    // ACK is the only thing that can free the window): let its events wake us.
-                    val ev = withTimeoutOrNull(400L) { events.receive() }
-                    if (ev != null) {
-                        if (tracker.apply(ev)) {
-                            publish(tracker, img)
-                            return
-                        }
-                        if (ev is OtaEvent.Ack) lastAckMs = now()
-                    }
                 }
+
+                if (!link.otaWrite(OtaFrames.data(seg.offset, data, seg.offset, seg.length))) {
+                    writeFailures++
+                    // A write the stack did not complete is not a dead link, and on this bench a
+                    // busy unit (flash writes stall both CPUs) can hold the callback past the
+                    // timeout with the radio perfectly healthy. Ask the unit where it actually is:
+                    // its answer is the offset to continue from, which covers both the write that
+                    // landed late and the one that never left the phone.
+                    val status = api.otaStatus()
+                    if (writeFailures >= MAX_WRITE_FAILURES || !status.ok ||
+                        link.state.value !is BleLinkState.Ready
+                    ) {
+                        val live = link.state.value is BleLinkState.Ready
+                        _view.update {
+                            it.copy(
+                                stage = OtaStage.Paused,
+                                note = "The unit has " + tracker.acked + " of " + img.size +
+                                    " bytes on flash" +
+                                    if (live) {
+                                        ". The link is still up; press RESUME and it continues from " +
+                                            "where the unit actually is."
+                                    } else {
+                                        ". The link dropped. The unit holds the install open for " +
+                                            resumeWindowWords() + ": reconnect on the link card, " +
+                                            "then press RESUME and it continues from there."
+                                    },
+                            )
+                        }
+                        return
+                    }
+                    val off = (BleJson.int(status.fields, "off") ?: nextOff).coerceIn(0, img.size)
+                    nextOff = off
+                    tracker.apply(OtaEvent.Ack(off))
+                    lastAckMs = now()
+                    publish(tracker, img)
+                    delay(WRITE_RETRY_DELAY_MS)
+                    continue
+                }
+                writeFailures = 0
+                tracker.wrote(seg.offset + seg.length)
+                nextOff = seg.offset + seg.length
 
                 while (true) {
                     val event = events.tryReceive().getOrNull() ?: break
@@ -476,15 +396,9 @@ object OtaController {
                 if (now() - lastAckMs >= STALL_SILENCE_MS) {
                     // No ACK for a while. Ask rather than guess: the answer either shows real
                     // progress (ACK frames simply lag the writes) or shows the unit is behind
-                    // what the phone thinks it sent. The pipe goes quiet first, for the same reason
-                    // a failed write does: with frames still in the phone, the unit's offset is
-                    // behind by exactly those frames and re-sending them is a mismatch.
-                    drainPipe()
-                    val unitOff = settledOffset(read = {
-                        val s = api.otaStatus()
-                        if (s.ok) (BleJson.int(s.fields, "off") ?: 0).coerceIn(0, img.size) else null
-                    })
-                    if (unitOff == null) {
+                    // what the phone thinks it sent.
+                    val status = api.otaStatus()
+                    if (!status.ok) {
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Paused,
@@ -495,11 +409,14 @@ object OtaController {
                         }
                         return
                     }
-                    // Continue exactly where the unit says it is, forwards as well as backwards. The
-                    // number is settled (its ring has had time to drain), so it is the real next byte
-                    // the unit needs - and that is the only offset its own check accepts.
-                    nextOff = unitOff
-                    tracker.apply(OtaEvent.Ack(unitOff))
+                    val off = (BleJson.int(status.fields, "off") ?: tracker.acked).coerceIn(0, img.size)
+                    if (off < nextOff) {
+                        // The unit is behind: the writes in between never landed. Restarting the
+                        // loop at the unit's offset is the only safe move — writing past it would
+                        // trip the unit's offset check and kill the install.
+                        nextOff = off
+                    }
+                    tracker.apply(OtaEvent.Ack(off))
                     lastAckMs = now()
                     publish(tracker, img)
                 }

@@ -1,7 +1,5 @@
 package com.alefinot.dashboardpp.ble
 
-import kotlinx.coroutines.delay
-
 /**
  * The firmware-install transfer, in the parts that can be checked without a radio.
  *
@@ -184,97 +182,6 @@ fun nextSegment(total: Int, chunk: Int, off: Int): OtaSegment? {
     require(chunk > 0) { "chunk must be positive" }
     if (off < 0 || off >= total) return null
     return OtaSegment(off, minOf(chunk, total - off))
-}
-
-/**
- * How deep the phone may keep its write pipe (plan `INSTALL-SPEED-PLAN-2026-11-03`, task A3).
- *
- * Awaiting one write's callback before issuing the next costs ~23 ms per 496-byte frame on the
- * bench, which is 43 writes/s: the radio, the unit's radio handler and its flash drain were all
- * idle while the phone waited for a coroutine round trip. Keeping a few writes in the stack at
- * once is the phone-side fix, and the unit *wants* them — its handoff ring peaked at 2-3 of 7
- * usable slots with the flash drain waiting up to 125 ms between passes.
- *
- * The limit is that ring. `src/bt_ota.cpp` refuses a frame the ring has no slot for and answers
- * `bad_frame ring full`, which ends the install; its own comment spells out that nothing in the
- * ACK cadence protects it from a phone running ahead. A frame the unit has not ACKed is either
- * sitting in that ring or still in the air, so the window on **unacked bytes** is what keeps the
- * ring from filling — one slot narrower than the ring, so there is always a slot the unit can
- * take without refusing.
- *
- * All of this is arithmetic on the unit's published geometry (`OTA_RING_SLOTS` 8 → 7 usable,
- * `OTA_ACK_BYTES` 4096 trimmed to half the ring), not a guess: the tests in
- * `OtaWritePipelineTest` re-derive it from those numbers.
- */
-/**
- * The unit's position in the image, read until it stops moving (A3, `INSTALL-SPEED-PLAN-2026-11-03`).
- *
- * `ota.status` answers with the bytes BtTask has drained into flash - not with the bytes the radio
- * delivered. The unit's handoff ring can be holding up to seven frames of everything the phone has
- * already sent, and a drain pass takes up to ~125 ms on this bench (`OTA: ... longest Nms between
- * drains`). Read once during a hiccup and the answer can be a whole pipe behind reality: continue
- * from that number and the phone re-sends frames the unit already accepted, and the unit's offset
- * check ends the install with `offset_mismatch`. That is exactly how A3's first bench run died on
- * 2026-11-04 at 396800 of 1593664 bytes (`write at 396304, unit expects 396800`).
- *
- * So keep reading while the number still moves, and only believe it once it stands still. Returns
- * null if the unit never answered at all; if the offset is still moving when the attempts run out,
- * the newest reading is returned - the caller's floor rule (never write below what the unit has
- * reported) is what keeps a too-low reading from re-sending bytes.
- */
-suspend fun settledOffset(
-    read: suspend () -> Int?,
-    attempts: Int = 4,
-    settleMs: Long = 350L,
-): Int? {
-    var last: Int? = null
-    var tries = 0
-    while (tries < attempts) {
-        tries++
-        val off = read() ?: return last
-        if (last != null && off == last) return off
-        last = off
-        if (tries < attempts) delay(settleMs)
-    }
-    return last
-}
-
-object OtaPump {
-
-    /** Usable frames in the unit's handoff ring: `OTA_RING_SLOTS - 1` in `src/bt_ota.cpp`. */
-    const val UNIT_RING_SLOTS = 7
-
-    /** Writes the phone keeps in the stack at once. The bench picks the number, not this file. */
-    const val PIPE_FRAMES = 4
-
-    /**
-     * Bytes the phone may have on the wire without an ACK for them.
-     *
-     * Kept under the unit's whole ring on purpose ([UNIT_RING_SLOTS] frames would let the phone
-     * fill it exactly, and the frame that fills it is the one the unit refuses). It must also stay
-     * at or above the unit's own ACK cadence — `OTA_ACK_BYTES`, trimmed to half the ring for a
-     * small chunk — or the phone waits for an ACK the unit has no reason to send.
-     */
-    fun paceLimitBytes(
-        chunk: Int,
-        ringSlots: Int = UNIT_RING_SLOTS,
-        capBytes: Int = OtaController.OUTSTANDING_BYTES,
-    ): Int {
-        require(chunk > 0) { "chunk must be positive" }
-        return minOf(capBytes, maxOf(1, ringSlots - 1) * chunk)
-    }
-
-    /** Whether the pump may hand over one more frame right now. */
-    fun canIssue(
-        inFlight: Int,
-        unacked: Int,
-        chunk: Int,
-        depth: Int = PIPE_FRAMES,
-        capBytes: Int = OtaController.OUTSTANDING_BYTES,
-    ): Boolean {
-        require(chunk > 0) { "chunk must be positive" }
-        return inFlight < depth && unacked < paceLimitBytes(chunk, capBytes = capBytes)
-    }
 }
 
 /**
