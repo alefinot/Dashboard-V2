@@ -73,6 +73,10 @@ size_t btBuildSnapshotJson(char *buf, size_t cap);
 // task exists. This is the stack the RPC handlers run on.
 uint16_t btStackFree();
 
+// The same task's handle, for the heapdiag stack table. Opaque pointer on
+// purpose - FreeRTOS types stay out of this header.
+void *btTaskHandleForDiag();
+
 // The ATT MTU actually negotiated on this link (what onMtu said), NOT what we
 // asked for - BLEDevice::getMTU() reports the request, so a central that
 // negotiated lower would be handed a chunk size its writes cannot carry.
@@ -93,6 +97,13 @@ void btOtaStatus(char *buf, size_t cap, uint32_t *off, uint32_t *size, bool *act
                  const char **stage);
 void btOtaFeed(const uint8_t *data, size_t len);
 void btOtaPoll();
+
+// Ring behaviour of the most recent install (reset by btOtaBegin): how many of
+// the OTA_RING_SLOTS-1 usable slots were occupied at the busiest moment, and the
+// longest gap between two BtTask drain passes. The perf reply reports both, so a
+// slot-count change is judged on numbers (heap-recovery plan, Phase 1).
+uint8_t btOtaRingHighWater();
+unsigned long btOtaDrainGapMaxMs();
 bool btOtaActive();         // an install is open, resume window included
 bool btOtaImageAccepted();  // verified and activated; the reboot is pending
 

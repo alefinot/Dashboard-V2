@@ -211,6 +211,11 @@ static volatile uint8_t s_ringHigh = 0;      // high-water occupancy of this ins
 static unsigned long s_lastDrainMs = 0;      // BtTask: last pass that served the ring
 static unsigned long s_drainGapMaxMs = 0;    // longest pause between those passes
 
+// Read by the perf reply, so a soak run leaves its ring behaviour visible without
+// waiting for an install to fail. Both are reset by ota.begin (see btOtaBegin).
+uint8_t btOtaRingHighWater() { return (uint8_t)s_ringHigh; }
+unsigned long btOtaDrainGapMaxMs() { return s_drainGapMaxMs; }
+
 static uint16_t s_eventSeq = 0x4000;  // frame seq for our unsolicited events
 
 // ACK cadence for the install in progress: OTA_ACK_BYTES, capped by the depth of

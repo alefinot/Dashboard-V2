@@ -85,8 +85,17 @@ void freeVLWData120() {
 }
 
 void resetVLWFontCache() {
+  // The mem-saver and install releases are the only callers, and both are
+  // supposed to hand back the 120 px font's allocations. Priced here (heap
+  // recovery plan, Phase 0) so the release side is a number, not an assumption.
+  const bool had120 = g_vlw120Loaded;
+  const unsigned long f0 = (unsigned long)ESP.getFreeHeap();
+  const unsigned long m0 = (unsigned long)ESP.getMaxAllocHeap();
   g_lastVLWFont = -1;
   display.unloadFont();
+  if (had120)
+    logPrintf("VLW120 unload: heap %lu->%lu maxalloc %lu->%lu\n", f0,
+              (unsigned long)ESP.getFreeHeap(), m0, (unsigned long)ESP.getMaxAllocHeap());
 }
 
 void LGFX_ST7789_4::loadVLWFont(const char *path) {
@@ -102,7 +111,17 @@ void LGFX_ST7789_4::loadVLWFont(const char *path) {
   g_lastVLWFont = cur;
 
   if (is120) {
+    // What the 120 px font really costs in DRAM. The .vlw image itself is a
+    // flash array (zero DRAM), but LovyanGFX's loader allocates a glyph cache and
+    // draw buffers, and the guard at the fallback reload in ui.cpp
+    // (maxAlloc >= 48000) has never been priced against that - heap recovery
+    // plan, Phase 0 item 6.
+    const unsigned long f0 = (unsigned long)ESP.getFreeHeap();
+    const unsigned long m0 = (unsigned long)ESP.getMaxAllocHeap();
     g_vlw120Loaded = loadFont(DS_DIGIT_120px_vlw, lgfx::v1::IFont::font_type_t::ft_vlw);
+    logPrintf("VLW120 load: heap %lu->%lu maxalloc %lu->%lu (ok=%d)\n", f0,
+              (unsigned long)ESP.getFreeHeap(), m0, (unsigned long)ESP.getMaxAllocHeap(),
+              (int)g_vlw120Loaded);
   } else if (isDs28) {
     loadFont(DS_DIGIT_28px_vlw, lgfx::v1::IFont::font_type_t::ft_vlw);
   } else if (isCon28) {

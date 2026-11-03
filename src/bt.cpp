@@ -12,6 +12,7 @@
 
 #include "dashboard.h"
 #include "bt_proto.h"
+#include "heapdiag.h"
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -198,6 +199,9 @@ static void btRxFragment(const uint8_t *data, size_t n) {
   }
   memcpy(s_rx + s_rxLen, data + BT_FRAME_HDR, len);
   s_rxLen += len;
+  // Deepest point the reassembly buffer has ever reached (heap-recovery plan:
+  // whether BT_MAX_MSG can ever shrink is a measurement, not a guess).
+  btNoteRxUse(s_rxLen);
   if (flags & BT_FLAG_LAST) {
     s_rxOpen = false;
     s_rxReady = true;  // handed to btTask below
@@ -514,10 +518,14 @@ static void btTask(void *pvParameters) {
     // method surfaces it to the app.
     if (now - lastStackLog >= 30000) {
       lastStackLog = now;
-      logPrintf("BT: stack free %u B, heap %lu, mtu %u, rx %u/%u B\n",
+      // `rx_high` is the deepest the reassembly buffer has ever been, not its
+      // length right now: an idle BtTask reads 0 for the length even a minute
+      // after a 4.8 KB settings save went through, and that depth is the number
+      // the heap plan needs to decide whether BT_MAX_MSG can shrink.
+      logPrintf("BT: stack free %u B, heap %lu, mtu %u, rx_high %u/%u B\n",
                 (unsigned)uxTaskGetStackHighWaterMark(NULL),
                 (unsigned long)ESP.getFreeHeap(), (unsigned)s_mtu,
-                (unsigned)s_rxLen, (unsigned)BT_MAX_MSG);
+                (unsigned)btRxHighWater(), (unsigned)BT_MAX_MSG);
     }
 
     btLoopCount = btLoopCount + 1;
@@ -543,6 +551,10 @@ void btAdvertisedName(char *out, size_t n) {
 uint16_t btStackFree() {
   return s_btTask ? (uint16_t)uxTaskGetStackHighWaterMark(s_btTask) : 0;
 }
+
+// The handle, for the heapdiag stack table (which reports every task the same
+// way rather than special-casing this one).
+void *btTaskHandleForDiag() { return (void *)s_btTask; }
 
 // Forgets every pairing. A factory reset has to do this or the unit comes back
 // owned by whoever paired it last: the GATT permissions demand an encrypted

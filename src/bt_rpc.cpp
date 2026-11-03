@@ -19,6 +19,7 @@
 
 #include "dashboard.h"
 #include "bt_proto.h"
+#include "heapdiag.h"
 #include "noisebench.h"
 #include "bootinfo.h"
 
@@ -264,6 +265,16 @@ static void methodPerf(uint16_t seq, uint32_t id) {
          "\"stack_free\":{\"SensorTaskCore1\":%u,\"GpsTaskCore0\":%u,\"BtTaskCore0\":%u},",
          (unsigned)uxTaskGetStackHighWaterMark(sensorTaskHandle),
          (unsigned)uxTaskGetStackHighWaterMark(gpsTaskHandle), (unsigned)btStackFree());
+  // Heap-recovery plan (Phase 0): the stack high-water marks of every task, in
+  // BYTES (this core's uxTaskGetStackHighWaterMark is byte-based, see
+  // src/heapdiag.h), plus the internal-DRAM numbers the static trims are priced
+  // against. Additive keys - the app reads perf by name and ignores the rest.
+  btCatf(s_out, sizeof(s_out) - 1, &used, "\"stack_free_hwm_b\":{");
+  used += heapDiagStackJson(s_out + used, sizeof(s_out) - used - 1);
+  btCatf(s_out, sizeof(s_out) - 1, &used, "},\"heap_diag\":{");
+  used += heapDiagHeapJson(s_out + used, sizeof(s_out) - used - 1);
+  btCatf(s_out, sizeof(s_out) - 1, &used, ",\"ring_high\":%u,\"ring_gap_ms\":%lu},",
+         (unsigned)btOtaRingHighWater(), (unsigned long)btOtaDrainGapMaxMs());
   btCatf(s_out, sizeof(s_out) - 1, &used,
          "\"mem_saver\":%d,\"heap_size\":%lu,\"psram_size\":%lu,\"psram_free\":%lu,"
          "\"flash_total\":%lu,\"flash_free\":%lu,",
@@ -456,12 +467,21 @@ static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
 // the old memory-saver gate stays: with the display still holding its sprites
 // the unit does not have room for both.
   unsigned long memT0 = millis();
+  // Phase 0 of the heap-recovery plan: the gate threshold (45000) was never
+  // priced against what this path actually needs, and the app pays a silent
+  // retry loop when it is wrong. CONFIGSET lines carry the entry heap, the heap
+  // after the payload copy (the peak), and how many 50 ms waits the gate cost -
+  // gate G2 of the plan is "zero waits", which is not checkable without this.
+  const unsigned long heapEntry = (unsigned long)ESP.getFreeHeap();
+  const unsigned long maxAllocEntry = (unsigned long)ESP.getMaxAllocHeap();
+  unsigned gateWaits = 0;
   while (ESP.getFreeHeap() < 45000 && (millis() - memT0) < 3000) {
     if (!memSaverRequested) {
       logPrintf("RPC config.set: heap %lu B, requesting memory-saver\n",
                 (unsigned long)ESP.getFreeHeap());
       memSaverRequested = true;
     }
+    gateWaits++;
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 
@@ -470,10 +490,13 @@ static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
   // {"m","id","p"} from being mistaken for settings.
   JsonDocument doc;
   doc.set(p);
+  const unsigned long heapCopied = (unsigned long)ESP.getFreeHeap();
+  const unsigned long maxAllocCopied = (unsigned long)ESP.getMaxAllocHeap();
 
   configSaveStartMs = millis();
   configSaveInProgress = true;
   processConfig(2, &doc);
+  const unsigned long heapApplied = (unsigned long)ESP.getFreeHeap();
   recalculateDerivedParams();
   configSaveInProgress = false;
   pendingApplyBusConfig = true;
@@ -488,6 +511,14 @@ static void methodConfigSet(uint16_t seq, uint32_t id, JsonObjectConst p) {
   else
     btCatf(s_out, sizeof(s_out) - 1, &used, "{\"nvsErrors\":0}");
   rpcFinish(seq, prefix, used - prefix);
+
+  // The measurement above, in one line. `payload` is what the copy is sized by
+  // (measureJson of the request's p object), so a phase-2 change that drops the
+  // copy can be compared against it rather than against a guess.
+  logPrintf("CONFIGSET keys=%u payload=%u B heap %lu->%lu(copied)->%lu(applied) "
+            "maxalloc %lu->%lu gate_waits=%u gate_ms=%lums\n",
+            (unsigned)p.size(), (unsigned)measureJson(p), heapEntry, heapCopied, heapApplied,
+            maxAllocEntry, maxAllocCopied, gateWaits, (unsigned long)(millis() - memT0));
 
   // Same as the POST handler: the new geometry, digit counts and colours belong
   // together, so repaint the whole panel once they have all landed.

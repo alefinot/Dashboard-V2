@@ -1,5 +1,7 @@
 #include "dashboard.h"
 #include "bootinfo.h"
+#include "bt_proto.h"  // btTaskHandleForDiag() for the stack table below
+#include "heapdiag.h"
 #include "noisebench.h"
 #include <stdarg.h>
 
@@ -8,6 +10,10 @@ volatile int logHead = 0;
 volatile int logTail = 0;
 volatile unsigned long logSequence = 0;
 portMUX_TYPE logMux = portMUX_INITIALIZER_UNLOCKED;
+
+// The two CPU probe tasks: created in setup(), tracked for the stack report, and
+// held here only so the handles outlive the call (startTask writes through it).
+static TaskHandle_t s_probeHandles[2] = {NULL, NULL};
 
 unsigned long g_startupTime = 0;
 bool forceFullRedraw = false;
@@ -360,6 +366,9 @@ void setup() {
   }
   recalculateDerivedParams();
   logNvsStats();
+  // Phase 0 of the heap-recovery plan: where the heap stands after each boot
+  // stage. See src/heapdiag.h for why `internal=` is the number that matters.
+  heapStage("config+seed");
 
   // Recovery + watchdog guard:
   // - Serial "RESET" within the first 2s after boot: factory reset (NVS wipe).
@@ -471,6 +480,7 @@ void setup() {
   logPrintf("display.init() start\n");
   bool initOk = display.init();
   logPrintf("display.init() done ok=%d\n", (int)initOk);
+  heapStage("display.init");
   if (initOk) display.invertDisplay(DISPLAY_INVERT_COLORS);
   applyTftDrive();
   display.setRotation(DISPLAY_ROTATION);
@@ -551,7 +561,12 @@ void setup() {
   display.fillScreen(TFT_BLACK);
 
   SensorSnapshot emptySnap;
+  // This is the first draw, and with it the first speed-sprite build and the
+  // first 120 px panel font load - the two biggest transient allocations in
+  // boot. The pair of lines around it is what prices them.
+  heapStage("pre first draw");
   updateBigDisplay(emptySnap);
+  heapStage("post first draw");
   fadeStepCount = (currentBrightnessTarget / 8) + 1;
   for (int level = 0; level <= currentBrightnessTarget; level += 8) {
     ledcWrite(BL_DISPLAY, level);
@@ -574,13 +589,25 @@ void setup() {
   startTask("GpsTaskCore0", gpsTask, 4096, 2, 0, NULL, &gpsTaskHandle, 1);
   // The phone link replaces the web task on core 0. It owns the GATT server and
   // the 1 Hz telemetry pump; the display keeps core 1 untouched.
+  heapStage("pre btInit");
   btInit();
-  startTask("CPUProbe0", cpuProbeTask, 2048, 1, 0, (void *)0, NULL, 3);
-  startTask("CPUProbe1", cpuProbeTask, 2048, 1, 1, (void *)1, NULL, 4);
+  heapStage("post btInit");
+  startTask("CPUProbe0", cpuProbeTask, 2048, 1, 0, (void *)0, &s_probeHandles[0], 3);
+  startTask("CPUProbe1", cpuProbeTask, 2048, 1, 1, (void *)1, &s_probeHandles[1], 4);
+  // Track every task whose stack we have to price (heap-recovery plan Phase 0).
+  // loopTask is this task, so its handle is taken here rather than externed from
+  // the core's main.cpp.
+  heapDiagAddTask("loopTask", (void *)xTaskGetCurrentTaskHandle());
+  heapDiagAddTask("SensorTaskCore1", (void *)sensorTaskHandle);
+  heapDiagAddTask("GpsTaskCore0", (void *)gpsTaskHandle);
+  heapDiagAddTask("BtTaskCore0", btTaskHandleForDiag());
+  heapDiagAddTask("CPUProbe0", (void *)s_probeHandles[0]);
+  heapDiagAddTask("CPUProbe1", (void *)s_probeHandles[1]);
   if (failedTasksMask)
     logPrintf("Boot finished with failed tasks (mask 0x%02X) - check the lines above\n",
               failedTasksMask);
 
+  heapStage("setup done");
   logPrintf("Setup done\n");
 }
 
@@ -847,6 +874,8 @@ void loop() {
     g_diagOver24Ms = 0;
     g_diagMaxSensorGapMs = 0;
   }
+  // Stack high-water marks at 10 s / 60 s / then every 5 min (heapdiag.h).
+  heapDiagTick(now);
 
   // Diagnostic: log OTA/mem-saver state transitions and any loop stall >50ms.
   // Logs only on change/anomaly so steady-state operation stays silent.
