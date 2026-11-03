@@ -1,18 +1,23 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,24 +30,36 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
+import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
-import com.alefinot.dashboardpp.ui.screens.CardHead
+import com.alefinot.dashboardpp.ui.components.HudPage
+import com.alefinot.dashboardpp.ui.components.HudPageHeader
+import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudeBodyFamily
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
+import com.alefinot.dashboardpp.ui.theme.HudeMonoFamily
 import com.alefinot.dashboardpp.ui.theme.HudePerfLabel
-import com.alefinot.dashboardpp.ui.theme.HudePerfValue
+import com.alefinot.dashboardpp.ui.theme.HudePerfRowValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
+import com.alefinot.dashboardpp.ui.theme.HudeTable
+import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * The unit's Performance Monitor, as a page this app draws over the Bluetooth link.
+ * The unit's Performance Monitor, drawn as the panel the ESP's own Web UI used to serve.
  *
  * Every number here is the unit talking about itself: `perf`, `health`, `live` and `boot` from
  * `src/bt_rpc.cpp`. Nothing on this page is something the app could work out for itself — that is
@@ -51,21 +68,19 @@ import kotlinx.coroutines.isActive
  * have left, did this unit reboot without anybody asking, and how much room is left in the settings
  * budget.
  *
- * The cards, and what each is for:
+ * The layout is the deleted page's `#perf-panel`, not a stack of rows:
  *
- *  - **The link.** What the unit believes its own radio is doing — the only place where a stale
- *    "advertising" claim can be seen side by side with what this phone actually has.
- *  - **Display.** FPS against the target, refresh interval, geometry, the SPI clock.
- *  - **CPU.** Clock, whether it may drop when idle, temperature, load.
- *  - **Memory.** The bar the unit's old page drew (in use / total), free heap, the low-water mark
- *    since boot, the largest single free block, and each task's remaining stack.
- *  - **Storage.** The partition map, and the settings budget in ENTRIES — the thing that runs out
- *    long before the bytes do.
- *  - **Why this unit is running.** Reset reason, boot counter, boot-storm flag: the difference
- *    between "up for two days" and "quietly rebooting every ten minutes".
- *  - **What it is measuring.** The inputs the HUD is drawing right now.
- *  - **The spread while this screen is open.** Turns the single readings above into a range, which
- *    is the only way a slow leak or an FPS dip during a config read becomes visible.
+ *  - **Display | System** side by side on anything tablet-sized, one above the other on a
+ *    phone, the way `.perf-grid` reflows below 600 px. Display carries the frame figures;
+ *    System carries uptime, the SPI clock, the heap line and the read cadence.
+ *  - **CPU Performance** and **Memory & Storage** span the grid. Both are `.perf-card`
+ *    tiles with a caption line over a 20 dp `--bg-tertiary` bar, and Memory keeps the
+ *    segmented flash bar, its legend and the settings-budget line under it.
+ *  - **The app-only cards** — the Bluetooth link, task stacks, why the unit is running, the
+ *    inputs it is measuring and the spread over the time the page was open — use the same
+ *    tile so they read as part of the panel rather than as an appendix.
+ *  - **Serial Output Monitor** is the one card that did not travel: serial is a cable on the
+ *    bench, and this app has no wire to the unit.
  *
  * Reading costs link round trips and `perf` is the widest reply on the link, so the cadence is a
  * choice rather than a constant. It defaults to 2 s, and leaving the screen stops it.
@@ -147,246 +162,159 @@ fun PerfMonitorScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    Column(Modifier.hudPage()) {
+        // `.header` + `.ip-banner` + the controls the page kept in its toolbar. The header is
+        // centred over the column; READ NOW sits in the corner slot where a browser put its
+        // advanced-mode switch.
+        Column(
+            Modifier.fillMaxWidth()
+                .padding(horizontal = HudPage.Gutter)
+                .padding(top = 10.dp, bottom = 4.dp),
         ) {
-            HudButton(label = "BACK", style = HudButtonStyle.SECONDARY, onClick = onBack)
-            Text("PERFORMANCE MONITOR", style = HudeSectionTitle(), color = HudColors.Cyan)
-            Spacer(Modifier.weight(1f))
-            Text(
-                if (reading) "reading…" else "every ${cadence.label}",
-                style = HudeCfgNote(),
-                color = if (reading) HudColors.Cyan else HudColors.TextDim,
-            )
-            HudButton(
-                label = "CADENCE",
-                style = HudButtonStyle.SECONDARY,
-                onClick = {
-                    cadence = cadence.next()
-                    round += 1
+            HudPageHeader(
+                title = "Performance Monitor",
+                trailing = {
+                    HudButton(
+                        label = "READ NOW",
+                        style = HudButtonStyle.PRIMARY,
+                        onClick = { round += 1 },
+                    )
                 },
-            )
-            HudButton(
-                label = "READ NOW",
-                style = HudButtonStyle.PRIMARY,
-                onClick = { round += 1 },
-            )
-        }
-
-        // What the numbers are resting on. A dropped link freezes them where they were, and a page
-        // that does not say so is how a stale figure ends up believed.
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        ) {
-            Text(
-                when (val state = linkState) {
-                    is BleLinkState.Ready -> "linked to ${state.name} · MTU ${state.mtu}"
-                    else -> "NO LINK — these are the last values read from the unit"
-                },
-                style = HudeCfgHelp(),
-                color = if (linked) HudColors.TextDim else HudColors.Amber,
-                modifier = Modifier.weight(1f),
-            )
-            if (lastRead.isNotEmpty()) {
-                Text("last read $lastRead", style = HudeCfgNote(), color = HudColors.TextDim)
+            ) {
+                HudBanner(
+                    text = when (val state = linkState) {
+                        is BleLinkState.Ready -> "linked to ${state.name} · MTU ${state.mtu}"
+                        // A link that is down freezes the figures where they were; the pill has to
+                        // say whether there is anything to freeze in the first place.
+                        else -> if (perf == null) {
+                            "no link — waiting for the unit"
+                        } else {
+                            "no link — showing the last figures read"
+                        }
+                    },
+                    color = if (linked) HudColors.Green else HudColors.Amber,
+                )
             }
-        }
-        // The clock is part of the link's state, and the only place it is reported is
-        // here — the app pushed it on the way in, and if that failed the unit's own
-        // stamps are the thing that is wrong, which is a fact about the numbers below.
-        timeNote?.let {
-            Text(
-                it,
-                style = HudeCfgNote(),
-                color = HudColors.Amber,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            )
-        }
-        if (error.isNotEmpty()) {
-            Text(
-                error,
-                style = HudeCfgNote(),
-                color = HudColors.Red,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
-            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HudButton(
+                    label = "BACK",
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onBack,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    when {
+                        reading -> "reading…"
+                        cadence == Cadence.OFF -> "polling off"
+                        else -> "polling every ${cadence.label}"
+                    },
+                    style = HudeCfgNote(),
+                    color = if (reading) HudColors.Cyan else HudColors.TextDim,
+                )
+                HudButton(
+                    label = "CADENCE",
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = {
+                        cadence = cadence.next()
+                        round += 1
+                    },
+                )
+            }
+            // The clock is part of the link's state, and the only place it is reported is
+            // here — the app pushed it on the way in, and if that failed the unit's own
+            // stamps are the thing that is wrong, which is a fact about the numbers below.
+            timeNote?.let {
+                Text(
+                    it,
+                    style = HudeCfgNote(),
+                    color = HudColors.Amber,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+            }
+            if (error.isNotEmpty()) {
+                Text(
+                    error,
+                    style = HudeCfgNote(),
+                    color = HudColors.Red,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+            }
         }
 
         val p = perf
         val l = live
         val h = health
         val b = boot
+        // `health` reports the largest single free block, `boot` carries a fallback copy; the
+        // System card says whichever one the unit has actually sent.
+        val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) }
+            ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
+            ?: "--"
+        // `.perf-grid` is two 1fr tracks above 600 px and one `auto-fit` track below it.
+        val twoUp = LocalConfiguration.current.screenWidthDp >= 600
 
-        LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-            item { CardHead("The link the unit thinks it has") }
-            row("Radio", p?.let { DiagFormat.bleState(it.bleState) } ?: "--")
-            row("Link up on the unit side", if (p?.bleConnected == true) "yes" else "no")
-            row("MTU (unit side)", p?.let { "${it.bleMtu} bytes" } ?: "--")
-            row("Passkey entry open", if (p?.blePairing == true) "yes" else "no")
-            row("Unit MAC", p?.mac?.ifEmpty { "--" } ?: "--")
-            row("Uptime", p?.let { DiagFormat.uptime(it.uptimeS) } ?: "--")
+        // The list is the only child that flexes, so the header stays put while the panel scrolls
+        // under it - the page's `details` content did the same inside its own container.
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter),
+        ) {
+            item { Spacer(Modifier.height(10.dp)) }
 
-            item { CardHead("Display") }
-            row("Current FPS", p?.let { fixed(it.fpsCurrent, 1) } ?: "--")
-            row("Average FPS", p?.let { fixed(it.fpsAverage, 1) } ?: "--")
-            row("Target FPS", p?.let { "${it.fpsTarget}" } ?: "--")
-            // Slower than the target is the one thing on this page the driver alone cannot see.
-            row(
-                "Refresh interval",
-                p?.let { "${it.refreshMs} ms" } ?: "--",
-                warn = p != null && p.fpsTarget > 0 && p.fpsCurrent < p.fpsTarget * 0.85,
-            )
-            row("Resolution", p?.resolution?.ifEmpty { "--" } ?: "--")
-            row("SPI bus", p?.let { "${it.spiHz / 1_000_000} MHz" } ?: "--")
-            row("Ambient light ADC", p?.let { "${it.ambientLight}" } ?: "--")
-
-            item { CardHead("CPU") }
-            row("Frequency", p?.let { "${it.cpuMHz} MHz" } ?: "--")
-            row(
-                "Mode",
-                when {
-                    p == null -> "--"
-                    p.cpuDynamic -> "may drop when idle"
-                    else -> "fixed"
-                },
-            )
-            row("Temperature", p?.let { "${fixed(it.cpuTempC, 1)} °C" } ?: "--")
-            bar(
-                label = "CPU usage",
-                detail = p?.let { "${fixed(it.cpuUsagePct, 1)} %" } ?: "--",
-                fraction = (p?.cpuUsagePct ?: 0.0) / 100.0,
-                color = HudColors.Cyan,
-            )
-
-            item { CardHead("Memory") }
-            val ramUsed = if (p == null) 0L else DiagFormat.usedOf(p.heapSize, p.freeHeap)
-            bar(
-                label = "RAM in use",
-                detail = if (p == null) {
-                    "--"
-                } else {
-                    "${DiagFormat.bytes(ramUsed)} / ${DiagFormat.bytes(p.heapSize)} " +
-                        "(${DiagFormat.pct(ramUsed, p.heapSize)})"
-                },
-                fraction = if (p == null || p.heapSize <= 0L) 0.0 else ramUsed.toDouble() / p.heapSize,
-                color = HudColors.Green,
-            )
-            row("Free heap", p?.let { DiagFormat.bytes(it.freeHeap) } ?: "--")
-            row(
-                "Lowest free heap since boot",
-                p?.let { DiagFormat.bytes(it.minFreeHeap) } ?: "--",
-                warn = p != null && p.minFreeHeap < 20_000L,
-            )
-            row(
-                "Largest single free block",
-                h?.let { DiagFormat.bytes(it.maxAlloc) }
-                    ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
-                    ?: "--",
-            )
-            row("Mem saver", if (p?.memSaver == true || h?.memSaver == true) "on" else "off")
-            row(
-                "PSRAM",
-                p?.let { "${DiagFormat.bytes(it.psramSize)} · free ${DiagFormat.bytes(it.psramFree)}" }
-                    ?: "--",
-            )
-            // The stack marks by the names the firmware prints. These are words of stack still
-            // free, read from the unit's own high-water marks — the number that has to stay away
-            // from zero, and the one that says a task is about to overflow before it does.
-            p?.stacks?.forEach { stack ->
-                row("Stack left · ${stack.label}", "${stack.wordsFree} words", warn = stack.wordsFree < 512)
+            // Display | System. The row is measured to its taller card and both fill that height,
+            // which is what `align-items: stretch` did to the page's grid row.
+            if (twoUp) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        DisplayCard(p, Modifier.weight(1f).fillMaxHeight())
+                        SystemCard(
+                            p = p,
+                            largestBlock = largestBlock,
+                            cadence = cadence,
+                            lastRead = lastRead,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
+                }
+            } else {
+                item { DisplayCard(p) }
+                item { Spacer(Modifier.height(10.dp)) }
+                item {
+                    SystemCard(
+                        p = p,
+                        largestBlock = largestBlock,
+                        cadence = cadence,
+                        lastRead = lastRead,
+                    )
+                }
             }
 
-            item { CardHead("Storage and the settings budget") }
-            val flashUsed = p?.flashUsed ?: 0L
-            val flashTotal = p?.flashTotal ?: 0L
-            bar(
-                label = "Flash taken by the partitions",
-                detail = if (p == null) {
-                    "--"
-                } else {
-                    "${DiagFormat.bytes(flashUsed)} / ${DiagFormat.bytes(flashTotal)} " +
-                        "(${DiagFormat.pct(flashUsed, flashTotal)})"
-                },
-                fraction = if (flashTotal <= 0L) 0.0 else flashUsed.toDouble() / flashTotal,
-                color = HudColors.Blue,
-            )
-            p?.partitions?.forEach { part ->
-                row(
-                    "· ${part.label} @ 0x${part.addr.toString(16)}",
-                    "${DiagFormat.bytes(part.used)} of ${DiagFormat.bytes(part.size)}",
-                )
-            }
-            bar(
-                label = "Settings entries",
-                detail = p?.let {
-                    "${it.nvsEntriesUsed} / ${it.nvsEntriesTotal} " +
-                        "(${DiagFormat.pct(it.nvsEntriesUsed, it.nvsEntriesTotal)})"
-                } ?: "--",
-                fraction = if (p == null || p.nvsEntriesTotal <= 0L) {
-                    0.0
-                } else {
-                    p.nvsEntriesUsed.toDouble() / p.nvsEntriesTotal
-                },
-                color = HudColors.Amber,
-            )
-            row(
-                "Entries still free",
-                p?.let { "${it.nvsEntriesAvailable}" } ?: "--",
-                warn = p != null && p.nvsEntriesAvailable < 10L,
-            )
-            row("NVS bytes", p?.let { DiagFormat.bytes(it.nvsBytes) } ?: "--")
+            item { Spacer(Modifier.height(10.dp)) }
+            item { CpuCard(p) }
+            item { Spacer(Modifier.height(10.dp)) }
+            item { MemoryCard(p) }
 
-            item { CardHead("Why this unit is running") }
-            row(
-                "Reset reason",
-                b?.resetReason?.ifEmpty { "unknown" } ?: "--",
-                warn = b != null && DiagFormat.resetLooksUnasked(b.resetReason),
-            )
-            row("Boot count", b?.let { "${it.bootCount}" } ?: "--")
-            row(
-                "Boot storm",
-                if (b?.storm == true) "yes — it rebooted too many times in a row" else "no",
-                warn = b?.storm == true,
-            )
-            row("Last reboot tag", b?.lastRebootTag?.ifEmpty { "none recorded" } ?: "--")
-            row("Heap at last reboot", b?.let { DiagFormat.bytes(it.heapAtLastReboot) } ?: "--")
-            row("Lowest free heap · last boot", b?.let { DiagFormat.bytes(it.minHeapLastBoot) } ?: "--")
-            row("Lowest free heap · this boot", b?.let { DiagFormat.bytes(it.minHeapSinceBoot) } ?: "--")
-
-            item { CardHead("What the unit is measuring right now") }
-            row("Battery", l?.let { fixed(it.volts, 2) + " V" } ?: "--")
-            row("Engine temperature", l?.let { fixed(it.engineTempC, 1) + " °C" } ?: "--")
-            row("Ambient light", l?.let { "${it.ambient}" } ?: "--")
-            row("Odometer", l?.let { fixed(it.odometerKm, 2) + " km" } ?: "--")
-            row("Fuel sender", l?.let { "${it.fuelRaw} ADC · ${fixed(it.fuelOhm, 1)} ohm" } ?: "--")
-            row("Fuel input", l?.let { DiagFormat.fuelState(it.fuelState) } ?: "--")
-
-            item { CardHead("Spread while this screen is open") }
-            for ((name, decimals) in listOf(
-                "fps" to 1,
-                "heap" to 0,
-                "minheap" to 0,
-                "cpu" to 1,
-                "cputemp" to 1,
-            )) {
-                row(trendLabel(name), DiagFormat.trend(trends.series(name), decimals))
-            }
-            item {
-                Text(
-                    "This window holds the last ${trends.cap} readings taken while the page was open, " +
-                        "so it cannot see a fault that stopped before the page was opened. The unit's " +
-                        "own low-water marks — lowest free heap, the stack marks — do reach back over " +
-                        "the whole boot.",
-                    style = HudeCfgHelp(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                )
-            }
-            item { Spacer(Modifier.height(16.dp)) }
+            // The cards below are this app's own bench additions. They did not exist on the page
+            // (its Serial Output Monitor took the last full-width slot), but they are the reason
+            // the monitor is worth opening on a phone, so they keep the same `.perf-card` tile.
+            item { Spacer(Modifier.height(10.dp)) }
+            item { LinkCard(p) }
+            item { Spacer(Modifier.height(10.dp)) }
+            item { StacksCard(p) }
+            item { Spacer(Modifier.height(10.dp)) }
+            item { BootCard(b) }
+            item { Spacer(Modifier.height(10.dp)) }
+            item { MeasuringCard(l) }
+            item { Spacer(Modifier.height(10.dp)) }
+            item { SpreadCard(trends) }
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
@@ -406,65 +334,516 @@ private enum class Cadence(val label: String, val millis: Long) {
     }
 }
 
-/** One label/value line, in the unit's own page style: dim label, monospace value. */
-private fun LazyListScope.row(label: String, value: String, warn: Boolean = false) {
-    item {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        ) {
-            Text(
-                label,
-                style = HudePerfLabel(),
-                color = HudColors.TextMuted,
-                modifier = Modifier.weight(1f),
+// ─── The page's `.perf-card` recipe ────────────────────────────────────────────
+
+/**
+ * `.perf-card`: rgba(18,25,38,.8), 12 px of padding, 8 px corners and the page's
+ * `--border-color` hairline. `CardInner` is that fill, `Hairline` is that border, and
+ * `HudRadius.CardShape` is its 8 px radius - so this is the page's tile, not a
+ * `.card` with different spacing.
+ */
+@Composable
+private fun PerfCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier
+            .hudCard(fill = HudColors.CardInner, borderColor = HudColors.Hairline)
+            .padding(12.dp),
+    ) {
+        Text(
+            title,
+            style = HudeSectionTitle(0.2f / 13f),
+            color = HudColors.Cyan,
+        )
+        // `.perf-card h4 { margin: 0 0 8px 0 }` - the tile's heading sits closer to its
+        // first row than `.card h4`'s 5 px, because the grid is denser.
+        Spacer(Modifier.height(8.dp))
+        content()
+    }
+}
+
+/** `.perf-row`: a dim 12 px label, a white mono figure, 3 px above and below. */
+@Composable
+private fun PerfRow(label: String, value: String, warn: Boolean = false) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = HudePerfLabel(),
+            color = HudColors.TextMuted,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            value,
+            style = HudePerfRowValue(),
+            color = if (warn) HudColors.Amber else HudColors.TextPrimary,
+        )
+    }
+}
+
+/**
+ * `.perf-bar-label`: muted 12 px caption on the left, the values on the right with the
+ * numbers in `strong`. The page leaves the separators muted and paints only the figures
+ * white, which is what [parts] carries - each `String to strong` pair is appended with
+ * the matching span.
+ */
+@Composable
+private fun CaptionLine(
+    label: String,
+    parts: List<Pair<String, Boolean>>,
+    modifier: Modifier = Modifier,
+    monoValues: Boolean = false,
+) {
+    Row(
+        modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = HudePerfLabel(),
+            color = HudColors.TextMuted,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            buildAnnotatedString {
+                for ((text, strong) in parts) {
+                    if (strong) {
+                        withStyle(
+                            SpanStyle(
+                                color = HudColors.White,
+                                fontFamily = if (monoValues) HudeMonoFamily else HudeBodyFamily,
+                                fontWeight = if (monoValues) FontWeight.W600 else FontWeight.W700,
+                            ),
+                        ) { append(text) }
+                    } else {
+                        withStyle(SpanStyle(color = HudColors.TextMuted)) { append(text) }
+                    }
+                }
+            },
+            style = HudePerfLabel(),
+        )
+    }
+}
+
+/** `.perf-bar`: a 20 px `--bg-tertiary` recess with 4 px corners and a coloured fill. */
+@Composable
+private fun PerfBar(fraction: Double, color: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(20.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(HudColors.Track),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.toFloat().coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .background(color),
+        )
+    }
+}
+
+/** A caption over its bar, 6 px apart, the way every labelled bar on the page is built. */
+@Composable
+private fun BarBlock(
+    label: String,
+    parts: List<Pair<String, Boolean>>,
+    fraction: Double,
+    color: Color,
+    modifier: Modifier = Modifier,
+    monoValues: Boolean = false,
+) {
+    Column(modifier.fillMaxWidth()) {
+        CaptionLine(label, parts, monoValues = monoValues)
+        Spacer(Modifier.height(6.dp))
+        PerfBar(fraction, color)
+    }
+}
+
+// ─── The panel, card by card ───────────────────────────────────────────────────
+
+@Composable
+private fun DisplayCard(p: PerfReadout?, modifier: Modifier = Modifier) {
+    PerfCard("Display", modifier) {
+        PerfRow("Current FPS", p?.let { fixed(it.fpsCurrent, 1) } ?: "--")
+        PerfRow("Average FPS", p?.let { fixed(it.fpsAverage, 1) } ?: "--")
+        PerfRow("Target FPS", p?.let { "${it.fpsTarget}" } ?: "--")
+        // Slower than the target is the one thing on this page the driver alone cannot see.
+        PerfRow(
+            "Refresh",
+            p?.let { "${it.refreshMs} ms" } ?: "--",
+            warn = p != null && p.fpsTarget > 0 && p.fpsCurrent < p.fpsTarget * 0.85,
+        )
+        PerfRow("Resolution", p?.resolution?.ifEmpty { "--" } ?: "--")
+    }
+}
+
+@Composable
+private fun SystemCard(
+    p: PerfReadout?,
+    largestBlock: String,
+    cadence: Cadence,
+    lastRead: String,
+    modifier: Modifier = Modifier,
+) {
+    PerfCard("System", modifier) {
+        PerfRow("Uptime", p?.let { DiagFormat.uptime(it.uptimeS) } ?: "--")
+        PerfRow("SPI Bus", p?.let { "${it.spiHz / 1_000_000} MHz" } ?: "--")
+        // The page put the low-water mark and the mem-saver flag inside the heap value
+        // rather than giving each its own row, and that is how a bench reader scans it.
+        PerfRow(
+            "Heap",
+            p?.let {
+                "${DiagFormat.bytes(it.freeHeap)} free / min ${DiagFormat.bytes(it.minFreeHeap)}" +
+                    if (it.memSaver) " (mem-saver ON)" else ""
+            } ?: "--",
+            warn = p != null && p.minFreeHeap < 20_000L,
+        )
+        PerfRow("Largest free block", largestBlock)
+        if ((p?.psramSize ?: 0L) > 0L) {
+            PerfRow(
+                "PSRAM",
+                p?.let { "${DiagFormat.bytes(it.psramSize)} · free ${DiagFormat.bytes(it.psramFree)}" }
+                    ?: "--",
             )
+        }
+        // `#p-live-poll` and the dim detail line under it: what the monitor is doing, and
+        // when it last heard from the unit.
+        PerfRow(
+            "Live Poll",
+            if (cadence == Cadence.OFF) "off" else "every ${cadence.label}",
+        )
+        Text(
+            if (lastRead.isEmpty()) "--" else "last read $lastRead",
+            style = HudeTable(),
+            color = HudColors.TextDim,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        )
+    }
+}
+
+@Composable
+private fun CpuCard(p: PerfReadout?, modifier: Modifier = Modifier) {
+    PerfCard("CPU Performance", modifier) {
+        PerfRow("Frequency", p?.let { "${it.cpuMHz} MHz" } ?: "--")
+        PerfRow(
+            "Mode",
+            when {
+                p == null -> "--"
+                p.cpuDynamic -> "Dynamic"
+                else -> "Fixed ${p.cpuMHz} MHz"
+            },
+        )
+        PerfRow("Temperature", p?.let { "${fixed(it.cpuTempC, 1)} °C" } ?: "--")
+        val pct = p?.cpuUsagePct ?: 0.0
+        BarBlock(
+            label = "CPU Usage",
+            parts = if (p == null) {
+                listOf("--" to false)
+            } else {
+                listOf(fixed(pct, 1) to true, "%" to false)
+            },
+            fraction = pct / 100.0,
+            color = when {
+                pct < 50.0 -> HudColors.Green
+                pct < 80.0 -> HudColors.Amber
+                else -> HudColors.Red
+            },
+            monoValues = true,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun MemoryCard(p: PerfReadout?, modifier: Modifier = Modifier) {
+    PerfCard("Memory & Storage", modifier) {
+        val ramUsed = if (p == null) 0L else DiagFormat.usedOf(p.heapSize, p.freeHeap)
+        val ramPct = if (p == null || p.heapSize <= 0L) 0.0 else ramUsed * 100.0 / p.heapSize
+
+        // `.perf-bar-label` before the 20 px bar, with the used / total / percent figures
+        // in `strong` and the units around them muted - the page's own caption, not a
+        // prose sentence.
+        BarBlock(
+            label = "RAM Usage",
+            parts = if (p == null) {
+                listOf("--" to false)
+            } else {
+                listOf(
+                    "${ramUsed / 1024}" to true,
+                    " / " to false,
+                    "${p.heapSize / 1024}" to true,
+                    " KB (" to false,
+                    fixed(ramPct, 1) to true,
+                    "%)" to false,
+                )
+            },
+            fraction = ramPct / 100.0,
+            color = when {
+                ramPct < 70.0 -> HudColors.Green
+                ramPct < 85.0 -> HudColors.Amber
+                else -> HudColors.Red
+            },
+            modifier = Modifier.padding(bottom = 14.dp),
+        )
+
+        val flashTotal = p?.flashTotal ?: 0L
+        val flashUsed = p?.flashUsed ?: 0L
+        val flashPct = if (flashTotal <= 0L) 0.0 else flashUsed * 100.0 / flashTotal
+        CaptionLine(
+            label = "Flash Storage",
+            parts = if (p == null) {
+                listOf("--" to false)
+            } else {
+                listOf(
+                    "${flashUsed / 1024}" to true,
+                    " / " to false,
+                    "${flashTotal / 1024}" to true,
+                    " KB (" to false,
+                    fixed(flashPct, 1) to true,
+                    "%)" to false,
+                )
+            },
+        )
+        Spacer(Modifier.height(6.dp))
+        FlashBar(p)
+        Spacer(Modifier.height(6.dp))
+        FlashLegend(p)
+
+        // Settings-storage budget. NVS runs out of ENTRY SLOTS, not bytes, and it can keep
+        // hundreds free while refusing a write (its tidier needs a spare page), so
+        // `available` is the number worth watching - and it keeps the page's colours.
+        if (p != null && p.nvsEntriesTotal > 0L) {
+            val available = p.nvsEntriesAvailable
+            val total = p.nvsEntriesTotal
+            val nearlyFull = available <= total * 0.03
             Text(
-                value,
-                style = HudePerfValue(),
-                color = if (warn) HudColors.Amber else HudColors.TextPrimary,
+                buildAnnotatedString {
+                    append("Settings storage (NVS ${p.nvsBytes / 1024} KB): ")
+                    withStyle(SpanStyle(color = HudColors.White, fontWeight = FontWeight.W700)) {
+                        append("${p.nvsEntriesUsed}")
+                    }
+                    append(" of $total entries used, ")
+                    withStyle(
+                        SpanStyle(
+                            color = nvsColor(available, total),
+                            fontWeight = FontWeight.W700,
+                        ),
+                    ) { append("$available") }
+                    append(" available")
+                    if (nearlyFull) {
+                        withStyle(SpanStyle(color = HudColors.Red)) {
+                            append(" - nearly full, new settings may not save")
+                        }
+                    }
+                },
+                style = HudeCfgNote(),
+                color = HudColors.TextMuted,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
         }
     }
 }
 
-/** A figure the unit gives as a pair, drawn as a bar the way its old page drew them. */
-private fun LazyListScope.bar(
-    label: String,
-    detail: String,
-    fraction: Double,
-    color: Color,
-) {
-    item {
-        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    label,
-                    style = HudePerfLabel(),
-                    color = HudColors.TextMuted,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(detail, style = HudePerfValue(), color = HudColors.TextPrimary)
-            }
+/**
+ * The flash bar as `#fl-partitions-bar`: one flex slice per partition that has bytes in
+ * it, in the page's five-colour rotation, and the unclaimed width left as `--bg-tertiary`
+ * for free space. A partition with nothing written draws nothing, exactly as the page's
+ * `used <= 0` guard does.
+ */
+@Composable
+private fun FlashBar(p: PerfReadout?) {
+    val total = p?.flashTotal ?: 0L
+    val partitions = p?.partitions.orEmpty()
+    val used = partitions.sumOf { it.used }
+    val free = (total - used).coerceAtLeast(0L)
+
+    Row(
+        Modifier.fillMaxWidth()
+            .height(20.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(HudColors.Track),
+    ) {
+        if (total <= 0L) return@Row
+        partitions.forEachIndexed { index, part ->
+            if (part.used <= 0L) return@forEachIndexed
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(HudColors.Hairline),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(fraction.toFloat().coerceIn(0f, 1f))
-                        .fillMaxHeight()
-                        .background(color),
+                    .weight(part.used.toFloat())
+                    .fillMaxHeight()
+                    .background(HudColors.PartitionColors[index % HudColors.PartitionColors.size]),
+            )
+        }
+        if (free > 0L) {
+            Box(Modifier.weight(free.toFloat()).fillMaxHeight())
+        }
+    }
+}
+
+/** `#fl-legend`: 8 px swatches, 11 px muted labels, two 2×12 gaps and wrap. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FlashLegend(p: PerfReadout?) {
+    val total = p?.flashTotal ?: 0L
+    if (p == null || total <= 0L) return
+    val used = p.partitions.sumOf { it.used }
+    val free = (total - used).coerceAtLeast(0L)
+
+    FlowRow(
+        Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        p.partitions.forEachIndexed { index, part ->
+            if (part.used <= 0L) return@forEachIndexed
+            LegendItem(
+                color = HudColors.PartitionColors[index % HudColors.PartitionColors.size],
+                text = "${part.label} ${part.used / 1024}KB " +
+                    "(${DiagFormat.pct(part.used, total)})",
+            )
+        }
+        // The free slice keeps the same swatch but in the track colour with a hairline,
+        // because a track-coloured square on a card-coloured tile would otherwise vanish.
+        if (free > 0L) {
+            LegendItem(
+                color = HudColors.Track,
+                text = "free ${free / 1024}KB (${DiagFormat.pct(free, total)})",
+                dim = true,
+                bordered = true,
+            )
+        }
+    }
+}
+
+@Composable
+private fun LegendItem(
+    color: Color,
+    text: String,
+    dim: Boolean = false,
+    bordered: Boolean = false,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(color)
+                .then(
+                    if (bordered) {
+                        Modifier.border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(2.dp))
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+        Spacer(Modifier.width(3.dp))
+        Text(
+            text,
+            style = HudeCfgNote(),
+            color = if (dim) HudColors.TextDim else HudColors.TextMuted,
+        )
+    }
+}
+
+@Composable
+private fun LinkCard(p: PerfReadout?, modifier: Modifier = Modifier) {
+    PerfCard("Bluetooth Link", modifier) {
+        PerfRow("Radio", p?.let { DiagFormat.bleState(it.bleState) } ?: "--")
+        PerfRow("Link up on the unit side", if (p?.bleConnected == true) "yes" else "no")
+        PerfRow("MTU (unit side)", p?.let { "${it.bleMtu} bytes" } ?: "--")
+        PerfRow("Passkey entry open", if (p?.blePairing == true) "yes" else "no")
+        PerfRow("Unit MAC", p?.mac?.ifEmpty { "--" } ?: "--")
+    }
+}
+
+@Composable
+private fun StacksCard(p: PerfReadout?, modifier: Modifier = Modifier) {
+    PerfCard("Task Stacks", modifier) {
+        if (p == null || p.stacks.isEmpty()) {
+            PerfRow("Stack left", "--")
+        } else {
+            // These are words of stack still free, read from the unit's own high-water marks:
+            // the number that has to stay away from zero, and the one that says a task is
+            // about to overflow before it does.
+            for (stack in p.stacks) {
+                PerfRow(
+                    "Stack left · ${stack.label}",
+                    "${stack.wordsFree} words",
+                    warn = stack.wordsFree < 512,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun BootCard(b: BootReadout?, modifier: Modifier = Modifier) {
+    PerfCard("Why This Unit Is Running", modifier) {
+        PerfRow(
+            "Reset reason",
+            b?.resetReason?.ifEmpty { "unknown" } ?: "--",
+            warn = b != null && DiagFormat.resetLooksUnasked(b.resetReason),
+        )
+        PerfRow("Boot count", b?.let { "${it.bootCount}" } ?: "--")
+        PerfRow(
+            "Boot storm",
+            if (b?.storm == true) "yes — it rebooted too many times in a row" else "no",
+            warn = b?.storm == true,
+        )
+        PerfRow("Last reboot tag", b?.lastRebootTag?.ifEmpty { "none recorded" } ?: "--")
+        PerfRow("Heap at last reboot", b?.let { DiagFormat.bytes(it.heapAtLastReboot) } ?: "--")
+        PerfRow("Lowest free heap · last boot", b?.let { DiagFormat.bytes(it.minHeapLastBoot) } ?: "--")
+        PerfRow("Lowest free heap · this boot", b?.let { DiagFormat.bytes(it.minHeapSinceBoot) } ?: "--")
+    }
+}
+
+@Composable
+private fun MeasuringCard(l: LiveReadout?, modifier: Modifier = Modifier) {
+    PerfCard("What The Unit Is Measuring", modifier) {
+        PerfRow("Battery", l?.let { fixed(it.volts, 2) + " V" } ?: "--")
+        PerfRow("Engine temperature", l?.let { fixed(it.engineTempC, 1) + " °C" } ?: "--")
+        PerfRow("Ambient light", l?.let { "${it.ambient}" } ?: "--")
+        PerfRow("Odometer", l?.let { fixed(it.odometerKm, 2) + " km" } ?: "--")
+        PerfRow("Fuel sender", l?.let { "${it.fuelRaw} ADC · ${fixed(it.fuelOhm, 1)} ohm" } ?: "--")
+        PerfRow("Fuel input", l?.let { DiagFormat.fuelState(it.fuelState) } ?: "--")
+    }
+}
+
+@Composable
+private fun SpreadCard(trends: PerfTrends, modifier: Modifier = Modifier) {
+    PerfCard("Spread While This Screen Is Open", modifier) {
+        for ((name, decimals) in listOf(
+            "fps" to 1,
+            "heap" to 0,
+            "minheap" to 0,
+            "cpu" to 1,
+            "cputemp" to 1,
+        )) {
+            PerfRow(trendLabel(name), DiagFormat.trend(trends.series(name), decimals))
+        }
+        Text(
+            "This window holds the last ${trends.cap} readings taken while the page was open, " +
+                "so it cannot see a fault that stopped before the page was opened. The unit's " +
+                "own low-water marks — lowest free heap, the stack marks — do reach back over " +
+                "the whole boot.",
+            style = HudeCfgHelp(),
+            color = HudColors.TextDim,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+    }
+}
+
+/** The NVS line's colour ladder, straight out of the page's `updatePerf()`. */
+private fun nvsColor(available: Long, total: Long): Color = when {
+    available > total * 0.15 -> HudColors.Green
+    available > total * 0.03 -> HudColors.Amber
+    else -> HudColors.Red
 }
 
 private fun trendLabel(name: String): String = when (name) {

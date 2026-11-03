@@ -199,6 +199,20 @@ fun HudePerfValue(spacingEm: Float = 0.5f / 13f) = TextStyle(
     lineHeight = 18.sp,
 )
 
+/**
+ * `.perf-row .perf-value` at the size it actually inherits: the rule declares no
+ * size of its own and `.perf-row` says 12px, so inside a monitor row the figure
+ * is 12px. [HudePerfValue]'s 13px is the tile band, where the figure is the only
+ * thing on the surface - the row is a pairing, and both halves stay at 12px.
+ */
+fun HudePerfRowValue(spacingEm: Float = 0.5f / 12f) = TextStyle(
+    fontFamily = HudeMonoFamily,
+    fontSize = 12.sp,
+    fontWeight = FontWeight.W600,
+    letterSpacing = spacingEm.em,
+    lineHeight = 17.sp,
+)
+
 /** `button`: 13px, 600 — the words on an action, in the body family. */
 fun HudeButtonLabel(spacingEm: Float = 0f) = TextStyle(
     fontFamily = HudeBodyFamily,

@@ -45,6 +45,12 @@ object HudColors {
     val Msg = Color(0x990F172A)
     /** `.perf-card` rgba(18,25,38,.8) - a tile inside a card. */
     val CardInner = Color(0xCC121926)
+    /**
+     * `--bg-tertiary` #0f1422 - the empty part of a `.perf-bar`, and the "free"
+     * slice of the flash bar. It is darker than a card on purpose: the page draws
+     * a bar as a recess in the tile, not as a second surface on top of it.
+     */
+    val Track = Color(0xFF0F1422)
     /** `--bg-input` #121824 - the fill of `input[type=text|number]` and `select`. */
     val Field = Color(0xFF121824)
     /** `input:focus` background #182030 - the same field while it has focus. */
@@ -77,6 +83,20 @@ object HudColors {
     val Red = Color(0xFFFF1744)
     /** `rgba(255,23,68,.08)` - a warning strip's fill. */
     val RedDim = Color(0x14FF1744)
+
+    /**
+     * The Performance Monitor's partition palette, in the order the old page's
+     * `updatePerf()` cycled through it: purple, amber, cyan, blue, emerald. These
+     * are not the accent tokens - the page wanted five slices a reader can tell
+     * apart at 8 px, not five meanings - so they keep their own Tailwind values.
+     */
+    val PartitionColors = listOf(
+        Color(0xFFA855F7),
+        Color(0xFFF59E0B),
+        Color(0xFF06B6D4),
+        Color(0xFF3B82F6),
+        Color(0xFF10B981),
+    )
 
     /** `--text-main` / `--text-muted` / `--text-dim` */
     val TextPrimary = Color(0xFFF1F5F9)
