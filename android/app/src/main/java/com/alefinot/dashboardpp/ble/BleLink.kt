@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -103,6 +104,15 @@ data class BleReply(
  * `s_rxBusy`), so a second overlapping request would be rejected or answered out
  * of order; a queue in the app is the honest place for that limit.
  */
+/**
+ * What the stack answered when a firmware chunk was handed to it (A3, `INSTALL-SPEED-PLAN-2026-11-03`).
+ *
+ * `Busy` and `Unavailable` look alike and are not: a refused write because the queue is full is a
+ * reason to wait for a completion, while a refused write because the link or the characteristic is
+ * gone is the transfer's own failure path. Collapsing them is how an install pauses for no reason.
+ */
+enum class OtaWriteStart { Started, Busy, Unavailable }
+
 class BleLink(context: Context) {
 
     private val appContext = context.applicationContext
@@ -194,7 +204,12 @@ class BleLink(context: Context) {
     private var mtuDone: CompletableDeferred<Int>? = null
     private var descriptorDone: CompletableDeferred<Int>? = null
     private var writeDone: CompletableDeferred<Int>? = null
-    private var otaWriteDone: CompletableDeferred<Int>? = null
+
+    // A3 (`INSTALL-SPEED-PLAN-2026-11-03`): the firmware-write pipe. Several OTA writes may sit in
+    // the stack at once and each gets its own `onCharacteristicWrite`, so completions are counted
+    // into a channel instead of paired with one armed deferred. Only ever one RPC write at a time.
+    private val otaInFlight = AtomicInteger(0)
+    private val otaCompletions = Channel<Int>(Channel.UNLIMITED)
 
     private val seq = AtomicInteger(1)
     private val pending = ConcurrentHashMap<Int, Pending>()
@@ -484,40 +499,83 @@ class BleLink(context: Context) {
     suspend fun setConnectionPriority(high: Boolean): Boolean = applyConnectionPriority(high)
 
     /**
-     * Puts one firmware chunk on the wire.
+     * Puts one firmware chunk on the wire and waits for the stack to report it sent.
      *
-     * `WRITE_TYPE_NO_RESPONSE`, and the write is only issued once the stack reports the previous
-     * one: that is the flow control a 1.5 MB transfer needs. It also means the transfer stops by
-     * itself when the unit cannot keep up, instead of filling Android's outgoing queue, missing
-     * ATT slots and getting the connection torn down — the failure mode that looks like a broken
-     * cable.
-     *
-     * The write shares [writeMutex] with the RPC frames, one chunk at a time rather than one
-     * locked burst, so `ota.status` and `ota.abort` still fit between chunks when the driver
-     * presses a button mid-transfer.
+     * Kept for the one-offs (a resume's single retry); the chunk phase of an install uses
+     * [otaWriteStart] / [otaWriteAwait] so several frames can travel at once — see A3 in
+     * `INSTALL-SPEED-PLAN-2026-11-03`.
      */
-    suspend fun otaWrite(frame: ByteArray): Boolean {
-        val client = gatt ?: return false
-        val characteristic = otaChar ?: return false
-        if (_state.value !is BleLinkState.Ready) return false
+    suspend fun otaWriteOnce(frame: ByteArray): Boolean {
+        return when (otaWriteStart(frame)) {
+            OtaWriteStart.Started -> otaWriteAwait() == BluetoothGatt.GATT_SUCCESS
+            else -> false
+        }
+    }
+
+    /**
+     * Hands one firmware chunk to the stack without waiting for it to leave the phone.
+     *
+     * `WRITE_TYPE_NO_RESPONSE`, so a completed write only says the radio took the bytes; the unit's
+     * ACK is what says they are on flash, and the transfer paces on that. The pump that calls this
+     * must stay inside [MAX_OTA_IN_FLIGHT] and inside the byte window `OtaPump.paceLimitBytes`
+     * works out — the unit's handoff ring is seven frames and a frame it has no slot for ends the
+     * install with `bad_frame ring full`.
+     *
+     * The write shares [writeMutex] with the RPC frames, one chunk at a time rather than one locked
+     * burst, so `ota.status` and `ota.abort` still fit between chunks when the driver presses a
+     * button mid-transfer.
+     */
+    suspend fun otaWriteStart(frame: ByteArray): OtaWriteStart {
+        val client = gatt ?: return OtaWriteStart.Unavailable
+        val characteristic = otaChar ?: return OtaWriteStart.Unavailable
+        if (_state.value !is BleLinkState.Ready) return OtaWriteStart.Unavailable
         return writeMutex.withLock {
-            try {
-                writeOtaFrame(client, characteristic, frame)
-                true
-            } catch (e: Exception) {
-                false
+            if (otaInFlight.get() >= MAX_OTA_IN_FLIGHT) OtaWriteStart.Busy
+            else if (issueOtaFrame(client, characteristic, frame)) {
+                otaInFlight.incrementAndGet()
+                OtaWriteStart.Started
+            } else {
+                // The stack refused to take it. Not a dead link - the pump has a full queue, and
+                // the difference matters: a full queue is a reason to wait, not a reason to pause
+                // an install.
+                OtaWriteStart.Busy
             }
         }
     }
 
+    /** Frames handed to the stack whose callback has not come back yet. */
+    fun otaWritePending(): Int = otaInFlight.get().coerceAtLeast(0)
+
+    /**
+     * The next write completion, ATT status and all.
+     *
+     * Null when none came back inside [OTA_WRITE_TIMEOUT_MS] of airtime — say so rather than queue
+     * more writes into a link that may already be gone; the transfer's resume path decides whether
+     * it continues.
+     */
+    suspend fun otaWriteAwait(): Int? = withTimeoutOrNull(OTA_WRITE_TIMEOUT_MS) { otaCompletions.receive() }
+
+    /**
+     * Forgets the pipe: nothing in flight, nothing queued.
+     *
+     * Called when the transfer gives up on a write attempt and goes to ask the unit where it
+     * actually is. The stale callbacks may still arrive afterwards; the counter clamps at zero and
+     * the transfer re-reads the unit's offset, so a late completion can only wake the pump, never
+     * convince it that bytes landed.
+     */
+    fun otaPipeReset() {
+        while (otaCompletions.tryReceive().isSuccess) { }
+        otaInFlight.set(0)
+    }
+
     @SuppressLint("MissingPermission")
-    private suspend fun writeOtaFrame(
+    private fun issueOtaFrame(
         client: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
         frame: ByteArray,
-    ) {
-        val done = CompletableDeferred<Int>()
-        otaWriteDone = done
+    ): Boolean {
+        // The stack copies the value into its own queue here, so the next frame can overwrite the
+        // characteristic object immediately - which is what lets several writes sit in the air.
         val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             client.writeCharacteristic(
                 characteristic,
@@ -532,21 +590,13 @@ class BleLink(context: Context) {
             @Suppress("DEPRECATION")
             client.writeCharacteristic(characteristic)
         }
-        if (!started) {
-            otaWriteDone = null
-            throw IOException("ota_write_busy")
-        }
-        val status = try {
-            withTimeout(OTA_WRITE_TIMEOUT_MS) { done.await() }
-        } catch (e: TimeoutCancellationException) {
-            // Nothing came back for [OTA_WRITE_TIMEOUT_MS] of airtime. Say so rather than queue
-            // more writes into a link that may already be gone; the transfer's resume path decides
-            // whether it continues.
-            throw IOException("ota_write_timeout")
-        } finally {
-            otaWriteDone = null
-        }
-        if (status != BluetoothGatt.GATT_SUCCESS) throw IOException("ota_write_status_$status")
+        return started
+    }
+
+    private fun otaWriteComplete(status: Int) {
+        var left = otaInFlight.get()
+        while (left > 0 && !otaInFlight.compareAndSet(left, left - 1)) { left = otaInFlight.get() }
+        otaCompletions.trySend(status)
     }
 
     /** Drops the link. The next [connect] starts from a clean GATT client. */
@@ -850,10 +900,10 @@ class BleLink(context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
-            // One in-flight write at a time across both characteristics, so only one of the two
-            // deferreds is ever armed.
-            writeDone?.complete(status)
-            otaWriteDone?.complete(status)
+            // One RPC write at a time; the OTA pipe counts its own completions, because several
+            // firmware chunks may be in the stack at once and this callback does not say which one
+            // it belongs to - it only says one of them left.
+            if (characteristic.uuid == OTA_UUID) otaWriteComplete(status) else writeDone?.complete(status)
         }
 
         override fun onCharacteristicChanged(
@@ -900,7 +950,9 @@ class BleLink(context: Context) {
         otaChar = null
         // A transfer waiting on its next write must learn about this now, not four seconds later
         // when its own timeout fires.
-        otaWriteDone?.complete(BluetoothGatt.GATT_FAILURE)
+        val stuck = otaInFlight.getAndSet(0)
+        while (otaCompletions.tryReceive().isSuccess) { }
+        repeat(stuck) { otaCompletions.trySend(BluetoothGatt.GATT_FAILURE) }
         mtu = 23
         runCatching { client.disconnect() }
         runCatching { client.close() }
@@ -943,6 +995,15 @@ class BleLink(context: Context) {
         const val DESCRIPTOR_TIMEOUT_MS = 8_000L
         const val WRITE_TIMEOUT_MS = 8_000L
         const val OTA_WRITE_TIMEOUT_MS = 8_000L
+
+        /**
+         * Writes the stack may be holding for us at once.
+         *
+         * A hard ceiling, deliberately above the depth the transfer's own pace window asks for: it
+         * is here so a bug in the pump grows a bounded queue that answers `busy` instead of an
+         * unbounded one that misses ATT slots and gets the link torn down.
+         */
+        const val MAX_OTA_IN_FLIGHT = 8
         const val REQUEST_TIMEOUT_MS = 15_000L
     }
 }
