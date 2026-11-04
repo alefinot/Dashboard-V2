@@ -942,11 +942,22 @@ this is the sequence a person follows, and what to do when it does not work.
    The unit's log says `BT: auth ok` / `BT: auth FAILED (reason N)` / `BT: connected`.
    Name the card in the editor (**NAME IT**) and the identity is remembered.
 
+**Handing a unit from one phone to the next.** When a link drops the unit does not offer
+pairing again on the spot: it goes silent for **10 s** (`BT_PAIR_DELAY_MS` in `src/bt.cpp`)
+and then logs `BT: pairing mode on, 10000 ms after the link dropped`. The pause is there
+because the peer that just fell off usually redials within a second and takes the single peer
+slot, and because a phone that walked away from a pairing attempt used to keep the link open
+indefinitely - which left the unit unreachable by anyone else until it was reflashed.
+Android still *lists* the unit for a moment during that window (its scanner answers from the
+cache), but a connect attempt will not land until the unit advertises again. On the app side a
+search that ends in failure now drops the link it made along the way, so the hand-over
+finishes with the old phone gone and the unit advertising 10 s later.
+
 **When it does not work:**
 
 | What you see | What it means | What to do |
 |---|---|---|
-| Nothing in the scan list | The unit is not advertising: already connected to a phone (it closes advertising once a link is up), on a firmware with no GATT server (1.4.x and older), or out of range | Move closer; check the unit's boot log for `BT: advertising as …`; if another phone holds the link, disconnect there first |
+| Nothing in the scan list | The unit is not advertising: already connected to a phone (it closes advertising once a link is up), in the 10 s quiet window after a link dropped, on a firmware with no GATT server (1.4.x and older), or out of range | Move closer; check the unit's boot log for `BT: advertising as …`; if another phone holds the link, disconnect there first and wait for `BT: pairing mode on` |
 | A unit appears but tapping it changes nothing | Usually Android's pairing dialog is behind the app, or the attempt was refused and closed | Pull the dialog up; retry from the card. The unit's log names the reason |
 | No number on the panel | The pairing never started (the panel follows `btPairingActive()`, and it cannot be started from the radio), or the panel code is older than this build | Look at COM7 for `BT: pairing mode: passkey …`; if it is not there, the attempt never reached the unit |
 | The code is refused | The attempt window has closed (the stack's 30 s, and the unit's own 60 s backstop), or the typed number belongs to a different unit | Type the number the panel is showing **now** — a new attempt mints a new one; then retry from the card |
@@ -1619,6 +1630,28 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### Unreleased — a dropped link hands the unit back after 10 s (firmware `src/bt.cpp` + app)
+
+Bench, two phones and one unit (`DPP-B594`, FW 2.0.1, COM7): pairing a second phone used to
+need a reboot, because the first phone kept the link it had already stopped using.
+
+- **The unit re-offers pairing on a timer** (`src/bt.cpp`): `onDisconnect` no longer calls
+  `startAdvertising()` from the GAP callback; it stops advertising and arms
+  `BT_PAIR_DELAY_MS = 10000`, which `btTask` pays off with `BT: pairing mode on, 10000 ms
+  after the link dropped`. Measured on the bench: disconnect `07:31:51.703` → pairing on
+  `07:32:01.618` = **9.92 s**. Blocking inside the callback is not an option; a timer in the
+  polling task is.
+- **A failed search releases the link the app made on the way** (`ConnectionViewModel.kt`):
+  a `SEARCH` that lands on `NextAction.Failed` now calls `link.disconnect()` when the link is
+  up. That was the orphan: a dialled link, never adopted, never closed - and the unit serves
+  exactly one peer, so every other phone was locked out for as long as that link lived.
+- **Known bench issue, open:** a phone that no longer holds the unit's bond (its pairing was
+  removed on the Android side) can connect and then sit unencrypted until the stack gives up:
+  `BT: auth FAILED (reason 99, key type 0)` 30 s after `BT: phone connected`, then
+  `disconnected (reason 0x13)`. No passkey is shown, because the unit has a stored key for
+  that address and does not start a fresh exchange. Needs a decision about which side forgets
+  the bond, and whether a failed authentication should delete the unit's copy.
 
 ### V2.0.1 — a firmware push takes 76 s, not 145 s (firmware `src/` + app; firmware **2.0.0 → 2.0.1**, app **2.0.0/57 → 2.0.1/58**)
 

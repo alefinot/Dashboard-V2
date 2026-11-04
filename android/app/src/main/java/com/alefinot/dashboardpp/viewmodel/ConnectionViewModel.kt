@@ -688,6 +688,14 @@ class ConnectionViewModel(
                 }
                 is NextAction.Failed -> {
                     uiState.value = ConnectionUiState.Failed(n.reason)
+                    // A search that ended in failure has to let the radio go. The unit
+                    // serves one peer at a time, so a phone sitting on a link it never
+                    // uses keeps every other phone out of the unit - and since the unit
+                    // now holds pairing back for 10 s after a drop, holding on is what
+                    // makes a hand-over between two phones impossible.
+                    if (mode == ConnectMode.SEARCH && link.state.value != BleLinkState.Idle) {
+                        link.disconnect()
+                    }
                     return
                 }
                 is NextAction.Connect -> {

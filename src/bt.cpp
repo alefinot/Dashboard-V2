@@ -40,6 +40,14 @@ static BLECharacteristic *s_ota = nullptr;
 
 static volatile bool s_connected = false;
 static volatile bool s_advertising = false;
+// A link that drops goes quiet for this long before pairing is offered again. The
+// peer that just fell off often reconnects inside a second and takes the only peer
+// slot, which is how swapping a unit between two phones turns into a search that
+// finds nothing; a phone holding a link it never uses (an abandoned pairing) was
+// worse still. 10 s is the bench-usable compromise: long enough for a deliberate
+// hand-over, short enough that the next phone just waits for the card to appear.
+static constexpr uint32_t BT_PAIR_DELAY_MS = 10000;
+static volatile uint32_t s_advResumeAt = 0;
 static volatile bool s_pairing = false;
 // The name this unit advertises, kept after btInit() so the pairing panel can
 // print the same string the phone's scan list is about to show.
@@ -341,12 +349,15 @@ class BtServerCallbacks : public BLEServerCallbacks {
     s_rxReady = false;
     s_rxBadLogged = false;
     s_rxLen = 0;
-    server->startAdvertising();
-    s_advertising = true;
+    // Not "advertising again": pairing is held back for BT_PAIR_DELAY_MS, then
+    // btTask brings it up. See the constant.
+    BLEDevice::getAdvertising()->stop();
+    s_advertising = false;
+    s_advResumeAt = millis() + BT_PAIR_DELAY_MS;
     // The HCI reason is the clue when a client connects and vanishes: 0x3 is an
     // supervision timeout, 0x16 the client's own disconnect, 0x3F the local host.
-    logPrintf("BT: phone disconnected (reason 0x%02x), advertising again\n",
-              (unsigned)param->disconnect.reason);
+    logPrintf("BT: phone disconnected (reason 0x%02x), pairing in %u ms\n",
+              (unsigned)param->disconnect.reason, (unsigned)BT_PAIR_DELAY_MS);
   }
 };
 
@@ -462,6 +473,16 @@ static void btTask(void *pvParameters) {
   unsigned long lastLinkLog = 0;
   for (;;) {
     const unsigned long now = millis();
+
+    // Pairing resumes on a delay, never from the GAP callback (blocking there
+    // stalls the whole stack). The unit is uncontactable while this is pending.
+    if (!s_connected && s_advResumeAt && now >= s_advResumeAt) {
+      s_advResumeAt = 0;
+      BLEDevice::getAdvertising()->start();
+      s_advertising = true;
+      logPrintf("BT: pairing mode on, %u ms after the link dropped\n",
+                (unsigned)BT_PAIR_DELAY_MS);
+    }
 
     if (s_rxReady) {
       s_rxBusy = true;
