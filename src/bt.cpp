@@ -237,9 +237,10 @@ volatile bool otaUpdateSuccess = false;
 // reading that says so - the auth-complete event's own key fields describe the
 // legacy link key and lie about LE Secure Connections.
 static int btBondCount() {
-  esp_ble_bond_dev_t list[4];
-  int n = 4;  // capacity in, count out
-  if (esp_ble_get_bond_device_list(&n, list) != ESP_OK) return -1;
+  // The count, not a list read through a small buffer: a 4-entry list answers "4"
+  // whether the stack holds four keys or twelve, and Bluedroid's own ceiling is
+  // around 15 before it starts dropping the oldest peer.
+  int n = esp_ble_get_bond_device_num();
   return n < 0 ? 0 : n;
 }
 
@@ -247,6 +248,32 @@ static void btLogBondCount(const char *when) {
   int n = btBondCount();
   if (n < 0) logPrintf("BT: %s, bond list read failed\n", when);
   else logPrintf("BT: %s, %d bonded device(s)\n", when, n);
+}
+
+// One side has forgotten the pairing: the unit kept a key for this address and
+// the phone threw its copy away ("forget this device", a factory reset, a fresh
+// install). The unit then asks for an encryption the phone cannot answer, the
+// phone sits waiting for a pairing offer that never comes, and the link rots
+// until the Security Manager gives up - on the bench, 30 s after
+// `BT: phone connected`, as `BT: auth FAILED (reason 99)` =
+// ESP_AUTH_SMP_RSP_TIMEOUT, with no passkey ever shown on the panel. The phone
+// side is fixable by the user (forget the device, start over); the unit's half
+// is out of reach, so the unit deletes it here: the next attempt runs a clean
+// exchange and puts the six digits on the screen. Reasons that only say a
+// pairing is still in progress (BUSY 96, STARTED 98) leave the bond alone.
+// (by value, not by const reference: esp_ble_remove_bond_device takes the
+// address as a plain uint8_t[6], so a const view of the event will not pass it)
+static void btDropFailedBond(esp_ble_auth_cmpl_t cmpl) {
+  if (cmpl.fail_reason == ESP_AUTH_SMP_BUSY || cmpl.fail_reason == ESP_AUTH_SMP_STARTED) {
+    return;
+  }
+  if (esp_ble_remove_bond_device(cmpl.bd_addr) == ESP_OK) {
+    logPrintf("BT: bond with %02x:%02x:%02x:%02x:%02x:%02x dropped - the next attempt pairs from scratch\n",
+              cmpl.bd_addr[0], cmpl.bd_addr[1], cmpl.bd_addr[2],
+              cmpl.bd_addr[3], cmpl.bd_addr[4], cmpl.bd_addr[5]);
+  } else {
+    logPrintf("BT: no stored bond to drop for that peer\n");
+  }
 }
 
 class BtSecurityCallbacks : public BLESecurityCallbacks {
@@ -274,6 +301,7 @@ class BtSecurityCallbacks : public BLESecurityCallbacks {
     logPrintf("BT: auth %s (reason %d, key type %u, auth req 0x%02x)\n",
               cmpl.success ? "ok" : "FAILED", (int)cmpl.fail_reason,
               (unsigned)cmpl.key_type, (unsigned)cmpl.auth_mode);
+    if (!cmpl.success) btDropFailedBond(cmpl);
     btLogBondCount("after auth");
   }
 };
@@ -589,7 +617,8 @@ void *btTaskHandleForDiag() { return (void *)s_btTask; }
 // owned by whoever paired it last: the GATT permissions demand an encrypted
 // link, and only a bonded phone can build one.
 void btClearBonds() {
-  esp_ble_bond_dev_t list[8];
+  esp_ble_bond_dev_t list[16];  // above Bluedroid's ~15-key ceiling: a short list
+                                // silently leaves the oldest peers bonded
   int n = (int)(sizeof(list) / sizeof(list[0]));
   if (esp_ble_get_bond_device_list(&n, list) != ESP_OK) {
     logPrintf("BT: bond list unavailable - pairings not cleared\n");
