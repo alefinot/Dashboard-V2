@@ -143,6 +143,21 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 
 ## 23. Push Policy
 - **Always push when committing** — every commit on `main` is pushed to GitHub right after it is made.
+- **Which remote (decided 2026-11-05):** push to **`origin` = `alefinot/Dashboard-V2`** and nothing
+  else. That repository is a progress-savings mirror; the project's intended final home is the pre-BLE
+  repository `alefinot/Dashboard-for-ESP32`, still wired into this checkout as the remote **`old`**.
+  The maintainer chose **"switch once at the end"** over mirroring as you go: **do not** push commits,
+  tags or releases to `old` while work continues, and do not delete the remote.
+- **The move is a fast-forward, verified:** `old/main` = `0c64c586` is an ancestor of `main`, so the
+  whole V2 line can be published later with `git push old main` followed by `git push old --tags`.
+  Nothing needs grafting or squashing — do not invent a history-rewrite step.
+- **At switch time**, confirm with the maintainer and then: duplicate the `V2.0.x` releases into the
+  old repo with both artifacts (rules 27/28; 2.0.2's `firmware.bin` and APK are the ones this tree
+  builds, earlier ones re-download from V2 or rebuild from their tags), re-point the two repo-name
+  strings — the clone block in `README.md` and the tile **User-Agent** policy string in
+  `android/.../ui/map/RouteMap.kt` (an app change: APK rebuild + `versionCode` bump, rules 8/24) —
+  then `git remote rename origin v2 && git remote rename old origin` so this rule keeps pointing at
+  the real home, and archive the V2 repository.
 
 ## 24. Android versionCode
 - Bump `versionCode` in `android/app/build.gradle.kts` on every shared/test APK (per the app implementation plan).
