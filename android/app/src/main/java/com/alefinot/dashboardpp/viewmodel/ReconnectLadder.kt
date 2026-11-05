@@ -74,14 +74,27 @@ sealed interface LadderStep {
  *
  * Two things are deliberately *not* here, and their absence is the point:
  *
- *  - **No background retries with the screen off.** Nothing in the app needs a link
- *    while the phone is asleep: trips are recorded by `TripLogService` while it runs,
- *    and a link that comes up unseen then drops again only produces a log line nobody
- *    reads. The ladder lives in the view model, which is alive when the screen is.
+ *  - **No retries with the screen off.** Nothing in the app needs a link while the phone
+ *    is asleep: trips are recorded by `TripLogService` while it runs, and a link that
+ *    comes up unseen then drops again only produces a log line nobody reads. Every dial
+ *    this object can authorise — a rung of the ladder, or a tick of the restart below —
+ *    is allowed only while the vehicle page is visible, which is [rearmWanted]'s first
+ *    guard and the reason the caller tracks foreground state at all.
  *  - **No re-pairing.** A dropped ACL is not a lost bond, so the ladder dials the
  *    existing pairing. Re-running a pairing ceremony on a link failure would be the
  *    same wrong move as the old code's silent fallback to scanning: it reaches for
  *    *some* dashboard when the user asked for *this* one.
+ *
+ * What this object deliberately does **not** do is restart itself: [step] is terminal,
+ * and a `GiveUp` means *this* failure spent its three dials. Left alone that is fatal in
+ * a way the bench found on 2026-11-05: a unit rebooted at 21:45, the ladder was spent by
+ * 21:48:51, and from then on the phone sat foreground, unlinked and not even scanning,
+ * while the unit advertised and its clock and weather card aged out — because the only
+ * thing left that could dial again was a finger. The rules below are that finger on a
+ * clock: [rearmDelayMs] decides *when* a given-up ladder is restarted and [rearmWanted]
+ * decides whether anything permits it. They are pure and live here for the same reason
+ * [step] does — the case that matters (give up, screen off, screen back on) is a race
+ * you cannot otherwise write a test for.
  *
  * [attempt] is how many dials this failure has already caused (0-based) and resets on
  * [LinkEvent.Linked] and on [LinkEvent.UserAsked].
@@ -157,4 +170,56 @@ object ReconnectLadder {
             LinkEvent.Linked -> LadderStep.Linked
         }
     }
+
+    // ------------------------------------------------------------- the quiet restart
+
+    /**
+     * When a ladder that gave up gets dialled again: once [REARM_FIRST_MS] after the
+     * give-up, then every [REARM_STEP_MS] for as long as the page stays open.
+     *
+     * This is a maintenance cadence, not a second backoff, and the difference is the
+     * point. The ladder escalates because one *failure* deserves escalating patience; a
+     * restart that escalated with it would end up asking, hours later, about a unit whose
+     * clock the tick exists to keep honest. Two numbers instead: 60 s catches the case the
+     * ladder was built for and still misses — a unit that rebooted while nobody was
+     * watching, which is advertising again seconds after the ladder's last dial — and 5 min
+     * is what the unattended long tail costs in radio time (twelve dials an hour, and every
+     * one of them stops with the screen).
+     */
+    const val REARM_FIRST_MS = 60_000L
+    const val REARM_STEP_MS = 300_000L
+
+    /**
+     * The pause before re-arm number [rearmsDone] — 0-based, so `rearmDelayMs(0)` is the
+     * first quiet dial after a give-up and every dial after it lands on [REARM_STEP_MS].
+     */
+    fun rearmDelayMs(rearmsDone: Int): Long =
+        if (rearmsDone <= 0) REARM_FIRST_MS else REARM_STEP_MS
+
+    /**
+     * Whether the slow tick may reach for the radio *now*. All five have to hold; each one
+     * is a bench case where a dial would have been waste or worse than waste.
+     *
+     *  - [foreground] — the rule above: nothing in the app needs a link the user cannot
+     *    see, and a dial behind `ON_STOP` is a radio in somebody's pocket.
+     *  - [hasPairing] — [com.alefinot.dashboardpp.vehicles.Vehicle.hasPairing]. No bond,
+     *    nothing to dial, and waiting produces one no better than the ladder's own guard.
+     *  - [adapterOn] — the radio we never switch on ourselves cannot be asked to dial.
+     *  - `linkBusy`, false — a link that is up already answers the question the tick was
+     *    going to ask, and one that is being built will report its own result. This is also
+     *    what keeps a re-arm off the back of a BLE firmware install: an update in progress
+     *    holds the link in `Ready` for its whole transfer.
+     *  - `dialInFlight`, false — an attempt the ladder is running is the same attempt this
+     *    tick is about to start.
+     *
+     * Nothing here is a *reason to* dial: the tick fires on a timer, and this is the list
+     * of things that can make it hold its hand instead.
+     */
+    fun rearmWanted(
+        foreground: Boolean,
+        hasPairing: Boolean,
+        adapterOn: Boolean,
+        linkBusy: Boolean,
+        dialInFlight: Boolean,
+    ): Boolean = foreground && hasPairing && adapterOn && !linkBusy && !dialInFlight
 }

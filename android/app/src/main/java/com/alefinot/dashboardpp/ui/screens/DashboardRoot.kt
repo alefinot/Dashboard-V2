@@ -6,9 +6,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
@@ -32,6 +36,24 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // summary cache, and outlives tab switches (trip recording plan §5).
     val trips = remember { TripsViewModel(activity.application) }
     LaunchedEffect(Unit) { vm.boot() }
+    // The view model is remembered inside `setContent`, so the composable is the only thing
+    // in the app that knows whether the screen is in front of somebody. That fact is what
+    // makes "no reconnects with the screen off" enforceable: `ON_START` / `ON_STOP` bound
+    // the window in which the quiet restart of a given-up ladder may put a dial on the air,
+    // and coming back to `ON_START` with a give-up in effect dials straight away instead of
+    // waiting out another tick.
+    val lifecycle = LocalLifecycleOwner.current
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> vm.onForegroundChanged(true)
+                Lifecycle.Event.ON_STOP -> vm.onForegroundChanged(false)
+                else -> Unit
+            }
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    }
     val s = vm.uiState.value
     // Keep content inside the safe area: with targetSdk 35 edge-to-edge is
     // enforced, so without these insets the HUD chrome draws behind the

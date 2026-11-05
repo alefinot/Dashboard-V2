@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.viewmodel
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -132,5 +133,67 @@ class ReconnectLadderTest {
             "escalating, or a rebooting unit and a unit out of range get the same patience",
             ReconnectLadder.BACKOFF_MS.zipWithNext().all { (a, b) -> a < b },
         )
+    }
+
+    // ------------------------------------------------------------------ the quiet restart
+
+    @Test
+    fun `a given-up ladder is restarted at one minute then every five`() {
+        assertEquals(60_000L, ReconnectLadder.rearmDelayMs(0))
+        // Bounded, and deliberately not a second backoff: an escalating restart would end
+        // up asking about a unit days later, which is the staleness the restart exists to
+        // prevent. Whatever the counter, the cadence is one line.
+        assertEquals(300_000L, ReconnectLadder.rearmDelayMs(1))
+        assertEquals(300_000L, ReconnectLadder.rearmDelayMs(2))
+        assertEquals(300_000L, ReconnectLadder.rearmDelayMs(99))
+        // A negative counter is the same question as a first dial, not a dial in the past.
+        assertEquals(ReconnectLadder.REARM_FIRST_MS, ReconnectLadder.rearmDelayMs(-1))
+        assertEquals(60_000L, ReconnectLadder.REARM_FIRST_MS)
+        assertEquals(300_000L, ReconnectLadder.REARM_STEP_MS)
+        assertTrue(
+            "the first restart must come before the steady cadence, or a unit that rebooted " +
+                "while the page was open waits five minutes to be believed",
+            ReconnectLadder.REARM_FIRST_MS < ReconnectLadder.REARM_STEP_MS,
+        )
+    }
+
+    @Test
+    fun `a restart wants every guard clear`() {
+        // The one row that may dial: page open, card paired, radio on, no link, nothing
+        // already reaching for it.
+        assertTrue(ReconnectLadder.rearmWanted(true, true, true, false, false))
+
+        // Each row below is a bench case where a quiet dial would be radio time with no
+        // chance of an answer, or a second dial on top of one already running.
+        val cases = listOf(
+            "screen off" to listOf(false, true, true, false, false),
+            "card has no pairing" to listOf(true, false, true, false, false),
+            "radio off" to listOf(true, true, false, false, false),
+            "link already up" to listOf(true, true, true, true, false),
+            "link being built" to listOf(true, true, true, true, false),
+            "a dial is in flight" to listOf(true, true, true, false, true),
+        )
+        for ((what, args) in cases) {
+            assertFalse(
+                "$what must not start a quiet dial",
+                ReconnectLadder.rearmWanted(args[0], args[1], args[2], args[3], args[4]),
+            )
+        }
+    }
+
+    @Test
+    fun `the restart rule is not the ladder's rule`() {
+        // Two separate decisions, and collapsing them is how the 2026-11-05 bench ended up
+        // silent: `step` is still terminal, so nothing about the ladder got more patient —
+        // the fourth drop still gives up, and it is the restart below that dials again.
+        assertTrue(
+            ReconnectLadder.step(LinkEvent.Dropped("gatt 133"), 3, paired, radioOn)
+                is LadderStep.GiveUp,
+        )
+        // And a restart is not an excuse to ignore a blocked card: the same two facts the
+        // ladder words with `blocked` are guards here, in Boolean form.
+        assertFalse(ReconnectLadder.rearmWanted(true, false, true, false, false))
+        assertFalse(ReconnectLadder.rearmWanted(true, true, false, false, false))
+        assertNotNull(ReconnectLadder.blocked(false, radioOn))
     }
 }

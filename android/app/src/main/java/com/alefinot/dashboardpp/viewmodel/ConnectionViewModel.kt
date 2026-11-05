@@ -41,6 +41,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -105,6 +106,33 @@ class ConnectionViewModel(
      * pure rule and this is the stateful half of the same design.
      */
     private var attempts = 0
+
+    /**
+     * The quiet restart of a ladder that gave up, if one is waiting. One at a time, always
+     * replaced, cancelled by anything the user touches.
+     */
+    private var rearm: Job? = null
+
+    /**
+     * Quiet dials already spent on the current failure. It decides only the *pause* before
+     * the next one ([ReconnectLadder.rearmDelayMs]) and survives the screen going off, so a
+     * page that comes back is still on the five-minute cadence rather than back at minute
+     * one. Reset when a link comes up.
+     */
+    private var rearms = 0
+
+    /**
+     * True between the vehicle page's `ON_START` and `ON_STOP`. Every dial the reconnect
+     * machinery starts on its own is refused while it is false; see [onForegroundChanged].
+     */
+    private var foreground = false
+
+    /**
+     * True while the last word about the current failure was a give-up — the only state the
+     * quiet restart serves. Cleared by a link coming up and by any press, because both mean
+     * something else owns the ladder now.
+     */
+    private var gaveUp = false
 
     val uiState = mutableStateOf<ConnectionUiState>(ConnectionUiState.Idle(null))
 
@@ -238,6 +266,36 @@ class ConnectionViewModel(
     }
 
     /**
+     * The vehicle page became visible ([on] true) or stopped being visible (false).
+     *
+     * The view model is `remember`ed inside `setContent`, so nothing above it can tell it
+     * about the screen; [com.alefinot.dashboardpp.ui.screens.DashboardRoot] observes the
+     * lifecycle and calls this from `ON_START` / `ON_STOP`. It is what turns "no retries
+     * with the screen off" from a comment into a rule, and it is the only reason the quiet
+     * restart can promise to stop when the phone goes in a pocket.
+     *
+     * Coming back to the foreground with a give-up in effect dials **at once**: the reason
+     * the app was silent is that a ladder ended, not that the unit is unreachable, and
+     * waiting out another five-minute tick to prove it would be the machinery making the
+     * user wait for something they did not start. The first `ON_START` of a process never
+     * dials here, because [gaveUp] is false and [boot] has already dialed.
+     */
+    fun onForegroundChanged(on: Boolean) {
+        foreground = on
+        if (!on) {
+            // Only the timer is cancelled. The counter survives, because the screen going
+            // off is not a new failure and says nothing about the unit.
+            rearm?.cancel()
+            rearm = null
+            return
+        }
+        scope.launch {
+            if (!gaveUp) return@launch
+            if (rearmWantedNow()) dialForRearm() else scheduleRearm()
+        }
+    }
+
+    /**
      * ADD VEHICLE -> SEARCH: dial what the selected card remembers, then sweep the radio.
      *
      * This is the only path that ever scans, and it exists because the user pressed a
@@ -247,6 +305,8 @@ class ConnectionViewModel(
      */
     fun rescan() {
         attempts = 0
+        gaveUp = false
+        rearm?.cancel()
         bondNote.value = null
         startAttempt(ConnectMode.SEARCH)
     }
@@ -265,6 +325,8 @@ class ConnectionViewModel(
      */
     fun pairWith(found: Found) {
         attempts = 0
+        gaveUp = false
+        rearm?.cancel()
         bondNote.value = null
         startAttempt(ConnectMode.SEARCH, pinned = found, preScanned = scanResults.value)
     }
@@ -346,8 +408,10 @@ class ConnectionViewModel(
      */
     fun connectVehicle(vehicleId: String, mode: ConnectMode = ConnectMode.SEARCH) {
         attempts = 0
+        gaveUp = false
         ladder?.cancel()
         retry?.cancel()
+        rearm?.cancel()
         scope.launch {
             vehicles.select(vehicleId)
             selectedVehicleId.value = vehicleId
@@ -367,6 +431,8 @@ class ConnectionViewModel(
      */
     fun huntNow(mode: ConnectMode = ConnectMode.PROBE) {
         attempts = 0
+        gaveUp = false
+        rearm?.cancel()
         scope.launch {
             val card = selectedCard()
             when (val step = ReconnectLadder.step(
@@ -391,8 +457,10 @@ class ConnectionViewModel(
      */
     fun selectVehicle(vehicleId: String) {
         attempts = 0
+        gaveUp = false
         ladder?.cancel()
         retry?.cancel()
+        rearm?.cancel()
         scope.launch {
             vehicles.select(vehicleId)
             selectedVehicleId.value = vehicleId
@@ -646,6 +714,10 @@ class ConnectionViewModel(
     fun disconnect() {
         ladder?.cancel()
         retry?.cancel()
+        // A deliberate DISCONNECT must not be undone by a timer sixty seconds later: the
+        // quiet restart exists to recover a link the user lost, not one they ended.
+        rearm?.cancel()
+        gaveUp = false
         attempts = 0
         link.disconnect()
         if (uiState.value !is ConnectionUiState.Connected) return
@@ -694,6 +766,10 @@ class ConnectionViewModel(
         var scanDone = preScanned != null
         var found = preScanned ?: emptyList()
         var outcome: LinkOutcome? = null
+        // This loop's own job, handed to `scheduleRearm` below. An attempt that ends in a
+        // failure is allowed to schedule its own restart, and the guard that refuses to
+        // dial over a running attempt has to be able to tell that caller from a stranger.
+        val me = currentCoroutineContext().job
         while (currentCoroutineContext().isActive) {
             val r = ConnectionCore.decide(
                 vehicles.all().first(), selectedVehicleId.value,
@@ -717,6 +793,15 @@ class ConnectionViewModel(
                     if (mode == ConnectMode.SEARCH && link.state.value != BleLinkState.Idle) {
                         link.disconnect()
                     }
+                    // This is the give-up the bench actually hits (2026-11-05): the attempt
+                    // dialed the card's own pairing, nothing answered, and the app's interest
+                    // in a unit that was merely still booting ended there — foreground, for
+                    // as long as anybody cared to watch, with the unit's clock and its weather
+                    // card ageing out. A `GiveUp` reached through a link event is the same
+                    // verdict from the other direction, and both now end the failure the same
+                    // way: the slow tick takes over.
+                    gaveUp = true
+                    scheduleRearm(except = me)
                     return
                 }
                 is NextAction.Connect -> {
@@ -902,6 +987,9 @@ class ConnectionViewModel(
             scope.launch { vehicles.select(n.vehicleId) }
         }
         attempts = 0
+        rearms = 0
+        gaveUp = false
+        rearm?.cancel()
         uiState.value = ConnectionUiState.Connected(
             address = n.address,
             name = n.name,
@@ -1112,6 +1200,9 @@ class ConnectionViewModel(
         when (step) {
             LadderStep.Linked -> {
                 attempts = 0
+                rearms = 0
+                gaveUp = false
+                rearm?.cancel()
                 retry?.cancel()
             }
             LadderStep.Stop -> Unit
@@ -1119,6 +1210,12 @@ class ConnectionViewModel(
                 attempts = 0
                 retry?.cancel()
                 uiState.value = ConnectionUiState.Failed(step.reason)
+                // "The ladder is over until a finger moves" was the design, and on the bench
+                // it was a defect: a unit that rebooted unattended stayed unreachable until
+                // somebody tapped something, and with it its clock and its weather. The tick
+                // below is the finger that does not need a person.
+                gaveUp = true
+                scheduleRearm()
             }
             is LadderStep.Retry -> {
                 // The guard is about the link, not about the dial. A dial still in flight is not
@@ -1136,6 +1233,10 @@ class ConnectionViewModel(
                 }
                 attempts++
                 retry?.cancel()
+                // The ladder is dialing again, so the slow tick has nothing to say until it
+                // stops: a press or a rung of the ladder owns the failure, not the calendar.
+                gaveUp = false
+                rearm?.cancel()
                 retry = scope.launch {
                     delay(step.delayMs)
                     if (currentCoroutineContext().isActive) {
@@ -1160,10 +1261,75 @@ class ConnectionViewModel(
         }
     }
 
+    // ------------------------------------------------------------- the quiet restart
+
+    /**
+     * The five guards of [ReconnectLadder.rearmWanted], read as of now.
+     *
+     * [except] is the caller's own job when the caller is an attempt: an attempt that just
+     * failed is the one dial that is definitely not in flight, and a guard that counted its
+     * own caller would refuse every restart before it was scheduled.
+     */
+    private suspend fun rearmWantedNow(except: Job? = null): Boolean {
+        val card = selectedCard()
+        val s = link.state.value
+        return ReconnectLadder.rearmWanted(
+            foreground = foreground,
+            hasPairing = card?.hasPairing == true,
+            adapterOn = link.enabled(),
+            // A link that is up already answers the question, and one being built reports
+            // for itself. This is also the OTA guard, and it needs no new signal: a firmware
+            // install holds the link in `Ready` from `begin_ok` to the reboot it triggers, so
+            // a re-arm can never dial over an update in progress.
+            linkBusy = s is BleLinkState.Ready || s is BleLinkState.Connecting ||
+                s is BleLinkState.Pairing,
+            dialInFlight = ladder?.isActive == true && ladder !== except,
+        )
+    }
+
+    /**
+     * Put the next quiet dial in the calendar — if [rearmWantedNow] permits it.
+     *
+     * One tick at a time, always replaced, so every path a finger owns (a press, a rung of
+     * the ladder, a selection) cancels it by replacing it with nothing. The wait is a single
+     * [delay] rather than a loop for the same reason the ladder is a ladder: nothing in this
+     * class may put the radio on a timer that outlives the decision it was made for.
+     */
+    private suspend fun scheduleRearm(except: Job? = null) {
+        if (!rearmWantedNow(except)) return
+        val waitMs = ReconnectLadder.rearmDelayMs(rearms)
+        rearm?.cancel()
+        rearm = scope.launch {
+            delay(waitMs)
+            // Re-read on waking: the radio can have gone off, a press can have taken the
+            // ladder, and a link can have come up by itself in the meantime.
+            if (currentCoroutineContext().isActive && rearmWantedNow()) dialForRearm()
+        }
+    }
+
+    /**
+     * One quiet dial of the stored pairing.
+     *
+     * `PROBE`, and never `SEARCH`: restarting a ladder is not a licence to put an automatic
+     * sweep on the radio ([ConnectionMode.PROBE] keeps that rule where it belongs), and the
+     * unit this phone is paired with is still the only thing worth reaching for. The attempt
+     * counter goes back to zero because this is a new failure, not a fourth rung of the old
+     * one — whatever the link reports next gets the ladder's full patience again.
+     */
+    private fun dialForRearm() {
+        rearms++
+        attempts = 0
+        // Still unlinked: the restart regime continues past this dial, whether it answers or
+        // not, and `onForegroundChanged` has to be able to tell that from a fresh boot.
+        gaveUp = true
+        startAttempt(ConnectMode.PROBE)
+    }
+
     fun dispose() {
         stopAdapterWatch()
         ladder?.cancel()
         retry?.cancel()
+        rearm?.cancel()
         linkWatch?.cancel()
         weatherTick?.cancel()
         job.cancel()
