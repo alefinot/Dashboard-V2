@@ -102,6 +102,15 @@ static size_t btMaxPayload() {
   uint16_t mtu = s_mtu;
   if (mtu < 23) mtu = 23;
   size_t n = (size_t)mtu - 3u - BT_FRAME_HDR;
+  // Stay below the ATT ceiling: a notification whose payload is exactly MTU-3 is
+  // accepted by this stack (status 1, rc 0) and then silently lost. Measured on a
+  // Xiaomi 15 at MTU 517: all seven 514 B frames of a config.get never reached the
+  // phone (so four of six chunks died and the settings page reported "138 keys the
+  // schema knows are missing from the read"), while every frame of 506 B or less
+  // arrived - 183 of 183 keys. A central that settles at a smaller MTU (251 is
+  // common) never lands on the boundary, which is why this only bit one phone.
+  const size_t HEADROOM = 8;
+  if (n > HEADROOM) n -= HEADROOM;
   if (n > 512u) n = 512u;  // static frame buffer is header + 512
   return n;
 }
