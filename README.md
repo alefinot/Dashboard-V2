@@ -844,7 +844,7 @@ The parameter table shrank on 2026-11-02, when the portal and the network stack 
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.2`, `versionCode 61` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.2`, `versionCode 65` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -1031,7 +1031,7 @@ A unit from this tree has no radio, so it cannot ask anything about the sky. The
 
 The reverse rung is **Nominatim** (`nominatim.openstreetmap.org/reverse`, `zoom=12&addressdetails=1&accept-language=en`) and the forward rung is **Open-Meteo geocoding** (`geocoding-api.open-meteo.com/v1/search`). BigDataCloud's free reverse endpoint was the plan's first rank and is **not** in the build: its fair-use policy gates the free client-side API to browser pages with an origin, which a native app cannot present honestly. Nominatim's own policy is enforced in code rather than trusted to the caller — one request per 1.1 s (`MIN_REVERSE_INTERVAL_MS`), and the caller caches per place, so a drive across town costs one query, not one per feed.
 
-**The schedule** (`WeatherCoordinator`, one instance per process via `WeatherRuntime`, same shape as `BleRuntime`): woken by the ViewModel at link-up, by a 60 s ViewModel tick while a link is up, and by the trip service on each handled frame (throttled to one wake per 10 s; the frames themselves are handed over free through `HostFrames`). A pass then decides whether anything is due: fetch when the last fetch is **≥ 15 min** old or the car has moved **> 2 km** since it, and never more than one fetch per pass. Back-offs are separate from the schedule: **+5 min** after a provider that did not answer, **+60 s** after the unit answers `ota_in_progress` (it is writing firmware; `src/bt_ota.cpp` refuses non-`ping`/`ota.*` RPCs mid-install and the weather feed is not going to call that a link failure), **+5 s** after `busy`, and one immediate retry for `busy` because that is the unit's own 100 ms settings mutex. **`bad_param` is treated as our bug**: the payload is printed in the card's note and not re-queued.
+**The schedule** (`WeatherCoordinator`, one instance per process via `WeatherRuntime`, same shape as `BleRuntime`): woken by the ViewModel at link-up (through `unitWoke` — see below), by a 60 s ViewModel tick that runs **whether or not a link is up** (it used to start with the link and stop with it, which is what made a re-connected unit wait out the interval), and by the trip service on each handled frame (throttled to one wake per 10 s; the frames themselves are handed over free through `HostFrames`). A pass then decides whether anything is due: fetch when the last fetch is **≥ 5 min** old or the car has moved **> 2 km** since it, and never more than one fetch per pass. **A unit that came up between two fetches is handed the frame the phone is holding** (RAM, keyed by unit, stamped with its fetch time): `g_weatherData` is RAM and its `lastUpdated` is stamped by `millis()`, so a reboot deletes whatever the app last sent, while the schedule's answer to that unit was "nothing is due" — the blank card, from the owner's side, for up to a whole interval (bench, 2026-11-06). `unitWoke` delivers the held frame — no network, no `snapshot` RPC, one `weather.set` — and fetches only when there is nothing fit to hand: nothing sent yet, an app restart, or a held frame older than the interval. Back-offs are separate from the schedule: **+5 min** after a provider that did not answer, **+60 s** after the unit answers `ota_in_progress` (it is writing firmware; `src/bt_ota.cpp` refuses non-`ping`/`ota.*` RPCs mid-install and the weather feed is not going to call that a link failure), **+5 s** after `busy`, and one immediate retry for `busy` because that is the unit's own 100 ms settings mutex. **`bad_param` is treated as our bug**: the payload is printed in the card's note and not re-queued.
 
 **Staleness is a frame, not a silence.** When the last feed to a unit is **> 3 h** old, the next pass sends exactly one `valid = false` frame carrying the last label, and the unit's card reads `Weather Offline (waiting for phone...)` (the firmware already owned that copy — `F2` in the plan's ledger). The `offlineSent` flag is stored with the cache row, so an app restart cannot spend a second goodbye on a unit that already shows one; the next live frame ends it.
 
@@ -1685,6 +1685,37 @@ is why one phone in the field showed it and the bench Mi 9 Lite never did. The O
 from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
 never touched the ceiling — which is why BLE installs were never affected by this.
 
+### App 2.0.2/65 — a unit that comes back gets its clock and its weather again (Android app only, `versionCode` 64 → 65; firmware unchanged at 2.0.2)
+
+Both of the panel's RAM-only facts went missing in the same way: the app had decided, for the
+lifetime of the process, that it had already supplied them.
+
+- **The clock was pushed once per process, not once per link.** `clockPushedFor` was cleared
+  by nothing — not by `Failed`, not by `Disconnected` — so after a reboot in the same app
+  session the reconnect skipped `time.set` and the panel sat at 01:00 Jan 1 2024, or at
+  whatever it had been before the unit lost power, until the app was force-stopped (what
+  looked like "a bug that a restart fixes"). `watchLink()` now clears the key with every
+  non-`Ready` state, next to the weather key that already worked that way, and every push is
+  logged under `DPP-CONN` (`clock pushed ok address=…`) so the claim is on the capture.
+- **A woken unit was not handed the weather it was owed.** The feed's `due` check answers
+  "is a fetch due", and for a unit that rebooted five minutes into an interval the honest
+  answer is no — which is exactly the case where the unit has nothing to show, because
+  `g_weatherData` is RAM (bench, 2026-11-06: *the phone knows the weather, the unit does
+  not*). `WeatherCoordinator.unitWoke(unitKey)` is the other question: deliver the frame the
+  process is holding (no network, no `snapshot` RPC, one `weather.set`), and fetch only when
+  there is nothing fit to hand — nothing sent yet, an app restart, or a held frame older than
+  the interval. `ConnectionViewModel` calls it at link-up, and the 60 s tick no longer
+  starts with the link and stops with it: it runs from `boot()`, keyed to the connected unit
+  or, with no link, to the selected card's MAC, so the fetch is the phone's own schedule.
+- **Fetch interval 15 min → 5 min** (`WeatherPolicy.INTERVAL_MS`), the owner's call: a feed
+  that only runs while a link is up costs the panel a quarter of an hour of weather after
+  every power cycle; a feed on its own clock can afford to be current. Cache cap (24 h),
+  staleness (3 h), the 2 km move trigger and every back-off are unchanged — including the
+  **+5 min** provider failure back-off, which a failed fetch now sits out *of* the interval
+  instead of inside it, because the two are the same number.
+
+Protocol, schema and firmware untouched — 549 unit tests, four of them new.
+
 ### App 2.0.2/63 — the phone fetches the weather and the unit displays it (Android app only, `versionCode` 61 → 63; firmware unchanged at 2.0.2)
 
 The unit's weather card had no source: the Wi-Fi stack that used to fill it is gone, and the
@@ -1695,7 +1726,7 @@ app side only — no firmware change, no new NVS parameter, no schema row, no pr
   to that file by `SettingsTabReplacesTheWebPageTest`), `OpenMeteo` (URL builder + parser, the
   firmware's units — °C, km/h, %, epoch seconds), `PlaceNames` (Open-Meteo geocoding forward,
   Nominatim reverse with its one-per-second rule enforced locally, ASCII folding to the panel's
-  95-glyph font set), `WeatherPolicy` (15 min / 2 km / 24 h cache / 3 h staleness), and
+  95-glyph font set), `WeatherPolicy` (5 min / 2 km / 24 h cache / 3 h staleness), and
   `WeatherCoordinator` (one schedule per process, woken by the ViewModel at link-up, by a 60 s
   tick and by the trip service on handled frames).
 - **BigDataCloud dropped from the reverse ladder** (ledger `D0.2`): its free client-side endpoint

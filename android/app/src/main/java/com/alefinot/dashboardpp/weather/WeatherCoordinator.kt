@@ -103,16 +103,44 @@ class WeatherCoordinator(
 
     /**
      * When to try again after a failed fetch or a refused push. Separate from
-     * [WeatherPolicy.INTERVAL_MS] on purpose: a transient failure must not cost the feed
-     * a quarter of an hour, and a unit that refused us must not be hammered either.
+     * [WeatherPolicy.INTERVAL_MS] on purpose: a transient failure must not wait out the
+     * schedule to be tried again, and a unit that refused us must not be hammered either.
      */
     private var retryAtMs = 0L
 
     /** A reading fetched but not delivered, kept for the next pass. */
     private var pending: WeatherPush? = null
 
+    /**
+     * The last frame this process got onto a unit, which unit it went to, and how old its
+     * data is (stamped from the fetch, not from the push, so re-sending it does not make
+     * it younger). RAM on purpose: its only job is answering a unit that came up between
+     * two fetches, and a frame older than the interval belongs to a fetch anyway.
+     */
+    private var heldFrame: WeatherPush? = null
+    private var heldFrameFor: String? = null
+    private var heldAtMs = 0L
+
+    /** The unit that came up and has not been given a frame yet. Cleared on delivery. */
+    private var awaitingFrameFor: String? = null
+
     private var servingUnitKey: String? = null
     private var lastTimePushMs = 0L
+
+    /**
+     * A unit just came up: hand it a frame as fast as possible, and fetch only if this
+     * process has nothing worth handing over.
+     *
+     * Separate from [wake] because the question is different. [wake] asks "is a fetch
+     * due"; a unit powered off and back on five minutes after a fetch is not due for one
+     * and still shows an empty card, because its weather lives in RAM (`g_weatherData`,
+     * stamped by `millis()` in src/bt_rpc.cpp) and every reboot loses what we sent it. The
+     * answer to "this unit has nothing to show" cannot be "wait for the schedule".
+     */
+    suspend fun unitWoke(unitKey: String, snapshot: Snapshot? = null) {
+        awaitingFrameFor = unitKey
+        wake("link-up", unitKey, snapshot)
+    }
 
     /**
      * One wake-up: "something happened; decide what is due".
@@ -221,7 +249,31 @@ class WeatherCoordinator(
             return
         }
 
-        // 2. A unit that has a frame from us, and whose last feed is now stale, gets one
+        // 2. A unit that came up between two fetches. It has lost the frame we last sent
+        // it and the schedule says nothing is due, so the frame this process is holding is
+        // the difference between a weather card and a blank one. Asked for nothing: no
+        // network, no `snapshot` RPC, one frame on the link. Ahead of the staleness
+        // goodbye on purpose - a unit that just woke up needs data, not a "no data" marker
+        // it would then wait a tick to have corrected.
+        if (awaitingFrameFor == unitKey && now >= retryAtMs) {
+            val held = heldFrame?.takeIf {
+                heldFrameFor == unitKey && it.valid &&
+                    now - heldAtMs < WeatherPolicy.INTERVAL_MS
+            }
+            if (held != null) {
+                // Still owed on failure: `awaitingFrameFor` is only cleared by a delivery
+                // the unit accepted, so the next tick offers it again.
+                if (deliver(held) == DeliverResult.DONE) {
+                    awaitingFrameFor = null
+                    savePush(unitKey, held, now)
+                }
+                return
+            }
+            // Nothing here to hand over, and `awaitingFrameFor` stays set: that is what
+            // makes the schedule below fetch instead of obeying its own "not due yet".
+        }
+
+        // 3. A unit that has a frame from us, and whose last feed is now stale, gets one
         // `valid=false` frame — the plan's once-per-transition, never again until it
         // recovers. `offlineSent` is what makes that survive an app restart.
         if (cache != null && lastFetchMs != null &&
@@ -236,7 +288,7 @@ class WeatherCoordinator(
             return
         }
 
-        // 3. Is anything due, using only positions we already have for free?
+        // 4. Is anything due, using only positions we already have for free?
         val host = snapshot ?: HostFrames.last(unitKey)
         val due = WeatherPolicy.due(
             nowMs = now,
@@ -246,11 +298,12 @@ class WeatherCoordinator(
             enabled = true,
         )
         // `PUSH NOW` on the settings card is the owner asking, so it skips the schedule;
-        // everything else obeys it.
-        if (!force && due == WeatherDue.NEVER) return
+        // everything else obeys it. A unit that came up and was handed nothing is the other
+        // exception: it is owed a frame, so "the cache is fresh" is not an answer.
+        if (!force && due == WeatherDue.NEVER && awaitingFrameFor != unitKey) return
         if (!force && now < retryAtMs) return
 
-        // 4. The ladder. The unit's snapshot RPC is spent only here, only when nothing
+        // 5. The ladder. The unit's snapshot RPC is spent only here, only when nothing
         // already tells us where the car is, and only because this pass is fetching.
         val city = store.cityNow()
         // One `snapshot` RPC, spent only because this pass is fetching and nothing else
@@ -269,7 +322,7 @@ class WeatherCoordinator(
             return
         }
 
-        // 5. Two labels, because the card and the unit need different things: the card
+        // 6. Two labels, because the card and the unit need different things: the card
         // can wrap and show accents, the unit has a 47-byte field and ASCII-only fonts.
         val forCard = pos.labelHint ?: names.label(pos.lat, pos.lon, city.typed)
         val forUnit = PlaceNames.panelLabel(forCard) ?: PlaceNames.coordinateLabel(pos.lat, pos.lon)
@@ -365,6 +418,14 @@ class WeatherCoordinator(
             ),
         )
         _status.value = _status.value.copy(lastPushAt = now)
+        // Remember what the unit now holds, for the next time it comes up. A `valid=false`
+        // goodbye is not worth holding: it is a marker, and a unit that woke up to an empty
+        // card does not need a second one.
+        if (push.valid) {
+            heldFrame = push
+            heldFrameFor = unitKey
+            heldAtMs = cache.fetchEpochMs
+        }
     }
 
     companion object {

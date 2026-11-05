@@ -45,10 +45,16 @@ enum class WeatherDue { FIRST, INTERVAL, MOVED, NEVER }
  * behaviour: `TIME_REPUSH_MS` is six hours because that is the drift the unit's RTC
  * error budget already assumes (README: "the +200 ppm figure is what its worst-case
  * clock error per day assumes"), and re-pushing the clock costs 24 bytes.
+ *
+ * `INTERVAL_MS` is the phone's own clock, and since 2026-11-06 it is **not** tied to the
+ * link: the feed runs whether or not a unit is connected, so a unit that comes up between
+ * two fetches can be handed the frame in hand instead of an empty card (see
+ * [WeatherCoordinator.unitWoke]). That is what the owner asked for after the bench showed
+ * a rebooted panel waiting a quarter of an hour for weather it already had.
  */
 object WeatherPolicy {
 
-    const val INTERVAL_MS = 15 * 60 * 1000L
+    const val INTERVAL_MS = 5 * 60 * 1000L
 
     /** A car that has moved this far is in a different forecast. */
     const val MOVE_TRIGGER_KM = 2.0
@@ -111,7 +117,7 @@ object WeatherPolicy {
 
     /**
      * Should the feed run now? A move outranks the clock: a car driving into different
-     * weather must not wait out the remaining minutes of a 15-minute interval to get a
+     * weather must not wait out the remaining minutes of the fetch interval to get a
      * forecast that is already wrong.
      *
      * [last] is the position the last successful feed used; [current] is the best

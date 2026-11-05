@@ -259,6 +259,12 @@ class ConnectionViewModel(
     fun boot() {
         watchAdapter()
         watchLink()
+        // The weather schedule is the phone's, not the link's: it fetches whether or not a
+        // unit is connected, so a unit that comes up between two fetches can be handed the
+        // frame in hand (`WeatherCoordinator.unitWoke`) instead of showing an empty card
+        // until the interval expires. Started here, once, because "is a fetch due" does not
+        // depend on having anyone to send it to yet.
+        startWeatherTick()
         adapterOn.value = link.enabled()
         permissionMissing.value = missingBlePermissions().isNotEmpty()
         scope.launch {
@@ -1072,6 +1078,18 @@ class ConnectionViewModel(
         linkWatch = scope.launch {
             link.state.collect { s ->
                 adapterOn.value = link.enabled()
+                // Both keys below mean "this link", not "this process". A unit that is
+                // powered off and back on has lost its clock (the phone is its only clock
+                // source, and `settimeofday` is RAM) and its weather (`g_weatherData` is RAM
+                // too), so the next link has to feed both again. `Ready` is re-published
+                // when the MTU or the name changes, which is why the keys are cleared here
+                // rather than keyed on the state object. Before this, a reconnect in the
+                // same process never re-pushed the clock: the panel's date and time stayed
+                // wrong until the app was force-stopped (bench, 2026-11-06).
+                if (s !is BleLinkState.Ready) {
+                    clockPushedFor = null
+                    weatherWokenFor = null
+                }
                 when (s) {
                     is BleLinkState.Ready -> {
                         pushClock(s)
@@ -1079,8 +1097,6 @@ class ConnectionViewModel(
                         if (ladder?.isActive != true) adoptLiveLink(s)
                     }
                     is BleLinkState.Failed -> {
-                        weatherWokenFor = null
-                        weatherTick?.cancel()
                         if (ladder?.isActive != true) {
                             onLinkEvent(LinkEvent.Dropped(s.reason))
                         } else {
@@ -1116,6 +1132,13 @@ class ConnectionViewModel(
         clockPushedFor = ready.address
         scope.launch {
             val reply = api.pushTime()
+            // Under DPP-CONN because "the app re-linked and the panel is still showing the
+            // wrong time" is only answerable if the clock write is on the capture.
+            Log.d(
+                DPP_CONN_LOG_TAG,
+                "clock pushed ${if (reply.ok) "ok" else "failed err=${reply.error}"} " +
+                    "address=${ready.address}",
+            )
             timeNote.value = if (reply.ok) {
                 null
             } else {
@@ -1140,28 +1163,49 @@ class ConnectionViewModel(
             weatherWokenFor = ready.address
             val address = ready.address
             scope.launch {
-                WeatherRuntime.coordinator(appContext).wake("link", weatherKeyFor(address))
+                // `unitWoke`, not `wake`: the question is "this unit has nothing to show",
+                // not "is a fetch due". It hands over whatever this process is holding and
+                // fetches only when there is nothing to hand over.
+                WeatherRuntime.coordinator(appContext).unitWoke(weatherKeyFor(address))
             }
         }
-        startWeatherTick()
     }
 
     /**
-     * Every minute: enough for the 15-minute rule to land within a minute of its due time
+     * Every minute: enough for the five-minute rule to land within a minute of its due time
      * and for the 2 km rule to notice within a couple of kilometres at motorway speed.
      * The wake itself is cheap when nothing is due — the coordinator reads its own memory
      * first and asks the unit for nothing.
+     *
+     * It runs whether or not there is a link, and is not cancelled when one falls over:
+     * the fetch is for the phone's own schedule, and a unit that comes up five minutes into
+     * an interval is the case that benefits.
      */
     private fun startWeatherTick() {
         if (weatherTick?.isActive == true) return
         weatherTick = scope.launch {
             while (isActive) {
                 delay(WEATHER_TICK_MS)
-                val c = uiState.value as? ConnectionUiState.Connected ?: continue
-                WeatherRuntime.coordinator(appContext)
-                    .wake("tick", UnitIdentity.key(c.mac, c.address))
+                val key = feedUnitKey() ?: continue
+                WeatherRuntime.coordinator(appContext).wake("tick", key)
             }
         }
+    }
+
+    /**
+     * The unit the feed runs for: the connected one when there is one, otherwise the card
+     * the owner selected. With no link there is no address to key on, so the card's MAC is
+     * the identity — the same key the trip files and the weather cache already use.
+     */
+    private suspend fun feedUnitKey(): String? {
+        (uiState.value as? ConnectionUiState.Connected)?.let {
+            return UnitIdentity.key(it.mac, it.address)
+        }
+        val selected = vehicles.all().first().firstOrNull { it.id == selectedVehicleId.value }
+            ?: return null
+        // Neither a MAC nor a pairing means no identity to file a forecast under.
+        return UnitIdentity.key(selected.mac, selected.bleAddress)
+            .takeIf { it != UnitIdentity.UNKNOWN }
     }
 
     /**

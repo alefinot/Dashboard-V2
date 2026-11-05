@@ -20,7 +20,7 @@ import org.junit.Test
  *
  * What is under test here is not parsing — that has its own files — but **what the app
  * decides to do**: which calls a wake spends, which it refuses to spend, and what it
- * remembers for the next wake. Those are the rules the plan set (15 min, 2 km, 3 h, one
+ * remembers for the next wake. Those are the rules the plan set (5 min, 2 km, 3 h, one
  * offline frame per transition, one snapshot RPC per cycle, a unit writing firmware left
  * alone), and they are the ones that are invisible on a bench unless something is wrong.
  */
@@ -162,8 +162,8 @@ class WeatherCoordinatorTest {
     // ---- the schedule ---------------------------------------------------------------------
 
     @Test
-    fun `a feed five minutes old with no movement spends nothing at all`() = runBlocking {
-        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 5 * minute, pushedAt = t0 - 5 * minute)
+    fun `a feed four minutes old with no movement spends nothing at all`() = runBlocking {
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 4 * minute, pushedAt = t0 - 4 * minute)
 
         feed.wake("tick", unitKey)
 
@@ -174,7 +174,7 @@ class WeatherCoordinatorTest {
     }
 
     @Test
-    fun `fifteen minutes re-fetches`() = runBlocking {
+    fun `the interval re-fetches`() = runBlocking {
         store.rows[unitKey] = cacheRow(fetchedAt = t0 - WeatherPolicy.INTERVAL_MS, pushedAt = t0 - WeatherPolicy.INTERVAL_MS)
         unit.fix = snapshotAt(48.13743, 11.57549)
 
@@ -186,7 +186,7 @@ class WeatherCoordinatorTest {
 
     @Test
     fun `two kilometres of driving re-fetches`() = runBlocking {
-        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 5 * minute, pushedAt = t0 - 5 * minute)
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 4 * minute, pushedAt = t0 - 4 * minute)
 
         // 0.02 deg of latitude is about 2.2 km, just over the trigger.
         feed.wake("frame", unitKey, snapshotAt(48.15743, 11.57549))
@@ -196,7 +196,7 @@ class WeatherCoordinatorTest {
 
     @Test
     fun `two hundred metres of driving does not`() = runBlocking {
-        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 5 * minute, pushedAt = t0 - 5 * minute)
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 4 * minute, pushedAt = t0 - 4 * minute)
 
         feed.wake("frame", unitKey, snapshotAt(48.13923, 11.57549))
 
@@ -206,7 +206,7 @@ class WeatherCoordinatorTest {
 
     @Test
     fun `the move check costs nothing when the host hands over its frame`() = runBlocking {
-        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 5 * minute, pushedAt = t0 - 5 * minute)
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - 4 * minute, pushedAt = t0 - 4 * minute)
 
         feed.wake("frame", unitKey, snapshotAt(48.13843, 11.57549))
 
@@ -422,6 +422,87 @@ class WeatherCoordinatorTest {
         val other = "mac:112233445566"
         feed.wake("link", other)
         assertTrue(unit.times.isEmpty())
+    }
+
+    // ---- a unit that came up between two fetches ------------------------------------------
+
+    @Test
+    fun `a unit that woke up between fetches gets the frame in hand and no second network call`() = runBlocking {
+        // The bench case (2026-11-06): the unit is powered off and back on. Its weather is
+        // RAM (`g_weatherData`, stamped by `millis()` in src/bt_rpc.cpp), so it comes up with
+        // an empty card, while the phone is holding a frame three minutes old and its
+        // schedule says nothing is due. The card must not wait out the interval.
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+        feed.wake("link", unitKey)
+        assertEquals(1, http.forecasts.size)
+        val first = unit.pushes.single()
+
+        now += 3 * minute
+        unit.pushes.clear()
+        val snapshotsBefore = unit.snapshotCalls
+
+        feed.unitWoke(unitKey)
+
+        assertEquals("the frame in hand must not be refetched", 1, http.forecasts.size)
+        assertEquals("a re-push asks the unit for nothing", snapshotsBefore, unit.snapshotCalls)
+        val again = unit.pushes.single()
+        assertEquals(first.temperature, again.temperature, 0.0)
+        assertEquals(first.city, again.city)
+        assertTrue(again.valid)
+        assertEquals(t0 + 3 * minute, store.rows.getValue(unitKey).lastPushEpochMs)
+    }
+
+    @Test
+    fun `a unit that woke up with nothing held fetches instead of leaving the card empty`() = runBlocking {
+        // The app restarted inside the interval, so the store says the data is fresh but this
+        // process never held a frame. "Fresh cache, no frame" must mean fetch, or the unit
+        // sits at an empty card until the interval expires.
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - minute, pushedAt = t0 - minute)
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+
+        feed.unitWoke(unitKey)
+
+        assertEquals(1, http.forecasts.size)
+        assertEquals(1, unit.pushes.size)
+    }
+
+    @Test
+    fun `a wake-up the unit never asked for still does not push between fetches`() = runBlocking {
+        // The re-push is for a unit that came up, not for every tick: a link that flaps
+        // through `Ready` must not become a weather frame a minute.
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+        feed.wake("link", unitKey)
+
+        now += minute
+        unit.pushes.clear()
+        feed.wake("tick", unitKey)
+
+        assertTrue(unit.pushes.isEmpty())
+        assertEquals(1, http.forecasts.size)
+    }
+
+    @Test
+    fun `a refused re-push is tried again on the next wake and never dropped`() = runBlocking {
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+        feed.wake("link", unitKey)
+        unit.pushes.clear()
+
+        now += minute
+        // A unit that will not take the frame at all: `replies` would answer the second
+        // (post-`busy`) attempt from the default, so the refusal has to be the default.
+        unit.reply = BleReply(ok = false, error = "busy")
+        feed.unitWoke(unitKey)
+        assertEquals(2, unit.pushes.size) // the push and its one `busy` retry
+
+        now += 2 * minute
+        unit.pushes.clear()
+        unit.reply = BleReply(ok = true)
+        feed.wake("tick", unitKey)
+        assertEquals("the frame is still owed to the unit", 1, unit.pushes.size)
     }
 
     // ---- helpers ---------------------------------------------------------------------------

@@ -108,12 +108,12 @@ class WeatherPolicyTest {
     }
 
     @Test
-    fun `fifteen minutes makes it due`() {
+    fun `the interval makes it due`() {
         val last = LatLon(48.13743, 11.57549)
 
         assertEquals(
             WeatherDue.NEVER,
-            WeatherPolicy.due(now + 14 * minute, lastFetchMs = now, last = last, current = last, enabled = true),
+            WeatherPolicy.due(now + 4 * minute, lastFetchMs = now, last = last, current = last, enabled = true),
         )
         assertEquals(
             WeatherDue.INTERVAL,
@@ -134,7 +134,7 @@ class WeatherPolicyTest {
 
         assertEquals(
             WeatherDue.NEVER,
-            WeatherPolicy.due(now + 5 * minute, lastFetchMs = now, last = last, current = near, enabled = true),
+            WeatherPolicy.due(now + 4 * minute, lastFetchMs = now, last = last, current = near, enabled = true),
         )
         assertEquals(
             WeatherDue.MOVED,
@@ -162,7 +162,10 @@ class WeatherPolicyTest {
     fun `the schedule constants are the plan's numbers`() {
         // Pinned on purpose: the 6 h time gap is the firmware's RTC drift figure
         // (README), and the rest are the plan's. Changing one is a decision.
-        assertEquals(15 * minute, WeatherPolicy.INTERVAL_MS)
+        // The interval dropped from 15 min to 5 on 2026-11-06, with the maintainer asking
+        // for a panel that is current when a link comes up rather than one that waits out a
+        // quarter of an hour; the fetch now runs off the app's own clock, not off the link.
+        assertEquals(5 * minute, WeatherPolicy.INTERVAL_MS)
         assertEquals(2.0, WeatherPolicy.MOVE_TRIGGER_KM, 0.0)
         assertEquals(24 * hour, WeatherPolicy.CACHE_MAX_AGE_MS)
         assertEquals(3 * hour, WeatherPolicy.STALE_AFTER_MS)
@@ -184,7 +187,7 @@ class WeatherPolicyTest {
     @Test
     fun `two minutes parked is neither a move nor stale`() {
         // The combination the plan cares about: a unit parked for two hours keeps its
-        // weather "current" (under the 3 h cap) while the 15 min clock still refreshes.
+        // weather "current" (under the 3 h cap) while the 5 min clock still refreshes.
         val last = LatLon(48.13743, 11.57549)
         assertEquals(WeatherDue.NEVER, WeatherPolicy.due(now + 2 * minute, now, last, last, true))
         assertFalse(WeatherPolicy.stale(now + 2 * minute, lastSuccessMs = now))
