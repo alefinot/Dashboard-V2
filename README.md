@@ -502,9 +502,13 @@ can never grow an unbounded buffer.
 6  len       payload bytes in this fragment, little endian
 ```
 
-Payload per fragment = negotiated MTU − 3 − 8; at the negotiated MTU of **517** that is **506
-bytes**. `BT_MAX_MSG` (**8192 B**) caps what the firmware will reassemble in either direction —
-a full config export is the biggest thing either side sends as a single message.
+Payload per fragment = negotiated MTU − 3 − 8 − 8; at the negotiated MTU of **517** that is **498
+bytes** (a 506-byte notification). The last 8 bytes are deliberate headroom: a notification whose
+payload is exactly `MTU − 3` is accepted by the unit's BLE stack and then silently lost, so the
+fragmenter stops short of the ceiling (see the 2026-11-05 changelog entry — this was the whole of
+the "138 keys the schema knows are missing from the read" report). `BT_MAX_MSG` (**8192 B**) caps
+what the firmware will reassemble in either direction — a full config export is the biggest thing
+either side sends as a single message.
 
 | Type | Name | Direction / meaning |
 | :---: | :--- | :--- |
@@ -1658,6 +1662,29 @@ In Demo Mode:
 
 ## Changelog
 
+### Unreleased (firmware) — a settings read lost every full-MTU frame (no version bump yet)
+
+A Xiaomi 15 paired to 2.0.2 opened **Dashboard settings** with an amber line in the header:
+*138 keys the schema knows are missing from the read*. The unit was innocent — it logged
+`RPC: config.get streamed 6 chunk(s), 183 key(s)` — and so was the bundled schema asset. The
+frames were the problem. `btMaxPayload()` spent the whole ATT budget (`MTU − 3 − 8` = **506 B**
+of payload, so a **514 B** notification at the negotiated MTU 517), and a notification of exactly
+`MTU − 3` is accepted by this BLE stack and then never leaves the antenna. The stack is emphatically
+not silent about it in the direction that matters: `onStatus` returns `status 1 rc 0`, which is
+exactly why the unit's own log looked clean while the phone starved.
+
+Both ends were logged against a single read. The unit sent seven 514 B fragments and the phone
+received **none** of them; every fragment of 453 B or less arrived. Four of the six config chunks
+therefore died, and their `LAST` fragments reached the app as orphans with no `FIRST` behind them,
+which `FrameAssembler` was right to discard — the missing-keys line was an accurate report of a
+transport loss, not a schema drift. `btMaxPayload()` now keeps **8 B** of headroom (498 B payload,
+506 B frame): the same read on the same phone merges **183 of 183 keys**, the group cards fill
+(`Sensors Tuning 39 of 39`, `UI Layout 78 of 78`, `More settings 2 of 2`) and the amber line is
+gone. A central that settles at a smaller MTU (251 is common) never lands on the boundary, which
+is why one phone in the field showed it and the bench Mi 9 Lite never did. The OTA chunk size comes
+from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
+never touched the ceiling — which is why BLE installs were never affected by this.
+
 ### App 2.0.2/63 — the phone fetches the weather and the unit displays it (Android app only, `versionCode` 61 → 63; firmware unchanged at 2.0.2)
 
 The unit's weather card had no source: the Wi-Fi stack that used to fill it is gone, and the
@@ -1754,7 +1781,7 @@ need a reboot, because the first phone kept the link it had already stopped usin
 - **A clamped RPC answer is refused, not sent** (`fecd23ca`): `btCatf` clamps at the end of the shared
   buffer, so the tail of an oversized reply is a sentence cut in half, not JSON. `bt_rpc.cpp` detects
   that and answers `too_large` while logging `RPC: body clamped at N B (seq N) - not JSON any more`;
-  `bt.cpp` logs what every answer cost (`BT: RESP seq 1: 382 B over 1 frame(s), payload cap 506 B`).
+  `bt.cpp` logs what every answer cost (`BT: RESP seq 1: 382 B over 1 frame(s), payload cap 498 B`).
 
 End to end on the device that was failing — a Samsung SM-T590 paired through **SEARCH FOR
 DASHBOARD++**, which found `DPP-B594` at −69 dBm (the same route is used on the Xiaomi phone, because
