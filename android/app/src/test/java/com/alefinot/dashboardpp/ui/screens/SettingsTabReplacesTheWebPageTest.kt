@@ -96,10 +96,13 @@ class SettingsTabReplacesTheWebPageTest {
      *
      * The `http` strings that are allowed to stay are not roads to a unit: one is the XML
      * namespace on the root element of a written GPX file, one is the contact URL in the user
-     * agent the trip map sends with its OSM tile requests, and one is the contact URL inside the
+     * agent the trip map sends with its OSM tile requests, one is the contact URL inside the
      * weather client's own user agent — Nominatim's usage policy demands an identifying one
      * ("stock User-Agents as set by http libraries will not do"), so the seam carries the
-     * repository there. They are named file by file so the ban itself stays absolute.
+     * repository there — and one is the forecast endpoint the weather client is pointed at,
+     * `api.open-meteo.com`, which is a keyless public forecast for the car's coordinates and not
+     * an address anything in this repo controls. They are named file by file so the ban itself
+     * stays absolute.
      */
     @Test
     fun thereIsNoSecondWayToReachAUnitLeftInTheApp() {
@@ -134,8 +137,10 @@ class SettingsTabReplacesTheWebPageTest {
         )
         // URLs are checked in the raw text, not the comment-stripped text: `codeOnly` removes
         // everything after `//`, which is exactly the half of a URL that would have to be the
-        // evidence. The three files allowed to hold one are named, and none of the three sends a
-        // word to a unit: one XML namespace and two user-agent contact URLs.
+        // evidence. The files allowed to hold one are named, and none of them sends a word to a
+        // unit: one XML namespace, two user-agent contact URLs, and one provider endpoint that
+        // only ever has a coordinate sent to it. A weather file that names a host is fine; the
+        // same file opening a connection of its own is what the `okhttp3` list above forbids.
         val urlFiles = sources.filter {
             val raw = it.readText()
             raw.contains("http://") || raw.contains("https://")
@@ -145,6 +150,7 @@ class SettingsTabReplacesTheWebPageTest {
                 "user agent, a provider endpoint), add it here and say what it is", listOf(
                 "trips/GpxWriter.kt",
                 "ui/map/RouteMap.kt",
+                "weather/OpenMeteo.kt",
                 "weather/WeatherHttp.kt",
             ), urlFiles,
         )
