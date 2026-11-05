@@ -34,6 +34,7 @@ import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
+import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.HudToggle
@@ -53,6 +54,13 @@ import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
+import com.alefinot.dashboardpp.weather.CityFallback
+import com.alefinot.dashboardpp.weather.Place
+import com.alefinot.dashboardpp.weather.PositionSource
+import com.alefinot.dashboardpp.weather.WeatherCoordinator
+import com.alefinot.dashboardpp.weather.WeatherRuntime
+import com.alefinot.dashboardpp.weather.WeatherSettings
+import com.alefinot.dashboardpp.weather.WeatherStatus
 
 /**
  * The "APP SETTINGS" tab — controls that apply to the Android app itself. The unit's own
@@ -84,6 +92,19 @@ fun SettingsScreen(
     val recordingEnabled by settings.recordingEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     val motionOn by settings.motionEnabled.collectAsStateWithLifecycle(initialValue = true)
+    // The weather feed has its own store and its own coordinator: the switch and the
+    // typed city are the owner's, the schedule belongs to the process-wide feed that the
+    // link and the trip service are also waking (one schedule, or the unit gets two).
+    val weatherSettings = remember { WeatherSettings(context) }
+    val weatherFeed = remember { WeatherRuntime.coordinator(context) }
+    val weatherOn by weatherSettings.enabled.collectAsStateWithLifecycle(initialValue = true)
+    val weatherCity by weatherSettings.cityFallback
+        .collectAsStateWithLifecycle(initialValue = CityFallback(null, null))
+    val weatherStatus by weatherFeed.status.collectAsStateWithLifecycle()
+    // null means "not edited yet", which is what lets the field show the stored city
+    // once the store has answered instead of starting out empty and staying that way.
+    var cityEdit by remember { mutableStateOf<String?>(null) }
+    var weatherLine by remember { mutableStateOf("") }
     val appVersion = remember {
         try {
             val app = context.applicationContext
@@ -172,6 +193,83 @@ fun SettingsScreen(
                 on = motionOn,
                 toggleLabel = "motion",
             ) { on -> scope.launch { settings.setMotionEnabled(on) } }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ── Weather feed ─────────────────────────────────────────────────
+        Column(
+            Modifier.fillMaxWidth().hudCard()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            CardHead("Weather Feed")
+            Text(
+                "The dashboard has no radio of its own, so this phone asks the weather " +
+                    "service and sends the answer over Bluetooth: on connect, once a " +
+                    "minute, and again when the car has moved 2 km. A reading older than " +
+                    "three hours tells the dashboard to show Weather Offline.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+            Spacer(Modifier.height(10.dp))
+            ToggleRow(
+                label = "PUSH WEATHER",
+                note = "Off stops every call this app makes for weather — no forecast, " +
+                    "no place-name lookups — and sends the dashboard nothing further.",
+                on = weatherOn,
+                toggleLabel = "push weather",
+            ) { on -> scope.launch { weatherSettings.setEnabled(on) } }
+            Spacer(Modifier.height(12.dp))
+            Text("FALLBACK CITY", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(4.dp))
+            HudInput(
+                value = cityEdit ?: (weatherCity.typed ?: ""),
+                onValueChange = { cityEdit = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = "Used when the unit has no GPS fix",
+                onDone = {
+                    val typed = cityEdit ?: weatherCity.typed
+                    scope.launch { weatherLine = saveWeatherCity(typed, weatherFeed, weatherSettings) }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HudButton(
+                    "SAVE CITY",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.SECONDARY,
+                ) {
+                    val typed = cityEdit ?: weatherCity.typed
+                    scope.launch { weatherLine = saveWeatherCity(typed, weatherFeed, weatherSettings) }
+                }
+                HudButton(
+                    "PUSH NOW",
+                    modifier = Modifier.weight(1f),
+                    enabled = weatherStatus.unitKey != null,
+                ) {
+                    val key = weatherStatus.unitKey ?: return@HudButton
+                    scope.launch { weatherFeed.pushNow(key) }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(weatherStatusLine(weatherStatus), color = HudColors.TextMuted, style = HudeCfgLive())
+            weatherStatus.note?.let {
+                Spacer(Modifier.height(4.dp))
+                Text(it, color = HudColors.Amber, style = HudeCfgNote())
+            }
+            if (weatherLine.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(weatherLine, color = HudColors.TextMuted, style = HudeCfgNote())
+            }
+            Spacer(Modifier.height(8.dp))
+            // Both providers' terms ask for credit and for the app to say who it is, and
+            // BigDataCloud's free reverse endpoint refuses a call made from a server or a
+            // non-browser client, so the names here are the two that are actually called.
+            Text(
+                "Weather data by Open-Meteo.com \u00b7 place names by OpenStreetMap " +
+                    "Nominatim contributors",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
         }
         Spacer(Modifier.height(12.dp))
 
@@ -346,4 +444,55 @@ private fun RecordingCard(
             )
         }
     }
+}
+
+/**
+ * Store the owner's fallback city together with the coordinates the gazetteer gave it.
+ *
+ * The lookup runs here, at save time, and never once per feed: a typed city is one line
+ * of text the owner changes once a year, while the schedule asks about it on every pass.
+ * The answer returned is the sentence to show under the field, including the honest one
+ * for a name no gazetteer knows — the text is kept so it can be edited, but there is no
+ * position behind it, so the ladder will not use it.
+ */
+internal suspend fun saveWeatherCity(
+    typed: String?,
+    feed: WeatherCoordinator,
+    settings: WeatherSettings,
+): String {
+    val query = typed?.trim().orEmpty()
+    if (query.isEmpty()) {
+        settings.setCity(null, null)
+        return "Fallback city cleared. The feed will use the unit's own fix."
+    }
+    val place = feed.resolveCity(query)
+    settings.setCity(query, place)
+    return if (place == null) {
+        "\"$query\" brought nothing back. The text is kept; a nearby town may do."
+    } else {
+        "Weather will fall back to ${placeLabel(place)}."
+    }
+}
+
+/** "Munich, Bavaria, Germany" — which of the several Münchs this app picked, in full. */
+internal fun placeLabel(place: Place): String =
+    listOfNotNull(place.name, place.admin1, place.country).joinToString(", ")
+
+/**
+ * The feed in one line: when it last reached the unit, which position it used, and what
+ * it called that place. A blank is worse than the truth, because the dashboard next to
+ * this screen is showing weather the phone sent and the owner cannot tell how old it is.
+ */
+internal fun weatherStatusLine(status: WeatherStatus, nowMs: Long = System.currentTimeMillis()): String {
+    if (status.busy) return "asking the weather service now..."
+    val pushed = status.lastPushAt
+    if (pushed == null || pushed == WeatherSettings.NO_EPOCH) return "this app has not fed the dashboard yet"
+    val ageMin = ((nowMs - pushed).coerceAtLeast(0L)) / 60_000L
+    val source = when (status.source) {
+        PositionSource.FIX -> "unit GNSS"
+        PositionSource.CACHE -> "last known position"
+        PositionSource.CITY -> "typed city"
+        null -> "unknown position"
+    }
+    return "fed ${status.label?.takeIf { it.isNotBlank() } ?: "no name"} | $source | ${ageMin} min ago"
 }

@@ -1012,6 +1012,33 @@ ts_ms,up_s,spd,src,avg,max,trp_km,...
 
 On the Trips page each card carries a badge - the vehicle name in cyan, or `NO VEHICLE` in amber keyed on the *id*, not on the label, because a file can have an id and still have no readable name. A chip row (`ALL`, one per vehicle that actually has drives, `UNKNOWN` when something is untagged) appears only when there is something to narrow: with one vehicle and nothing untagged, the list is already filtered and a control with one choice is decoration. The one exception is the chip that is **on**: while a filter hides rows that chip stays on screen, because a filter with no way back to `ALL` is a trap rather than a control. When a filter is on the header count says `N of M` instead of quietly shrinking, the empty state names the chip that is on and says how many drives exist in total, and a remembered filter pointing at a card that no longer has drives falls back to `ALL` rather than showing an empty page labelled with an id the user has never seen. The list's staggered entrance ramp is keyed to the rows as well as to the visit: an animation may delay the cards, it may not decide whether they exist. The detail page states it in one line: `Vehicle: Motosbu · dashboard 94:B5:55:F8:B8:58`, with `(that card is no longer in the garage)` when the id has no card. Deleting a card never deletes its drives.
 
+### Weather: the phone fetches it, the unit displays it
+
+A unit from this tree has no radio, so it cannot ask anything about the sky. The widget is fed from outside: the app fetches a forecast and hands it over with `weather.set` (`BT_F_WEATHER`). Nothing on the unit fetches, nothing on the unit schedules, and there is no new NVS parameter or schema row — the whole feature lives in `android/.../weather/` and in one card on the App Settings page. The firmware side (`methodWeatherSet`, `src/bt_rpc.cpp:693`) is untouched by this and predates it.
+
+**The position ladder** (`WeatherPolicy.positionLadder`) decides what to ask about, in this order:
+
+1. **The unit's own GNSS fix** — a `snapshot` reply with `fix == 1` and a real coordinate (`Snapshot.hasPosition`, which rejects the `lat == 0 && lon == 0` a unit reports before it has any satellites).
+2. **The last position this app fed that unit**, if it is less than 24 h old (`weather:cache:<identity>` in the `weather_settings` DataStore).
+3. **A city typed in App Settings**, geocoded once when it is saved, not once per feed.
+4. Nothing — the pass stops and says so on the card rather than pushing a frame with no place in it.
+
+**The label ladder** (`PlaceNames.label`) decides what to call it: a reverse-geocoded name, else the typed city, else `47.398 N 11.000 E`. The name that goes to the unit goes through `panelLabel`, because the panel's fonts carry exactly 95 glyphs (U+0020–U+007E in both `Conthrax_SemiBold_16px.vlw` and `28px.vlw`) and `copyFixed` keeps 47 bytes of its own: accents are folded away (München → Munchen, Ørland → Orland), a name with no Latin form is dropped rather than mangled, and the result is cut at 47 characters. The App Settings card shows the name in full, accents and all — the card can wrap, the unit cannot.
+
+The reverse rung is **Nominatim** (`nominatim.openstreetmap.org/reverse`, `zoom=12&addressdetails=1&accept-language=en`) and the forward rung is **Open-Meteo geocoding** (`geocoding-api.open-meteo.com/v1/search`). BigDataCloud's free reverse endpoint was the plan's first rank and is **not** in the build: its fair-use policy gates the free client-side API to browser pages with an origin, which a native app cannot present honestly. Nominatim's own policy is enforced in code rather than trusted to the caller — one request per 1.1 s (`MIN_REVERSE_INTERVAL_MS`), and the caller caches per place, so a drive across town costs one query, not one per feed.
+
+**The schedule** (`WeatherCoordinator`, one instance per process via `WeatherRuntime`, same shape as `BleRuntime`): woken by the ViewModel at link-up, by a 60 s ViewModel tick while a link is up, and by the trip service on each handled frame (throttled to one wake per 10 s; the frames themselves are handed over free through `HostFrames`). A pass then decides whether anything is due: fetch when the last fetch is **≥ 15 min** old or the car has moved **> 2 km** since it, and never more than one fetch per pass. Back-offs are separate from the schedule: **+5 min** after a provider that did not answer, **+60 s** after the unit answers `ota_in_progress` (it is writing firmware; `src/bt_ota.cpp` refuses non-`ping`/`ota.*` RPCs mid-install and the weather feed is not going to call that a link failure), **+5 s** after `busy`, and one immediate retry for `busy` because that is the unit's own 100 ms settings mutex. **`bad_param` is treated as our bug**: the payload is printed in the card's note and not re-queued.
+
+**Staleness is a frame, not a silence.** When the last feed to a unit is **> 3 h** old, the next pass sends exactly one `valid = false` frame carrying the last label, and the unit's card reads `Weather Offline (waiting for phone...)` (the firmware already owned that copy — `F2` in the plan's ledger). The `offlineSent` flag is stored with the cache row, so an app restart cannot spend a second goodbye on a unit that already shows one; the next live frame ends it.
+
+**The clock re-pushes every 6 h** (`time.set`, `WeatherPolicy.TIME_REPUSH_MS`), riding this same timer so there is one heartbeat for both periodic jobs. The first push per link stays the ViewModel's (`pushClock`); the timer starts counting from that moment, so a link-up never spends two RPCs on the same second.
+
+**What leaves the phone, and how often:** at most one `snapshot` RPC and one `weather.set` per cycle, one reverse geocode per > 2 km move or empty cache, one forward geocode per city save. No Android location permission is requested or used, and the only user text that leaves the phone is the typed city name, sent to Open-Meteo's geocoding host. OkHttp (4.12.0) is the app's only HTTP client and it is confined to one file, `weather/WeatherHttp.kt` — `SettingsTabReplacesTheWebPageTest` pins it there and keeps the URL list to five named files, so a second transport cannot grow the way the deleted Wi-Fi one did. Requests carry the `Dashboardpp-Android/<version> (+<repo URL>)` user agent both providers ask for by name.
+
+**The card** (App Settings → **Weather Feed**) is the whole settings surface: a **PUSH WEATHER** switch (default on — the owner turns it off, never on), a **FALLBACK CITY** field that geocodes on save and shows which of the twins it picked (`Munich, Bavaria, Germany`) or says plainly that nothing came back, one status line (`fed Munich | unit GNSS | 7 min ago`, or `asking the weather service now...`, or `this app has not fed the dashboard yet`), a reason line in amber when a provider or the unit refused, **PUSH NOW** for the bench, and the attribution both providers' terms ask for: `Weather data by Open-Meteo.com · place names by OpenStreetMap Nominatim contributors`. Turning the switch off stops every call this app makes for weather, the clock re-push included — one switch, one promise.
+
+**Per unit identity, not per link.** The cache row is keyed by `UnitIdentity.key(mac, bleAddress)` — the same key as the trip files and the recorder's session row — so a re-pair does not restart a drive's weather history and a second car on the same phone never inherits the first one's position. Deleting a card clears its weather row and its in-memory frame, beside its session row (`ConnectionViewModel.deleteVehicle`); the typed city survives, because it belongs to the owner and not to the unit.
+
 ### Photos: pick, crop, one JPEG per vehicle
 
 The editor hands a picked image to `vehicles/PhotoCrop.kt`, which writes one JPEG per vehicle into `getExternalFilesDir()/vehicles` (`v1.jpg`); there is no separate thumbnail file. A camera capture is staged in the app's **cache** under `captures/` and handed to the camera app through `FileProvider` (authority `${applicationId}.fileprovider`), whose roots are declared in `res/xml/files_path.xml` (`exports/` for shared CSV/GPX, `captures/` for the scratch JPEG). The two names have to agree: `getUriForFile` throws for a file under no declared root, which the store reports as "no camera" rather than launching an intent for a picture nobody could read back - `AppXmlWiringTest` fails if either side drifts, and it also reads the manifest and the XML directly, in plain JVM, because there is no Robolectric in this project.
@@ -1630,6 +1657,34 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### App 2.0.2/62 — the phone fetches the weather and the unit displays it (Android app only, `versionCode` 61 → 62; firmware unchanged at 2.0.2)
+
+The unit's weather card had no source: the Wi-Fi stack that used to fill it is gone, and the
+BLE `weather.set` endpoint had nothing on the phone calling it. This closes that gap on the
+app side only — no firmware change, no new NVS parameter, no schema row, no protocol field.
+
+- **New package `weather/`**: `WeatherHttp` (the app's one HTTP client, OkHttp 4.12.0, confined
+  to that file by `SettingsTabReplacesTheWebPageTest`), `OpenMeteo` (URL builder + parser, the
+  firmware's units — °C, km/h, %, epoch seconds), `PlaceNames` (Open-Meteo geocoding forward,
+  Nominatim reverse with its one-per-second rule enforced locally, ASCII folding to the panel's
+  95-glyph font set), `WeatherPolicy` (15 min / 2 km / 24 h cache / 3 h staleness), and
+  `WeatherCoordinator` (one schedule per process, woken by the ViewModel at link-up, by a 60 s
+  tick and by the trip service on handled frames).
+- **BigDataCloud dropped from the reverse ladder** (ledger `D0.2`): its free client-side endpoint
+  requires a browser origin, which a native app cannot present; Nominatim leads instead and the
+  ladder shape is unchanged.
+- **`valid = false` is a frame, not a silence**: one goodbye per transition past 3 h, remembered
+  in the cache row so a restart cannot send a second one.
+- **`time.set` re-pushes every 6 h**, on the same timer.
+- OkHttp enters `build.gradle.kts` for the first time; the comment there and the guard test now
+  say what is true — the unit is reached over GATT, and the phone's only outbound calls are the
+  two place-name services, Open-Meteo, and osmdroid's tiles.
+- Unit tests: nine new files (`WeatherHttpTest`, `OpenMeteoUrlTest`,
+  `OpenMeteoParseTest`, `PlaceNamesTest`, `WeatherPolicyTest`, `WeatherPushShapeTest`,
+  `WeatherCacheCodecTest`, `WeatherCoordinatorTest`, `WeatherFeedCardLineTest`); the existing
+  guard suites stay green. Bench acceptance on `DPP-B594` is **still outstanding** — the plan's
+  demo-mode drift, the 3 h cap and the install-window case are unit-tested, not yet observed.
 
 ### V2.0.2 — pairing shows its code and keeps it (firmware `src/bt.cpp`, `src/bt_ota.cpp`, `src/bt_rpc.cpp` + app; firmware **2.0.1 → 2.0.2**, app **2.0.1/60 → 2.0.2/61**)
 

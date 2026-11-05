@@ -28,6 +28,8 @@ import com.alefinot.dashboardpp.trips.TripPolicy
 import com.alefinot.dashboardpp.trips.TripRecorder
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripStore
+import com.alefinot.dashboardpp.weather.HostFrames
+import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.trips.TripSummary
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -78,6 +80,9 @@ class TripLogService : Service() {
      * the link under it changes.
      */
     private var deviceKey: String = ""
+
+    /** When the weather feed was last woken from this service's frame stream. */
+    private var lastWeatherWakeMs = 0L
 
     /**
      * Whose drives the files are: the card selected when this service was pointed at
@@ -225,6 +230,7 @@ class TripLogService : Service() {
 
     /** One accepted sample: append it, publish it, show it. */
     private fun handleSnapshot(s: Snapshot) {
+        noteWeatherFrame(s)
         val rec = recorder ?: return
         val event = rec.onSnapshot(deviceKey, s)
         val summary = rec.summary()
@@ -247,6 +253,25 @@ class TripLogService : Service() {
             TripEvent.APPENDED -> if (summary != null && summary.samples % 30 == 0) persistSession()
             else -> Unit
         }
+    }
+
+    /**
+     * Hand this frame to the weather feed, and wake the feed on a bounded cadence.
+     *
+     * The frame itself is only a map write — the coordinator reads it later as the free
+     * answer to "has the car moved 2 km?", which is the question that would otherwise
+     * cost a `snapshot` RPC. The wake-up is throttled because the store read it does is
+     * not free: at 2 km at 100 km/h that is 72 seconds of driving, so ten seconds is
+     * plenty of resolution for the trigger and six store reads a minute instead of sixty.
+     */
+    private fun noteWeatherFrame(s: Snapshot) {
+        val key = deviceKey
+        if (key.isEmpty()) return
+        HostFrames.note(key, s)
+        val now = System.currentTimeMillis()
+        if (now - lastWeatherWakeMs < WEATHER_WAKE_INTERVAL_MS) return
+        lastWeatherWakeMs = now
+        scope.launch { WeatherRuntime.coordinator(applicationContext).wake("recording", key) }
     }
 
     /**
@@ -432,6 +457,9 @@ class TripLogService : Service() {
 
         private const val CHANNEL = "trip_recording"
         private const val NOTIF_ID = 4201
+
+        /** How often the frame stream may wake the weather feed (see [noteWeatherFrame]). */
+        private const val WEATHER_WAKE_INTERVAL_MS = 10_000L
         private const val WAKE_TAG = "dashboardpp:trip"
         /**
          * Point the recorder at a dashboard. No address in the signature anywhere: the

@@ -22,6 +22,9 @@ import com.alefinot.dashboardpp.ble.scanFailureText
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.RecorderTarget
 import com.alefinot.dashboardpp.vehicles.UnitIdentity
+import com.alefinot.dashboardpp.weather.HostFrames
+import com.alefinot.dashboardpp.weather.WeatherRuntime
+import com.alefinot.dashboardpp.weather.WeatherSettings
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.CropRect
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
@@ -173,6 +176,16 @@ class ConnectionViewModel(
 
     /** The link whose clock was last pushed; null means "this link, not yet". */
     private var clockPushedFor: String? = null
+
+    /**
+     * The link the weather feed was first woken for. Same trick as [clockPushedFor]:
+     * `Ready` is re-published when the MTU or the name changes, and each of those would
+     * otherwise look like a new link to the feed.
+     */
+    private var weatherWokenFor: String? = null
+
+    /** The 60 s feed tick. Owned here because this is where a link's life is visible. */
+    private var weatherTick: Job? = null
 
     /**
      * Bumped every time a card's photo changes on disk. A cover that recomposes on it
@@ -479,13 +492,21 @@ class ConnectionViewModel(
      * unit; if the card disappears first, a crash in between leaves the claim pointing at
      * nothing. Removing the row first leaves the worst case as a card that still exists
      * with a clean identity, which the next connect refills.
+     *
+     * The weather cache row and the in-memory frame go with it for the same reason: the
+     * position the feed asks about belongs to this vehicle, and a row left behind for a
+     * unit nobody owns is a coordinate that will be dialed again by whoever inherits the
+     * link. The typed city stays - it is the owner's, not the unit's.
      */
     fun deleteVehicle(vehicleId: String) {
         scope.launch {
             val v = vehicles.get(vehicleId) ?: return@launch
             val ownsSession = (uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId
             if (ownsSession) ladder?.cancel()
-            tripSettings.clearSessions(listOf(UnitIdentity.key(v.mac, v.bleAddress)))
+            val key = UnitIdentity.key(v.mac, v.bleAddress)
+            tripSettings.clearSessions(listOf(key))
+            WeatherSettings(appContext).clearCaches(listOf(key))
+            HostFrames.clear(key)
             vehicles.delete(vehicleId)
             if (selectedVehicleId.value == vehicleId) {
                 // The store clears its own pointer; the VM's copy has to follow, and the
@@ -957,10 +978,15 @@ class ConnectionViewModel(
                 when (s) {
                     is BleLinkState.Ready -> {
                         pushClock(s)
+                        wakeWeather(s)
                         if (ladder?.isActive != true) adoptLiveLink(s)
                     }
-                    is BleLinkState.Failed -> if (ladder?.isActive != true) {
-                        onLinkEvent(LinkEvent.Dropped(s.reason))
+                    is BleLinkState.Failed -> {
+                        weatherWokenFor = null
+                        weatherTick?.cancel()
+                        if (ladder?.isActive != true) {
+                            onLinkEvent(LinkEvent.Dropped(s.reason))
+                        }
                     }
                     else -> Unit
                 }
@@ -994,6 +1020,56 @@ class ConnectionViewModel(
             }
         }
     }
+
+    /**
+     * Feed the unit's weather card as soon as a link comes up, and keep this host's
+     * heartbeat while the link lives.
+     * [BleRuntime] owns the link's status independently of the trip service, so without
+     * this the card fills in only while a recording is running.
+     *
+     * Not awaited, and never part of the connection sequence: a unit that will not take
+     * a weather frame is a unit whose telemetry still arrives, and the plan's whole point
+     * is that weather answers to the link rather than to the trip recorder.
+     */
+    private fun wakeWeather(ready: BleLinkState.Ready) {
+        if (weatherWokenFor != ready.address) {
+            weatherWokenFor = ready.address
+            val address = ready.address
+            scope.launch {
+                WeatherRuntime.coordinator(appContext).wake("link", weatherKeyFor(address))
+            }
+        }
+        startWeatherTick()
+    }
+
+    /**
+     * Every minute: enough for the 15-minute rule to land within a minute of its due time
+     * and for the 2 km rule to notice within a couple of kilometres at motorway speed.
+     * The wake itself is cheap when nothing is due — the coordinator reads its own memory
+     * first and asks the unit for nothing.
+     */
+    private fun startWeatherTick() {
+        if (weatherTick?.isActive == true) return
+        weatherTick = scope.launch {
+            while (isActive) {
+                delay(WEATHER_TICK_MS)
+                val c = uiState.value as? ConnectionUiState.Connected ?: continue
+                WeatherRuntime.coordinator(appContext)
+                    .wake("tick", UnitIdentity.key(c.mac, c.address))
+            }
+        }
+    }
+
+    /**
+     * The cache key for a link: the card's MAC when a card knows this address, so the
+     * weather cache hangs off the same identity as the trip files and the session, not off
+     * a re-pair. `UnitIdentity.key` falls back to the BLE address when no card claims it.
+     */
+    private suspend fun weatherKeyFor(address: String): String =
+        UnitIdentity.key(
+            vehicles.all().first().firstOrNull { it.bleAddress == address }?.mac,
+            address,
+        )
 
     /**
      * A link that came up under us: name it, resolve which card it belongs to, publish
@@ -1089,6 +1165,7 @@ class ConnectionViewModel(
         ladder?.cancel()
         retry?.cancel()
         linkWatch?.cancel()
+        weatherTick?.cancel()
         job.cancel()
     }
 
@@ -1097,5 +1174,8 @@ class ConnectionViewModel(
     private companion object {
         /** How long one radio sweep runs; the link panel used the same window. */
         const val BLE_SCAN_MS = 15_000L
+
+        /** How often this host wakes the weather feed while a link is up. */
+        const val WEATHER_TICK_MS = 60_000L
     }
 }
