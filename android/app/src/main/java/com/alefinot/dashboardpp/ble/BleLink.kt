@@ -19,6 +19,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -47,6 +48,31 @@ data class BleDevice(
     val address: String,
     val rssi: Int,
 )
+
+/**
+ * The tag every connect-path and teardown line in the app is logged under, and nothing else
+ * is: no telemetry frame, no RPC body, no OTA byte. Those stay on the wire and out of logcat.
+ *
+ * This is the permanent record behind the reconnect work, and it is meant to be captured on a
+ * drive and read afterwards, not watched live:
+ *
+ * ```
+ * adb logcat -c
+ * adb logcat -s DPP-CONN bt > dpp-conn.logcat.txt      # in another window, for the whole drive
+ * adb shell dumpsys bluetooth_manager > dpp-conn.dumpsys.txt   # at the end, once
+ * ```
+ *
+ * The point of one tag is that the app's decisions and the stack's land on one clock: this tag
+ * says which dial was made, which stage it reached and which path let the link go (with the
+ * GATT `status` beside it), `bt` says what the stack made of the same moment, and
+ * `dumpsys bluetooth_manager` says what the phone believes it is bonded to. Only the three
+ * together separate "the unit took the connection and ended it" from "the stack tore it down
+ * itself" — which is the question the reconnect ladder cannot answer from inside itself.
+ *
+ * A top-level constant rather than a logger class, because the tag is the whole idea; the view
+ * model imports it, so a ladder's decision and the stack's answer to it share one filter.
+ */
+const val DPP_CONN_LOG_TAG = "DPP-CONN"
 
 /** What the link is doing, for the screen that drives it. */
 sealed interface BleLinkState {
@@ -165,6 +191,14 @@ class BleLink(context: Context) {
 
     @Volatile
     private var mtu = 23
+
+    /**
+     * When the stack reported a link up, for the one number the bench capture needs: how long
+     * the link just dropped had been alive. Zero while nothing is up, and nothing in this class
+     * decides on it — the `DPP-CONN` log is its only reader.
+     */
+    @Volatile
+    private var connectedAtMs = 0L
 
     @Volatile
     private var telemChar: BluetoothGattCharacteristic? = null
@@ -291,7 +325,8 @@ class BleLink(context: Context) {
      */
     @SuppressLint("MissingPermission")
     suspend fun connect(address: String, name: String): Boolean = connectMutex.withLock {
-        disconnectInternal()
+        Log.d(DPP_CONN_LOG_TAG, "connect start name=$name address=$address")
+        disconnectInternal("replaced by a new connect")
         resetAssemblers()
 
         val radio = adapter ?: return fail("no_bluetooth")
@@ -309,6 +344,7 @@ class BleLink(context: Context) {
 
         val connected = CompletableDeferred<Boolean>()
         connectDone = connected
+        Log.d(DPP_CONN_LOG_TAG, "dial direct address=$address timeoutMs=$CONNECT_TIMEOUT_MS")
         val client = try {
             device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } catch (e: SecurityException) {
@@ -325,6 +361,7 @@ class BleLink(context: Context) {
             var up = try {
                 withTimeout(CONNECT_TIMEOUT_MS) { connected.await() }
             } catch (e: TimeoutCancellationException) {
+                Log.d(DPP_CONN_LOG_TAG, "dial direct timed out address=$address after ${CONNECT_TIMEOUT_MS} ms")
                 false
             } finally {
                 connectDone = null
@@ -338,7 +375,8 @@ class BleLink(context: Context) {
                 // unit advertised happily). autoConnect = true asks the stack to wait for the
                 // advertisement instead of demanding a connection now. When the unit is simply
                 // gone this costs the same timeout it would have cost anyway.
-                disconnectInternal()
+                disconnectInternal("patient retry after a direct timeout")
+                Log.d(DPP_CONN_LOG_TAG, "dial patient address=$address autoConnect=true timeoutMs=$CONNECT_TIMEOUT_MS")
                 val patient = CompletableDeferred<Boolean>()
                 connectDone = patient
                 val waiting = try {
@@ -355,16 +393,19 @@ class BleLink(context: Context) {
                 up = try {
                     withTimeout(CONNECT_TIMEOUT_MS) { patient.await() }
                 } catch (e: TimeoutCancellationException) {
+                    Log.d(DPP_CONN_LOG_TAG, "dial patient timed out address=$address after ${CONNECT_TIMEOUT_MS} ms")
                     false
                 } finally {
                     connectDone = null
                 }
             }
             if (!up) throw IOException("connect_timeout")
+            Log.d(DPP_CONN_LOG_TAG, "dial up address=$address")
 
             // A larger MTU is what keeps a config chunk to a handful of fragments.
             mtu = requestMtu(client, BleProto.TARGET_MTU)
             if (mtu < 23) mtu = 23
+            Log.d(DPP_CONN_LOG_TAG, "mtu negotiated=$mtu address=$address")
 
             _state.value = BleLinkState.Pairing(name)
             bond(device)
@@ -387,12 +428,13 @@ class BleLink(context: Context) {
             telemChar = telem
             rpcChar = rpc
             _state.value = BleLinkState.Ready(name, address, mtu).also { lastPeer = it }
+            Log.d(DPP_CONN_LOG_TAG, "ready name=$name address=$address mtu=$mtu")
             true
         } catch (e: Exception) {
             // A disconnect reported by the stack already said why; keep that reason
             // instead of replacing it with whatever the next await threw.
             if (_state.value is BleLinkState.Failed) {
-                closeGatt()
+                closeGatt("link already reported failed")
                 false
             } else {
                 fail(e.message ?: e.javaClass.simpleName)
@@ -551,7 +593,7 @@ class BleLink(context: Context) {
 
     /** Drops the link. The next [connect] starts from a clean GATT client. */
     fun disconnect() {
-        disconnectInternal()
+        disconnectInternal("app disconnect")
         _state.value = BleLinkState.Idle
     }
 
@@ -638,7 +680,11 @@ class BleLink(context: Context) {
 
     @SuppressLint("MissingPermission")
     private suspend fun bond(device: BluetoothDevice) {
-        if (device.bondState == BluetoothDevice.BOND_BONDED) return
+        if (device.bondState == BluetoothDevice.BOND_BONDED) {
+            Log.d(DPP_CONN_LOG_TAG, "bond already bonded address=${device.address}")
+            return
+        }
+        Log.d(DPP_CONN_LOG_TAG, "bond start address=${device.address} timeoutMs=$BOND_TIMEOUT_MS")
 
         val done = CompletableDeferred<Boolean>()
         bondDone = done
@@ -683,7 +729,11 @@ class BleLink(context: Context) {
                 }
                 if (event == false) break
             }
-            if (!bonded) throw IOException("pairing_failed")
+            if (!bonded) {
+                Log.d(DPP_CONN_LOG_TAG, "bond failed address=${device.address} after ${BOND_TIMEOUT_MS} ms")
+                throw IOException("pairing_failed")
+            }
+            Log.d(DPP_CONN_LOG_TAG, "bond ok address=${device.address}")
         } finally {
             bondDone = null
             runCatching { appContext.unregisterReceiver(receiver) }
@@ -702,20 +752,26 @@ class BleLink(context: Context) {
         while (true) {
             val done = CompletableDeferred<Boolean>()
             serviceDone = done
+            Log.d(DPP_CONN_LOG_TAG, "discover attempt=${tries + 1} of $DISCOVER_ATTEMPTS address=${client.device.address}")
             val started = client.discoverServices()
             val ok = if (!started) {
                 serviceDone = null
+                Log.d(DPP_CONN_LOG_TAG, "discover refused by the stack attempt=${tries + 1}")
                 false
             } else {
                 try {
                     withTimeout(DISCOVER_TIMEOUT_MS) { done.await() }
                 } catch (e: TimeoutCancellationException) {
+                    Log.d(DPP_CONN_LOG_TAG, "discover timed out attempt=${tries + 1} after ${DISCOVER_TIMEOUT_MS} ms")
                     false
                 } finally {
                     serviceDone = null
                 }
             }
-            if (ok) return
+            if (ok) {
+                Log.d(DPP_CONN_LOG_TAG, "discover ok services=${client.services?.size ?: 0}")
+                return
+            }
             // Someone tore the link down while we were asking; retrying on a dead client is a lie.
             if (gatt !== client) throw IOException("disconnected")
             tries++
@@ -726,9 +782,15 @@ class BleLink(context: Context) {
 
     @SuppressLint("MissingPermission")
     private suspend fun subscribe(client: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
-        if (!client.setCharacteristicNotification(characteristic, true)) return false
+        if (!client.setCharacteristicNotification(characteristic, true)) {
+            Log.d(DPP_CONN_LOG_TAG, "subscribe ${characteristic.uuid} refused by the stack")
+            return false
+        }
         val descriptor = characteristic.getDescriptor(CCCD_UUID)
-            ?: return false
+            ?: run {
+                Log.d(DPP_CONN_LOG_TAG, "subscribe ${characteristic.uuid} has no CCCD")
+                return false
+            }
         val done = CompletableDeferred<Int>()
         descriptorDone = done
         val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -742,16 +804,24 @@ class BleLink(context: Context) {
         }
         if (!started) {
             descriptorDone = null
+            Log.d(DPP_CONN_LOG_TAG, "subscribe ${characteristic.uuid} write refused by the stack")
             return false
         }
         val status = try {
             withTimeout(DESCRIPTOR_TIMEOUT_MS) { done.await() }
         } catch (e: TimeoutCancellationException) {
+            Log.d(DPP_CONN_LOG_TAG, "subscribe ${characteristic.uuid} timed out after ${DESCRIPTOR_TIMEOUT_MS} ms")
             return false
         } finally {
             descriptorDone = null
         }
-        return status == BluetoothGatt.GATT_SUCCESS
+        // A GATT write answers with a status, not an exception, and this status is the
+        // difference between notifications arriving and silence forever. Both characteristics
+        // are logged because the bench report that started this was a link that came up, said
+        // nothing, and left the screen showing the previous minute.
+        val subbed = status == BluetoothGatt.GATT_SUCCESS
+        Log.d(DPP_CONN_LOG_TAG, "subscribed ${characteristic.uuid} ${if (subbed) "ok" else "failed status=$status"}")
+        return subbed
     }
 
     private fun onResponse(text: String) {
@@ -814,12 +884,18 @@ class BleLink(context: Context) {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                connectedAtMs = System.currentTimeMillis()
+                Log.d(DPP_CONN_LOG_TAG, "gatt connected status=$status address=${g.device.address}")
                 connectDone?.complete(true)
                 return
             }
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                // `status` is the number the capture is after. The stack names "Local Host
+                // Terminated" (0x16) here just as plainly as a supervision timeout, and whether
+                // the phone or the unit hung up is the one thing the ladder cannot work out.
+                Log.d(DPP_CONN_LOG_TAG, "gatt disconnected status=$status (0x${status.toString(16)}) newState=$newState address=${g.device.address}")
                 connectDone?.complete(false)
-                closeGatt()
+                closeGatt("gatt status=$status")
                 failPending("disconnected")
                 if (_state.value is BleLinkState.Ready || _state.value is BleLinkState.Pairing ||
                     _state.value is BleLinkState.Connecting
@@ -879,15 +955,26 @@ class BleLink(context: Context) {
     // -----------------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
-    private fun disconnectInternal() {
+    private fun disconnectInternal(cause: String) {
         bondDone?.complete(false)
         bondDone = null
-        closeGatt()
+        closeGatt(cause)
         failPending("disconnected")
     }
 
-    private fun closeGatt() {
+    /**
+     * [cause] is for the log and not for a decision: the capture that wants to know why phones
+     * stop answering a dial has to be able to tell which path ended each link, and every
+     * teardown of a live client is exactly one line — including how long that link had been up.
+     */
+    private fun closeGatt(cause: String) {
         val client = gatt ?: return
+        // A teardown of a link the stack never reported up carries no age, and logging `0` there
+        // would read as an instant.
+        val ageMs = if (connectedAtMs > 0) System.currentTimeMillis() - connectedAtMs else -1L
+        connectedAtMs = 0L
+        Log.d(DPP_CONN_LOG_TAG, "teardown cause=$cause address=${client.device.address}" +
+            (if (ageMs >= 0) " linkAgeMs=$ageMs" else ""))
         // Hand the ordinary connection interval back before the client goes. On a real disconnect
         // the stack may well refuse - the link is already gone - but this is the one place that
         // every teardown path runs through, so a phone cannot be left holding HIGH after an install
@@ -913,7 +1000,8 @@ class BleLink(context: Context) {
     }
 
     private fun fail(reason: String): Boolean {
-        closeGatt()
+        Log.d(DPP_CONN_LOG_TAG, "connect failed reason=$reason was=${_state.value::class.simpleName}")
+        closeGatt("connect failed $reason")
         _state.value = BleLinkState.Failed(reason)
         return false
     }

@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
@@ -18,6 +19,7 @@ import com.alefinot.dashboardpp.ble.BleJson
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ble.BleRuntime
+import com.alefinot.dashboardpp.ble.DPP_CONN_LOG_TAG
 import com.alefinot.dashboardpp.ble.scanFailureText
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.RecorderTarget
@@ -281,6 +283,7 @@ class ConnectionViewModel(
      * dials here, because [gaveUp] is false and [boot] has already dialed.
      */
     fun onForegroundChanged(on: Boolean) {
+        Log.d(DPP_CONN_LOG_TAG, "foreground on=$on gaveUp=$gaveUp rearms=$rearms")
         foreground = on
         if (!on) {
             // Only the timer is cancelled. The counter survives, because the screen going
@@ -731,6 +734,7 @@ class ConnectionViewModel(
         pinned: Found? = null,
         preScanned: List<Found>? = null,
     ) {
+        Log.d(DPP_CONN_LOG_TAG, "attempt start mode=$mode pinned=${pinned?.address ?: "-"} attempts=$attempts")
         ladder?.cancel()
         ladder = scope.launch { runAttempt(mode, pinned, preScanned) }
     }
@@ -802,6 +806,7 @@ class ConnectionViewModel(
                     // way: the slow tick takes over.
                     gaveUp = true
                     scheduleRearm(except = me)
+                    Log.d(DPP_CONN_LOG_TAG, "attempt ended reason=${n.reason} mode=$mode, handing the failure to the slow tick")
                     return
                 }
                 is NextAction.Connect -> {
@@ -986,6 +991,10 @@ class ConnectionViewModel(
             selectedVehicleId.value = n.vehicleId
             scope.launch { vehicles.select(n.vehicleId) }
         }
+        // The count of quiet dials this link took to come back, which is the number the
+        // cadence is judged by: one means the unit was barely late, ten means the tick is
+        // the only reason the app is talking to it at all. Read before the reset, of course.
+        Log.d(DPP_CONN_LOG_TAG, "linked name=${n.name} address=${n.address} vehicle=${n.vehicleId} mtu=${n.mtu} rearmsSpent=$rearms")
         attempts = 0
         rearms = 0
         gaveUp = false
@@ -1074,6 +1083,13 @@ class ConnectionViewModel(
                         weatherTick?.cancel()
                         if (ladder?.isActive != true) {
                             onLinkEvent(LinkEvent.Dropped(s.reason))
+                        } else {
+                            // The case the 2026-11-02 fix was about: a link that fell over while
+                            // an attempt was running is that attempt's business, and the ladder
+                            // in front of it will report the outcome. Logged, because "the app
+                            // swallowed its own retry" is exactly the thing a capture has to be
+                            // able to rule in or out.
+                            Log.d(DPP_CONN_LOG_TAG, "link failed reason=${s.reason} while an attempt runs; that attempt owns it")
                         }
                     }
                     else -> Unit
@@ -1197,6 +1213,7 @@ class ConnectionViewModel(
         val step = ReconnectLadder.step(
             event, attempts, card?.hasPairing == true, link.enabled(),
         )
+        Log.d(DPP_CONN_LOG_TAG, "event ${event::class.simpleName} attempts=$attempts pairing=${card?.hasPairing == true} radio=${link.enabled()} -> $step")
         when (step) {
             LadderStep.Linked -> {
                 attempts = 0
@@ -1296,9 +1313,15 @@ class ConnectionViewModel(
      * class may put the radio on a timer that outlives the decision it was made for.
      */
     private suspend fun scheduleRearm(except: Job? = null) {
-        if (!rearmWantedNow(except)) return
+        if (!rearmWantedNow(except)) {
+            // Named, because a capture that shows no dials has to be able to tell "the tick
+            // was never armed" from "the tick was armed and the guards said no".
+            Log.d(DPP_CONN_LOG_TAG, "rearm not scheduled: guards closed (foreground=$foreground pairing=${selectedCard()?.hasPairing == true} radio=${link.enabled()} state=${link.state.value::class.simpleName} dialInFlight=${ladder?.isActive == true})")
+            return
+        }
         val waitMs = ReconnectLadder.rearmDelayMs(rearms)
         rearm?.cancel()
+        Log.d(DPP_CONN_LOG_TAG, "rearm scheduled in ${waitMs} ms rearmsSoFar=$rearms")
         rearm = scope.launch {
             delay(waitMs)
             // Re-read on waking: the radio can have gone off, a press can have taken the
@@ -1322,6 +1345,7 @@ class ConnectionViewModel(
         // Still unlinked: the restart regime continues past this dial, whether it answers or
         // not, and `onForegroundChanged` has to be able to tell that from a fresh boot.
         gaveUp = true
+        Log.d(DPP_CONN_LOG_TAG, "rearm dial rearms=$rearms mode=PROBE")
         startAttempt(ConnectMode.PROBE)
     }
 
