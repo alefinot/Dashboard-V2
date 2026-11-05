@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.pm.PackageManager
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -89,12 +91,23 @@ class OkHttpWeatherHttp(
         }
     }
 
-    /** The body of a 2xx that had one; null when the response was usable but said nothing. */
-    private fun exchange(request: Request): String? =
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val body = response.body?.string()
-            if (body.isNullOrEmpty()) null else body
+    /**
+     * The blocking call, off whichever thread the caller happens to be on.
+     *
+     * **This is not the caller's job.** The coordinator wakes from the ViewModel's Main
+     * scope, from the service's Main scope and from its own loop, and Android answers a
+     * blocking socket on the main thread with `NetworkOnMainThreadException` - which is a
+     * crash in a debug build and a swallowed note in this one, so it is refused here,
+     * where one file owns the transport, rather than trusted to every call site. The
+     * thread rule is pinned by `WeatherHttpTest`.
+     */
+    private suspend fun exchange(request: Request): String? =
+        withContext(Dispatchers.IO) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body?.string()
+                if (body.isNullOrEmpty()) null else body
+            }
         }
 
     companion object {

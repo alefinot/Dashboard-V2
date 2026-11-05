@@ -7,10 +7,13 @@ import com.alefinot.dashboardpp.ble.BleReply
 import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.ble.WeatherPush
 import com.alefinot.dashboardpp.api.Snapshot
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * What the coordinator can ask a unit for.
@@ -85,6 +88,7 @@ class WeatherCoordinator(
     private val http: WeatherHttp,
     private val names: PlaceNames = PlaceNames(http),
     private val clock: () -> Long = { System.currentTimeMillis() },
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
     private val lock = Mutex()
@@ -118,23 +122,43 @@ class WeatherCoordinator(
      * to ask the unit where it is. Pass null (the ViewModel's tick) and the coordinator
      * spends at most one `snapshot` RPC, and only when it was going to fetch anyway.
      */
-    suspend fun wake(reason: String, unitKey: String, snapshot: Snapshot? = null, force: Boolean = false) {
-        if (inFlight) return
-        inFlight = true
-        _status.value = _status.value.copy(unitKey = unitKey, busy = true)
-        try {
-            lock.withLock { pass(unitKey, snapshot, force) }
-        } catch (e: Exception) {
-            // If this object dies the dashboard's weather card goes stale with it, so an
-            // unexpected problem becomes a note and a later retry instead of a crash.
-            _status.value = _status.value.copy(
-                note = "The weather feed hit a problem it did not expect and will try again.",
-            )
-            retryAtMs = clock() + WeatherPolicy.RETRY_AFTER_FAILURE_MS
-        } finally {
-            inFlight = false
-            _status.value = _status.value.copy(busy = false)
+    suspend fun wake(reason: String, unitKey: String, snapshot: Snapshot? = null, force: Boolean = false) =
+        withContext(io) {
+            if (inFlight) return@withContext
+            inFlight = true
+            _status.value = _status.value.copy(unitKey = unitKey, busy = true)
+            try {
+                lock.withLock { pass(unitKey, snapshot, force) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Whoever owns this object is going away; that is not a feed failure and it
+                // must not be recorded as one. `finally` still parks `busy`.
+                throw e
+            } catch (e: Exception) {
+                // If this object dies the dashboard's weather card goes stale with it, so an
+                // unexpected problem becomes a note and a later retry instead of a crash. The
+                // note carries the exception's own identity, because this app logs nothing and
+                // the card is the only window anyone has onto what happened.
+                _status.value = _status.value.copy(note = internalProblem(e))
+                retryAtMs = clock() + WeatherPolicy.RETRY_AFTER_FAILURE_MS
+            } finally {
+                inFlight = false
+                _status.value = _status.value.copy(busy = false)
+            }
         }
+
+    /**
+     * The swallowed-exception report, spelled so an owner can read it and a developer can
+     * act on it: the class, the message, and the first frame inside this app. Frames from
+     * OkHttp or the coroutines machinery are noise next to that.
+     */
+    private fun internalProblem(e: Exception): String {
+        val frame = e.stackTrace.firstOrNull { it.className.startsWith("com.alefinot.dashboardpp") }
+            ?.let { " at ${it.methodName}(${it.fileName}:${it.lineNumber})" }
+            ?: ""
+        val detail = e.javaClass.simpleName +
+            e.message?.take(140)?.replace('\n', ' ')?.let { ": $it" }.orEmpty()
+        return "The weather feed hit a problem it did not expect ($detail)$frame. " +
+            "It will try again."
     }
 
     /** Ask for weather for one position and push it, ignoring the schedule. */
@@ -146,7 +170,7 @@ class WeatherCoordinator(
      * is this coordinator. The card lives in `ui/screens`, where no network client belongs
      * — that is the rule the Web page used to enforce by not existing.
      */
-    suspend fun resolveCity(name: String): Place? = names.geocodeCity(name)
+    suspend fun resolveCity(name: String): Place? = withContext(io) { names.geocodeCity(name) }
 
     private suspend fun pass(unitKey: String, snapshot: Snapshot?, force: Boolean) {
         val now = clock()

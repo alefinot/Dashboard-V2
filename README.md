@@ -1035,7 +1035,7 @@ The reverse rung is **Nominatim** (`nominatim.openstreetmap.org/reverse`, `zoom=
 
 **What leaves the phone, and how often:** at most one `snapshot` RPC and one `weather.set` per cycle, one reverse geocode per > 2 km move or empty cache, one forward geocode per city save. No Android location permission is requested or used, and the only user text that leaves the phone is the typed city name, sent to Open-Meteo's geocoding host. OkHttp (4.12.0) is the app's only HTTP client and it is confined to one file, `weather/WeatherHttp.kt` — `SettingsTabReplacesTheWebPageTest` pins it there and keeps the URL list to five named files, so a second transport cannot grow the way the deleted Wi-Fi one did. Requests carry the `Dashboardpp-Android/<version> (+<repo URL>)` user agent both providers ask for by name.
 
-**The card** (App Settings → **Weather Feed**) is the whole settings surface: a **PUSH WEATHER** switch (default on — the owner turns it off, never on), a **FALLBACK CITY** field that geocodes on save and shows which of the twins it picked (`Munich, Bavaria, Germany`) or says plainly that nothing came back, one status line (`fed Munich | unit GNSS | 7 min ago`, or `asking the weather service now...`, or `this app has not fed the dashboard yet`), a reason line in amber when a provider or the unit refused, **PUSH NOW** for the bench, and the attribution both providers' terms ask for: `Weather data by Open-Meteo.com · place names by OpenStreetMap Nominatim contributors`. Turning the switch off stops every call this app makes for weather, the clock re-push included — one switch, one promise.
+**The card** (App Settings → **Weather Feed**) is the whole settings surface: a **PUSH WEATHER** switch (default on — the owner turns it off, never on), a **FALLBACK CITY** field that geocodes on save and shows which of the twins it picked (`Munich, Bavaria, Germany`) or says plainly that nothing came back, one status line (`fed Munich | unit GNSS | 7 min ago`, or `asking the weather service now...`, or `this app has not fed the dashboard yet`), a reason line in amber when a provider or the unit refused (a failure nobody expected carries the exception's own name and the line it came from — the app logs nothing, so the card is the only window), **PUSH NOW** for the bench, and the attribution both providers' terms ask for: `Weather data by Open-Meteo.com · place names by OpenStreetMap Nominatim contributors`. Turning the switch off stops every call this app makes for weather, the clock re-push included — one switch, one promise.
 
 **Per unit identity, not per link.** The cache row is keyed by `UnitIdentity.key(mac, bleAddress)` — the same key as the trip files and the recorder's session row — so a re-pair does not restart a drive's weather history and a second car on the same phone never inherits the first one's position. Deleting a card clears its weather row and its in-memory frame, beside its session row (`ConnectionViewModel.deleteVehicle`); the typed city survives, because it belongs to the owner and not to the unit.
 
@@ -1658,7 +1658,7 @@ In Demo Mode:
 
 ## Changelog
 
-### App 2.0.2/62 — the phone fetches the weather and the unit displays it (Android app only, `versionCode` 61 → 62; firmware unchanged at 2.0.2)
+### App 2.0.2/63 — the phone fetches the weather and the unit displays it (Android app only, `versionCode` 61 → 63; firmware unchanged at 2.0.2)
 
 The unit's weather card had no source: the Wi-Fi stack that used to fill it is gone, and the
 BLE `weather.set` endpoint had nothing on the phone calling it. This closes that gap on the
@@ -1680,11 +1680,30 @@ app side only — no firmware change, no new NVS parameter, no schema row, no pr
 - OkHttp enters `build.gradle.kts` for the first time; the comment there and the guard test now
   say what is true — the unit is reached over GATT, and the phone's only outbound calls are the
   two place-name services, Open-Meteo, and osmdroid's tiles.
-- Unit tests: nine new files (`WeatherHttpTest`, `OpenMeteoUrlTest`,
+- **Every pass runs off the UI thread, on purpose.** `PUSH NOW` is pressed on Main, and the
+  ViewModel and the recorder are both Main-scope wake hosts; Android answers a blocking
+  socket there with `NetworkOnMainThreadException` — invisible in a JVM test, and on the bench
+  it surfaced as the internal note below. So `OkHttpWeatherHttp.exchange` hops to `Dispatchers.IO`
+  itself (a call site never has to remember) and the coordinator runs a whole pass — fetch,
+  geocode, BLE write — on an injected io dispatcher. Tests in both files pin the thread.
+- **An unexpected failure names itself.** The card's internal note carries the exception class,
+  its message and the first line inside this app, e.g.
+  `... did not expect (NetworkOnMainThreadException) at exchange(WeatherHttp.kt:94) ...`,
+  because the app logs nothing and the card is the only window onto a feed that stopped.
+- **Bench acceptance, `DPP-B594` (moto s bu, FW 2.0.2, demo mode, Wi-Fi on):** the first
+  `weather.set` was accepted (`BLE rpc -> weather: updated from phone`, the panel repainted),
+  29 writes at ~16 min spacing, `time.set` 41 writes at ~120 s spacing, `weather.get`
+  round-tripping the payload. The 2 km rule showed up as the simulated position drifted:
+  the card moved from `fed Munich` to `fed Neubiberg`, which also proves the place-name
+  ladder on a live unit. With HTTP killed (a dead system proxy) the card showed
+  `Open-Meteo did not answer for Neubiberg. The unit keeps showing the last frame it was
+  sent.` and the panel kept its frame. **Not observed on hardware:** the 3 h offline cap
+  (needs an offline cache aged past 3 h) and an install under way during a pass.
+- Unit tests: 106 across nine new files (`WeatherHttpTest`, `OpenMeteoUrlTest`,
   `OpenMeteoParseTest`, `PlaceNamesTest`, `WeatherPolicyTest`, `WeatherPushShapeTest`,
-  `WeatherCacheCodecTest`, `WeatherCoordinatorTest`, `WeatherFeedCardLineTest`); the existing
-  guard suites stay green. Bench acceptance on `DPP-B594` is **still outstanding** — the plan's
-  demo-mode drift, the 3 h cap and the install-window case are unit-tested, not yet observed.
+  `WeatherCacheCodecTest`, `WeatherCoordinatorTest`, `WeatherFeedCardLineTest`) plus
+  `TripLogWeatherWakeTest` for the recorder wiring; the app's suite is 542 and the existing
+  guard suites stay green.
 
 ### V2.0.2 — pairing shows its code and keeps it (firmware `src/bt.cpp`, `src/bt_ota.cpp`, `src/bt_rpc.cpp` + app; firmware **2.0.1 → 2.0.2**, app **2.0.1/60 → 2.0.2/61**)
 

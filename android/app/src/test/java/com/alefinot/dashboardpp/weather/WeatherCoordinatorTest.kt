@@ -3,9 +3,12 @@ package com.alefinot.dashboardpp.weather
 import com.alefinot.dashboardpp.ble.BleReply
 import com.alefinot.dashboardpp.api.Snapshot
 import java.util.ArrayDeque
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -73,6 +76,71 @@ class WeatherCoordinatorTest {
         assertTrue(unit.pushes.isEmpty())
         assertEquals(1, unit.snapshotCalls)
         assertTrue(feed.status.value.note!!.contains("city"))
+    }
+
+    @Test
+    fun `a pass asked for by a main-thread host runs its calls off that thread`() = runBlocking {
+        // The bench found this one, and the JVM cannot: `PUSH NOW` is pressed on the UI
+        // thread, the ViewModel awaits on Main.immediate, and a blocking socket on Main
+        // answers NetworkOnMainThreadException. The coordinator's `io` hop is what keeps a
+        // manual press and a 1 Hz recorder wake from running the network on the UI.
+        val caller = Executors.newSingleThreadExecutor {
+            Thread(it, "caller-thread-under-test")
+        }.asCoroutineDispatcher()
+        val worker = Executors.newSingleThreadExecutor {
+            Thread(it, "weather-io-under-test")
+        }.asCoroutineDispatcher()
+        try {
+            val feed = WeatherCoordinator(
+                unit, store, http, PlaceNames(http, { now }), { now }, io = worker,
+            )
+            unit.fix = snapshotAt(48.13743, 11.57549)
+            http.reverseBody = """{"address":{"city":"Munich"}}"""
+
+            withContext(caller) { feed.wake("manual", unitKey) }
+
+            assertTrue("the pass must have asked for weather", http.forecasts.isNotEmpty())
+            assertEquals("every provider call must run on the io worker",
+                setOf("weather-io-under-test"), http.threads.toSet())
+            assertEquals("the BLE push too",
+                setOf("weather-io-under-test"), unit.pushThreads.toSet())
+        } finally {
+            caller.close()
+            worker.close()
+        }
+    }
+
+    @Test
+    fun `an unexpected problem names the exception, because the card is the only window`() = runBlocking {
+        store.boom = IllegalStateException("something about the store")
+
+        feed.wake("link", unitKey)
+
+        val note = feed.status.value.note!!
+        assertTrue(note, note.contains("IllegalStateException"))
+        assertTrue(note, note.contains("something about the store"))
+        // The first frame inside this app is the part a developer can act on. In a
+        // coroutine the frame is an `invokeSuspend`, so what the note has to give is the
+        // file and line — which is exactly enough to land in the right source.
+        assertTrue(note, Regex("""at \w+\(\w+\.kt:\d+\)""").containsMatchIn(note))
+        assertTrue(http.forecasts.isEmpty())
+        assertNull(feed.status.value.source)
+    }
+
+    @Test
+    fun `a cancellation is not a feed failure - it goes back to whoever asked`() = runBlocking {
+        store.boom = kotlinx.coroutines.CancellationException("the scope is going away")
+
+        val thrown = try {
+            feed.wake("link", unitKey)
+            null
+        } catch (e: Exception) {
+            e
+        }
+
+        assertTrue(thrown is kotlinx.coroutines.CancellationException)
+        assertNull(feed.status.value.note)
+        org.junit.Assert.assertFalse("busy must be parked", feed.status.value.busy)
     }
 
     @Test
@@ -379,6 +447,7 @@ class WeatherCoordinatorTest {
         var fix: Snapshot? = null
         var snapshotCalls = 0
         val pushes = mutableListOf<com.alefinot.dashboardpp.ble.WeatherPush>()
+        val pushThreads = mutableListOf<String>()
         val times = mutableListOf<Long>()
         val replies = ArrayDeque<BleReply>()
         var reply: BleReply = BleReply(ok = true)
@@ -390,6 +459,7 @@ class WeatherCoordinatorTest {
 
         override suspend fun pushWeather(push: com.alefinot.dashboardpp.ble.WeatherPush): BleReply {
             pushes += push
+            pushThreads += Thread.currentThread().name.substringBefore(" @")
             return replies.poll() ?: reply
         }
 
@@ -405,7 +475,13 @@ class WeatherCoordinatorTest {
     ) : WeatherStore {
         val rows = mutableMapOf<String, WeatherCache>()
 
-        override suspend fun enabledNow(): Boolean = enabled
+        /** Set to make a pass blow up, for the two tests about what a failure reports. */
+        var boom: Exception? = null
+
+        override suspend fun enabledNow(): Boolean {
+            boom?.let { throw it }
+            return enabled
+        }
         override suspend fun cityNow(): CityFallback = city
         override suspend fun cacheFor(unitKey: String): WeatherCache? = rows[unitKey]
         override suspend fun saveCache(unitKey: String, cache: WeatherCache) {
@@ -416,6 +492,7 @@ class WeatherCoordinatorTest {
     /** One fake for both providers, routed by URL so the calls stay countable. */
     private class RoutingHttp : WeatherHttp {
         val urls = mutableListOf<String>()
+        val threads = mutableListOf<String>()
         var openMeteoBody: String? = OPEN_METEO_BODY
         var reverseBody: String? = null
         var searchBody: String? = null
@@ -425,6 +502,7 @@ class WeatherCoordinatorTest {
 
         override suspend fun get(url: String): String? {
             urls += url
+            threads += Thread.currentThread().name.substringBefore(" @")
             return when {
                 url.startsWith(OpenMeteo.HOST) -> openMeteoBody
                 url.startsWith(PlaceNames.SEARCH_URL) -> searchBody

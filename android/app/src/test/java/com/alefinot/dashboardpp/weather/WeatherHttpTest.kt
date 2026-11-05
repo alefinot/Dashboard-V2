@@ -1,7 +1,10 @@
 package com.alefinot.dashboardpp.weather
 
 import java.io.IOException
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
@@ -38,6 +41,32 @@ class WeatherHttpTest {
         val network = Network(answers.toList())
         val client = OkHttpClient.Builder().addInterceptor(network).build()
         return OkHttpWeatherHttp(OkHttpWeatherHttp.userAgentFor("2.0.2"), client) to network
+    }
+
+    @Test
+    fun `the blocking call never runs on the thread that asked`() {
+        // Android answers a blocking socket on the main thread with
+        // NetworkOnMainThreadException - a crash in a debug build, a swallowed note in a
+        // release one. Every host that wakes the weather coordinator lives on Main (the
+        // ViewModel's scope, the foreground service), so this seam owns its own thread and
+        // a call site never has to remember to hop.
+        val callerName = "http-caller-under-test"
+        val network = Network(listOf(Answer(body = """{"current":{"temperature_2m":11.5}}""")))
+        val client = OkHttpClient.Builder().addInterceptor(network).build()
+        val http = OkHttpWeatherHttp(OkHttpWeatherHttp.userAgentFor("2.0.2"), client)
+        val caller = Executors.newSingleThreadExecutor { Thread(it, callerName) }.asCoroutineDispatcher()
+        try {
+            runBlocking { withContext(caller) { http.get("https://api.open-meteo.com/v1/forecast?latitude=1") } }
+        } finally {
+            caller.close()
+        }
+        assertEquals(1, network.asked.size)
+        val ranOn = network.threads.single()
+        org.junit.Assert.assertNotEquals("the socket ran on the caller's thread", callerName, ranOn)
+        assertTrue(
+            "expected an io-pool thread, got $ranOn",
+            ranOn.startsWith("DefaultDispatcher-worker"),
+        )
     }
 
     @Test
@@ -206,10 +235,12 @@ private class Answer(
  */
 private class Network(private val answers: List<Answer>) : Interceptor {
     val asked = mutableListOf<Request>()
+    val threads = mutableListOf<String>()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         asked += request
+        threads += Thread.currentThread().name
         // Clamped, not indexed: an implementation that retried more often than the script holds
         // would otherwise fail on the array bound instead of on the count assertion.
         val answer = answers[minOf(asked.size - 1, answers.lastIndex)]
