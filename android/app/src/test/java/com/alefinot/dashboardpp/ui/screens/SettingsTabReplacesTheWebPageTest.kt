@@ -138,9 +138,10 @@ class SettingsTabReplacesTheWebPageTest {
         // URLs are checked in the raw text, not the comment-stripped text: `codeOnly` removes
         // everything after `//`, which is exactly the half of a URL that would have to be the
         // evidence. The files allowed to hold one are named, and none of them sends a word to a
-        // unit: one XML namespace, two user-agent contact URLs, and one provider endpoint that
-        // only ever has a coordinate sent to it. A weather file that names a host is fine; the
-        // same file opening a connection of its own is what the `okhttp3` list above forbids.
+        // unit: one XML namespace, two user-agent contact URLs, and the weather providers'
+        // endpoints - two hosts that only ever have a coordinate or a typed place-name sent to
+        // them, and never a unit. A weather file that names a host is fine; the same file opening
+        // a connection of its own is what the `okhttp3` list above forbids.
         val urlFiles = sources.filter {
             val raw = it.readText()
             raw.contains("http://") || raw.contains("https://")
@@ -151,6 +152,7 @@ class SettingsTabReplacesTheWebPageTest {
                 "trips/GpxWriter.kt",
                 "ui/map/RouteMap.kt",
                 "weather/OpenMeteo.kt",
+                "weather/PlaceNames.kt",
                 "weather/WeatherHttp.kt",
             ), urlFiles,
         )

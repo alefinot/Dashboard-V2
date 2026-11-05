@@ -59,21 +59,7 @@ class BleApi(private val link: BleLink) {
 
     /** Pushes the weather the phone fetched; the unit only displays it. */
     suspend fun pushWeather(weather: WeatherPush): BleReply =
-        link.request(
-            "weather.set",
-            BleJson.params(
-                "temperature" to weather.temperature,
-                "humidity" to weather.humidity,
-                "windSpeed" to weather.windSpeed,
-                "windDirection" to weather.windDirection,
-                "weatherCode" to weather.weatherCode,
-                "cloudCover" to weather.cloudCover,
-                "sunrise" to weather.sunrise,
-                "sunset" to weather.sunset,
-                "city" to weather.city,
-                "valid" to weather.valid,
-            ),
-        )
+        link.request("weather.set", weatherParams(weather))
 
     suspend fun setOdometer(km: Double): BleReply =
         link.request("odo.set", BleJson.params("km" to km))
@@ -127,6 +113,33 @@ class BleApi(private val link: BleLink) {
 
     /** Tells the unit the last byte went out; it then runs its own image check. */
     suspend fun otaEnd(): BleReply = link.request("ota.end", timeoutMs = 10_000)
+
+    companion object {
+        /**
+         * The `weather.set` body, kept separate from the call so the payload is testable
+         * without a link (see `WeatherPushShapeTest`).
+         *
+         * The ten keys are the firmware's — `methodWeatherSet` (`src/bt_rpc.cpp:725-741`)
+         * reads these names and defaults each one, so a typo here is not an error, it is a
+         * card that quietly shows the wrong thing. Every key is always present, including
+         * `valid`, whose firmware default is `true`.
+         */
+        fun weatherParams(weather: WeatherPush): String = BleJson.params(
+            "temperature" to weather.temperature,
+            "humidity" to weather.humidity,
+            "windSpeed" to weather.windSpeed,
+            "windDirection" to weather.windDirection,
+            "weatherCode" to weather.weatherCode,
+            "cloudCover" to weather.cloudCover,
+            // A missing sun time goes out as JSON null, which the unit already understands
+            // (anything that is not a number becomes "--:--", src/bt_rpc.cpp:717-722). It
+            // must not go out as 0: that formats as 00:00, and a zero reading is a claim.
+            "sunrise" to weather.sunrise,
+            "sunset" to weather.sunset,
+            "city" to weather.city,
+            "valid" to weather.valid,
+        )
+    }
 }
 
 /** The merged result of a streamed `config.get`. */
@@ -138,9 +151,15 @@ data class ConfigMirror(
 )
 
 /**
- * What Open-Meteo gives the app, keyed the way `weather.set` reads it. The two sun
- * times are Unix seconds; the firmware turns them into the panel's local `HH:MM`
- * with the timezone settings it already owns.
+ * What the app pushes to the unit's weather card, keyed the way `weather.set` reads it.
+ * The payload's units are the firmware's (°C, km/h, %): the panel does its own °F
+ * conversion in Imperial mode (src/ui.cpp:2435), so nothing here is converted.
+ *
+ * [sunrise] and [sunset] are Unix seconds — the provider's numbers, unshifted, because
+ * the unit formats them with the timezone settings `time.set` already gave it. Null means
+ * the provider had no sun time, and goes to the unit as JSON null so the card prints
+ * `--:--`; [city] is null when there is no name to show, which the unit renders as its
+ * own "no name".
  */
 data class WeatherPush(
     val temperature: Double,
@@ -149,8 +168,8 @@ data class WeatherPush(
     val windDirection: Double,
     val weatherCode: Int,
     val cloudCover: Int,
-    val sunrise: Long,
-    val sunset: Long,
-    val city: String,
+    val sunrise: Long?,
+    val sunset: Long?,
+    val city: String?,
     val valid: Boolean = true,
 )
