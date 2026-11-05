@@ -48,6 +48,22 @@ static volatile bool s_advertising = false;
 // hand-over, short enough that the next phone just waits for the card to appear.
 static constexpr uint32_t BT_PAIR_DELAY_MS = 10000;
 static volatile uint32_t s_advResumeAt = 0;
+
+// The peer gets the first move in pairing, and this is how long the unit waits
+// for it before making its own request. It is not a courtesy: an Android phone
+// with no key sits out a peripheral-initiated security request entirely - the
+// bench recorded three straight `BT: auth FAILED (reason 99)` = SMP response
+// timeout, each 30 s after `BT: phone connected`, with the bond table already
+// clean of that phone - while the very same phone starts a real exchange on its
+// own: BleLink.kt calls createBond() about a second after the link is up, and
+// that path does reach the unit and puts the six digits on the panel. So the
+// unit stays quiet for this long, and only asks for the secured link itself if
+// nothing has happened by then - which is what a central that waits for the
+// peripheral needs (Windows tooling pairs that way).
+static constexpr uint32_t BT_PAIR_GRACE_MS = 3000;
+static volatile uint32_t s_secAskAt = 0;   // when to ask ourselves; 0 = nothing pending
+static volatile bool s_smpSeen = false;    // any SMP traffic since the link came up
+static esp_bd_addr_t s_peerAddr = {0};     // address of the link that is up
 static volatile bool s_pairing = false;
 // The name this unit advertises, kept after btInit() so the pairing panel can
 // print the same string the phone's scan list is about to show.
@@ -277,9 +293,13 @@ static void btDropFailedBond(esp_ble_auth_cmpl_t cmpl) {
 }
 
 class BtSecurityCallbacks : public BLESecurityCallbacks {
-  uint32_t onPassKeyRequest() override { return s_passkey; }
+  uint32_t onPassKeyRequest() override {
+    s_smpSeen = true;  // an exchange is running, whoever started it
+    return s_passkey;
+  }
 
   void onPassKeyNotify(uint32_t pass_key) override {
+    s_smpSeen = true;
     s_passkey = pass_key;
     s_pairing = true;
     s_pairingSince = millis();
@@ -287,13 +307,21 @@ class BtSecurityCallbacks : public BLESecurityCallbacks {
               (unsigned long)pass_key);
   }
 
-  bool onSecurityRequest() override { return true; }
+  bool onSecurityRequest() override {
+    s_smpSeen = true;
+    logPrintf("BT: the peer asked for a secured link\n");
+    return true;
+  }
 
-  bool onConfirmPIN(uint32_t) override { return true; }
+  bool onConfirmPIN(uint32_t) override {
+    s_smpSeen = true;
+    return true;
+  }
 
   void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
     s_pairing = false;
     s_passkey = 0;
+    s_secAskAt = 0;  // the handshake resolved one way or the other
     // key_present is the legacy link-key field: with LE Secure Connections the
     // LTK travels a different way, so it reads false even when the bond landed.
     // The stored-device list is what actually answers "will the next connect
@@ -352,11 +380,15 @@ class BtServerCallbacks : public BLEServerCallbacks {
     s_rpcNotifyLogged = 0;
     s_mtu = 23;  // reset: the negotiated value belongs to the link that just ended
     logPrintf("BT: phone connected (conn %u)\n", (unsigned)param->connect.conn_id);
-    // Ask for the encrypted link immediately; the passkey prompt follows. This
-    // is the peripheral-side request the stack exposes (there is no
-    // esp_ble_gap_security_req in this IDF): MITM so SC pairing runs, and the
-    // bond lets the next connection skip the code.
-    esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_MITM);
+    // Don't demand anything yet - see BT_PAIR_GRACE_MS. Demanding an encrypted
+    // link on the instant the connection lands is how the forgotten-pairing
+    // deadlock kept coming back: the request went out, the phone ignored it,
+    // and the link spent 30 s timing out before either side could do anything.
+    memcpy(s_peerAddr, param->connect.remote_bda, sizeof(s_peerAddr));
+    s_smpSeen = false;
+    s_secAskAt = millis() + BT_PAIR_GRACE_MS;
+    logPrintf("BT: %d bond(s) stored; giving the peer %u ms to start pairing\n",
+              btBondCount(), (unsigned)BT_PAIR_GRACE_MS);
   }
 
   void onMtuChanged(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
@@ -372,6 +404,8 @@ class BtServerCallbacks : public BLEServerCallbacks {
     s_connected = false;
     s_pairing = false;
     s_passkey = 0;
+    s_secAskAt = 0;  // the link it belonged to is gone
+    memset(s_peerAddr, 0, sizeof(s_peerAddr));
     // Anything half-received belongs to the link that just died.
     s_rxOpen = false;
     s_rxReady = false;
@@ -510,6 +544,22 @@ static void btTask(void *pvParameters) {
       s_advertising = true;
       logPrintf("BT: pairing mode on, %u ms after the link dropped\n",
                 (unsigned)BT_PAIR_DELAY_MS);
+    }
+
+    // The other half of the grace period (see BT_PAIR_GRACE_MS): if the peer
+    // never opened an SMP exchange, ask for the secured link from here rather
+    // than from the GAP callback, so a slow controller request cannot stall the
+    // stack task. MITM so Secure Connections runs and a bond lands - the next
+    // connection then skips the code.
+    if (s_secAskAt && now >= s_secAskAt) {
+      s_secAskAt = 0;
+      if (s_smpSeen) {
+        logPrintf("BT: pairing already under way - the peer started it\n");
+      } else if (s_connected) {
+        logPrintf("BT: no SMP from the peer in %u ms - asking for the secured link\n",
+                  (unsigned)BT_PAIR_GRACE_MS);
+        esp_ble_set_encryption(s_peerAddr, ESP_BLE_SEC_ENCRYPT_MITM);
+      }
     }
 
     if (s_rxReady) {
