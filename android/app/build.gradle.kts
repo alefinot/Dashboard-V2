@@ -54,10 +54,14 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
 
-    // No HTTP client: OkHttp went out with the Wi-Fi transport (the one connection
-    // story, P6). Everything the app reads from a unit arrives over GATT, and the
-    // only thing that still reaches out to a network is the trip map, which fetches
-    // its OSM tiles through osmdroid's own stack.
+    // The one HTTP client in the app, and it belongs to weather/: a unit has no radio of
+    // its own, so the phone asks Open-Meteo for the forecast and the place-name services
+    // for the label under it, then hands the result over with `weather.set`. This is not a
+    // way to reach a unit - everything read FROM a unit still arrives over GATT - and the
+    // only other network user in the app is osmdroid's OSM tile fetcher below. The client
+    // is pinned to that one file by `SettingsTabReplacesTheWebPageTest`, which is what
+    // keeps this lane from widening the way the old Wi-Fi one did.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Coroutines are pulled in by Compose and lifecycle, but the service and the
     // pollers depend on them directly, so the version is stated rather than
