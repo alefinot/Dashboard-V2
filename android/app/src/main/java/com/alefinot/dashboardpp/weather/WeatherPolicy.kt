@@ -57,7 +57,7 @@ object WeatherPolicy {
     const val CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000L
 
     /** Older than this, the picture on the panel is treated as no longer current. */
-    const val OFFLINE_AFTER_MS = 3 * 60 * 60 * 1000L
+    const val STALE_AFTER_MS = 3 * 60 * 60 * 1000L
 
     /** A failed attempt is retried this soon, provided a link is still up. */
     const val RETRY_AFTER_FAILURE_MS = 5 * 60 * 1000L
@@ -130,8 +130,8 @@ object WeatherPolicy {
      * there has been no successful feed since the app started, so there is nothing to
      * mark stale — the coordinator treats that case separately.
      */
-    fun offline(nowMs: Long, lastSuccessMs: Long?): Boolean =
-        lastSuccessMs != null && nowMs - lastSuccessMs >= OFFLINE_AFTER_MS
+    fun stale(nowMs: Long, lastSuccessMs: Long?): Boolean =
+        lastSuccessMs != null && nowMs - lastSuccessMs >= STALE_AFTER_MS
 
     /**
      * The reading to display, with the label the ladder settled on.
@@ -160,7 +160,7 @@ object WeatherPolicy {
      * there is no stale value to carry, and zero is the one thing that cannot be
      * mistaken for a reading.
      */
-    fun offlinePush(label: String?): WeatherPush = WeatherPush(
+    fun stalePush(label: String?): WeatherPush = WeatherPush(
         temperature = 0.0,
         humidity = 0,
         windSpeed = 0.0,

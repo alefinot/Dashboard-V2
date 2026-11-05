@@ -165,7 +165,7 @@ class WeatherPolicyTest {
         assertEquals(15 * minute, WeatherPolicy.INTERVAL_MS)
         assertEquals(2.0, WeatherPolicy.MOVE_TRIGGER_KM, 0.0)
         assertEquals(24 * hour, WeatherPolicy.CACHE_MAX_AGE_MS)
-        assertEquals(3 * hour, WeatherPolicy.OFFLINE_AFTER_MS)
+        assertEquals(3 * hour, WeatherPolicy.STALE_AFTER_MS)
         assertEquals(5 * minute, WeatherPolicy.RETRY_AFTER_FAILURE_MS)
         assertEquals(6 * hour, WeatherPolicy.TIME_REPUSH_MS)
         assertEquals(60_000L, WeatherPolicy.RETRY_AFTER_OTA_MS)
@@ -175,10 +175,10 @@ class WeatherPolicyTest {
 
     @Test
     fun `three hours without a successful feed is offline`() {
-        assertFalse(WeatherPolicy.offline(now, lastSuccessMs = now - 179 * minute))
-        assertTrue(WeatherPolicy.offline(now, lastSuccessMs = now - WeatherPolicy.OFFLINE_AFTER_MS))
+        assertFalse(WeatherPolicy.stale(now, lastSuccessMs = now - 179 * minute))
+        assertTrue(WeatherPolicy.stale(now, lastSuccessMs = now - WeatherPolicy.STALE_AFTER_MS))
         // No successful feed yet: there is nothing on the panel to mark stale.
-        assertFalse(WeatherPolicy.offline(now, lastSuccessMs = null))
+        assertFalse(WeatherPolicy.stale(now, lastSuccessMs = null))
     }
 
     @Test
@@ -187,9 +187,9 @@ class WeatherPolicyTest {
         // weather "current" (under the 3 h cap) while the 15 min clock still refreshes.
         val last = LatLon(48.13743, 11.57549)
         assertEquals(WeatherDue.NEVER, WeatherPolicy.due(now + 2 * minute, now, last, last, true))
-        assertFalse(WeatherPolicy.offline(now + 2 * minute, lastSuccessMs = now))
+        assertFalse(WeatherPolicy.stale(now + 2 * minute, lastSuccessMs = now))
         // A link down for three hours is the other half of the same rule.
-        assertTrue(WeatherPolicy.offline(now + 3 * hour, lastSuccessMs = now))
+        assertTrue(WeatherPolicy.stale(now + 3 * hour, lastSuccessMs = now))
     }
 
     @Test

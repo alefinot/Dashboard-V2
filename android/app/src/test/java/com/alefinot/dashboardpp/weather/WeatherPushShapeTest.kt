@@ -76,7 +76,7 @@ class WeatherPushShapeTest {
 
     @Test
     fun `the offline frame keeps the name and drops the numbers`() {
-        val push = WeatherPolicy.offlinePush("Munich")
+        val push = WeatherPolicy.stalePush("Munich")
         val body = BleApi.weatherParams(push)
 
         assertFalse(push.valid)
@@ -105,7 +105,7 @@ class WeatherPushShapeTest {
 
     @Test
     fun `no name is still a legal frame`() {
-        val body = BleApi.weatherParams(WeatherPolicy.offlinePush(null))
+        val body = BleApi.weatherParams(WeatherPolicy.stalePush(null))
 
         // The unit's own default is "no name"; sending null keeps the app from
         // inventing a place the owner never chose.
