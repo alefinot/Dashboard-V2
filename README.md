@@ -17,8 +17,8 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
 Two generations are described in these pages, and they are not the same product:
 
 - **A current-build unit** — anything built from this tree, i.e. **V2.0.0** and the Changelog
-  entries it collects on top of V1.5.1 — is **BLE-only, with no Wi-Fi stack at
-  all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
+  entries it collects on top of V1.5.1, the current build being **V2.0.2** — is **BLE-only, with no
+  Wi-Fi stack at all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
   the LAN install route **and the weather-fetch task**), `src/webui.html` and
   `scripts/gzip_webui.py` were **deleted on 2026-11-02**, and there is no build flag that
   compiles any of it back: a unit flashed from here has no SoftAP, no IP, no
@@ -840,7 +840,7 @@ The parameter table shrank on 2026-11-02, when the portal and the network stack 
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.0`, `versionCode 50` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.2`, `versionCode 61` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -1566,8 +1566,8 @@ compared against `sha256sum firmware.bin`.
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
-every build (`[image tag] firmware.bin declares itself 2.0.0 (marker at 0x23eb0)`), the
-unit prints it on the console at every boot (`FW 2.0.0, image marker DPPVER=2.0.0` — that
+every build (`[image tag] firmware.bin declares itself 2.0.2 (marker at 0x24488)`), the
+unit prints it on the console at every boot (`FW 2.0.2, image marker DPPVER=2.0.2` — that
 log line exists because the marker had stopped surviving the link: its only reader lived
 in `web.cpp`, and once `web.cpp` left the build the linker's section garbage-collection
 deleted the literal, which is why every image built for a while carried no tag at all),
@@ -1631,7 +1631,7 @@ In Demo Mode:
 
 ## Changelog
 
-### Unreleased — a dropped link hands the unit back after 10 s (firmware `src/bt.cpp` + app)
+### V2.0.2 — pairing shows its code and keeps it (firmware `src/bt.cpp`, `src/bt_ota.cpp`, `src/bt_rpc.cpp` + app; firmware **2.0.1 → 2.0.2**, app **2.0.1/60 → 2.0.2/61**)
 
 Bench, two phones and one unit (`DPP-B594`, FW 2.0.1, COM7): pairing a second phone used to
 need a reboot, because the first phone kept the link it had already stopped using.
@@ -1646,12 +1646,55 @@ need a reboot, because the first phone kept the link it had already stopped usin
   a `SEARCH` that lands on `NextAction.Failed` now calls `link.disconnect()` when the link is
   up. That was the orphan: a dialled link, never adopted, never closed - and the unit serves
   exactly one peer, so every other phone was locked out for as long as that link lived.
-- **Known bench issue, open:** a phone that no longer holds the unit's bond (its pairing was
-  removed on the Android side) can connect and then sit unencrypted until the stack gives up:
-  `BT: auth FAILED (reason 99, key type 0)` 30 s after `BT: phone connected`, then
-  `disconnected (reason 0x13)`. No passkey is shown, because the unit has a stored key for
-  that address and does not start a fresh exchange. Needs a decision about which side forgets
-  the bond, and whether a failed authentication should delete the unit's copy.
+- **A failed handshake deletes the unit's half of the bond** (`7d6d6664`, `src/bt.cpp`): the question
+  above is answered, and the answer is *the unit forgets first*. `onAuthComplete` with a non-zero
+  reason walks the stored list and calls `esp_ble_remove_bond_device()` for the address that just
+  failed — `BT: bond with 4d:a0:8e:dd:7c:24 dropped - the next attempt pairs from scratch`, then
+  `BT: after auth, N bonded device(s)`. Without that the unit keeps a key for a peer that has none:
+  the connect is accepted, the demand for encryption is answered by nothing, and 30 s later the
+  attempt dies as `BT: auth FAILED (reason 99)` with no code ever shown — a deadlock an owner cannot
+  leave without a reboot.
+- **The unit waits 3 s before it asks for security** (`55cb8282`, `BT_PAIR_GRACE_MS`): on connect it
+  no longer demands an encrypted link from its own side. Android ignores a peripheral's security
+  request when it holds no bond, so that demand is what kept SMP pairing from ever starting. The
+  connect handler arms `s_secAskAt = millis() + BT_PAIR_GRACE_MS` instead and prints `BT: 3 bond(s)
+  stored; giving the peer 3000 ms to start pairing`; only a peer that has not moved by then gets
+  asked for. Bench trace (`10:44:35.007` → `10:44:36.070 BT: the peer asked for a secured link`): the
+  phone leads about 1 s in, the unit replies `BT: pairing already under way - the peer started it`,
+  stands down, and the ladder runs on the phone's own `createBond()`.
+- **The passkey panel is no longer destroyed 47 ms after it appears** (`5d2a2318`, `src/bt.cpp` and
+  `src/bt_ota.cpp`): the window check read `now - s_pairingSince > 60000`, with `now` stamped at the
+  top of the `btTask` pass and `s_pairingSince` stamped by `onPassKeyNotify` on the Bluedroid task. A
+  code handed out mid-pass is dated *ahead* of `now`, so the unsigned subtraction wrapped to ~4.29e9
+  and the window was always past: `BT: pairing passkey 014864` at `10:32:40.553`, digits on the panel
+  at `.711`, `BT: pairing window expired` at `.758`, dashboard back at `.760`. Both comparisons are
+  signed now. The identical wrap sat in `btOtaClocks()`, where a write landing in the hairline
+  between `millis()` and the read would report ~49 days of silence and kill a running install as
+  `stalled`.
+- **The unit's MAC rides in the one answer the pairing ladder always reads** (`d952d1da`,
+  `src/bt_rpc.cpp` + app): the snapshot reply carries `"mac":"94:B5:55:F8:B8:58"` taken from
+  `ESP.getEfuseMac()`, and the app keys the vehicle on that rather than on the address seen over the
+  air — the two differ by design (`…58` identity, `…5A` on air), and a card built on the on-air
+  address cannot be redialled once the radio rotates. If the field would not fit the reply the unit
+  says so (`RPC: snapshot+mac did not fit - answering without it`) instead of truncating JSON.
+- **A clamped RPC answer is refused, not sent** (`fecd23ca`): `btCatf` clamps at the end of the shared
+  buffer, so the tail of an oversized reply is a sentence cut in half, not JSON. `bt_rpc.cpp` detects
+  that and answers `too_large` while logging `RPC: body clamped at N B (seq N) - not JSON any more`;
+  `bt.cpp` logs what every answer cost (`BT: RESP seq 1: 382 B over 1 frame(s), payload cap 506 B`).
+
+End to end on the device that was failing — a Samsung SM-T590 paired through **SEARCH FOR
+DASHBOARD++**, which found `DPP-B594` at −69 dBm (the same route is used on the Xiaomi phone, because
+MIUI's own Bluetooth list does not list LE-only devices at all): `BT: phone connected` `10:44:35.000`
+→ `the peer asked for a secured link` `.070` → `pairing passkey 887776` `.307` → digits on the panel
+`.460` → **they stayed 13.8 s** while the PIN was typed on the tablet → `BT: auth ok (reason 0, key
+type 0, auth req 0x0d)` `10:44:50.268` → `BT: after auth, 4 bonded device(s)` → `request 1, 23 B →
+RESP 382 B`, `request 2, 52 B → RESP 38 B`. That hold is the whole difference: at 2.0.1 the digits sat
+on the panel for 47 ms and the attempt closed as `auth FAILED (reason 85)`.
+
+**Release assets** (rule 27): `firmware.bin` (**1,595,248 B**, image tag `DPPVER=2.0.2` at `0x24488`,
+RAM 73,396 B / 22.4 %) and `app-debug.apk` (**11,650,128 B**, `versionCode 61`, `versionName 2.0.2`,
+built by `gradlew.bat assembleDebug`). **No `.sig` asset** — no device can verify one. App unit tests
+green: **436 tests, 0 failures, 0 errors** over 43 suites.
 
 ### V2.0.1 — a firmware push takes 76 s, not 145 s (firmware `src/` + app; firmware **2.0.0 → 2.0.1**, app **2.0.0/57 → 2.0.1/58**)
 
