@@ -30,10 +30,18 @@ interface WeatherHttp {
 /**
  * The production [WeatherHttp].
  *
- * The timeouts are 10 s per phase — connect, read, write. Long enough for a cold cell connection
- * on the bench, short enough that a dead network does not hold a refresh open: one attempt is
- * bounded by the connect timeout plus the read timeout, and the whole call by two attempts plus
- * the retry wait, so the coordinator's schedule can stay in seconds.
+ * Timeouts, per the plan's line for this client: 10 s to connect, 15 s to read, and a 20 s
+ * *call* timeout over the whole attempt. The per-phase numbers are what a cold cell connection
+ * needs; the call timeout is what bounds one attempt, because two slow phases that each sit just
+ * under their own limit would otherwise add up to a refresh that spent half a minute on one
+ * provider that has stopped answering. Two attempts plus the retry wait is then the whole
+ * transaction, and the coordinator's schedule stays in seconds rather than minutes.
+ *
+ * No HTTP cache and no redirects. Neither provider needs one today (both answer 200 on the URL
+ * they are given), so accepting a redirect would only ever do one thing: send the car's
+ * coordinates to a host this app did not choose. The plan says the same thing in one line —
+ * "no redirects-followed-to-other-hosts" — and OkHttp's switch is all-or-nothing, which is the
+ * stricter reading and the one that cannot be misconfigured later.
  *
  * One retry, after 2 s, and only for an [IOException]. That failure is the one worth asking
  * again: a radio handover drops a connection that would have worked a moment later. A provider
@@ -91,7 +99,11 @@ class OkHttpWeatherHttp(
 
     companion object {
         const val CONNECT_TIMEOUT_MS = 10_000L
-        const val READ_TIMEOUT_MS = 10_000L
+        const val READ_TIMEOUT_MS = 15_000L
+        const val WRITE_TIMEOUT_MS = 10_000L
+
+        /** Bounds one whole attempt — phases and connection acquisition included. */
+        const val CALL_TIMEOUT_MS = 20_000L
 
         /** The gap between the first attempt and the only retry. */
         const val RETRY_DELAY_MS = 2_000L
@@ -124,7 +136,16 @@ class OkHttpWeatherHttp(
             OkHttpClient.Builder()
                 .connectTimeout(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .readTimeout(READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .writeTimeout(READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .writeTimeout(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .callTimeout(CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                // A 3xx from a provider would move the car's coordinates to a host we did not
+                // pick, so it is refused: the answer arrives as null and the feed keeps the frame
+                // it already had. Both hosts answer 200 today, so nothing is given up.
+                .followRedirects(false)
+                .followSslRedirects(false)
+                // No cache is configured, which in OkHttp means no cache at all — the response is
+                // read from the network or not at all. The weather cache this app keeps is the
+                // one in `WeatherSettings`, per unit, where the age rules can be written down.
                 // The other half of the flaky-radio case: a pooled connection that went stale
                 // during a handover is replaced instead of surfacing as a failed refresh, and
                 // this is separate from our own retry, which also covers a dead server.

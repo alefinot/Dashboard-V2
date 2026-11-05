@@ -11,6 +11,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -168,14 +169,26 @@ class WeatherHttpTest {
 
     @Test
     fun `the default client is built for a phone on a cell connection`() {
-        // The timeouts are what stop a failed refresh holding the feed open: 10 s per phase
-        // bounds one attempt, so the whole call is at most two attempts plus the 2 s wait.
-        // Pinned here so a later "make it bigger" edit has to argue for it.
+        // The plan's line for this client, pinned: 10 s connect / 15 s read / 20 s call, no
+        // redirects, no cache. The call timeout is the one that bounds an attempt - two phases
+        // that each sit just under their own limit would otherwise add up to a refresh stuck on
+        // a provider that stopped answering. Pinned here so a later "make it bigger" edit has to
+        // argue for it, and so the redirect/cache posture cannot drift silently.
         val client = OkHttpWeatherHttp.defaultClient(OkHttpWeatherHttp.userAgentFor("2.0.2"))
         assertEquals(OkHttpWeatherHttp.CONNECT_TIMEOUT_MS, client.connectTimeoutMillis.toLong())
         assertEquals(OkHttpWeatherHttp.READ_TIMEOUT_MS, client.readTimeoutMillis.toLong())
-        assertEquals(OkHttpWeatherHttp.READ_TIMEOUT_MS, client.writeTimeoutMillis.toLong())
+        assertEquals(OkHttpWeatherHttp.WRITE_TIMEOUT_MS, client.writeTimeoutMillis.toLong())
+        assertEquals(OkHttpWeatherHttp.CALL_TIMEOUT_MS, client.callTimeoutMillis.toLong())
         assertTrue(client.retryOnConnectionFailure)
+        assertFalse(
+            "a redirect would move the car's coordinates to a host this app did not choose",
+            client.followRedirects || client.followSslRedirects,
+        )
+        assertNull(
+            "the only weather cache is the per-unit one in WeatherSettings, where its age rules " +
+                "are written down - an OkHttp cache would age them invisibly",
+            client.cache,
+        )
     }
 }
 
