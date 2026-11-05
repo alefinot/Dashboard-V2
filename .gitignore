@@ -90,3 +90,8 @@ hardware/tools/
 # catches them wherever they land, this line keeps the whole folder out of git.
 serial-*.log
 Local artifacts/
+
+# Agent scratch from this harness (bench serial captures, uiautomator dumps,
+# test scripts). ~1.9 GB of one-run artefacts, regenerable, and none of it is
+# product code - same no-push policy as graphify-out/ and Implementation plans/.
+.superpowers/
