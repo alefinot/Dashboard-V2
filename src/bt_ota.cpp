@@ -772,14 +772,20 @@ static void btOtaDrain() {
 static void btOtaClocks() {
   if (!s_active) return;
   const unsigned long now = millis();
-  if (now - otaQuietLastByteMs > OTA_SILENCE_MS) {
+  // Signed comparisons, both of them. otaQuietLastByteMs is stamped by the OTA
+  // characteristic callback on the Bluedroid task, so a write that lands in the
+  // hairline between taking `now` and reading it dates the clock ahead of `now`,
+  // and an unsigned subtraction would report ~49 days of silence and kill a
+  // live install as `stalled`. Same class as the passkey window in bt.cpp, where
+  // the wrap was measured rather than theorised.
+  if ((long)(now - otaQuietLastByteMs) > (long)OTA_SILENCE_MS) {
     char detail[64];
     snprintf(detail, sizeof(detail), "nothing accepted for %lus",
              (unsigned long)((now - otaQuietLastByteMs) / 1000UL));
     otaFail("stalled", detail);
     return;
   }
-  if (now - s_openedMs > OTA_MAX_MS) {
+  if ((long)(now - s_openedMs) > (long)OTA_MAX_MS) {
     otaFail("stalled", "an install was open for 15 minutes");
     return;
   }

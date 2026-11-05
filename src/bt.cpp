@@ -600,7 +600,17 @@ static void btTask(void *pvParameters) {
     // The stack hands out a random passkey with a 30 s entry window. If the
     // phone never answers, drop the code so the panel returns to the dashboard
     // instead of sitting on a code that can no longer be used.
-    if (s_pairing && now - s_pairingSince > 60000) {
+    //
+    // The cast is load-bearing. s_pairingSince is stamped by onPassKeyNotify on
+    // the Bluedroid task, while `now` was taken at the top of this loop pass -
+    // so a code that lands mid-pass is dated *ahead* of `now`, and the unsigned
+    // subtraction wraps to ~4.29e9, which is always > 60000. Measured on the
+    // bench (2026-11-05): `pairing passkey 014864` at 10:32:40.553, panel drawn
+    // at .711, `pairing window expired` at .758 - 47 ms later, dashboard back on
+    // screen before a human had read a single digit. The pairing then dies as
+    // `auth FAILED (reason 85)` and the owner concludes the unit never showed a
+    // code at all. Signed arithmetic makes "not yet due" simply false.
+    if (s_pairing && (long)(now - s_pairingSince) > 60000) {
       s_pairing = false;
       s_passkey = 0;
       logPrintf("BT: pairing window expired\n");
