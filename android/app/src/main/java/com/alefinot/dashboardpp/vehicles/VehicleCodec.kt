@@ -132,6 +132,23 @@ object VehicleCodec {
     private fun str(obj: Map<*, *>, key: String, fallback: String): String =
         obj[key] as? String ?: fallback
 
+    /**
+     * A value from a parsed object as the text the file wrote it with, for a message that has to
+     * quote the file back at someone.
+     *
+     * [parseValue] keeps numbers in an opaque [Num] so nothing passes through a binary fraction,
+     * and that wrapper has no `toString()` of its own: interpolating one gives
+     * `com.alefinot.dashboardpp.vehicles.VehicleCodec$Num@47e2e487`. That string is what an owner
+     * would read on the vehicle page when `vehicles.json` came from a newer build — and it is the
+     * one sentence that should tell them to update the app rather than delete the file.
+     */
+    internal fun textOf(raw: Any?): String = when (raw) {
+        is Num -> raw.text
+        is String -> raw
+        null -> "(none)"
+        else -> raw.toString()
+    }
+
     private fun nullableStr(obj: Map<*, *>, key: String): String? = obj[key] as? String
 
     /**

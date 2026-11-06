@@ -152,16 +152,32 @@ class VehicleStore(context: Context) {
      * whose file could not be parsed is *not* retried by pressing save again: the app is refusing
      * to write, because the alternative is writing an empty garage over someone's cards, and the
      * only fix is the file itself — which is why the sentence names it.
+     *
+     * [what] is the thing that did not happen, said the way the user would say it — "Photo not
+     * attached", "Pairing not forgotten", "Card not deleted" — because a refusal that only says
+     * "not saved" under a photo the user just attached tells them nothing about which action
+     * failed. The default is the card form's own wording, which is where this started.
      */
-    fun saveFailure(): String {
+    /**
+     * Why the garage is being shown as empty when there is a file sitting there, or null when
+     * there is nothing to explain. After the first read of the file, either way.
+     *
+     * This exists because [saveFailure] can only speak when asked: a save is an action the user
+     * took, and the page that shows nothing at all invites none. Without this, an owner whose
+     * `vehicles.json` got a brace deleted in a file manager sees "Nothing has been met yet" — the
+     * sentence for a garage that never existed, over their cards still being on disk.
+     */
+    suspend fun damageNote(): String? = garage.damageNote()
+
+    fun saveFailure(what: String = "Not saved"): String {
         val why = garage.damage()
         val where = AppRoot.sharedRootLabel() + "/" + AppRoot.GARAGE_FILE
         return if (why == null) {
-            "Not saved — the garage file could not be written. Nothing on disk changed, so save " +
-                "again once the phone has room or the storage permission back."
+            "$what — the garage file could not be written, and nothing on disk changed. Try again " +
+                "once the phone has room or the storage permission is back."
         } else {
-            "Not saved — $where could not be read ($why), and the app will not write over a " +
-                "garage it cannot read. Nothing on disk changed."
+            "$what — $where could not be read ($why), and the app will not write over a garage it " +
+                "cannot read. Nothing on disk changed."
         }
     }
 
@@ -316,6 +332,19 @@ private class GarageState(private val appContext: Context) {
 
     /** Why writes are refused, or null while the app believes it can write. */
     fun damage(): String? = damage
+
+    /**
+     * [damage] *after* the file has actually been read.
+     *
+     * The plain accessor answers null before the first read, which is correct for the write path
+     * (it runs under the lock, after `ensure()`) and wrong for a screen asking at startup: a page
+     * that checked it before the read would tell the owner nothing is wrong with a file it has not
+     * opened yet. This waits for the read, so an answer of null means the file was looked at.
+     */
+    suspend fun damageNote(): String? = withContext(Dispatchers.IO) {
+        mutex.withLock { ensure() }
+        damage
+    }
 
     /** Read → change → write → publish, or refuse outright on a damaged file. */
     private suspend fun mutate(change: (Garage) -> Garage): Boolean = withContext(Dispatchers.IO) {

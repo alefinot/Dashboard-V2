@@ -461,9 +461,13 @@ fun AppShell(
                     editorRefusal = null
                 },
                 onDelete = {
-                    connection.deleteVehicle(draft.id)
-                    editing = null
-                    editorRefusal = null
+                    connection.deleteVehicle(draft.id) { refusal ->
+                        // A refused delete means the card is still in the garage file, so the
+                        // editor stays open with the reason in it instead of closing on a
+                        // forget that did not happen.
+                        editorRefusal = refusal
+                        if (refusal == null) editing = null
+                    }
                 },
             )
         }

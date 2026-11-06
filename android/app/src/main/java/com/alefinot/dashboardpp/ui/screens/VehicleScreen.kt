@@ -118,6 +118,13 @@ fun VehicleScreen(
     // it in place would rebuild and restart the collection on every recomposition.
     val cards = remember(connection) { connection.vehicleCards() }
     val vehicles by cards.collectAsStateWithLifecycle(initialValue = emptyList())
+    // Why this page is empty, when empty is not the truth. A garage file that will not parse is
+    // shown as no cards (the app refuses to write over what it cannot read), and the only line
+    // about it has to come from the store, because nothing else on the page can tell the two
+    // apart. Re-asked when the cards change, so a repaired file stops the warning on its own.
+    val garageDamage by produceState<String?>(initialValue = null, vehicles) {
+        value = connection.garageDamage()
+    }
     val selectedId = connection.selectedVehicleId.value
     val state = connection.uiState.value
     val notice by connection.notice
@@ -187,9 +194,17 @@ fun VehicleScreen(
             // One line. The card below already explains what its two buttons do, so an
             // empty garage only has to say that nothing has been met yet - a second
             // paragraph about what a search is would be the page talking to itself.
+            //
+            // Unless it is not empty at all. A file the app will not parse is a different
+            // sentence, in a different colour, because the fix is the file and not a search.
             Text(
-                "Nothing has been met yet: this app has not paired with a dashboard yet.",
-                color = HudColors.TextMuted,
+                garageDamage?.let {
+                    "There is a garage file on disk, but this build cannot read it ($it), so no " +
+                        "card is shown. The app will not write over a garage it cannot read: " +
+                        "repair or move that file and the cards come back."
+                }
+                    ?: "Nothing has been met yet: this app has not paired with a dashboard yet.",
+                color = if (garageDamage == null) HudColors.TextMuted else HudColors.Amber,
                 style = HudeCfgNote(),
             )
             Spacer(Modifier.height(14.dp))

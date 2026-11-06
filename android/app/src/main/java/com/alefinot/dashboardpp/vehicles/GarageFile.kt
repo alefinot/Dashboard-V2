@@ -112,7 +112,7 @@ object GarageFile {
         val version = if (parsed.containsKey("version")) VehicleCodec.intOrNull(parsed, "version") else null
         if (version != VERSION) {
             return GarageRead.Damaged(
-                "the file declares version ${parsed["version"] ?: "(none)"}; this build writes $VERSION",
+                "the file declares version ${VehicleCodec.textOf(parsed["version"])}; this build writes $VERSION",
             )
         }
 

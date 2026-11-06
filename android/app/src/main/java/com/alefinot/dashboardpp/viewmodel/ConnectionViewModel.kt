@@ -229,6 +229,13 @@ class ConnectionViewModel(
     fun vehicleCards() = vehicles.all()
 
     /**
+     * Why the vehicle page is empty when a garage file is there (see [VehicleStore.damageNote]).
+     * Suspends until the file has been read, so null means the app looked and found nothing to
+     * apologise about — not that it has not looked yet.
+     */
+    suspend fun garageDamage(): String? = vehicles.damageNote()
+
+    /**
      * What the trip recorder has to write as the owner of the files it creates: the
      * link it is pointed at, the card that owns it, that card's name right now,
      * and the MAC the dashboard reported when the link came up.
@@ -364,7 +371,15 @@ class ConnectionViewModel(
                 bondNote.value = "That card holds no pairing on this phone."
                 return@launch
             }
-            vehicles.put(card.copy(bleAddress = null, mac = null))
+            if (!vehicles.put(card.copy(bleAddress = null, mac = null))) {
+                // The pairing is still in the file, so the card is still paired once the app
+                // restarts. `bondNote` is the line this page already uses to say a forget came
+                // out half-done (the Android bond is out of reach), so a third half is said there
+                // rather than in a new place the user has to learn.
+                bondNote.value = vehicles.saveFailure("Pairing not forgotten") +
+                    " The card may look unpaired until the app is restarted."
+                return@launch
+            }
             if ((uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId) {
                 disconnect()
             } else {
@@ -579,17 +594,34 @@ class ConnectionViewModel(
      * position the feed asks about belongs to this vehicle, and a row left behind for a
      * unit nobody owns is a coordinate that will be dialed again by whoever inherits the
      * link. The typed city stays - it is the owner's, not the unit's.
+     *
+     * [onDone] reports the outcome the way [saveVehicle] does: `null` when the file agrees the
+     * card is gone, the refusal sentence when it does not. A refused delete is the worst of
+     * the garage writes to leave quiet — the editor closed, the card vanished from the screen,
+     * and the next start the card is back because the file never took the removal.
      */
-    fun deleteVehicle(vehicleId: String) {
+    fun deleteVehicle(vehicleId: String, onDone: (refusal: String?) -> Unit = {}) {
         scope.launch {
-            val v = vehicles.get(vehicleId) ?: return@launch
+            val v = vehicles.get(vehicleId) ?: run {
+                // Nothing to delete: the card is already gone from the garage, which is the
+                // outcome the caller asked for.
+                onDone(null)
+                return@launch
+            }
             val ownsSession = (uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId
             if (ownsSession) ladder?.cancel()
             val key = UnitIdentity.key(v.mac, v.bleAddress)
             tripSettings.clearSessions(listOf(key))
             WeatherSettings(appContext).clearCaches(listOf(key))
             HostFrames.clear(key)
-            vehicles.delete(vehicleId)
+            if (!vehicles.delete(vehicleId)) {
+                // The card survived the delete. Its caches went first (that ordering is the one a
+                // crash can survive), so what the user is holding is a card that will come back
+                // after a restart — which is exactly the thing they must be told, because the
+                // editor they just closed said it was gone.
+                onDone(vehicles.saveFailure("Card not deleted"))
+                return@launch
+            }
             if (selectedVehicleId.value == vehicleId) {
                 // The store clears its own pointer; the VM's copy has to follow, and the
                 // garage needs *some* card selected afterwards or the ladder has nothing to
@@ -607,6 +639,7 @@ class ConnectionViewModel(
                 notice.value = null
                 unclaimed.value = null
             }
+            onDone(null)
         }
     }
 
@@ -681,22 +714,39 @@ class ConnectionViewModel(
      * than closing. A user who cancels the crop screen never reaches this method:
      * [cancelPhoto] removes the scratch capture and the previous photo stays, which is the
      * plan's "CANCEL keeps the previous photo".
+     *
+     * The second argument of [onDone] is the refusal when the JPEG landed but the record
+     * naming it did not — a picture on disk that no card points at, which the card shows for
+     * now and loses on the next start. It is the one case where a closed crop step is right
+     * (the crop worked, the framing cannot be recovered) and a quiet one would not be.
      */
-    fun applyPhotoCrop(source: File, vehicleId: String, rect: CropRect, onDone: (File?) -> Unit) {
+    fun applyPhotoCrop(
+        source: File,
+        vehicleId: String,
+        rect: CropRect,
+        onDone: (landed: File?, refusal: String?) -> Unit,
+    ) {
         scope.launch {
             val card = vehicles.get(vehicleId) ?: run {
                 vehicles.photos.clearCapture(vehicleId)
-                onDone(null)
+                onDone(null, null)
                 return@launch
             }
             val landed = vehicles.photos.cropFrom(source, vehicleId, rect)
             if (landed == null) {
-                onDone(null)
+                onDone(null, null)
                 return@launch
             }
-            vehicles.put(card.copy(photoFile = landed.name))
+            if (!vehicles.put(card.copy(photoFile = landed.name))) {
+                // The JPEG is in `vehicles/` and the card on screen wears it; the file on disk
+                // still names the old picture. Saying nothing would leave the owner hunting for
+                // a photo that is not in their folder.
+                photoVersion.intValue++
+                onDone(landed, vehicles.saveFailure("Photo not attached"))
+                return@launch
+            }
             photoVersion.intValue++
-            onDone(landed)
+            onDone(landed, null)
         }
     }
 
@@ -713,15 +763,34 @@ class ConnectionViewModel(
      * draws its glyph), which is a cosmetic lie for one boot. The reverse - a file deleted
      * after the record still names it, or a record pointing at a file that was never written
      * - is the case where the editor offers a photo the app cannot show.
+     *
+     * When the record would not take the removal, [onRefused] says so: the JPEG is gone from
+     * the folder, so a card that still points at it will draw nothing after the next start,
+     * and "the photo is still attached" is worth knowing while the user is looking at a
+     * picture that is already deleted.
      */
-    fun removePhoto(vehicleId: String) {
+    fun removePhoto(vehicleId: String, onRefused: (String) -> Unit = {}) {
         scope.launch {
             vehicles.photos.delete(vehicleId)
             vehicles.get(vehicleId)?.let { card ->
-                if (card.photoFile != null) vehicles.put(card.copy(photoFile = null))
+                if (card.photoFile != null && !vehicles.put(card.copy(photoFile = null))) {
+                    onRefused(vehicles.saveFailure("Photo not removed"))
+                }
             }
             photoVersion.intValue++
         }
+    }
+
+    /**
+     * A card field the ladder tried to remember and the file would not take — a firmware
+     * version, a last-connect time. Not announced: nobody asked for this write, the value is
+     * in memory and on screen, and the next successful connect refills it. It is logged
+     * because it is the one garage write that can fail with nobody watching, and "the app
+     * forgot the version again" should have a line behind it.
+     */
+    private fun logPersistMiss(vehicleId: String, from: String) {
+        Log.w(DPP_CONN_LOG_TAG, "garage write refused ($from) vehicle=$vehicleId — " +
+            "identity/version fields stay in memory only")
     }
 
     /** The connected card's DISCONNECT. The selection stays; the unit goes. */
@@ -790,7 +859,7 @@ class ConnectionViewModel(
                 vehicles.all().first(), selectedVehicleId.value,
                 tried, scanDone, found, outcome, mode, now(), pinned,
             )
-            r.persist?.let { vehicles.put(it) }
+            r.persist?.let { if (!vehicles.put(it)) logPersistMiss(it.id, "ladder") }
             unclaimed.value = r.adoption
             r.notice?.let { notice.value = it }
             when (val n = r.next) {
@@ -1245,7 +1314,7 @@ class ConnectionViewModel(
             ),
             mode = ConnectMode.SILENT, nowMs = now(),
         )
-        r.persist?.let { vehicles.put(it) }
+        r.persist?.let { if (!vehicles.put(it)) logPersistMiss(it.id, "silent identity read") }
         unclaimed.value = r.adoption
         r.notice?.let { notice.value = it }
         when (val n = r.next) {

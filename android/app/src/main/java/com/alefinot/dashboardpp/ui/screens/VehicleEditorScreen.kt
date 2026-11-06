@@ -246,7 +246,7 @@ fun VehicleEditorScreen(
                         hasPhoto = false
                         well = null
                         photoNote = null
-                        vm.removePhoto(draft.id)
+                        vm.removePhoto(draft.id) { refusal -> photoNote = refusal }
                     },
                 )
                 Spacer(Modifier.height(16.dp))
@@ -374,17 +374,26 @@ fun VehicleEditorScreen(
         PhotoCropPanel(
             source = staged,
             onUse = { rect ->
-                vm.applyPhotoCrop(staged, draft.id, rect) { landed ->
-                    // Both answers close the crop step; only the failure leaves a note. A
-                    // null here means the picture never became a file, so the card still has
-                    // the photo it had - and saying so is better than pretending it worked.
+                vm.applyPhotoCrop(staged, draft.id, rect) { landed, refusal ->
+                    // Both answers close the crop step; only a failure leaves a note. A null
+                    // landed means the picture never became a file, so the card still has the
+                    // photo it had. A landed file with a refusal is the other half: the JPEG is
+                    // in the folder and the card on screen wears it, but the record naming it did
+                    // not reach the disk, so it walks off at the next start. Saying so now beats
+                    // a photo the owner cannot find in their own folder.
                     cropFrom = null
-                    if (landed == null) {
-                        photoNote = "The photo could not be cut down to a file. The card keeps " +
+                    when {
+                        landed == null -> photoNote =
+                            "The photo could not be cut down to a file. The card keeps " +
                             "the picture it had."
-                    } else {
-                        hasPhoto = true
-                        photoNote = null
+                        refusal != null -> {
+                            hasPhoto = true
+                            photoNote = refusal
+                        }
+                        else -> {
+                            hasPhoto = true
+                            photoNote = null
+                        }
                     }
                 }
             },

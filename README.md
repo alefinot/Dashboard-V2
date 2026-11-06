@@ -1062,7 +1062,7 @@ Every vehicle card lives in one document, `Documents/Dashboard++/vehicles.json`,
 
 It used to be a preferences DataStore - a `vehicle:<id>` row per card, plus `vehicle:last` and `vehicle:nextseq` - and the move is not decoration: the garage is now something the owner can back up, read and repair, in the same folder as their drive logs, and it is written by code that can be tested off-device. `VehicleCodec` is reused per record, unchanged, so a record means the same thing in either container. `nextSeq` is the card-id counter (its job is to survive a delete: a freed row never reissues its name), and `selectedId` is the card the garage opens on.
 
-**A file it cannot parse is never written to.** A truncated `vehicles.json`, a `version` this build does not know, two cards sharing an id, or one record that will not decode, reads as damage: the UI shows an empty garage (there is no safe way to draw a document the app does not understand), `put`/`delete`/`select` refuse, and the editor says so in one sentence that names the file - because the alternative, writing an empty garage over someone's cards to "fix" a typo, is the one failure a storage layer is not allowed to have. Bookkeeping is treated more gently than cards: a broken `nextSeq` restarts above the highest id in the file, and a `selectedId` naming a card that is not there simply selects nothing.
+**A file it cannot parse is never written to.** A truncated `vehicles.json`, a `version` this build does not know, two cards sharing an id, or one record that will not decode, reads as damage: the UI shows an empty garage (there is no safe way to draw a document the app does not understand), `put`/`delete`/`select` refuse, and the editor says so in one sentence that names the file - because the alternative, writing an empty garage over someone's cards to "fix" a typo, is the one failure a storage layer is not allowed to have. An empty garage is now said out loud too: with a damaged file the vehicle page stops reading *Nothing has been met yet* (a sentence about a phone that has never paired, which is a lie about a phone that has) and says in amber that a file is there, that this build cannot read it, and that the app will not write over it - the reason string from `GarageRead.Damaged` is carried by `VehicleStore.damageNote()` and printed in that line, so a file from a newer build reports the version the file itself claims (`VehicleCodec.textOf()` keeps the file's own digits; interpolating the parsed number directly used to print `VehicleCodec$Num@47e2e487`). Bookkeeping is treated more gently than cards: a broken `nextSeq` restarts above the highest id in the file, and a `selectedId` naming a card that is not there simply selects nothing.
 
 Writes go through `<file>.tmp` and a rename, so a reader never sees half a garage, and a failed write leaves the previous file byte-for-byte in place - which is the only reason "nothing on disk changed" is a truthful sentence. The garage is process-wide state behind a `Mutex` (one in-memory copy, one writer), because `VehicleStore` is constructed by two ViewModels and two copies of a garage would be two writers overwriting each other's cards. `VehicleOrderTest` still tests ordering and id allocation as pure functions; `GarageFileTest` tests the format, the damage rules and the atomic writer against a real temporary folder.
 
@@ -1074,9 +1074,9 @@ There is **no migration** from the old private store, and that was a decision, n
 
 The grant is `MANAGE_EXTERNAL_STORAGE`, which **no dialog can request**: the app sends the owner to the system's All files access page (and falls back to the all-files page, then to the app's details page, because some devices route the first action nowhere), and `Environment.isExternalStorageManager()` - API 30+, which is why it sits behind an `SDK_INT` check - reports the answer, along with `Environment.getExternalStorageDirectory()` writable, which is the part that actually decides whether a drive will be recorded. `WRITE_EXTERNAL_STORAGE` is declared with `maxSdkVersion="28"` so the same code keeps working on a 9.0 tablet without asking anything of a modern one. The app still declares none of the Wi-Fi-era permissions, and `AppXmlWiringTest` keeps them out.
 
-**Both states are said out loud, because a silently-degraded folder is how a user loses a drive.** App Settings has a **Storage** card: the folder in use, how many trip files and cards are in it, free space, and a button that is either `STORAGE ACCESS GRANTED` (said, not offered) or `GRANT STORAGE ACCESS`. The Trips header adds a line when the folder is not the shared one, and the Trip detail page's `Shared from` and `Copy path` say which folder a given drive is in, because one install can hold drives from both. Recording, sharing, photos and the garage all keep working in the private folder - only the visibility changes.
+**Both states are said out loud, because a silently-degraded folder is how a user loses a drive.** App Settings has a **Storage** card: the folder in use, how many trip files and cards are in it, free space, and an affordance that is only there when there is something to do. **Android 10 is a dead end and the app now says so.** `AppRoot.grantPath(sdkInt)` answers `ALL_FILES` (API 30+), `RUNTIME_PERMISSION` (API ≤ 28, where a dialog can ask) or `NONE` (API 29, which has no All files access and where `requestLegacyExternalStorage` stopped applying to an app targeting 30+), and every storage sentence in the app is a pure function of that answer (`storage/StorageCopy.kt`). So the card shows `STORAGE ACCESS GRANTED` when the grant is held, `GRANT STORAGE ACCESS` when there is a switch to open, and **no button at all on Android 10** - instead a line saying the files are in the app's own folder, that this Android version gives an app no way to open the shared folder and no switch to grant, and that the files come out through the app's own **Share** buttons. The old copy promised *grant storage access in App Settings* to owners of a Mi 9 Lite (MIUI 12) and a Galaxy Tab A 10.1 who then looked at an app-info page with no storage entry on it: the sentence was not a hint that failed, it was a control that could not exist. The Trips header and the Trip detail page pick their sentences from the same table (and count with the same helper, so a header cannot say `1 drives`); the Trip detail page's `Shared from` and `Copy path` still say which folder a given drive is in, because one install can hold drives from both. Recording, sharing, photos and the garage all keep working in the private folder - only the visibility changes.
 
-**One install, two folders, one visible at a time.** The recorder writes where the grant says to write, and the Trips list reads the folder in use. So a drive recorded before the grant - or during a stretch where it was revoked - stays in the folder it was written to and is not listed while the other root is active; the CSVs do not move, and merging them is a copy in a file manager. Nothing here migrates on the app's own initiative, for the same reason the garage does not (see *The garage*): the app cannot tell an upgrade from a deliberate clearing, and quietly copying files between the two roots is how a user ends up with two of each.
+**One install, two folders, both read.** The recorder writes where the grant says to write. It used to be that the Trips list read only the folder in use, so granting storage access - or revoking it - made old drives disappear from the app while they stayed on disk, which reads as deletion. `TripStore.dirs()` now lists both roots (the folder in use first, then the private one; deduplicated by canonical path, because with no grant the two names resolve to the same directory), and the Trips header adds a line naming the folder the drives it is *not* writing to hold, so the count in the header and the folder in the line above cannot disagree. Nothing is copied or moved: the recorder still writes to one folder, the list simply reads both shelves. Nothing migrates on the app's own initiative, for the same reason the garage does not (see *The garage*): the app cannot tell an upgrade from a deliberate clearing, and quietly copying files between the two roots is how a user ends up with two of each.
 
 ### Sharing a drive
 
@@ -1099,6 +1099,9 @@ The suite is ~580 plain-JVM tests, and four of them read **sources** rather than
 | `ConnectActionsOnOnePageTest` | Only `VehicleScreen.kt` may call a connection action; a cover offers exactly one button and no address; no screen in `ui/screens/` reaches for the deleted transport |
 | `SettingsTabReplacesTheWebPageTest` | The ESP slot draws the native page, and the settings page holds no URL, no socket and no old HTTP lane; the whole `app/src/main` tree contains no `EspApi`, `OkHttpClient`/`okhttp3`, `HttpURLConnection`, `android.webkit`/`WebView`, `Nsd`/`NsdManager`, `SubnetScanner`, `DeviceVerifier`, `BleScreen`, `GroupStrip`, `ToolsPage`, `WifiManager`, `ConnectivityManager`, `MulticastLock` or `V1Routes` in code, the files and the package that carried them must not exist, OkHttp is gone from `build.gradle.kts`, and only two files hold a URL at all — the GPX XML namespace and the map's tile user agent, named file by file so the ban itself stays absolute |
 | `AppRootTest` | The shared root wins only when the access is granted *and* the folder can be made, the private root is never null, `trips/` `vehicles/` and `vehicles.json` carry the same names in both roots, the folder name lives in exactly one constant, and `AppRoot.kt` never spells a public path by hand |
+| `StorageCopyTest` | The three storage paths by API level (28 asks, 29 has nothing, 30 offers the switch), one-of-a-thing counting (`1 car`, `1 drive`, `12 trip files`), the button shown only where there is a switch to open, and a guard that no sentence an Android 10 owner can read promises a grant, an App Settings page or All files access |
+| `GarageWritesAreSaidOutLoudTest` | Every `vehicles.put(`/`vehicles.delete(` in the app checks the `false` that means the file did not take the change, the number of watched sites has not fallen, and the vehicle page explains a garage that is empty only because the file will not parse |
+| `DrivesFromBothFoldersTest` | Drives recorded outside the folder being written to are counted and placed by the same walk that built the list, an all-old list still names the other folder, a folder reached by two spellings is one folder, and `TripStore.dirs()` is pinned to read the folder in use *and* the private one, deduplicated so a name in both is listed once |
 | `AppXmlWiringTest` | FileProvider roots match the directory names the stores actually write - the cache roots and both trip roots - the camera `<queries>` block is declared, the manifest declares the storage access the app uses (`MANAGE_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE` capped at API 28) and asks for the radio it uses and none of the ones it dropped (no `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`), the folder names `AppRoot` publishes are the ones `files_path.xml` grants, a shared CSV is the recorded file rather than a cache copy, and no store names the private `Android/data` path |
 
 The pairing and the GATT protocol cannot be tested in JVM at all — they need a unit. The bench acceptance for this transport (unit `DPP-B594`) is in `Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md`: scan → passkey → `Ready`, reconnect from a cold app without a scan, 1 Hz LIVE, a trip tagged to the card, and the settings page exercised end to end.
@@ -1720,6 +1723,61 @@ gone. A central that settles at a smaller MTU (251 is common) never lands on the
 is why one phone in the field showed it and the bench Mi 9 Lite never did. The OTA chunk size comes
 from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
 never touched the ceiling — which is why BLE installs were never affected by this.
+
+### App 2.0.2/67 — the app stops promising a switch Android 10 does not have (Android app only, `versionCode` 66 → 67; firmware unchanged at 2.0.2)
+
+On a bench Mi 9 Lite (Android 10, MIUI 12) the **Storage** card offered `GRANT STORAGE ACCESS`, the
+Trips header said *grant storage access in App Settings*, and nothing on the phone could satisfy
+either. Android 10 has no All files access — `MANAGE_EXTERNAL_STORAGE` arrived in API 30 — and
+`requestLegacyExternalStorage` does nothing for an app that targets 35, so the owner who tapped the
+button landed on an app-info page whose only entries were AUTO-START, Displays and Manage Space.
+The copy was not a hint that had failed to land; it was a control that could not exist, written for
+the half of the fleet that has it. Same sentence, three devices, two of them true.
+
+The version cannot be changed from inside the app, so it became a parameter: `AppRoot.grantPath(
+sdkInt)` answers `ALL_FILES` (API 30+), `RUNTIME_PERMISSION` (API ≤ 28, where a dialog can ask) or
+`NONE` (**API 29 — neither way works**), and every storage sentence the app speaks is now a pure
+function of it in `storage/StorageCopy.kt`, which also owns the counting (`1 car`, `1 drive`,
+`12 trip files` — the pages that used to interpolate `$n drives` said *1 drives*). The button is
+`STORAGE ACCESS GRANTED` when held, `GRANT STORAGE ACCESS` when there is a page to open, and absent
+on 29, where the card instead says the files are in the app's own folder, that no file manager shows
+it and no USB copy sees it, that this Android version gives no way in and nothing to grant, and that
+the way out is the app's own **Share** buttons. `StorageCopyTest` runs the honesty check over every
+sentence an Android 10 owner can reach and fails on the words *grant storage*, *App Settings*, *App
+info* or *All files* — and keeps them on the API 30+ sentences, so fixing 29 does not talk the real
+grant out of the app. Bench, after the change: the Storage card reads *app-private folder · 0 trip
+files · 1 car · 3902.1 MB free* with no button, and the Trips header *0 drives · 0 B* over *in the
+app's own folder; this Android version has no storage switch to grant*.
+
+Two other lies the same walk exposed, both fixed on the unit's side of the screen. A garage file
+that will not parse was drawn as an empty garage and captioned *Nothing has been met yet: this app
+has not paired with a dashboard yet* — true of a phone that never paired, false of a phone whose
+`vehicles.json` is sitting there unreadable; the vehicle page now asks `VehicleStore.damageNote()`
+and says, in amber, that a file exists, why it could not be read, and that the app will not write
+over it. And a `version` newer than this build reported itself as `the file declares version
+com.alefinot.dashboardpp.vehicles.VehicleCodec$Num@47e2e487`, because the codec keeps numbers as
+unparsed text and that wrapper has no `toString()`: `VehicleCodec.textOf()` now quotes the digits
+the file wrote, which is the whole point of the sentence (update the app, do not delete the file).
+Bench proof, both directions: a hand-written 50-byte `vehicles.json` produced *There is a garage file
+on disk, but this build cannot read it (the file is not a JSON object), so no card is shown…* on the
+phone, and pushing the pulled original back (md5 `8a6b6a34…`, matching before and after) restored
+the one card.
+
+The Trips list also stopped losing drives. It read only the folder in use, so the moment storage
+access was granted, every drive recorded before it vanished from the app while staying on disk —
+and the 2.0.2/66 entry documented that as intended. It was not survivable: a list that hides files
+is a list that gets blamed for deleting them. `TripStore.dirs()` now reads the folder in use *and*
+the private one (deduplicated by canonical path, because with no grant both names resolve to the
+same directory), the recorder still writes to one folder, and the Trips header gains a line naming
+the folder whose drives it is showing but not writing to. Nothing is copied, moved or migrated.
+
+`versionCode` 66 → 67 for the shared debug APK. Tests: 601 in each variant, 2 skipped (the
+replace-on-rename assertion POSIX gives Android and Windows does not), 0 failed — new
+`storage/StorageCopyTest`, `vehicles/GarageWritesAreSaidOutLoudTest` (every `vehicles.put(`/`delete(`
+must check the `false` that means the file did not change, and the vehicle page must explain a garage
+that is empty only because the file is damaged) and `viewmodel/DrivesFromBothFoldersTest`; an
+`AppRootTest` assertion pins `privateTripsDir()` to the private root, because if it resolved through
+`base()` the second shelf would silently be the first one again.
 
 ### App 2.0.2/66 — the app's files moved into the folder the owner can open (Android app only, `versionCode` 65 → 66; firmware unchanged at 2.0.2)
 
