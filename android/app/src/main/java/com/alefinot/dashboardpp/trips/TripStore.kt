@@ -28,18 +28,44 @@ import java.util.Locale
 class TripStore(context: Context) {
     private val appContext = context.applicationContext
 
-    /** The trips folder, created if it is missing. Never null, on either root. */
+    /** The trips folder the recorder writes to: the root the grant points at today. */
     fun dir(): File = AppRoot.tripsDir(appContext)
 
-    /** Newest first, as the Trips list wants them. */
-    fun trips(): List<File> =
-        dir().listFiles { f -> f.isFile && f.name.startsWith("trip-") && f.name.endsWith(".csv") }
+    /**
+     * Every trips folder this app writes to, in the order a reader should show them:
+     * the folder in use first, then the app-private folder it used before All files
+     * access arrived — or after it was revoked, which points the other way round.
+     *
+     * Both are listed because a drive in the other one is the owner's file too. The
+     * recorder writes wherever the grant says and the grant can change between drives,
+     * so an install really does hold drives from both roots; a list that followed only
+     * the current one would make old drives look deleted the moment the user granted
+     * storage access. Nothing is copied or moved — this is the list reading both
+     * shelves, not the files being shelved together. Deduplicated because with no
+     * grant the two names resolve to the same directory.
+     */
+    fun dirs(): List<File> {
+        val shared = AppRoot.tripsDir(appContext)
+        val private = AppRoot.privateTripsDir(appContext)
+        return listOf(shared, private).distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
+    }
+
+    /** Newest first, as the Trips list wants them; a name in both roots is listed once. */
+    fun trips(): List<File> {
+        val seen = HashSet<String>()
+        return dirs()
+            .flatMap { d ->
+                d.listFiles { f -> f.isFile && f.name.startsWith("trip-") && f.name.endsWith(".csv") }
+                    ?.asList() ?: emptyList()
+            }
+            .filter { seen.add(it.name) }
             // Ordered by the drive's start (the name), not by mtime: a live trip
             // is being appended to, so its mtime keeps moving to the top of the
             // list on every refresh.
-            ?.sortedByDescending { startMsOf(it.name) ?: it.lastModified() }
-            ?: emptyList()
+            .sortedByDescending { startMsOf(it.name) ?: it.lastModified() }
+    }
 
+    /** Clears every folder the list shows, and reports how many files went. */
     fun deleteAll(): Int {
         val files = trips()
         files.forEach { it.delete() }

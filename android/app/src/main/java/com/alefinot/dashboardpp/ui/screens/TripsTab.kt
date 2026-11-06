@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.storage.AppRoot
+import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudPage
@@ -85,6 +86,7 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     val message by vm.message.collectAsStateWithLifecycle()
     val storage by vm.storageBytes.collectAsStateWithLifecycle()
     val sharedStorage by vm.shared.collectAsStateWithLifecycle()
+    val elsewhere by vm.elsewhere.collectAsStateWithLifecycle()
     var refreshKey by remember { mutableStateOf(0) }
 
     // The pager keeps this page composed from the first frame on (see ConnectedTabs),
@@ -117,30 +119,40 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
                 // What the cards underneath actually are: when a filter is on, the
                 // count says so instead of quietly shrinking.
                 if (visible.size == rows.size) {
-                    "${rows.size} drives  ·  ${formatBytes(storage)}"
+                    "${StorageCopy.drives(rows.size)}  ·  ${formatBytes(storage)}"
                 } else {
-                    "${visible.size} of ${rows.size} drives  ·  ${formatBytes(storage)}"
+                    "${visible.size} of ${StorageCopy.drives(rows.size)}  ·  ${formatBytes(storage)}"
                 },
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                // Where the cards underneath came from. The folder is named because it is
-                // the place a user goes to open a drive in a spreadsheet or pull one off
-                // over USB; when the grant is missing, saying "app-private" instead of that
-                // path is the difference between a drive they cannot find and a drive they
-                // were told about.
-                if (sharedStorage) {
-                    "One file per ESP power session · CSV in " +
-                        "${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}"
-                } else {
-                    "One file per ESP power session · app-private folder — grant " +
-                        "storage access in App Settings"
-                },
+                // Where the cards underneath came from. The folder is named because it is the
+                // place a user goes to open a drive in a spreadsheet or pull one off over USB —
+                // and the words are StorageCopy's, because on Android 10 there is no storage
+                // switch to point at, so the sentence must not promise one.
+                StorageCopy.tripsNote(
+                    sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
+                    AppRoot.sharedRootLabel(), AppRoot.TRIPS,
+                ),
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
+            // Drives the recorder did not write here. A permission change moves where the app
+            // writes, never where the drives are, so this line is what keeps the count in the
+            // line above and the folder it names from contradicting each other.
+            elsewhere?.let { strays ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "+ ${StorageCopy.drives(strays.count)} from " +
+                        "another folder: ${strays.path}",
+                    color = HudColors.TextDim,
+                    style = HudeCfgNote(),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
         Spacer(Modifier.height(10.dp))
 

@@ -142,6 +142,24 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
      */
     val shared: StateFlow<Boolean> = _shared
 
+    private val _elsewhere = MutableStateFlow<Elsewhere?>(null)
+
+    /**
+     * Drives the list is showing from a folder the recorder is *not* writing to right now,
+     * and where those files are. A drive is recorded wherever the grant pointed at the time,
+     * so an install really does hold drives from both roots, and the list reads both
+     * ([com.alefinot.dashboardpp.trips.TripStore.dirs]) so a permission change never hides
+     * one. This is the line that says so, naming the other folder; without it the count in
+     * the header and the folder in the line above disagree.
+     *
+     * Carried as a flow for the same reason [shared] is — the other folder's path is only
+     * known after the walk, and the Trips pager keeps this page composed.
+     */
+    val elsewhere: StateFlow<Elsewhere?> = _elsewhere
+
+    /** How many drives live in a folder other than the one in use, and that folder's path. */
+    data class Elsewhere(val count: Int, val path: String)
+
     fun refresh() {
         scope.launch(Dispatchers.IO) {
             _busy.value = true
@@ -197,6 +215,7 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             // Read from the same walk that counted the files, so the header's "where" and
             // its "how much" cannot disagree about which folder they are describing.
             _shared.value = AppRoot.isSharedAvailable(getApplication())
+            _elsewhere.value = elsewhereFor(files, store.dir())
             index.retain(files.map { it.absolutePath }.toSet())
             _busy.value = false
             // Any file whose summary is missing gets summarised in the
@@ -273,6 +292,24 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Exposed for the settings screen's "open the folder" affordance. */
         fun tripsDir(app: Application): File = TripStore(app).dir()
+
+        /** The path of the folder a file sits in, resolved the way the comparison needs it. */
+        private fun parentOf(f: File): String = f.parentFile?.let { p ->
+            runCatching { p.canonicalPath }.getOrDefault(p.absolutePath)
+        } ?: ""
+
+        /**
+         * The drives in [files] that are not in the folder being written to, and where they
+         * are. Computed from the walk that built the list, so the sentence cannot name a
+         * folder the list is not showing rows from, and it costs nothing: the files are
+         * already in hand.
+         */
+        fun elsewhereFor(files: List<File>, writingTo: File): Elsewhere? {
+            val here = runCatching { writingTo.canonicalPath }.getOrDefault(writingTo.absolutePath)
+            val strays = files.filter { parentOf(it) != here }
+            if (strays.isEmpty()) return null
+            return Elsewhere(strays.size, strays.first().parentFile?.absolutePath ?: "")
+        }
     }
 
     private fun summarise(row: TripRow) {
