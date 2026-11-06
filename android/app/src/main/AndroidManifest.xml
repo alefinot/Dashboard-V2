@@ -63,13 +63,19 @@
          `storage/AppRoot.kt` states the same trade from the code side. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
-    <!-- Android 8/9 only. Scoped storage applies to apps running on Android 10 and up, so on
-         API 26-28 this ordinary runtime permission is what makes public Documents writable at
-         all, and MainActivity asks for it the way it asks for notifications. Capped at 28
-         because on a newer device it is answered by All files access instead, and a permission
-         nothing reads is still a promise the app's listing makes. API 29 gets neither (see
-         AppRoot.isGranted) and keeps the app-private folder. -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- Android 8.1 through 10. On API 26-28 scoped storage does not exist, so this ordinary
+         runtime permission is simply what makes public Documents writable, and MainActivity asks
+         for it at first launch the way it asks for notifications.
+
+         API 29 is included because Android 10 still honours the legacy storage model (see the
+         requestLegacyExternalStorage attribute on <application>), and in that model this
+         permission is again the whole answer: measured on two Android 10 devices — a Mi 9 Lite on
+         MIUI 12 and a Galaxy Tab A — the launch dialog appears for a targetSdk-35 install, and
+         after Allow the app creates and writes Documents/Dashboard++/trips. Capped at 29 because
+         on API 30+ the flag stops applying, the permission grants nothing further, and All files
+         access (declared above) is the only way in: an uncapped declaration would be a promise to
+         users whose devices ignore it. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
     <!-- Package visibility, Android 11+. The editor's TAKE PHOTO button hands an
          IMAGE_CAPTURE intent to whatever camera the device has, and from API 30 an app that
@@ -84,6 +90,19 @@
         </intent>
     </queries>
 
+    <!-- Legacy external storage, Android 10 only. Scoped storage applies by default to apps that
+         *target* Android 10 or newer, and Android 10 lets an app opt back out with this flag:
+         the volume then shows the app the old flat view and WRITE_EXTERNAL_STORAGE (capped at 29
+         above) is enough to write public Documents. The flag is inert on Android 11+ devices, so
+         those keep needing All files access — the two halves never overlap, which is what
+         `storage/AppRoot.grantPath()` encodes.
+
+         This is a Play-restricted attribute on an app that targets 30+, and this app is not on
+         Play: it is shipped as a sideloaded debug APK by its maintainer to the devices it runs on
+         (same trade already recorded for MANAGE_EXTERNAL_STORAGE above). If that ever changes,
+         this attribute, the Android 10 branch of AppRoot.isGranted and the shared root are the
+         things to revisit together. Bench, 2026-11-06: Mi 9 Lite (MIUI 12) and SM-T590 both set
+         `appops … LEGACY_STORAGE: allow` for this targetSdk-35 install and wrote the folder. -->
     <application
         android:name=".DashboardApp"
         android:label="@string/app_name"
@@ -91,6 +110,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.Dashboardpp"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
 
         <activity

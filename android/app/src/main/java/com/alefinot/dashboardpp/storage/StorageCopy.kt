@@ -18,9 +18,12 @@ package com.alefinot.dashboardpp.storage
  * 10 and an Android 13 are each told; there is no way to make this process claim to be API 29.
  *
  * The rule the copy follows: **the app never points at a switch this Android version does not
- * have.** Where there is nothing to grant, it says so and stops, because a dead-end button and a
- * dead-end sentence cost the owner a trip to App Info and a hunt for a toggle that was never
- * there (bench, Mi 9 on MIUI 12 — its App Info page has no storage entry at all).
+ * have.** Below API 30 there is no All files access to point at, and pointing an owner at an
+ * App-info page that has no storage entry costs them a trip to Settings for nothing (measured on
+ * the bench Mi 9 at API 29: AUTO-START, Displays, Manage Space — no storage row). What Android
+ * 8.1 through 10 do have is the storage permission, so there the copy talks about *allowing* it
+ * and the button raises the system's dialog; from API 30 up the copy talks about granting access
+ * and the button opens the settings page. Same offer, correct door.
  */
 object StorageCopy {
 
@@ -35,14 +38,19 @@ object StorageCopy {
     fun drives(n: Int): String = count(n, "drive")
 
     /**
-     * The Storage card's button, or `null` when this Android version has nothing to offer — in
-     * which case the card draws no button at all. A disabled "GRANT STORAGE ACCESS" is worse than
-     * none: it looks like a control that is broken rather than a path that does not exist.
+     * The Storage card's button label. Every Android version the app runs on has a way into the
+     * shared folder ([AppRoot.GrantPath]), so every one of them gets a button; what differs is the
+     * door it opens - the All files access page from API 30 up, the system's storage dialog below
+     * that. Only the granted state is disabled, and it is disabled because it is already true.
      */
-    fun grantButton(shared: Boolean, path: AppRoot.GrantPath): String? = when {
+    fun grantButton(shared: Boolean, path: AppRoot.GrantPath): String = when {
         shared -> "STORAGE ACCESS GRANTED"
-        path == AppRoot.GrantPath.ALL_FILES -> "GRANT STORAGE ACCESS"
-        else -> null
+        else -> when (path) {
+            AppRoot.GrantPath.ALL_FILES -> "GRANT STORAGE ACCESS"
+            // Below API 30 there is no settings page to hand them; the app can put the system's
+            // own dialog in front of them, which is what this button does.
+            AppRoot.GrantPath.RUNTIME_PERMISSION -> "ALLOW STORAGE"
+        }
     }
 
     /** The paragraph under the Storage card's button. */
@@ -56,15 +64,11 @@ object StorageCopy {
             "Trip logs, card photos and the garage are in the app's own folder, which no file " +
                 "manager shows and no USB copy sees. Grant storage access to save where you " +
                 "can see it."
-        path == AppRoot.GrantPath.RUNTIME_PERMISSION ->
-            "Trip logs, card photos and the garage are in the app's own folder, which no file " +
-                "manager shows and no USB copy sees. This Android version asks for storage " +
-                "permission when the app starts; allow it once and new files land in Documents."
         else ->
             "Trip logs, card photos and the garage are in the app's own folder, which no file " +
-                "manager shows and no USB copy sees. This Android version gives an app no way " +
-                "to open the shared folder and no switch to grant, so there is nothing to " +
-                "change here — the files come out with the app's own Share buttons."
+                "manager shows and no USB copy sees. This Android version asks for storage " +
+                "permission when the app starts; allow it once and new files land in " +
+                "Documents, or use ALLOW STORAGE on this card if the dialog went unanswered."
     }
 
     /** The line under the Trips header: what the cards underneath are, and where they are. */
@@ -76,7 +80,6 @@ object StorageCopy {
             head + when (path) {
                 AppRoot.GrantPath.ALL_FILES -> "app-private folder — grant storage access in App Settings"
                 AppRoot.GrantPath.RUNTIME_PERMISSION -> "app-private folder — allow storage when the app asks"
-                AppRoot.GrantPath.NONE -> "in the app's own folder; this Android version has no storage switch to grant"
             }
         }
     }
@@ -96,8 +99,7 @@ object StorageCopy {
     } else {
         "The CSV is shared from the app's own folder, because " + when (path) {
             AppRoot.GrantPath.ALL_FILES -> "storage access was never granted — App Settings can change that."
-            AppRoot.GrantPath.RUNTIME_PERMISSION -> "the storage permission was never allowed — grant it in the system's app settings."
-            AppRoot.GrantPath.NONE -> "this Android version gives the app no way to open the shared folder."
+            AppRoot.GrantPath.RUNTIME_PERMISSION -> "the storage permission was never allowed — ALLOW STORAGE on the Storage card in App Settings."
         }
     }
 }

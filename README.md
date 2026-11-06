@@ -1072,9 +1072,9 @@ There is **no migration** from the old private store, and that was a decision, n
 
 `storage/AppRoot.kt` answers one question for the whole app - where do my files live - and everything else asks it. The answer is `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOCUMENTS)/Dashboard++/` (never a hardcoded `Documents`, which would break on a device whose public directory is mounted elsewhere), holding `trips/`, `vehicles/` and `vehicles.json`, all three named once in that file. When All files access is not granted, or the shared folder cannot be created, the same three names resolve under `getExternalFilesDir(null)` instead - the app's private folder, where writing is always allowed. The two roots are deliberately shaped alike so that switching is a matter of which root is named, and nothing in the app knows the private path: `AppRootTest` pins that parity, and a trip path carrying `Android/data` fails the suite.
 
-The grant is `MANAGE_EXTERNAL_STORAGE`, which **no dialog can request**: the app sends the owner to the system's All files access page (and falls back to the all-files page, then to the app's details page, because some devices route the first action nowhere), and `Environment.isExternalStorageManager()` - API 30+, which is why it sits behind an `SDK_INT` check - reports the answer, along with `Environment.getExternalStorageDirectory()` writable, which is the part that actually decides whether a drive will be recorded. `WRITE_EXTERNAL_STORAGE` is declared with `maxSdkVersion="28"` so the same code keeps working on a 9.0 tablet without asking anything of a modern one. The app still declares none of the Wi-Fi-era permissions, and `AppXmlWiringTest` keeps them out.
+The grant is a different thing per Android version, and both halves are declared. **From API 30 (Android 11+)** it is `MANAGE_EXTERNAL_STORAGE`, which **no dialog can request**: the app sends the owner to the system's All files access page (and falls back to the all-files page, then to the app's details page, because some devices route the first action nowhere), and `Environment.isExternalStorageManager()` - API 30+, which is why it sits behind an `SDK_INT` check - reports the answer, along with `Environment.getExternalStorageDirectory()` writable, which is the part that actually decides whether a drive will be recorded. **On Android 8.1 through 10** it is `WRITE_EXTERNAL_STORAGE`, which the app asks for itself in the system's ordinary dialog at first launch: on 8.1/9 because scoped storage does not exist on those devices, on Android 10 because the manifest carries `android:requestLegacyExternalStorage="true"` and Android 10 honours that flag whatever an app targets - measured 2026-11-06 on a Mi 9 Lite (MIUI 12) and a Galaxy Tab A at `targetSdk 35`, both reporting `appops … LEGACY_STORAGE: allow` after install and both creating and writing `Documents/Dashboard++/trips` once the dialog was allowed (on the tablet, `Documents/` did not exist until the app made it). The permission is capped at `maxSdkVersion="29"`, because past API 29 it grants nothing to this app and an uncapped declaration is a promise the listing makes to users whose devices ignore it. `AppXmlWiringTest` pins the block both ways - the permissions, the cap and the legacy flag. The app still declares none of the Wi-Fi-era permissions.
 
-**Both states are said out loud, because a silently-degraded folder is how a user loses a drive.** App Settings has a **Storage** card: the folder in use, how many trip files and cards are in it, free space, and an affordance that is only there when there is something to do. **Android 10 is a dead end and the app now says so.** `AppRoot.grantPath(sdkInt)` answers `ALL_FILES` (API 30+), `RUNTIME_PERMISSION` (API ≤ 28, where a dialog can ask) or `NONE` (API 29, which has no All files access and where `requestLegacyExternalStorage` stopped applying to an app targeting 30+), and every storage sentence in the app is a pure function of that answer (`storage/StorageCopy.kt`). So the card shows `STORAGE ACCESS GRANTED` when the grant is held, `GRANT STORAGE ACCESS` when there is a switch to open, and **no button at all on Android 10** - instead a line saying the files are in the app's own folder, that this Android version gives an app no way to open the shared folder and no switch to grant, and that the files come out through the app's own **Share** buttons. The old copy promised *grant storage access in App Settings* to owners of a Mi 9 Lite (MIUI 12) and a Galaxy Tab A 10.1 who then looked at an app-info page with no storage entry on it: the sentence was not a hint that failed, it was a control that could not exist. The Trips header and the Trip detail page pick their sentences from the same table (and count with the same helper, so a header cannot say `1 drives`); the Trip detail page's `Shared from` and `Copy path` still say which folder a given drive is in, because one install can hold drives from both. Recording, sharing, photos and the garage all keep working in the private folder - only the visibility changes.
+**Both states are said out loud, because a silently-degraded folder is how a user loses a drive.** App Settings has a **Storage** card: the folder in use, how many trip files and cards are in it, free space, and a button, because every Android version the app runs on has a way in. `AppRoot.grantPath(sdkInt)` answers `ALL_FILES` (API 30+, where the answer is a settings page the app can hand them) or `RUNTIME_PERMISSION` (API ≤ 29, where the answer is a dialog the app can raise), and every storage sentence in the app is a pure function of that answer (`storage/StorageCopy.kt`). The card reads `STORAGE ACCESS GRANTED` when the folder is open, `GRANT STORAGE ACCESS` from API 30 up and `ALLOW STORAGE` below it - two different verbs for two different actions, and the second one is the system's own dialog, raised on the owner's behalf from the page they are already standing on. What the copy never does is point at a switch the version does not have: an Android 10 owner sent hunting for *All files access* finds an app-info page offering AUTO-START, Displays and Manage Space, which is what the old sentences did to the owners of a Mi 9 Lite (MIUI 12) and a Galaxy Tab A 10.1. The Trips header and the Trip detail page pick their sentences from the same table (and count with the same helper, so a header cannot say `1 drives`); the Trip detail page's `Shared from` and `Copy path` still say which folder a given drive is in, because one install can hold drives from both. Recording, sharing, photos and the garage all keep working in the private folder - only the visibility changes.
 
 **One install, two folders, both read.** The recorder writes where the grant says to write. It used to be that the Trips list read only the folder in use, so granting storage access - or revoking it - made old drives disappear from the app while they stayed on disk, which reads as deletion. `TripStore.dirs()` now lists both roots (the folder in use first, then the private one; deduplicated by canonical path, because with no grant the two names resolve to the same directory), and the Trips header adds a line naming the folder the drives it is *not* writing to hold, so the count in the header and the folder in the line above cannot disagree. Nothing is copied or moved: the recorder still writes to one folder, the list simply reads both shelves. Nothing migrates on the app's own initiative, for the same reason the garage does not (see *The garage*): the app cannot tell an upgrade from a deliberate clearing, and quietly copying files between the two roots is how a user ends up with two of each.
 
@@ -1099,7 +1099,7 @@ The suite is ~580 plain-JVM tests, and four of them read **sources** rather than
 | `ConnectActionsOnOnePageTest` | Only `VehicleScreen.kt` may call a connection action; a cover offers exactly one button and no address; no screen in `ui/screens/` reaches for the deleted transport |
 | `SettingsTabReplacesTheWebPageTest` | The ESP slot draws the native page, and the settings page holds no URL, no socket and no old HTTP lane; the whole `app/src/main` tree contains no `EspApi`, `OkHttpClient`/`okhttp3`, `HttpURLConnection`, `android.webkit`/`WebView`, `Nsd`/`NsdManager`, `SubnetScanner`, `DeviceVerifier`, `BleScreen`, `GroupStrip`, `ToolsPage`, `WifiManager`, `ConnectivityManager`, `MulticastLock` or `V1Routes` in code, the files and the package that carried them must not exist, OkHttp is gone from `build.gradle.kts`, and only two files hold a URL at all — the GPX XML namespace and the map's tile user agent, named file by file so the ban itself stays absolute |
 | `AppRootTest` | The shared root wins only when the access is granted *and* the folder can be made, the private root is never null, `trips/` `vehicles/` and `vehicles.json` carry the same names in both roots, the folder name lives in exactly one constant, and `AppRoot.kt` never spells a public path by hand |
-| `StorageCopyTest` | The three storage paths by API level (28 asks, 29 has nothing, 30 offers the switch), one-of-a-thing counting (`1 car`, `1 drive`, `12 trip files`), the button shown only where there is a switch to open, and a guard that no sentence an Android 10 owner can read promises a grant, an App Settings page or All files access |
+| `StorageCopyTest` | The two storage paths by API level with the boundary pinned at API 30 (≤ 29 gets the runtime dialog, 30+ the All files page), one-of-a-thing counting (`1 car`, `1 drive`, `12 trip files`), the label each version's button carries (`ALLOW STORAGE` / `GRANT STORAGE ACCESS` / `STORAGE ACCESS GRANTED`), and a guard that no runtime-path sentence promises an All files switch |
 | `GarageWritesAreSaidOutLoudTest` | Every `vehicles.put(`/`vehicles.delete(` in the app checks the `false` that means the file did not take the change, the number of watched sites has not fallen, and the vehicle page explains a garage that is empty only because the file will not parse |
 | `DrivesFromBothFoldersTest` | Drives recorded outside the folder being written to are counted and placed by the same walk that built the list, an all-old list still names the other folder, a folder reached by two spellings is one folder, and `TripStore.dirs()` is pinned to read the folder in use *and* the private one, deduplicated so a name in both is listed once |
 | `AppXmlWiringTest` | FileProvider roots match the directory names the stores actually write - the cache roots and both trip roots - the camera `<queries>` block is declared, the manifest declares the storage access the app uses (`MANAGE_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE` capped at API 28) and asks for the radio it uses and none of the ones it dropped (no `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`), the folder names `AppRoot` publishes are the ones `files_path.xml` grants, a shared CSV is the recorded file rather than a cache copy, and no store names the private `Android/data` path |
@@ -1724,6 +1724,59 @@ is why one phone in the field showed it and the bench Mi 9 Lite never did. The O
 from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
 never touched the ceiling — which is why BLE installs were never affected by this.
 
+### App 2.0.2/68 — Android 10 can open the folder after all (`versionCode` 67 → 68; firmware unchanged at 2.0.2)
+
+The entry below ended with Android 10 having "nothing to grant", and the app stopped offering those
+owners anything. That was wrong, and the way it went wrong is worth writing down: the claim came from
+a true general sentence — `requestLegacyExternalStorage` does not apply to apps that *target* 30 and
+newer — applied to the wrong question. Scoped storage is decided by the **device's** Android version
+as well as the app's target, and an Android 10 device honours the flag whatever an app targets. Nobody
+looked at a device; the test suite asserted the conclusion, which is what a confident wrong answer
+sounds like from inside a JVM test.
+
+Measured on the bench, on the two devices this conversation is about, with an otherwise identical
+targetSdk-35 build carrying `android:requestLegacyExternalStorage="true"`:
+
+| Device | `appops get … LEGACY_STORAGE` | After the launch dialog was allowed |
+| --- | --- | --- |
+| Mi 9 Lite, Android 10 / MIUI 12 | `allow` | wrote `Documents/Dashboard++/trips/` |
+| Galaxy Tab A (SM-T590), Android 10 / One UI | `allow` | `Documents/` did not exist; the app created it, then wrote the folder |
+
+What changed:
+
+- **Manifest:** `WRITE_EXTERNAL_STORAGE` capped at `maxSdkVersion="29"` instead of 28, and
+  `android:requestLegacyExternalStorage="true"` added to `<application>`. Both are asserted by
+  `AppXmlWiringTest` — the cap, the flag, and the reason for each.
+- **`AppRoot.isGranted()`:** below API 30 it is the runtime permission **and**
+  `Environment.isExternalStorageLegacy()`. The legacy check is read, not assumed: an install can
+  inherit a scoped state (an upgrade from a build without the flag, or an OEM policy), and holding the
+  permission in that state buys nothing — the probe would turn into a `SecurityException` on the
+  recorder's path instead of the private folder the UI explains.
+- **`AppRoot.grantPath()`:** `GrantPath.NONE` is gone. The enum is `ALL_FILES` / `RUNTIME_PERMISSION`
+  and the line between them is API 30, which is where the platform draws both of its switches.
+- **`MainActivity`:** the launch ask runs through `Q`, so an Android 10 owner is asked once, on the
+  first launch, the same way an Android 8.1 owner is.
+- **The Storage card:** the button came back, and it is there on *every* version now. It had been
+  hidden below API 30, which also took away the control on Android 8.1 and 9 — where the runtime
+  permission always was the answer. Below API 30 it is labelled `ALLOW STORAGE` and raises the
+  system's dialog; `AppRoot.grantPath` decides the label and `StorageCopy` the sentences under it.
+- **`StorageCopy`:** the Android 10 sentences that described a dead end describe the ask instead
+  (*allow storage when the app asks*, *ALLOW STORAGE on the Storage card*), and the guard test that
+  used to forbid an Android 10 owner from ever seeing the words *grant* or *App Settings* now forbids
+  something true: promising an **All files** switch to a device that does not have one.
+
+The reading path showed up on the tablet for free: with the shared folder populated, the Trips header
+read `4 drives · 258 kB` over *CSV in Documents/Dashboard++/trips*, with
+*+ 3 drives from another folder: /storage/emulated/0/Android/data/…/files/trips* beneath it, and the
+one CSV that existed in both was counted once — the both-roots listing from 2.0.2/67 doing its job on
+a device that finally has two roots.
+
+**The trade, stated.** `WRITE_EXTERNAL_STORAGE` and `requestLegacyExternalStorage` are both
+Play-restricted for an app targeting 30+, and this app targets 35. That is the same trade already
+recorded for `MANAGE_EXTERNAL_STORAGE`: the app is built and sideloaded by its maintainer to the
+devices that run it, not published. If that changes, these three things — the attribute, the cap, and
+the Android 10 branch of `AppRoot.isGranted` — are one decision, not three.
+
 ### App 2.0.2/67 — the app stops promising a switch Android 10 does not have (Android app only, `versionCode` 66 → 67; firmware unchanged at 2.0.2)
 
 On a bench Mi 9 Lite (Android 10, MIUI 12) the **Storage** card offered `GRANT STORAGE ACCESS`, the
@@ -1733,6 +1786,8 @@ either. Android 10 has no All files access — `MANAGE_EXTERNAL_STORAGE` arrived
 button landed on an app-info page whose only entries were AUTO-START, Displays and Manage Space.
 The copy was not a hint that had failed to land; it was a control that could not exist, written for
 the half of the fleet that has it. Same sentence, three devices, two of them true.
+
+> **Corrected by 2.0.2/68 below.** One claim in this entry was read off documentation and never measured: `requestLegacyExternalStorage` does *not* "do nothing for an app that targets 35" - it is inert only from Android 11 up, and on an Android 10 device it makes the storage permission enough. The button taken away from Android 10 is back (as `ALLOW STORAGE`, and on 8.1/9, where it had also been hidden), and the folder these owners were told they could not have is one tap away.
 
 The version cannot be changed from inside the app, so it became a parameter: `AppRoot.grantPath(
 sdkInt)` answers `ALL_FILES` (API 30+), `RUNTIME_PERMISSION` (API ≤ 28, where a dialog can ask) or

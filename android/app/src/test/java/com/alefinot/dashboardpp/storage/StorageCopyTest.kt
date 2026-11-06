@@ -3,7 +3,6 @@ package com.alefinot.dashboardpp.storage
 import com.alefinot.dashboardpp.storage.AppRoot.GrantPath
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -11,33 +10,48 @@ import java.io.File
 /**
  * What the app is allowed to promise, per Android version.
  *
- * The bug this pins: on an Android 10 tablet the Storage card offered "GRANT STORAGE ACCESS" and
- * the Trips header said "grant storage access in App Settings". Android 10 has no All files access
- * (it arrived in API 30) and `requestLegacyExternalStorage` stopped applying to an app targeting
- * 30+, so the button opened an App-info page with no storage entry (measured: a Mi 9 on MIUI 12
- * offers AUTO-START, Displays and Manage Space) and the owner hunted for a switch that had never
- * existed. Same sentence, three devices, two of them true.
+ * The bug this was written for: on an Android 10 tablet the Storage card offered "GRANT STORAGE
+ * ACCESS" and the Trips header said "grant storage access in App Settings". Android 10 has no All
+ * files access (it arrived in API 30), so the button opened an App-info page with no storage entry
+ * (measured: a Mi 9 on MIUI 12 offers AUTO-START, Displays and Manage Space) and the owner hunted
+ * for a switch that had never existed. Same sentence, three devices, two of them true.
  *
- * The version cannot be changed inside this process, so the version is a parameter
- * ([AppRoot.grantPath]) and the wording is a pure function of it ([StorageCopy]). A real device
- * still has to be looked at once — but the sentence that was wrong is now wrong on purpose, in a
- * test, before it is on anyone's screen.
+ * **This file also carries the story of being wrong about the other half.** It asserted for a while
+ * that Android 10 was a dead end - `GrantPath.NONE`, "neither way works there" - on the strength of
+ * a general sentence about `requestLegacyExternalStorage` not applying to apps that target 30+.
+ * That sentence holds for Android 11 and newer devices and not for Android 10 devices, and nobody
+ * looked at a device to find out: on a Mi 9 Lite (MIUI 12) and a Galaxy Tab A, both on Android 10,
+ * a targetSdk-35 install carrying the flag reports `LEGACY_STORAGE: allow`, gets the storage
+ * dialog, and then creates and writes `Documents/Dashboard++/trips`. A test can be green,
+ * well-argued, and cost an owner a folder they could have had for one tap.
+ *
+ * So the assertions here are pinned to measurements rather than to recollection, and where the
+ * wording of an Android 11+ device is concerned nothing has changed: what the app may promise is
+ * still decided by the version, as a parameter ([AppRoot.grantPath]) with the sentences as pure
+ * functions of it ([StorageCopy]).
  */
 class StorageCopyTest {
 
     // ---------------------------------------------------------------- the version decides
 
     @Test
-    fun `android 8 and 9 are the runtime-permission path`() {
+    fun `android 8_1 through 10 are the runtime-permission path`() {
+        assertEquals(GrantPath.RUNTIME_PERMISSION, AppRoot.grantPath(26))
         assertEquals(GrantPath.RUNTIME_PERMISSION, AppRoot.grantPath(27))
         assertEquals(GrantPath.RUNTIME_PERMISSION, AppRoot.grantPath(28))
+        // Android 10 measures as a runtime-permission device, not a dead end: the flag in the
+        // manifest is honoured there whatever this app targets, so WRITE_EXTERNAL_STORAGE opens
+        // public Documents. Bench, 2026-11-06, two OEMs; see AppRoot.isGranted.
+        assertEquals(GrantPath.RUNTIME_PERMISSION, AppRoot.grantPath(29))
     }
 
     @Test
-    fun `android 10 is the dead end`() {
-        // Neither way works there: no All files access yet, and legacy storage is opt-out only for
-        // apps that target 29. This assertion is the whole reason StorageCopy exists.
-        assertEquals(GrantPath.NONE, AppRoot.grantPath(29))
+    fun `the line between the two ways in is api 30`() {
+        // Exactly where the platform draws it: All files access is invented in Android 11, and the
+        // same release is where requestLegacyExternalStorage stops being honoured. Both switches
+        // flip on the same number, so this is the only line worth pinning.
+        assertEquals(GrantPath.RUNTIME_PERMISSION, AppRoot.grantPath(29))
+        assertEquals(GrantPath.ALL_FILES, AppRoot.grantPath(30))
     }
 
     @Test
@@ -63,38 +77,42 @@ class StorageCopyTest {
     // ---------------------------------------------------------------- the button
 
     @Test
-    fun `the storage card offers a button only where there is something to open`() {
+    fun `every android version's card offers the door that version has`() {
         assertEquals("STORAGE ACCESS GRANTED", StorageCopy.grantButton(true, GrantPath.ALL_FILES))
+        assertEquals("STORAGE ACCESS GRANTED", StorageCopy.grantButton(true, GrantPath.RUNTIME_PERMISSION))
+        // Android 11+: a settings page to hand them.
         assertEquals("GRANT STORAGE ACCESS", StorageCopy.grantButton(false, GrantPath.ALL_FILES))
-        // Android 10: no switch. Not a disabled button either — a control that does nothing reads
-        // as broken hardware, while no control at all reads as "not offered here".
-        assertNull(StorageCopy.grantButton(false, GrantPath.NONE))
-        // Android 9: the switch is not in App settings, it is a dialog at startup.
-        assertNull(StorageCopy.grantButton(false, GrantPath.RUNTIME_PERMISSION))
+        // Android 8.1-10: no page, but the app can raise the system's dialog itself. Saying
+        // "ALLOW" rather than "GRANT" is the difference between the two verbs the owner is about to
+        // perform, and this button used to be missing here entirely.
+        assertEquals("ALLOW STORAGE", StorageCopy.grantButton(false, GrantPath.RUNTIME_PERMISSION))
     }
 
     // ---------------------------------------------------------------- the sentences
 
     @Test
-    fun `no sentence points an android 10 owner at a switch`() {
-        for (text in android10Sentences()) {
+    fun `no runtime-path sentence points at an all files switch`() {
+        // The guard survives the fix, only narrower and true: below API 30 there is no All files
+        // access, so a sentence that sends an Android 8.1-10 owner hunting for one is still a lie.
+        // What those sentences may do is name the card they are standing on.
+        for (text in runtimeSentences()) {
             val lowered = text.lowercase()
-            val promises = listOf("grant storage", "app settings", "app info", "all files")
+            val promises = listOf("all files", "app info", "grant storage access")
                 .filter { lowered.contains(it) }
             assertTrue(
-                "Android 10 has nothing to grant, but the app says: \"$text\"",
+                "There is no All files access below API 30, but the app says: \"$text\"",
                 promises.isEmpty(),
             )
         }
     }
 
     @Test
-    fun `the android 10 sentences still say where the files are`() {
-        // Honest degradation, not silence: the owner still needs to know the files exist inside
-        // the app, and that the app's own Share buttons are how they get out.
-        val notes = android10Sentences()
+    fun `the runtime-path sentences say where the files are and how to move them`() {
+        // Degradation, stated - and unlike the Android 11+ copy, the fix here is inside the app:
+        // the owner can act on these sentences without leaving for a settings page.
+        val notes = runtimeSentences()
         assertTrue(notes.any { it.contains("app's own folder") })
-        assertTrue(notes.any { it.contains("Share") })
+        assertTrue(notes.any { it.contains("allow") })
     }
 
     @Test
@@ -114,22 +132,29 @@ class StorageCopyTest {
     }
 
     @Test
-    fun `android 9 is told to allow the permission rather than hunt for a switch`() {
+    fun `the runtime path is told to allow the permission rather than hunt for a switch`() {
         val note = StorageCopy.storageNote(false, GrantPath.RUNTIME_PERMISSION)
         assertTrue(note, note.contains("asks for storage permission"))
+        // The card's own button has to be named in the sentence under it, or the owner reads the
+        // sentence, sees no control it describes, and concludes the app is broken.
+        assertTrue(note, note.contains("ALLOW STORAGE"))
         assertTrue(
             StorageCopy.tripsNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
                 .contains("allow storage"),
+        )
+        assertTrue(
+            StorageCopy.tripFileNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
+                .contains("ALLOW STORAGE"),
         )
     }
 
     @Test
     fun `a granted card and a granted trip both name the shared folder`() {
-        val note = StorageCopy.tripsNote(true, GrantPath.NONE, "Documents/Dashboard++", "trips")
+        val note = StorageCopy.tripsNote(true, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
         assertTrue(note, note.contains("Documents/Dashboard++/trips"))
         // The file's own location, not the app's capability: a drive recorded while the grant was
         // on stays where it was written after it is revoked.
-        val file = StorageCopy.tripFileNote(true, GrantPath.NONE, "Documents/Dashboard++", "trips")
+        val file = StorageCopy.tripFileNote(true, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
         assertTrue(file, file.contains("Documents/Dashboard++/trips/"))
     }
 
@@ -152,10 +177,11 @@ class StorageCopyTest {
         )
     }
 
-    private fun android10Sentences(): List<String> = listOf(
-        StorageCopy.storageNote(false, GrantPath.NONE),
-        StorageCopy.tripsNote(false, GrantPath.NONE, "Documents/Dashboard++", "trips"),
-        StorageCopy.tripFileNote(false, GrantPath.NONE, "Documents/Dashboard++", "trips"),
+    /** Everything the app says out loud on a device where the answer is the storage permission. */
+    private fun runtimeSentences(): List<String> = listOf(
+        StorageCopy.storageNote(false, GrantPath.RUNTIME_PERMISSION),
+        StorageCopy.tripsNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips"),
+        StorageCopy.tripFileNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips"),
     )
 
     private fun mainSources(): List<File> {

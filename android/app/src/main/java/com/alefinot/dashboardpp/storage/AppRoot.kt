@@ -18,12 +18,13 @@ import java.io.File
  * so the recorder, the Trips tab, the photo store and the garage cannot disagree
  * about where a drive is.
  *
- * **Why not always the shared folder.** Writing to public Documents needs *All
- * files access* (`MANAGE_EXTERNAL_STORAGE`), which no dialog can request — it is a
- * settings page the owner has to open (the Storage card in `ui/screens/SettingsScreen.kt`
- * jumps to it). Until they do, and on a device where the platform will not give the
- * grant at all, the app would throw on every sample if the shared root were the only
- * answer. So the degraded path stays: files move into
+ * **Why not always the shared folder.** Writing to public Documents needs a grant this app
+ * cannot hand itself: on Android 11+ it is *All files access* (`MANAGE_EXTERNAL_STORAGE`), which
+ * no dialog can request — it is a settings page the owner has to open (the Storage card in
+ * `ui/screens/SettingsScreen.kt` jumps to it); on Android 8.1 through 10 it is the storage
+ * permission, which the app can ask for and the owner can still refuse. Until they agree, and on
+ * a device where the platform will not give the grant at all, the app would throw on every sample
+ * if the shared root were the only answer. So the degraded path stays: files move into
  * `Android/data/<pkg>/files/`, the UI says so, and a drive is still a drive.
  *
  * **Why the folder is not simply the media store.** Card photos are records of
@@ -131,60 +132,84 @@ object AppRoot {
      *   grants on a settings page — `Environment.isExternalStorageManager()`. The
      *   permission is declared in the manifest but declaring it grants nothing;
      *   `checkSelfPermission` does not report this one, so it cannot be the test.
-     * - **API ≤28 (Android 8/9):** scoped storage does not exist on those devices
-     *   at all — it applies to apps running on Android 10 and up — so the ordinary
-     *   runtime `WRITE_EXTERNAL_STORAGE`, requested by [com.alefinot.dashboardpp.MainActivity],
-     *   is what makes public Documents writable. That is why the manifest caps the
-     *   permission at `maxSdkVersion="28"`: it does nothing on a newer device and
-     *   the permission list is a statement about what the app does.
-     * - **API 29 (Android 10):** neither way works. All files access was not
-     *   invented yet, and legacy storage is opt-out only for apps targeting 29,
-     *   which this one no longer does. Android 10 devices keep the app-private
-     *   folder, with the UI saying so.
+     * - **API 26-29 (Android 8.1 through 10):** the ordinary runtime
+     *   `WRITE_EXTERNAL_STORAGE`, asked by [com.alefinot.dashboardpp.MainActivity] at first
+     *   launch. On 8.1/9 that is the whole story — scoped storage does not exist on those
+     *   devices, because it applies to apps running on Android 10 and up. On Android 10 it works
+     *   as well, because this app opts out of scoped storage with
+     *   `android:requestLegacyExternalStorage` (see the manifest) and Android 10 honours that
+     *   flag whatever an app targets: measured 2026-11-06 on a Mi 9 Lite (MIUI 12) and a Galaxy
+     *   Tab A at `targetSdk 35`, both reported `LEGACY_STORAGE: allow` after install, and once
+     *   the launch dialog was allowed both created and wrote `Documents/Dashboard++/trips` — on
+     *   the tablet, where `Documents/` did not exist at all, the app made it. That flag is inert
+     *   on Android 11 devices, which is exactly where the first case takes over, and
+     *   [usesLegacyStorage] is what keeps the two from blurring into each other.
+     *
+     * The manifest caps the permission at `maxSdkVersion="29"` for the same reason: past API 29
+     * it grants nothing to this app, and the permission list is a statement about what the app
+     * does.
      */
     fun isGranted(context: Context): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
-        } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
-                PackageManager.PERMISSION_GRANTED
         } else {
-            false
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED && usesLegacyStorage()
+        }
+
+    /**
+     * Whether the volume is showing this process the pre-scoped, flat view of external storage.
+     *
+     * On API 26-28 it always is. On API 29 it is the answer to the manifest flag, and it is read
+     * rather than assumed for the same reason [sharedRootFor] probes the folder: an install can
+     * end up non-legacy anyway (an upgrade from a build that carried no flag, or an OEM applying
+     * its own policy), and holding `WRITE_EXTERNAL_STORAGE` in that state buys nothing — every
+     * write into public Documents throws. Reading it costs one call and turns a mystery
+     * `SecurityException` into the app-private folder the UI already explains.
+     */
+    private fun usesLegacyStorage(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Deprecated in API 30, where it is never reached: from there the question is
+            // isExternalStorageManager() and this app's flag is inert.
+            @Suppress("DEPRECATION")
+            runCatching { Environment.isExternalStorageLegacy() }.getOrDefault(false)
+        } else {
+            true
         }
 
     /**
      * Whether this Android version has anything to *ask* for. [isGranted] answers whether the
      * shared folder is open; a button has to answer the other question — is there a switch to
-     * flip — and on some versions there is not.
+     * flip, and where does it live.
      *
-     * **API 29 is the empty case, and it is not an oversight.** All files access was invented in
-     * Android 11, and `requestLegacyExternalStorage` stopped applying to any app targeting 30 or
-     * later — so an Android 10 device can be given neither way in. Measured on the bench Mi 9
-     * (MIUI 12, API 29): `Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION` throws there, so
-     * the app falls back to its own App-info page, and that page offers AUTO-START, Displays and
-     * Manage Space — **no storage entry**. A button that opens it is a dead end with a label.
+     * Two rows, because there are two ways in. Android 10 belongs in the runtime-permission row:
+     * it has no All files access (that arrived in API 30), but it still honours this app's
+     * `requestLegacyExternalStorage` flag, so the storage permission is enough there — measured on
+     * two Android 10 devices, see [isGranted]. The reading this replaced, that API 29 had "nothing
+     * to grant", came from trusting a general sentence about `targetSdk >= 30` rather than looking
+     * at a device, and it cost an owner a folder they could have had.
      */
     enum class GrantPath {
-        /** Android 11+ (API 30+): the owner can grant All files access. */
+        /** Android 11+ (API 30+): the owner can grant All files access on a settings page. */
         ALL_FILES,
 
-        /** Android 8.1/9 (API ≤28): the runtime `WRITE_EXTERNAL_STORAGE`, asked at startup. */
+        /**
+         * Android 8.1 through 10 (API ≤29): the runtime `WRITE_EXTERNAL_STORAGE`, asked at
+         * first launch and re-askable from the Storage card.
+         */
         RUNTIME_PERMISSION,
-
-        /** Android 10 (API 29): nothing to grant. The app's own folder is the whole story. */
-        NONE,
     }
 
     /**
      * Which of those this SDK level is. A parameter rather than [Build.VERSION.SDK_INT] on
      * purpose: this branch is the reason the Android 10 story is what it is, and a unit test can
-     * walk all three rows of it while this process runs on one.
+     * walk both rows of it while this process runs on one.
+     *
+     * The line is API 30 and nowhere else, matching the platform: All files access was introduced
+     * there, and `requestLegacyExternalStorage` stops being honoured on Android 11 devices there.
      */
-    fun grantPath(sdkInt: Int): GrantPath = when {
-        sdkInt >= Build.VERSION_CODES.R -> GrantPath.ALL_FILES
-        sdkInt <= Build.VERSION_CODES.P -> GrantPath.RUNTIME_PERMISSION
-        else -> GrantPath.NONE
-    }
+    fun grantPath(sdkInt: Int): GrantPath =
+        if (sdkInt >= Build.VERSION_CODES.R) GrantPath.ALL_FILES else GrantPath.RUNTIME_PERMISSION
 
     /** The folder a drive's CSVs land in, created if it is missing. Never null. */
     fun tripsDir(context: Context): File = ensureDir(tripsDirIn(base(context)))

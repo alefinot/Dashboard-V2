@@ -187,10 +187,16 @@ class AppXmlWiringTest {
      * `MANAGE_EXTERNAL_STORAGE` is what opens `Documents/Dashboard++`; without the declaration
      * the settings page the app jumps to has no switch for this app, and the app degrades to its
      * private folder forever while its Storage card offers a button that cannot work. The legacy
-     * permission is asserted *with its cap*: scoped storage applies to apps running on Android 10
-     * and up, so on 8/9 that permission is the only answer, but on 30+ it is a promise the
-     * listing makes and nothing reads - which is the same reason the dropped Wi-Fi permissions
-     * above are asserted absent.
+     * permission is asserted *with its cap*: scoped storage applies by default to apps that target
+     * Android 10 and up, so the cap sits at 29 - on Android 10 the legacy opt-out below makes this
+     * permission the whole answer, and on API 30+ it grants nothing further and would be a promise
+     * the listing makes that nothing reads (the same reason the dropped Wi-Fi permissions above are
+     * asserted absent).
+     *
+     * `requestLegacyExternalStorage` is asserted because the cap is only half of it: without the
+     * flag an Android 10 device is scoped, `WRITE_EXTERNAL_STORAGE` buys nothing there, and the
+     * app's Android 10 branch of [com.alefinot.dashboardpp.storage.AppRoot.isGranted] would be a
+     * claim nothing backs up. Both halves were measured on a Mi 9 Lite and a Galaxy Tab A.
      */
     @Test
     fun `the manifest declares the storage access the app actually uses`() {
@@ -207,10 +213,17 @@ class AppXmlWiringTest {
         val legacy = Regex("uses-permission[^>]*android\\.permission\\.WRITE_EXTERNAL_STORAGE[^>]*>")
             .find(manifest)
         assertTrue(
-            "WRITE_EXTERNAL_STORAGE must carry maxSdkVersion=\"28\": on Android 10+ it grants " +
-                "nothing to this app, and an uncapped declaration is a permission the listing " +
-                "still promises to users whose devices ignore it",
-            legacy != null && legacy.value.contains("maxSdkVersion=\"28\""),
+            "WRITE_EXTERNAL_STORAGE must carry maxSdkVersion=\"29\": it is the answer on Android " +
+                "8.1 through 10 (Android 10 because of requestLegacyExternalStorage, asserted just " +
+                "below) and grants nothing from Android 11 up, where an uncapped declaration would " +
+                "be a permission the listing still promises to users whose devices ignore it",
+            legacy != null && legacy.value.contains("maxSdkVersion=\"29\""),
+        )
+        assertTrue(
+            "the manifest must carry android:requestLegacyExternalStorage=\"true\": without it an " +
+                "Android 10 device runs this app scoped, the storage permission opens nothing, and " +
+                "AppRoot.isGranted's Android 10 branch quietly always answers false",
+            "android:requestLegacyExternalStorage=\"true\"" in manifest,
         )
     }
 

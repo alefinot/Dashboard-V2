@@ -32,18 +32,22 @@ class MainActivity : ComponentActivity() {
      * not required to record — only to show why recording is running — so the
      * app behaves the same when the user refuses.
      *
-     * WRITE_EXTERNAL_STORAGE rides along on Android 8/9, where it is what makes
-     * `Documents/Dashboard++` writable at all (see [AppRoot.isGranted] for why it is
-     * the only way on those API levels, and why nothing can be asked on 29+).
-     * Refusing it changes nothing about whether a drive is recorded: the files land
-     * in the app-private folder and the Storage card says so, which is the same
-     * degraded path a 29+ device without All files access takes. That page, not this
-     * dialog, is where a 29+ owner goes - `MANAGE_EXTERNAL_STORAGE` is a special
-     * access and no code can bring the dialog up for it.
+     * WRITE_EXTERNAL_STORAGE rides along on Android 8.1 through 10, where it is what makes
+     * `Documents/Dashboard++` writable at all: on 8.1/9 because scoped storage does not exist,
+     * on Android 10 because this app opts out of it with `requestLegacyExternalStorage` (see
+     * [AppRoot.isGranted] for the measurements, and for why the ask stops at API 29). Refusing it
+     * changes nothing about whether a drive is recorded: the files land in the app-private folder
+     * and the Storage card says so, which is the same degraded path a 11+ device without All
+     * files access takes. From Android 11 that page, not this dialog, is where an owner goes -
+     * `MANAGE_EXTERNAL_STORAGE` is a special access and no code can bring the dialog up for it.
+     *
+     * The result is not looked at: the recorder runs either way, and because [AppRoot] re-decides
+     * which folder to write into on every lookup, an Allow that arrives after launch takes effect
+     * on the next write rather than at the next install.
      */
     private val permissionRequests = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* granted or not: the recorder runs either way */ }
+    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,10 +96,11 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) permissionRequests.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        // The two asks never overlap an API level: notifications are 33+ and this is
-        // 8/9 only, so the single launcher is never asked to hold two permissions at
-        // once. On Android 10-12 neither fires and nothing is shown at launch.
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && !AppRoot.isGranted(this)) {
+        // The two asks never overlap an API level: notifications are 33+ and this one is Android
+        // 8.1 through 10 only, so the single launcher is never asked to hold two permissions at
+        // once. From Android 11 neither fires and nothing is shown at launch - All files access
+        // has no dialog to raise, and the Storage card is how an owner gets to its page.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q && !AppRoot.isGranted(this)) {
             permissionRequests.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }

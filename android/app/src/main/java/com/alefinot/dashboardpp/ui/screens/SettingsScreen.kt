@@ -318,10 +318,11 @@ fun SettingsScreen(
         LaunchedEffect(storageTick) {
             storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
         }
-        // Android 8/9 only: there, the ordinary runtime permission is what makes Documents
-        // writable at all, and this is the page the owner is standing on if the dialog at
-        // launch went unanswered. Nothing like it can be asked on 29+ - All files access
-        // is a special access and no code can bring its page up for them.
+        // Android 8.1 through 10: there, the ordinary runtime permission is what makes Documents
+        // writable at all, and this is the page the owner is standing on if the dialog at launch
+        // went unanswered or was declined. From Android 11 nothing like it can be asked - All
+        // files access is a special access and no code can bring its page up for them, only hand
+        // them the page.
         val legacyStorageAsk = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { storageTick++ }
@@ -329,7 +330,7 @@ fun SettingsScreen(
             StorageCard(
                 snapshot = snap,
                 onGrant = {
-                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
                         legacyStorageAsk.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     } else {
                         openStorageGrantScreen(context)
@@ -501,26 +502,27 @@ private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
             )
         }
         Spacer(Modifier.height(10.dp))
-        // The button only when this Android version has a switch behind it. Below API 30 there is
-        // nothing to open (`AppRoot.GrantPath`), and a button that lands on an App-info page with
-        // no storage entry — which is what MIUI 12 on Android 10 shows — is worse than no button.
-        StorageCopy.grantButton(snapshot.shared, AppRoot.grantPath(Build.VERSION.SDK_INT))?.let { label ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.heightIn(min = 44.dp)) {
-                    // Already granted is said, not offered: a button that does nothing looks
-                    // like a button that is broken, and the honest state is the one thing this
-                    // card can prove.
-                    HudButton(
-                        label,
-                        style = HudButtonStyle.SECONDARY,
-                        enabled = !snapshot.shared,
-                    ) { onGrant() }
-                }
+        // Every Android version gets the button, because every one has a way in
+        // (`AppRoot.GrantPath`); the version decides what it does. Hiding it below API 30 - as
+        // this card did, on the theory that Android 10 has nothing to offer - hid the only control
+        // that works there, while the sentence above it went on describing a folder the owner
+        // could have had for one tap.
+        val grantPath = AppRoot.grantPath(Build.VERSION.SDK_INT)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.heightIn(min = 44.dp)) {
+                // Already granted is said, not offered: a button that does nothing looks
+                // like a button that is broken, and the honest state is the one thing this
+                // card can prove.
+                HudButton(
+                    StorageCopy.grantButton(snapshot.shared, grantPath),
+                    style = HudButtonStyle.SECONDARY,
+                    enabled = !snapshot.shared,
+                ) { onGrant() }
             }
-            Spacer(Modifier.height(10.dp))
         }
+        Spacer(Modifier.height(10.dp))
         Text(
-            StorageCopy.storageNote(snapshot.shared, AppRoot.grantPath(Build.VERSION.SDK_INT)),
+            StorageCopy.storageNote(snapshot.shared, grantPath),
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )
