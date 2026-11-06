@@ -10,6 +10,13 @@ compile_commands.json
 
 # Local-only: implementation plans never get committed/pushed
 Implementation plans/
+
+# Bench scratch from the phone attached while working: screenshots, `uiautomator`
+# dumps, logcat captures, and the throwaway files a storage test needs (a corrupt
+# `vehicles.json`, a copy of the garage pulled off the device before touching it).
+# Evidence for one session's question, not project content - and one of these files
+# holds someone's real garage, so it stays out of the pushed history by design.
+device-logs/
 __pycache__/
 *.pyc
 
