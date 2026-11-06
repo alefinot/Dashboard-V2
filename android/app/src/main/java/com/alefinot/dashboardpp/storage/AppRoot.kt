@@ -152,8 +152,51 @@ object AppRoot {
             false
         }
 
+    /**
+     * Whether this Android version has anything to *ask* for. [isGranted] answers whether the
+     * shared folder is open; a button has to answer the other question — is there a switch to
+     * flip — and on some versions there is not.
+     *
+     * **API 29 is the empty case, and it is not an oversight.** All files access was invented in
+     * Android 11, and `requestLegacyExternalStorage` stopped applying to any app targeting 30 or
+     * later — so an Android 10 device can be given neither way in. Measured on the bench Mi 9
+     * (MIUI 12, API 29): `Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION` throws there, so
+     * the app falls back to its own App-info page, and that page offers AUTO-START, Displays and
+     * Manage Space — **no storage entry**. A button that opens it is a dead end with a label.
+     */
+    enum class GrantPath {
+        /** Android 11+ (API 30+): the owner can grant All files access. */
+        ALL_FILES,
+
+        /** Android 8.1/9 (API ≤28): the runtime `WRITE_EXTERNAL_STORAGE`, asked at startup. */
+        RUNTIME_PERMISSION,
+
+        /** Android 10 (API 29): nothing to grant. The app's own folder is the whole story. */
+        NONE,
+    }
+
+    /**
+     * Which of those this SDK level is. A parameter rather than [Build.VERSION.SDK_INT] on
+     * purpose: this branch is the reason the Android 10 story is what it is, and a unit test can
+     * walk all three rows of it while this process runs on one.
+     */
+    fun grantPath(sdkInt: Int): GrantPath = when {
+        sdkInt >= Build.VERSION_CODES.R -> GrantPath.ALL_FILES
+        sdkInt <= Build.VERSION_CODES.P -> GrantPath.RUNTIME_PERMISSION
+        else -> GrantPath.NONE
+    }
+
     /** The folder a drive's CSVs land in, created if it is missing. Never null. */
     fun tripsDir(context: Context): File = ensureDir(tripsDirIn(base(context)))
+
+    /**
+     * The `trips/` folder under the **private** root, whatever the grant says. Only
+     * for readers: the recorder uses [tripsDir], which follows the grant. The Trips
+     * list asks for both because a drive recorded while the grant was on the other
+     * side is still the owner's file, and hiding it on a permission change reads as
+     * lost data (shared storage plan §5).
+     */
+    fun privateTripsDir(context: Context): File = ensureDir(tripsDirIn(privateRoot(context)))
 
     /** The folder a card's JPEG lands in, created if it is missing. Never null. */
     fun vehiclesDir(context: Context): File = ensureDir(vehiclesDirIn(base(context)))
@@ -185,15 +228,25 @@ object AppRoot {
      * can no longer open. Cheap — it is a check and a `mkdirs()` on a path that
      * already exists.
      */
-    private fun base(context: Context): File {
-        val app = context.applicationContext
-        return baseFor(
-            sharedRootFor(isGranted(app), documentsRoot(app), ::ensureDirOrNull),
-            // getExternalFilesDir returns null when the volume is not mounted;
-            // internal storage always is. The chain is why baseFor needs no null.
-            app.getExternalFilesDir(null) ?: app.filesDir,
+    private fun base(context: Context): File =
+        baseFor(
+            sharedRootFor(
+                isGranted(context.applicationContext),
+                documentsRoot(context),
+                ::ensureDirOrNull,
+            ),
+            privateRoot(context),
         )
-    }
+
+    /**
+     * The app's own external folder — the root that never needs a permission. Public so the
+     * Trips list can read the drives left there ([privateTripsDir]); nothing else should
+     * pick a root by hand, which is the whole reason [base] exists.
+     */
+    fun privateRoot(context: Context): File =
+        // getExternalFilesDir returns null when the volume is not mounted;
+        // internal storage always is. The chain is why baseFor needs no null.
+        context.applicationContext.getExternalFilesDir(null) ?: context.applicationContext.filesDir
 
     /** mkdirs, tolerating a directory that already exists or a volume that refuses. */
     private fun ensureDir(f: File): File {

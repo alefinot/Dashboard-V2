@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.storage.AppRoot
+import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
@@ -203,13 +204,10 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
         // shared: the share sheet opens the file in that folder, so the folder is the thing
         // worth knowing. Only the CSV — the GPX is built for the occasion and lives in the cache.
         Text(
-            if (sharedStorage) {
-                "The CSV is shared from ${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}/ " +
-                    "itself; no copy is made to share."
-            } else {
-                "The CSV is shared from the app's own folder, because storage access was never " +
-                    "granted — App Settings can change that."
-            },
+            StorageCopy.tripFileNote(
+                sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
+                AppRoot.sharedRootLabel(), AppRoot.TRIPS,
+            ),
             color = HudColors.TextDim,
             style = MaterialTheme.typography.bodySmall,
         )

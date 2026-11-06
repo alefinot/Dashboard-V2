@@ -42,6 +42,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.storage.AppRoot
+import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import androidx.compose.runtime.rememberCoroutineScope
@@ -476,7 +477,7 @@ private class StorageSnapshot(
  */
 @Composable
 private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
-    val counts = "\u00b7 ${snapshot.tripFiles} trip files \u00b7 ${snapshot.cars} cars" +
+    val counts = "\u00b7 ${StorageCopy.tripFiles(snapshot.tripFiles)} \u00b7 ${StorageCopy.cars(snapshot.cars)}" +
         (if (snapshot.freeBytes >= 0) " \u00b7 ${hudBytes(snapshot.freeBytes)} free" else "")
     Column(
         Modifier.fillMaxWidth().hudCard()
@@ -500,30 +501,26 @@ private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
             )
         }
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.heightIn(min = 44.dp)) {
-                // Already granted is said, not offered: a button that does nothing looks
-                // like a button that is broken, and the honest state is the one thing this
-                // card can prove.
-                HudButton(
-                    if (snapshot.shared) "STORAGE ACCESS GRANTED" else "GRANT STORAGE ACCESS",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = !snapshot.shared,
-                ) { onGrant() }
+        // The button only when this Android version has a switch behind it. Below API 30 there is
+        // nothing to open (`AppRoot.GrantPath`), and a button that lands on an App-info page with
+        // no storage entry — which is what MIUI 12 on Android 10 shows — is worse than no button.
+        StorageCopy.grantButton(snapshot.shared, AppRoot.grantPath(Build.VERSION.SDK_INT))?.let { label ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.heightIn(min = 44.dp)) {
+                    // Already granted is said, not offered: a button that does nothing looks
+                    // like a button that is broken, and the honest state is the one thing this
+                    // card can prove.
+                    HudButton(
+                        label,
+                        style = HudButtonStyle.SECONDARY,
+                        enabled = !snapshot.shared,
+                    ) { onGrant() }
+                }
             }
+            Spacer(Modifier.height(10.dp))
         }
-        Spacer(Modifier.height(10.dp))
         Text(
-            if (snapshot.shared) {
-                "Trip logs, card photos and the garage live in that folder — open it in a " +
-                    "file manager, copy it off over USB, or delete a bad drive from it by " +
-                    "hand. Revoking the access sends them back to the app's own folder " +
-                    "rather than deleting anything."
-            } else {
-                "Trip logs, card photos and the garage are in the app's own folder, which no " +
-                    "file manager shows and no USB copy sees. Grant storage access to save " +
-                    "where you can see it."
-            },
+            StorageCopy.storageNote(snapshot.shared, AppRoot.grantPath(Build.VERSION.SDK_INT)),
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )

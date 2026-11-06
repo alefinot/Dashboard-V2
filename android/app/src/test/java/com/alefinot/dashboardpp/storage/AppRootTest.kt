@@ -147,6 +147,21 @@ class AppRootTest {
     // ---- the folder name is spelled once ------------------------------------
 
     @Test
+    fun `the reader of the other root asks for the private root by name`() {
+        // TripStore lists both folders so a storage grant never hides a drive. Its second
+        // call has to be the *private* one — if it ever resolves through base(), both
+        // entries are the folder in use, the list silently stops showing old drives, and
+        // nothing fails. So the wiring is pinned, not the behaviour: this is the one place
+        // that may name the private root outside base().
+        val source = mainKotlinSources().first { it.name == "AppRoot.kt" }.text
+        val line = source.lineSequence().first { it.contains("fun privateTripsDir") }
+        assertTrue(
+            "privateTripsDir must resolve under privateRoot, not the granted base: $line",
+            line.contains("tripsDirIn(privateRoot(context))"),
+        )
+    }
+
+    @Test
     fun `the folder name is declared in exactly one place`() {
         // The constant is the single source of truth the tests and every caller read.
         // Two spellings is how a folder rename ends up half-applied - trips in the
