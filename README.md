@@ -65,6 +65,9 @@ to be understood in detail.
    - [Dashboard settings: the unit's page, drawn natively](#dashboard-settings-the-units-page-drawn-natively)
    - [Trip log: one file per power session, tagged with the card](#trip-log-one-file-per-power-session-tagged-with-the-card)
    - [Photos: pick, crop, one JPEG per vehicle](#photos-pick-crop-one-jpeg-per-vehicle)
+   - [The garage: one JSON file the owner can open](#the-garage-one-json-file-the-owner-can-open)
+   - [Storage: the folder the owner can open](#storage-the-folder-the-owner-can-open)
+   - [Sharing a drive](#sharing-a-drive)
    - [Building and testing the app](#building-and-testing-the-app)
 9. [Codebase Architecture & File Map](#codebase-architecture--file-map)
 10. [Build, Installation & Flashing Guide](#build-installation--flashing-guide)
@@ -869,10 +872,10 @@ Pages are composed lazily but kept warm once reached, and the pager distinguishe
 `vehicles/Vehicle.kt` is one record with two halves on purpose. The user's words - `name`, `type` (`CAR` / `MOTORCYCLE` / `OTHER`), `plate`, `maker`, `model`, `year` (a `String`: "c. 1998" and "1998/99" are answers a number field would throw away), `notes`, `photoFile` - are never written by a connect. The app's evidence about a physical unit - `mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion` - is never typed. Keeping them in one record is what lets a card mean *this dashboard* instead of *whatever answered at this address*.
 
 - `id` is app-generated and stable across renames (`v1`, `v2`, ...: the next free name, `VehicleStore.nextIdName`). Trip files tag themselves with it, so renaming a vehicle does not rewrite recorded history.
-- `photoFile` is a bare file name (`v1.jpg`) inside the store's vehicles directory, never an absolute path: the external files directory can move (adopted storage, a restore), and a persisted path would become a dead link. A missing JPEG reads as "no photo", and the record stays valid.
+- `photoFile` is a bare file name (`v1.jpg`) inside the garage's `vehicles/` directory, never an absolute path: the folder can change (a storage grant arriving, a restore, an app moved to adopted storage), and a persisted path would become a dead link. A missing JPEG reads as "no photo", and the record stays valid.
 - `bleAddress` is stored **exactly as Android reports it**, and is never derived from the eFuse MAC. The ESP32's Bluetooth address is not its base MAC, so deriving one invents an address that may belong to a different device. It is the phone's way back to a link, not an identity; `mac` stays the identity (see below).
 - The old `ips` list is gone. Records written before the change still decode (an unknown key is ignored, so an existing garage survives the upgrade), and the list is simply dropped the next time the record is written. One BLE address per card.
-- Storage is DataStore (`vehicle_store`): one JSON record per `vehicle:<id>` row plus the selected card and the card order. Sorting, the next-name rule and the codec are pure functions in `VehicleStore`'s companion so they can be argued about in tests (`VehicleCodecTest` — including the `ble` round-trip and a record that still carries `ips` — `VehicleOrderTest`, `VehicleMatchTest`).
+- Storage is one JSON document the owner can open: `Documents/Dashboard++/vehicles.json`, every card plus the card-id counter and the selected card, written whole through a `.tmp` and a rename (`vehicles/GarageFile.kt`). It used to be the `vehicle_store` preferences DataStore with one row per card. A file the app cannot parse is never written over. Sorting, the next-name rule and the per-record codec stay pure functions in `VehicleStore`'s companion so they can be argued about in tests (`VehicleCodecTest` — including the `ble` round-trip and a record that still carries `ips` — `VehicleOrderTest`, `VehicleMatchTest`, `GarageFileTest`).
 
 ### Identity: which dashboard belongs to which card
 
@@ -998,7 +1001,7 @@ Slot 3 draws the unit's configuration in Compose instead of loading the unit's w
 
 ### Trip log: one file per power session, tagged with the card
 
-Files land in `Android/data/com.alefinot.dashboardpp/files/trips/` named `trip-YYYYMMDD-HHMMSS-NNN.csv`, one per ESP power session: `up_s` going backwards, or the link ending, seals the drive and opens the next file. Format is a header line and one fixed 25-column line per sample (`trips/TripFormat.kt`), append-only, oldest first.
+Files land in `Documents/Dashboard++/trips/` - a real folder, visible in a file manager and over USB, because the owner asks for their drive logs by name and should not have to know what `Android/data` means (see *Storage: the folder the owner can open*). The name is `trip-YYYYMMDD-HHMMSS-NNN.csv`, one file per ESP power session: `up_s` going backwards, or the link ending, seals the drive and opens the next file. Format is a header line and one fixed 25-column line per sample (`trips/TripFormat.kt`), append-only, oldest first.
 
 Above the header, a file may carry one comment line naming whose drive it is:
 
@@ -1045,7 +1048,39 @@ The reverse rung is **Nominatim** (`nominatim.openstreetmap.org/reverse`, `zoom=
 
 ### Photos: pick, crop, one JPEG per vehicle
 
-The editor hands a picked image to `vehicles/PhotoCrop.kt`, which writes one JPEG per vehicle into `getExternalFilesDir()/vehicles` (`v1.jpg`); there is no separate thumbnail file. A camera capture is staged in the app's **cache** under `captures/` and handed to the camera app through `FileProvider` (authority `${applicationId}.fileprovider`), whose roots are declared in `res/xml/files_path.xml` (`exports/` for shared CSV/GPX, `captures/` for the scratch JPEG). The two names have to agree: `getUriForFile` throws for a file under no declared root, which the store reports as "no camera" rather than launching an intent for a picture nobody could read back - `AppXmlWiringTest` fails if either side drifts, and it also reads the manifest and the XML directly, in plain JVM, because there is no Robolectric in this project.
+The editor hands a picked image to `vehicles/PhotoCrop.kt`, which writes one JPEG per vehicle into `Documents/Dashboard++/vehicles/` (`v1.jpg`) - beside the drive logs, for the same reason; there is no separate thumbnail file. Every JPEG lands through a staged `.jpg.tmp` in the same folder and a rename onto the final name, with a `finally { delete() }` behind it: the target's parent is never created (a card with a photo whose folder vanished is a bug, not a state to write off), and a half-written file is never left where a reader could open it. A camera capture is staged in the app's **cache** under `captures/` and handed to the camera app through `FileProvider` (authority `${applicationId}.fileprovider`), whose roots are declared in `res/xml/files_path.xml` - `exports/` for the generated GPX, `captures/` for the scratch JPEG, `Documents/Dashboard++/trips/` and `trips/` for the CSVs, and `Documents/Dashboard++/vehicles/` so a card's picture sits under a declared root too, even though nothing hands one out today (see *Sharing a drive*). The names have to agree: `getUriForFile` throws for a file under no declared root, which the store reports as "no camera" rather than launching an intent for a picture nobody could read back - `AppXmlWiringTest` fails if either side drifts, and it also reads the manifest and the XML directly, in plain JVM, because there is no Robolectric in this project.
+
+Deleting a card deletes its JPEG, and the id that named it is never handed out again: card ids double as trip tags (`#vehicle=v1|...`), so a new vehicle wearing a dead card's id would inherit its drives.
+
+### The garage: one JSON file the owner can open
+
+Every vehicle card lives in one document, `Documents/Dashboard++/vehicles.json`, written by `vehicles/GarageFile.kt`:
+
+```json
+{"version":1,"nextSeq":7,"selectedId":"v3","vehicles":[ {"v":"v1","id":"v3", ... } ]}
+```
+
+It used to be a preferences DataStore - a `vehicle:<id>` row per card, plus `vehicle:last` and `vehicle:nextseq` - and the move is not decoration: the garage is now something the owner can back up, read and repair, in the same folder as their drive logs, and it is written by code that can be tested off-device. `VehicleCodec` is reused per record, unchanged, so a record means the same thing in either container. `nextSeq` is the card-id counter (its job is to survive a delete: a freed row never reissues its name), and `selectedId` is the card the garage opens on.
+
+**A file it cannot parse is never written to.** A truncated `vehicles.json`, a `version` this build does not know, two cards sharing an id, or one record that will not decode, reads as damage: the UI shows an empty garage (there is no safe way to draw a document the app does not understand), `put`/`delete`/`select` refuse, and the editor says so in one sentence that names the file - because the alternative, writing an empty garage over someone's cards to "fix" a typo, is the one failure a storage layer is not allowed to have. Bookkeeping is treated more gently than cards: a broken `nextSeq` restarts above the highest id in the file, and a `selectedId` naming a card that is not there simply selects nothing.
+
+Writes go through `<file>.tmp` and a rename, so a reader never sees half a garage, and a failed write leaves the previous file byte-for-byte in place - which is the only reason "nothing on disk changed" is a truthful sentence. The garage is process-wide state behind a `Mutex` (one in-memory copy, one writer), because `VehicleStore` is constructed by two ViewModels and two copies of a garage would be two writers overwriting each other's cards. `VehicleOrderTest` still tests ordering and id allocation as pure functions; `GarageFileTest` tests the format, the damage rules and the atomic writer against a real temporary folder.
+
+There is **no migration** from the old private store, and that was a decision, not an omission: the app has no way to tell "this user upgraded" from "this user cleared the folder on purpose", and silently copying an old garage into the shared one would overwrite cards the owner deleted on purpose. The upgrade path is to clear the app's data once, or to move `vehicles.json` in by hand.
+
+### Storage: the folder the owner can open
+
+`storage/AppRoot.kt` answers one question for the whole app - where do my files live - and everything else asks it. The answer is `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOCUMENTS)/Dashboard++/` (never a hardcoded `Documents`, which would break on a device whose public directory is mounted elsewhere), holding `trips/`, `vehicles/` and `vehicles.json`, all three named once in that file. When All files access is not granted, or the shared folder cannot be created, the same three names resolve under `getExternalFilesDir(null)` instead - the app's private folder, where writing is always allowed. The two roots are deliberately shaped alike so that switching is a matter of which root is named, and nothing in the app knows the private path: `AppRootTest` pins that parity, and a trip path carrying `Android/data` fails the suite.
+
+The grant is `MANAGE_EXTERNAL_STORAGE`, which **no dialog can request**: the app sends the owner to the system's All files access page (and falls back to the all-files page, then to the app's details page, because some devices route the first action nowhere), and `Environment.isExternalStorageManager()` - API 30+, which is why it sits behind an `SDK_INT` check - reports the answer, along with `Environment.getExternalStorageDirectory()` writable, which is the part that actually decides whether a drive will be recorded. `WRITE_EXTERNAL_STORAGE` is declared with `maxSdkVersion="28"` so the same code keeps working on a 9.0 tablet without asking anything of a modern one. The app still declares none of the Wi-Fi-era permissions, and `AppXmlWiringTest` keeps them out.
+
+**Both states are said out loud, because a silently-degraded folder is how a user loses a drive.** App Settings has a **Storage** card: the folder in use, how many trip files and cards are in it, free space, and a button that is either `STORAGE ACCESS GRANTED` (said, not offered) or `GRANT STORAGE ACCESS`. The Trips header adds a line when the folder is not the shared one, and the Trip detail page's `Shared from` and `Copy path` say which folder a given drive is in, because one install can hold drives from both. Recording, sharing, photos and the garage all keep working in the private folder - only the visibility changes.
+
+**One install, two folders, one visible at a time.** The recorder writes where the grant says to write, and the Trips list reads the folder in use. So a drive recorded before the grant - or during a stretch where it was revoked - stays in the folder it was written to and is not listed while the other root is active; the CSVs do not move, and merging them is a copy in a file manager. Nothing here migrates on the app's own initiative, for the same reason the garage does not (see *The garage*): the app cannot tell an upgrade from a deliberate clearing, and quietly copying files between the two roots is how a user ends up with two of each.
+
+### Sharing a drive
+
+Sharing does not copy a drive. `trips/TripExport.kt` hands `FileProvider` the trip file where it already is and grants read access to it, so the owner gets `trip-20261108-175512-001.csv` under its real name instead of the `document-1.csv` a bare `ACTION_SEND` produces; the name is carried in the intent's `EXTRA_STREAM` label because some receivers show it and others show the last path segment. Only the generated **GPX** is built, into `cacheDir/exports/`, and `prune()` keeps that folder bounded (five files, one day) the same way `VehiclePhotoStore` bounds `captures/`. A drive still being written is shareable: the grant is read-only, and the recorder holds its own open `RandomAccessFile`, which Android's permission model does not disturb. The two roots that make this work - `Documents/Dashboard++/trips/` and, for the degraded case, `trips/` - are declared in `files_path.xml` and cross-checked against `AppRoot`'s constants by `AppXmlWiringTest`.
 
 ### Building and testing the app
 
@@ -1057,13 +1092,14 @@ cd android
 
 The testable APK is the debug build at `android/app/build/outputs/apk/debug/app-debug.apk` (rule 27 attaches it to every release). `versionCode` bumps on every shared APK (rule 24). The launcher icon layers are generated and geometry-checked by `python scripts/preview_icon.py` - never hand-edited, the same rule as the firmware's generated headers. Installing over USB on a development tablet is `adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk`; UI behaviour is then read back from the running app (`uiautomator dump`), not only from the build.
 
-The suite is ~395 plain-JVM tests, and three of them read **sources** rather than composing screens, because the module has no Compose test harness and a guard that only ran on a phone would never run in CI:
+The suite is ~580 plain-JVM tests, and four of them read **sources** rather than composing screens, because the module has no Compose test harness and a guard that only ran on a phone would never run in CI:
 
 | Guard | What it keeps true |
 |---|---|
 | `ConnectActionsOnOnePageTest` | Only `VehicleScreen.kt` may call a connection action; a cover offers exactly one button and no address; no screen in `ui/screens/` reaches for the deleted transport |
 | `SettingsTabReplacesTheWebPageTest` | The ESP slot draws the native page, and the settings page holds no URL, no socket and no old HTTP lane; the whole `app/src/main` tree contains no `EspApi`, `OkHttpClient`/`okhttp3`, `HttpURLConnection`, `android.webkit`/`WebView`, `Nsd`/`NsdManager`, `SubnetScanner`, `DeviceVerifier`, `BleScreen`, `GroupStrip`, `ToolsPage`, `WifiManager`, `ConnectivityManager`, `MulticastLock` or `V1Routes` in code, the files and the package that carried them must not exist, OkHttp is gone from `build.gradle.kts`, and only two files hold a URL at all — the GPX XML namespace and the map's tile user agent, named file by file so the ban itself stays absolute |
-| `AppXmlWiringTest` | FileProvider roots match the store's directory names, the camera `<queries>` block is declared, and the manifest asks for the radio the app uses and none of the ones it dropped (no `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`) |
+| `AppRootTest` | The shared root wins only when the access is granted *and* the folder can be made, the private root is never null, `trips/` `vehicles/` and `vehicles.json` carry the same names in both roots, the folder name lives in exactly one constant, and `AppRoot.kt` never spells a public path by hand |
+| `AppXmlWiringTest` | FileProvider roots match the directory names the stores actually write - the cache roots and both trip roots - the camera `<queries>` block is declared, the manifest declares the storage access the app uses (`MANAGE_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE` capped at API 28) and asks for the radio it uses and none of the ones it dropped (no `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`), the folder names `AppRoot` publishes are the ones `files_path.xml` grants, a shared CSV is the recorded file rather than a cache copy, and no store names the private `Android/data` path |
 
 The pairing and the GATT protocol cannot be tested in JVM at all — they need a unit. The bench acceptance for this transport (unit `DPP-B594`) is in `Implementation plans/ONE-CONNECTION-STORY-2026-11-01.md`: scan → passkey → `Ready`, reconnect from a cold app without a scan, 1 Hz LIVE, a trip tagged to the card, and the settings page exercised end to end.
 
@@ -1685,7 +1721,70 @@ is why one phone in the field showed it and the bench Mi 9 Lite never did. The O
 from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
 never touched the ceiling — which is why BLE installs were never affected by this.
 
+### App 2.0.2/66 — the app's files moved into the folder the owner can open (Android app only, `versionCode` 65 → 66; firmware unchanged at 2.0.2)
+
+A drive log the owner cannot find is a drive log they cannot back up. Everything the app writes used
+to live under `Android/data/com.alefinot.dashboardpp/files/`: invisible in a file manager, invisible
+to a USB copy, and deleted by the system the moment the app was uninstalled. It is now
+`Documents/Dashboard++/` — `trips/`, `vehicles/`, and one `vehicles.json` holding the garage — on the
+same All-files-access grant the deleted Wi-Fi-era code had once dropped.
+
+`storage/AppRoot.kt` answers the where, once: `Environment.getExternalStoragePublicDirectory(
+DIRECTORY_DOCUMENTS)/Dashboard++/` when the access is granted *and* the folder can be created, and
+`getExternalFilesDir(null)` when it is not, with the three child names identical in both roots so
+that degrading is a choice of root and nothing else. The private path appears nowhere else in the
+app, and a trip path containing `Android/data` fails `AppRootTest`. Both facts are decided behind
+pure functions (`sharedRootFor`, `baseFor`) because the Android parts of the answer are unmockable
+off-device: `isExternalStorageManager()` throws in the unit-test `android.jar` stubs rather than
+returning false, so the testable question is "which root do the pieces pick, given the answers", and
+`base(context)` is private so no caller can hold a stale root across a grant.
+
+The garage stopped being a preferences DataStore — `vehicle:<id>` rows, `vehicle:last`,
+`vehicle:nextseq`, all of it now `vehicles.json`, one atomic document written `.tmp` + rename by
+`vehicles/GarageFile.kt` and read by a `VehicleCodec` reused unchanged per record. The rule that
+shapes the format: **a file it cannot parse is never overwritten.** A truncated file, an unknown
+`version`, a duplicate card id or one undecodable record reads as damage — the UI shows an empty
+garage, every write refuses, and the editor says which file it will not touch, because the alternative
+is writing an empty garage over someone's cards to fix a typo. `nextSeq` and `selectedId` are treated
+as bookkeeping rather than cards and fall back rather than damaging the file. Reads and writes moved
+to `Dispatchers.IO` behind one process-wide `Mutex`, since the store is built by two ViewModels and
+two in-memory garages would be two writers overwriting each other's cards.
+
+Sharing got shorter instead of longer: `TripExport.csv()` — the copy into `cacheDir/exports` whose
+entire job was to rename the file to `document-1.csv` for some receivers — is gone. `FileProvider`
+hands out the recorded file where it lies (`Documents/Dashboard++/trips/`, or `trips/` in the private
+root, both declared in `files_path.xml` and cross-checked against `AppRoot`'s constants by a test),
+so the CSV arrives under the name it has on disk; only the generated GPX is still built into the
+cache. A drive still being written is shareable — the grant is read-only and the recorder keeps its
+own open `RandomAccessFile`.
+
+Nothing migrates, and that was decided rather than omitted: the app cannot tell an upgrade from a
+deliberate clearing, and copying an old private garage into the shared one would overwrite cards the
+owner removed on purpose. The upgrade step is to clear the app's data once, or to move
+`vehicles.json` in by hand. Both states are said out loud instead of being left to be discovered:
+App Settings gained a **Storage** card (folder in use, counts, free space, and a button that reads
+`STORAGE ACCESS GRANTED` rather than offering a grant the app already has), the Trips header adds a
+line when the folder is not the shared one, and the Trip detail page's *Shared from* / *Copy path*
+say which root a given drive is in — because one install can hold drives from both. Recording,
+sharing, photos and the garage all keep working in the private folder; only the visibility changes.
+`MANAGE_EXTERNAL_STORAGE` is the grant and no dialog can ask for it, so the card routes the owner to
+the system page (all-files page and app-details page as fallbacks, because some devices route the
+first action nowhere); `WRITE_EXTERNAL_STORAGE` comes back capped at API 28 for a 9.0 tablet, and the
+Wi-Fi-era permissions stay out, pinned by `AppXmlWiringTest`. One consequence of reading the folder
+currently in use: a drive recorded before the grant stays in the folder it was written to and is not
+listed while the shared root is active — the files do not move, and the app does not move them for
+you.
+
+Tests: new `storage/AppRootTest` (root choice, degraded fallback, name parity, the folder name in
+exactly one constant) and `vehicles/GarageFileTest` (round-trip, damage rules, the atomic writer
+against a real temporary folder — including that a write which cannot land leaves the old file
+byte-for-byte alone); `AppXmlWiringTest` extended to the new roots, the new permissions and the
+`Android/data` ban. One assertion — that a rename replaces an existing file — is skipped on a Windows
+host rather than weakened, because replace-on-rename is the POSIX behaviour Android gives the code.
+
 ### App 2.0.2/65 — a unit that comes back gets its clock and its weather again (Android app only, `versionCode` 64 → 65; firmware unchanged at 2.0.2)
+
+
 
 Both of the panel's RAM-only facts went missing in the same way: the app had decided, for the
 lifetime of the process, that it had already supplied them.
@@ -2520,7 +2619,7 @@ Everything merged since V1.4.5 ships together: two additions and one fix on the 
 - **Two defects found by running the app rather than by building it**, both on the Trips page, both fixed here:
   - a remembered filter could hide every row while the chip row judged itself decoration and disappeared - the page showed `0 of 3` with no control anywhere to get back to `ALL`. The rule "a control with one choice is decoration" now yields to "a filter that hides rows must be escapable": the chip that is on stays on screen while it hides something.
   - the list's staggered entrance ramp latched to alpha 0 when the visit happened before the index pass had finished, so a page could count four files and display none. An animation may delay content; it may not decide whether content exists.
-- **Photos: pick, crop, one JPEG per vehicle**, with the camera capture staged in the app's cache and handed over through `FileProvider` on declared roots that a test keeps in step with the directory the code actually writes.
+- **Photos: pick, crop, one JPEG per vehicle**, written into the shared `vehicles/` folder through a staged `.tmp` and a rename, with the camera capture staged in the app's cache and handed over through `FileProvider` on declared roots that a test keeps in step with the directory the code actually writes.
 - **Documentation**: the README gained a full `Android Companion App` reference section (shell, garage record, identity rules, connection states, trip format and filter, photos, build commands).
 
 **Verified** - 237 Android unit tests, plain JVM, 0 failures. Read back on an SM-T590 (Android 9): every file recorded since the card was bound starts `#vehicle=v1|94:B5:55:F8:B8:58|Motosbu`, and the recorder bound itself to the card on a *silent* reconnect at launch with no user action - which is the launch behaviour described above, proven on hardware. The filter path was exercised end to end (`5 · 287 kB` -> `1 of 5` under a card's chip -> detail line `Vehicle: Motosbu · dashboard 94:B5:55:F8:B8:58` -> `ALL`), and both fixes above were reproduced on the tablet and then confirmed by screenshot: the chip row `ALL · Motosbu · UNKNOWN` where it used to vanish, and five drive cards under the live recording row where the list used to be black. Cold start, both covers, and the vehicle-page-only rule were checked on the same tablet at the previous step.

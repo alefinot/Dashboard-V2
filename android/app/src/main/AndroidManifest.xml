@@ -46,6 +46,31 @@
          install time, only offered once in the UI. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Shared storage (shared storage plan §1). Trip CSVs, vehicle card JPEGs and the
+         garage file are written to Documents/Dashboard++, a folder the owner can open in a
+         file manager and see over USB - which is the whole point, and the only way to get it
+         is *All files access*. Scoped storage gives no ordinary permission that reaches a
+         folder another app owns, and the media store would put card photos in the camera roll.
+
+         This is a special access, not a runtime permission: no dialog can ask for it, so the
+         app ships without it and the Storage card on the settings page jumps to the system
+         page that grants it (`storage/AppRoot.kt`). Declaring it grants nothing on its own.
+
+         All files access is on the Play policy list, and this app does not go through Play:
+         it is shipped as a sideloaded debug APK by its maintainer to the devices it runs on.
+         If that ever changes, this permission and the shared root are the things to revisit -
+         not the file layout, which degrades to the app-private folder when the grant is absent.
+         `storage/AppRoot.kt` states the same trade from the code side. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!-- Android 8/9 only. Scoped storage applies to apps running on Android 10 and up, so on
+         API 26-28 this ordinary runtime permission is what makes public Documents writable at
+         all, and MainActivity asks for it the way it asks for notifications. Capped at 28
+         because on a newer device it is answered by All files access instead, and a permission
+         nothing reads is still a promise the app's listing makes. API 29 gets neither (see
+         AppRoot.isGranted) and keeps the app-private folder. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
     <!-- Package visibility, Android 11+. The editor's TAKE PHOTO button hands an
          IMAGE_CAPTURE intent to whatever camera the device has, and from API 30 an app that
          does not declare the action here cannot see - so cannot resolve, so cannot launch -

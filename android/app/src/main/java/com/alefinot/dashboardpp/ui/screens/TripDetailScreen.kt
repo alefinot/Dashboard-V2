@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -25,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
@@ -64,6 +67,7 @@ import java.util.Locale
 fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val detail = remember(row.file.absolutePath) { vm.detail(row) }
+    val sharedStorage by vm.shared.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
 
     BackHandler { onDismiss() }
@@ -192,6 +196,23 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
         HudButton("SHARE CSV") { context.startActivity(vm.shareCsv(row)) }
         Spacer(Modifier.height(8.dp))
         HudButton("SHARE GPX", style = HudButtonStyle.SECONDARY) { context.startActivity(vm.shareGpx(row)) }
+        Spacer(Modifier.height(6.dp))
+        // Where the file those buttons just handed over actually lives, in the same words the
+        // Trips header and the settings page use. Said here because this is the moment a user
+        // wonders where a drive went, and because the CSV is no longer copied anywhere to be
+        // shared: the share sheet opens the file in that folder, so the folder is the thing
+        // worth knowing. Only the CSV — the GPX is built for the occasion and lives in the cache.
+        Text(
+            if (sharedStorage) {
+                "The CSV is shared from ${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}/ " +
+                    "itself; no copy is made to share."
+            } else {
+                "The CSV is shared from the app's own folder, because storage access was never " +
+                    "granted — App Settings can change that."
+            },
+            color = HudColors.TextDim,
+            style = MaterialTheme.typography.bodySmall,
+        )
         Spacer(Modifier.height(8.dp))
         HudButton("DELETE THIS TRIP", style = HudButtonStyle.DANGER) { confirmDelete = true }
         Spacer(Modifier.height(8.dp))
@@ -202,7 +223,8 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
       if (confirmDelete) {
         HudConfirmDialog(
             message = "Delete this recorded trip? The CSV file goes away, and with it " +
-                "the route, the charts and the summary. Shared copies are not touched.",
+                "the route, the charts and the summary. Anything you have already shared " +
+                "from it is a file that app kept.",
             confirmLabel = "DELETE TRIP",
             confirmStyle = HudButtonStyle.DANGER,
             onConfirm = {

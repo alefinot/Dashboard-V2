@@ -3,6 +3,7 @@ package com.alefinot.dashboardpp.viewmodel
 import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
+import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.CachedSummary
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripExport
@@ -129,6 +130,18 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
      */
     val storageBytes: StateFlow<Long> = _storageBytes
 
+    private val _shared = MutableStateFlow(false)
+
+    /**
+     * Whether the drive files are in `Documents/Dashboard++/` or in the app's own
+     * folder, as the Trips header says it. Carried as a flow for the same reason
+     * [storageBytes] is — a header line that asked [com.alefinot.dashboardpp.storage.AppRoot]
+     * directly would create a folder on the volume during composition, on a page the
+     * pager keeps composed from the first frame — and it rides along with the index
+     * pass, which is already on the IO dispatcher and already walking that folder.
+     */
+    val shared: StateFlow<Boolean> = _shared
+
     fun refresh() {
         scope.launch(Dispatchers.IO) {
             _busy.value = true
@@ -181,6 +194,9 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
                 _filter.value = RecorderSettings.FILTER_ALL
             }
             _storageBytes.value = files.sumOf { it.length() }
+            // Read from the same walk that counted the files, so the header's "where" and
+            // its "how much" cannot disagree about which folder they are describing.
+            _shared.value = AppRoot.isSharedAvailable(getApplication())
             index.retain(files.map { it.absolutePath }.toSet())
             _busy.value = false
             // Any file whose summary is missing gets summarised in the
@@ -319,10 +335,7 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
     private fun openTripPath(): String? =
         com.alefinot.dashboardpp.trips.TripRuntime.state.value.takeIf { it.recording }?.tripPath
 
-    fun shareCsv(row: TripRow): Intent {
-        export.prune()
-        return export.shareIntent(export.csv(row.file), "text/csv")
-    }
+    fun shareCsv(row: TripRow): Intent = export.shareIntent(row.file, "text/csv")
 
     fun shareGpx(row: TripRow): Intent {
         export.prune()

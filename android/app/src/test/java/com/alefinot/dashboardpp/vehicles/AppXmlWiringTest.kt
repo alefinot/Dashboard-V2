@@ -144,6 +144,146 @@ class AppXmlWiringTest {
     }
 
     /**
+     * The folder the app writes into is shared storage or nothing (shared storage plan §2).
+     *
+     * `Android/data/<pkg>/files/` is where the files used to go, and it is the reason the plan
+     * exists: a folder a file manager hides, a USB mount never offers, and a user cannot clean up
+     * by hand after a bad drive. Two classes resolve that folder, so both are banned from naming
+     * it - if either went back to it alone, the trips would land where the Trips tab is not
+     * looking, or a card's photo where its record cannot find it, and the two halves would each
+     * look correct on the bench.
+     *
+     * Only [com.alefinot.dashboardpp.storage.AppRoot] may name it, and only as the fallback the
+     * grant-less path takes.
+     */
+    @Test
+    fun `the stores resolve their folder through AppRoot and never name the private one`() {
+        for (rel in listOf(
+            "src/main/java/com/alefinot/dashboardpp/trips/TripStore.kt",
+            "src/main/java/com/alefinot/dashboardpp/vehicles/VehiclePhotoStore.kt",
+        )) {
+            val src = moduleFile(rel)
+            val code = src.lines().filterNot { it.trimStart().startsWith("*") || it.trimStart().startsWith("//") }
+                .joinToString("\n")
+            for (banned in listOf("getExternalFilesDir", "Android/data")) {
+                assertTrue(
+                    "$rel names $banned in code: it must ask AppRoot.tripsDir / " +
+                        "AppRoot.vehiclesDir, which decide shared-versus-private once for the " +
+                        "whole app",
+                    !code.contains(banned),
+                )
+            }
+            assertTrue(
+                "$rel no longer asks AppRoot where its files go, so nothing keeps the recorder, " +
+                    "the list and the share sheet on the same folder",
+                src.contains("AppRoot.tripsDir") || src.contains("AppRoot.vehiclesDir"),
+            )
+        }
+    }
+
+    /**
+     * The storage permission block, stated rather than assumed (shared storage plan §1).
+     *
+     * `MANAGE_EXTERNAL_STORAGE` is what opens `Documents/Dashboard++`; without the declaration
+     * the settings page the app jumps to has no switch for this app, and the app degrades to its
+     * private folder forever while its Storage card offers a button that cannot work. The legacy
+     * permission is asserted *with its cap*: scoped storage applies to apps running on Android 10
+     * and up, so on 8/9 that permission is the only answer, but on 30+ it is a promise the
+     * listing makes and nothing reads - which is the same reason the dropped Wi-Fi permissions
+     * above are asserted absent.
+     */
+    @Test
+    fun `the manifest declares the storage access the app actually uses`() {
+        val manifest = moduleFile("src/main/AndroidManifest.xml")
+        val declared = Regex("uses-permission[^>]*android\\.permission\\.([A-Z_]+)")
+            .findAll(manifest).map { it.groupValues[1] }.toSet()
+        for (needed in listOf("MANAGE_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE")) {
+            assertTrue(
+                "the manifest no longer declares $needed - the folder the app promises to save " +
+                    "into stops existing on the devices that need it: $declared",
+                declared.contains(needed),
+            )
+        }
+        val legacy = Regex("uses-permission[^>]*android\\.permission\\.WRITE_EXTERNAL_STORAGE[^>]*>")
+            .find(manifest)
+        assertTrue(
+            "WRITE_EXTERNAL_STORAGE must carry maxSdkVersion=\"28\": on Android 10+ it grants " +
+                "nothing to this app, and an uncapped declaration is a permission the listing " +
+                "still promises to users whose devices ignore it",
+            legacy != null && legacy.value.contains("maxSdkVersion=\"28\""),
+        )
+    }
+
+    /**
+     * The shared folder has to be a published root, or a drive cannot be shared (shared storage
+     * plan §4), and both sides of that agreement are checked here.
+     *
+     * [com.alefinot.dashboardpp.storage.AppRoot.FOLDER] is the only place the folder name is
+     * written in code; `res/xml/files_path.xml` has to spell it the same way, because
+     * `getUriForFile` throws `IllegalArgumentException` for a file under no declared root. On a
+     * real phone the symptom is a SHARE CSV button that does nothing — `startActivity` throws
+     * inside the chooser, which is not a path any unit test on the JVM can walk.
+     *
+     * The private root is asserted alongside the shared one: when the grant is missing the CSVs
+     * live under `Android/data/…/files/trips`, and without that second root the share sheet
+     * would be broken on exactly the devices the degraded path exists for.
+     */
+    @Test
+    fun `the shared folders are published roots that agree with the folder constant`() {
+        val appRoot = moduleFile("src/main/java/com/alefinot/dashboardpp/storage/AppRoot.kt")
+        val folder = Regex("FOLDER\\s*=\\s*\"([^\"]+)\"").find(appRoot)
+        if (folder == null) {
+            throw AssertionError(
+                "AppRoot no longer declares FOLDER - update this test and files_path.xml together",
+            )
+        }
+        val xml = moduleFile("src/main/res/xml/files_path.xml")
+        val name = folder.groupValues[1]
+        assertTrue(
+            "files_path.xml must publish the shared drive folder, or SHARE CSV throws " +
+                "IllegalArgumentException for every recorded drive",
+            xml.contains("path=\"Documents/$name/trips/\""),
+        )
+        assertTrue(
+            "files_path.xml must publish the shared vehicle folder alongside it",
+            xml.contains("path=\"Documents/$name/vehicles/\""),
+        )
+        assertTrue(
+            "files_path.xml lost the private trips root: with the grant missing, the CSVs are in " +
+                "the app's own folder and the share sheet can still only hand out a declared root",
+            Regex("external-files-path[^>]*path\\s*=\\s*\"trips/\"").containsMatchIn(xml),
+        )
+    }
+
+    /**
+     * A shared CSV is the recorded file (shared storage plan §4). [com.alefinot.dashboardpp.trips.TripExport]
+     * used to copy the CSV into the cache and hand that copy over, which made a second file that
+     * looked like the drive and was not it - the one in the user's folder was the original, the
+     * one they had emailed was scratch the OS might clear. The copy is gone, so nothing should
+     * quietly grow it back; the GPX keeps its cache because it is built at the moment of sharing.
+     */
+    @Test
+    fun `a shared CSV is the recorded file and not a cache copy`() {
+        val export = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/TripExport.kt")
+        assertTrue(
+            "TripExport grew a csv() copy again: the share sheet must read the file in " +
+                "Documents/Dashboard++/trips itself, not a duplicate under cacheDir/exports",
+            !Regex("fun\\s+csv\\s*\\(").containsMatchIn(export),
+        )
+        assertTrue(
+            "the GPX still has to be built somewhere - cacheDir/exports is the only writable " +
+                "place when the app has no storage grant",
+            Regex("cacheDir").containsMatchIn(export),
+        )
+        val vm = moduleFile("src/main/java/com/alefinot/dashboardpp/viewmodel/TripsViewModel.kt")
+        assertTrue(
+            "shareCsv must hand the recorded file to the share sheet; it is calling something " +
+                "else, which means a copy is back",
+            Regex("shareCsv\\(row: TripRow\\): Intent\\s*=\\s*export\\.shareIntent\\(row\\.file").containsMatchIn(vm),
+        )
+    }
+
+    /**
      * Module-relative read. Gradle starts unit tests in the module directory (`android/app`) but
      * prefixes differ across configurations and IDEs, so each level from here upward is tried
      * with the plausible module prefixes before giving up. A guard test that fails because it

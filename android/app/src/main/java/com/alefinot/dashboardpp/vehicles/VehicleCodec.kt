@@ -3,9 +3,8 @@ package com.alefinot.dashboardpp.vehicles
 import java.util.Locale
 
 /**
- * Text form of a [Vehicle] for preference storage: one JSON record per
- * `vehicle:<id>` row in [VehicleStore], the same shape `SessionCodec` uses for a
- * trip session.
+ * Text form of a [Vehicle]: one JSON record inside `vehicles.json`, the same shape `SessionCodec`
+ * uses for a trip session.
  *
  * Hand-rolled on purpose, for the reason [com.alefinot.dashboardpp.api.FlatJson]
  * states in its own doc: the org.json classes in the unit-test android.jar are
@@ -30,8 +29,9 @@ import java.util.Locale
  * - a field whose value has the wrong shape defaults that field only.
  *
  * It returns `null` only for text that cannot be used at all - not an object, a
- * version tag this build cannot read, or a body that does not parse - so
- * [VehicleStore] can skip one torn row without losing the rest of the garage.
+ * version tag this build cannot read, or a body that does not parse - which is how [GarageFile]
+ * tells "this record is junk" from "this file is not ours" and refuses to write the garage back
+ * over a card it could not read.
  *
  * Nothing here decides what a value *means*: `mac` round-trips verbatim, junk
  * included, because identity belongs to [VehicleMatch] and the store's job is to
@@ -66,12 +66,17 @@ object VehicleCodec {
     }
 
     fun decode(text: String): Vehicle? {
-        val parsed = try {
-            Parser(text).parseTop()
-        } catch (e: Exception) {
-            null
-        }
-        val obj = parsed as? Map<*, *> ?: return null
+        val obj = parseValue(text) as? Map<*, *> ?: return null
+        return decode(obj)
+    }
+
+    /**
+     * A record that has already been parsed out of a larger document — today
+     * [GarageFile], which reads one JSON document holding every card. The tolerance rules
+     * and the `v` tag check are the same ones [decode] applies to a lone row, because a
+     * record must not mean two different things depending on which file it came in.
+     */
+    internal fun decode(obj: Map<*, *>): Vehicle? {
 
         // A record from another format version is not half-read: the fields a later
         // build might add could be misread as defaults that then get written back.
@@ -96,6 +101,33 @@ object VehicleCodec {
     }
 
     // --- field readers: wrong shape defaults that field, never the record -------
+
+    /**
+     * A whole JSON document as maps, lists and scalars, or `null` for text that does not parse.
+     *
+     * Exposed inside the module because [GarageFile] needs the same grammar for its container:
+     * two readers of one format is how a file starts meaning two things.
+     */
+    internal fun parseValue(text: String): Any? =
+        try {
+            Parser(text).parseTop()
+        } catch (e: Exception) {
+            null
+        }
+
+    /**
+     * One integer field of an already-parsed object: the number kept as the text it was written
+     * with, exactly as [longOrNull] does for a timestamp, so a hand-written `7.0` reads as 7 and
+     * nothing in the file passes through a binary fraction.
+     */
+    internal fun intOrNull(obj: Map<*, *>, key: String): Int? {
+        val text = when (val raw = obj[key]) {
+            is Num -> raw.text
+            is String -> raw
+            else -> null
+        } ?: return null
+        return text.toIntOrNull() ?: text.toDoubleOrNull()?.toInt()
+    }
 
     private fun str(obj: Map<*, *>, key: String, fallback: String): String =
         obj[key] as? String ?: fallback

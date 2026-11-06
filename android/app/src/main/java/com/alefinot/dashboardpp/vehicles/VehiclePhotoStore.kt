@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.util.LruCache
 import androidx.core.content.FileProvider
+import com.alefinot.dashboardpp.storage.AppRoot
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -62,17 +63,14 @@ class VehiclePhotoStore(context: Context) {
     }
 
     /**
-     * Where the JPEGs live: app-private external storage, removed with the app and
-     * visible to a file manager, with the same fallback chain [TripStore.dir] uses
-     * for the trip CSVs (a device without the volume mounted falls back to internal
-     * storage rather than failing every photo).
+     * Where the JPEGs live: `Documents/Dashboard++/vehicles/` once the owner grants
+     * All files access, so a card's picture is a file they can see and copy like the
+     * drive CSVs beside it, and the app-private folder otherwise (shared storage plan
+     * §2). [AppRoot] owns that choice and the fallback chain inside it — the same
+     * answer [com.alefinot.dashboardpp.trips.TripStore.dir] gives, because a photo
+     * written where the garage is not looking is a photo the app lost.
      */
-    fun dir(): File {
-        val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
-        val d = File(base, DIR_NAME)
-        if (!d.exists()) d.mkdirs()
-        return d
-    }
+    fun dir(): File = AppRoot.vehiclesDir(appContext)
 
     /**
      * The file a record's `photoFile` names, or `null` when that text cannot name
@@ -450,7 +448,6 @@ class VehiclePhotoStore(context: Context) {
         /** JPEG quality of the stored copy: 85 is visually indistinguishable here. */
         const val JPEG_QUALITY = 85
 
-        private const val DIR_NAME = "vehicles"
         private const val PHOTO_SUFFIX = ".jpg"
         private const val TMP_SUFFIX = ".tmp"
 

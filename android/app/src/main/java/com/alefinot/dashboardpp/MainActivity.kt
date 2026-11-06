@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.lifecycle.lifecycleScope
+import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.ui.screens.DashboardRoot
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -30,14 +31,23 @@ class MainActivity : ComponentActivity() {
      * devices, which would silently punch holes into the recording. The grant is
      * not required to record — only to show why recording is running — so the
      * app behaves the same when the user refuses.
+     *
+     * WRITE_EXTERNAL_STORAGE rides along on Android 8/9, where it is what makes
+     * `Documents/Dashboard++` writable at all (see [AppRoot.isGranted] for why it is
+     * the only way on those API levels, and why nothing can be asked on 29+).
+     * Refusing it changes nothing about whether a drive is recorded: the files land
+     * in the app-private folder and the Storage card says so, which is the same
+     * degraded path a 29+ device without All files access takes. That page, not this
+     * dialog, is where a 29+ owner goes - `MANAGE_EXTERNAL_STORAGE` is a special
+     * access and no code can bring the dialog up for it.
      */
-    private val notificationPermission = registerForActivityResult(
+    private val permissionRequests = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* granted or not: the recorder runs either way */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermissionIfNeeded()
+        requestPermissionsIfNeeded()
         warmPreferences()
         setContent {
             val vm = remember { ConnectionViewModel(application) }
@@ -75,11 +85,18 @@ class MainActivity : ComponentActivity() {
      * contrast, have nothing to do with reaching the dashboard, so they keep their own
      * quiet ask at launch.
      */
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    private fun requestPermissionsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) permissionRequests.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        // The two asks never overlap an API level: notifications are 33+ and this is
+        // 8/9 only, so the single launcher is never asked to hold two permissions at
+        // once. On Android 10-12 neither fires and nothing is shown at launch.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && !AppRoot.isGranted(this)) {
+            permissionRequests.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
     }
 }

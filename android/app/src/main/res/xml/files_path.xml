@@ -1,15 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Files handed out by FileProvider: the trip files being shared (CSV copied out of the
-     trip folder, and the generated GPX), and the scratch JPEG a camera capture is written
-     into before it is cropped. All of it lives in the app cache, which is scratch space by
-     definition — the trip log itself and the vehicle photos live in
-     getExternalFilesDir()/trips and /vehicles, which no other app is ever given access to.
+<!-- Files handed out by FileProvider. Four roots, and the split between them is the app's
+     storage model in miniature (shared storage plan §2 and §4):
+
+       Documents/Dashboard++/trips/    the drive CSVs, shared *where they lie*. The share sheet
+                                       opens the recorded file itself; no copy is made, so the
+                                       file a user emails is the file in their folder.
+       Documents/Dashboard++/vehicles/ the garage JPEGs, declared for the same reason the trips
+                                       are — a card's picture is a file the owner can see.
+                                       Nothing hands one out today (a camera capture goes
+                                       through `captures/` below), so this root is the folder a
+                                       future "share this card" would reach, not live wiring.
+       <external-files-path>/trips/    the same CSVs when All files access was never granted and
+                                       the app writes its own folder instead. Without this the
+                                       share sheet throws IllegalArgumentException on a
+                                       permission-less device and every drive fails to share.
+       cache-path exports/ captures/   scratch. The GPX is built at the moment of sharing and the
+                                       camera capture is a file another app writes into; both are
+                                       regenerable or already cropped, which is what makes them
+                                       safe to keep in a directory the OS may clear.
 
      `captures/` is the directory VehiclePhotoStore.captureFile writes, and the two names have
      to agree: getUriForFile throws IllegalArgumentException for a file under no declared root,
-     which the store reports as "no camera" rather than launching an intent for a picture
-     nobody could read back. AppXmlWiringTest fails if either side drifts. -->
+     which the store reports as "no camera" rather than launching an intent for a picture nobody
+     could read back. AppXmlWiringTest fails if either side drifts — including the folder name,
+     which is AppRoot.FOLDER in code and has to be spelled the same way here. -->
 <paths>
+    <external-path
+        name="shared-trips"
+        path="Documents/Dashboard++/trips/" />
+
+    <external-path
+        name="shared-vehicles"
+        path="Documents/Dashboard++/vehicles/" />
+
+    <external-files-path
+        name="private-trips"
+        path="trips/" />
+
     <cache-path
         name="exports"
         path="exports/" />

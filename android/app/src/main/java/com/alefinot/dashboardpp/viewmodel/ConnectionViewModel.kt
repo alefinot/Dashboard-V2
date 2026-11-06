@@ -548,7 +548,12 @@ class ConnectionViewModel(
                 onDone(refusalMessage(clash))
                 return@launch
             }
-            vehicles.put(finished)
+            if (!vehicles.put(finished)) {
+                // The card stayed on disk as it was. Closing the form here would tell the user the
+                // edit happened; the refusal keeps it open with the reason in it.
+                onDone(vehicles.saveFailure())
+                return@launch
+            }
             // A card that did not exist before becomes the selected one: the user made it
             // from a unit that is in front of them, and the next thing they do is connect.
             if (stored == null) {

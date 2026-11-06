@@ -1,5 +1,15 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.StatFs
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -7,9 +17,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
@@ -24,11 +37,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
@@ -273,16 +294,60 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
+        // ── Storage ─────────────────────────────────────────────────────
+        // Where the drive files are going, and the one control that can change it.
+        // Re-read whenever the page comes back to the foreground, because the grant is
+        // made on a system page this card opens: a card that latched the answer from its
+        // first composition would go on telling the owner the folder is private after
+        // they granted it, which is the one thing this card exists to tell them.
+        var storageTick by remember { mutableIntStateOf(0) }
+        val lifecycle = LocalLifecycleOwner.current
+        DisposableEffect(lifecycle) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) storageTick++
+            }
+            lifecycle.lifecycle.addObserver(observer)
+            onDispose { lifecycle.lifecycle.removeObserver(observer) }
+        }
+        // Null until the first read finishes, so the card arrives a frame late rather than
+        // promising a folder it has not confirmed. The read touches the volume (it creates
+        // the folder it reports on, and asks the volume for free space) and so stays off
+        // the main thread.
+        var storage by remember { mutableStateOf<StorageSnapshot?>(null) }
+        LaunchedEffect(storageTick) {
+            storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
+        }
+        // Android 8/9 only: there, the ordinary runtime permission is what makes Documents
+        // writable at all, and this is the page the owner is standing on if the dialog at
+        // launch went unanswered. Nothing like it can be asked on 29+ - All files access
+        // is a special access and no code can bring its page up for them.
+        val legacyStorageAsk = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { storageTick++ }
+        storage?.let { snap ->
+            StorageCard(
+                snapshot = snap,
+                onGrant = {
+                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                        legacyStorageAsk.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        openStorageGrantScreen(context)
+                    }
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
         Column(
             Modifier.fillMaxWidth().hudCard()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             CardHead("Recorded Drives")
             Text(
-                "One CSV per ESP power session, written to the app's own storage " +
-                    "(no SD-card permission). The recorder samples once a second while " +
-                    "the link is up and stops when it drops. Open drives are never " +
-                    "deleted. Share a trip as CSV or GPX from the Trips tab.",
+                "One CSV per drive in ${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}/, written " +
+                    "by this app \u2014 open them in a spreadsheet, copy them off over USB, or " +
+                    "delete them here. Without the storage grant the same files stay in the " +
+                    "app's own folder, which the Storage card above says is happening.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )
@@ -310,6 +375,18 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
             }
+            Spacer(Modifier.height(10.dp))
+            // Not "recording stops when the link drops" any more, which stopped being true
+            // the moment auto-start became per-vehicle and a drive you never confirmed
+            // started anyway. This is what is kept and what is gone.
+            Text(
+                "Auto-start is per vehicle: a card with recording enabled begins logging when " +
+                    "its dashboard connects, and stops when the vehicle is turned off. A drive " +
+                    "whose start you did not confirm was still recorded and kept; a drive you " +
+                    "deleted is gone.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
         }
         Spacer(Modifier.height(20.dp))
         Text(
@@ -349,6 +426,141 @@ fun SettingsScreen(
  * "FIRMWARE" above the version, and reading the app's own number meant scrolling past two
  * other facts. Across the column they are one line each.
  */
+/**
+ * What the Storage card reports, read off the volume in one pass.
+ *
+ * A snapshot rather than four calls made from the composition: the folder check
+ * creates the folder it reports on, `StatFs` asks the volume for its free space, and
+ * the car count is a first read of the garage — none of which belongs on the UI
+ * thread of a page that recomposes every time a switch on it moves.
+ */
+private class StorageSnapshot(
+    val shared: Boolean,
+    val tripFiles: Int,
+    val cars: Int,
+    val freeBytes: Long,
+) {
+    companion object {
+        /** Runs on the caller's dispatcher; the caller keeps it off the main thread. */
+        suspend fun of(context: Context, vm: ConnectionViewModel, trips: TripsViewModel): StorageSnapshot {
+            val shared = AppRoot.isSharedAvailable(context)
+            val where = AppRoot.tripsDir(context)
+            val free = try {
+                val fs = StatFs(where.absolutePath)
+                fs.availableBytes
+            } catch (e: Exception) {
+                // A volume that cannot answer for its free space still tells the owner
+                // where the files are; the number is the part that is dropped.
+                -1L
+            }
+            return StorageSnapshot(
+                shared = shared,
+                tripFiles = trips.rows.value.size,
+                cars = try { vm.vehicleCards().first().size } catch (e: Exception) { 0 },
+                freeBytes = free,
+            )
+        }
+    }
+}
+
+/**
+ * Where the user's files are, in the words they can act on.
+ *
+ * The card exists because the answer used to be "inside the app's private folder",
+ * which a user could not see in a file manager, could not copy over USB, and could
+ * not clean up by hand — and because the answer now depends on a grant no dialog can
+ * request, so the page has to say which of the two it is *and* hand them the way to
+ * change it. Both states are stated plainly: granted says the path, ungranted says
+ * the fallback in the warning colour rather than leaving the files somewhere the
+ * owner assumes is the folder named on the Recorded Drives card.
+ */
+@Composable
+private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
+    val counts = "\u00b7 ${snapshot.tripFiles} trip files \u00b7 ${snapshot.cars} cars" +
+        (if (snapshot.freeBytes >= 0) " \u00b7 ${hudBytes(snapshot.freeBytes)} free" else "")
+    Column(
+        Modifier.fillMaxWidth().hudCard()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        CardHead("Storage")
+        Text(
+            (if (snapshot.shared) AppRoot.sharedRootLabel() else "app-private folder") + " $counts",
+            color = if (snapshot.shared) HudColors.TextPrimary else HudColors.Amber,
+            style = HudeCfgNote(),
+        )
+        if (snapshot.shared) {
+            // Named file by file, because this line is also what a user follows after the editor
+            // tells them the garage could not be read: the folder is easy to find, the file inside
+            // it is the thing they have to open.
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "${AppRoot.GARAGE_FILE} \u00b7 ${AppRoot.TRIPS}/ \u00b7 ${AppRoot.VEHICLES}/",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.heightIn(min = 44.dp)) {
+                // Already granted is said, not offered: a button that does nothing looks
+                // like a button that is broken, and the honest state is the one thing this
+                // card can prove.
+                HudButton(
+                    if (snapshot.shared) "STORAGE ACCESS GRANTED" else "GRANT STORAGE ACCESS",
+                    style = HudButtonStyle.SECONDARY,
+                    enabled = !snapshot.shared,
+                ) { onGrant() }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (snapshot.shared) {
+                "Trip logs, card photos and the garage live in that folder — open it in a " +
+                    "file manager, copy it off over USB, or delete a bad drive from it by " +
+                    "hand. Revoking the access sends them back to the app's own folder " +
+                    "rather than deleting anything."
+            } else {
+                "Trip logs, card photos and the garage are in the app's own folder, which no " +
+                    "file manager shows and no USB copy sees. Grant storage access to save " +
+                    "where you can see it."
+            },
+            color = HudColors.TextDim,
+            style = HudeCfgNote(),
+        )
+    }
+}
+
+/**
+ * Hand the owner to the system page that grants All files access.
+ *
+ * There is no dialog for this: `MANAGE_EXTERNAL_STORAGE` is a special access the
+ * platform only hands over from a settings screen, so the app's job ends at getting
+ * them there. The per-app page is the one that lands them on this app's switch, but
+ * some devices route that action nowhere; the all-files page is the same decision one
+ * level up, and the app's details page is where a user can always get to. A chain of
+ * three rather than one, for the same reason [openPhoneBluetoothSettings] in
+ * `VehicleScreen.kt` has two: a button that throws is a button the owner never uses
+ * again.
+ */
+private fun openStorageGrantScreen(context: Context) {
+    val pkg = Uri.parse("package:" + context.packageName)
+    val intents = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            add(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkg))
+            add(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+        add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
+    }
+    for (intent in intents) {
+        try {
+            context.startActivity(intent)
+            return
+        } catch (e: ActivityNotFoundException) {
+            continue
+        }
+    }
+}
+
 @Composable
 private fun IdCard(label: String, value: String, modifier: Modifier = Modifier) {
     Column(

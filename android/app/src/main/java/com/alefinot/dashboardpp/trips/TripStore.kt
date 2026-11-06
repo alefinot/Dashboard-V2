@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.trips
 
 import android.content.Context
+import com.alefinot.dashboardpp.storage.AppRoot
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
@@ -11,19 +12,24 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Where trip files live (trip recording plan §4). App-private external storage:
- * visible to the user through a file manager and via the share sheet, removed
- * cleanly with the app, and needs no storage permission.
+ * Where trip files live (trip recording plan §4, shared storage plan §2).
+ *
+ * `Documents/Dashboard++/trips/` when the owner has granted All files access: a
+ * folder they can open in a file manager, copy off over USB, and clean up by hand
+ * after a bad drive. The app-private external folder it used to write is still the
+ * answer when that grant is missing — same sub-directory name, so every reader of
+ * this class keeps working — because a drive has to be recorded on a device where
+ * the owner never visited the settings page too.
+ *
+ * The choice is not made here. [AppRoot] decides it once for the whole app, so the
+ * recorder writing a row, the Trips tab listing files and the share sheet handing
+ * out a URI cannot each resolve a different folder.
  */
 class TripStore(context: Context) {
     private val appContext = context.applicationContext
 
-    fun dir(): File {
-        val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
-        val d = File(base, "trips")
-        if (!d.exists()) d.mkdirs()
-        return d
-    }
+    /** The trips folder, created if it is missing. Never null, on either root. */
+    fun dir(): File = AppRoot.tripsDir(appContext)
 
     /** Newest first, as the Trips list wants them. */
     fun trips(): List<File> =

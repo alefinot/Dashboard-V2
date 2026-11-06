@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudPage
@@ -83,6 +84,7 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     val runtime by TripRuntime.state.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val storage by vm.storageBytes.collectAsStateWithLifecycle()
+    val sharedStorage by vm.shared.collectAsStateWithLifecycle()
     var refreshKey by remember { mutableStateOf(0) }
 
     // The pager keeps this page composed from the first frame on (see ConnectedTabs),
@@ -122,7 +124,18 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "One file per ESP power session · CSV in app storage",
+                // Where the cards underneath came from. The folder is named because it is
+                // the place a user goes to open a drive in a spreadsheet or pull one off
+                // over USB; when the grant is missing, saying "app-private" instead of that
+                // path is the difference between a drive they cannot find and a drive they
+                // were told about.
+                if (sharedStorage) {
+                    "One file per ESP power session · CSV in " +
+                        "${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}"
+                } else {
+                    "One file per ESP power session · app-private folder — grant " +
+                        "storage access in App Settings"
+                },
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
                 textAlign = TextAlign.Center,
