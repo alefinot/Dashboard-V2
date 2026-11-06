@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.viewmodel
 
 import com.alefinot.dashboardpp.trips.TripStore
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -77,6 +78,73 @@ class DrivesFromBothFoldersTest {
     @Test
     fun `an empty list is not a second folder`() {
         assertNull(TripsViewModel.elsewhereFor(emptyList(), folder.newFolder("trips")))
+    }
+
+    @Test
+    fun `the folder in use is counted on its own and the rest is counted apart`() {
+        // The App settings Storage card names one folder and used to print the size of the whole
+        // list next to it: on a grant that had just been allowed, a folder holding nothing was
+        // captioned `Documents/Dashboard++ · 5 trip files` while all five files sat in the
+        // app-private folder. The card may only claim what the folder it names contains.
+        val active = folder.newFolder("shared-trips")
+        val legacy = folder.newFolder("private-trips")
+        val files = listOf(
+            tripIn(active, "trip-20261108-175512-001.csv"),
+            tripIn(legacy, "trip-20261101-080000-001.csv"),
+            tripIn(legacy, "trip-20261102-080000-001.csv"),
+        )
+
+        val counts = TripsViewModel.countsFor(files, active)
+
+        assertEquals(
+            "the card names the folder in use, so it may only count the files that are in it",
+            1, counts.here,
+        )
+        assertEquals(2, counts.elsewhere?.count)
+    }
+
+    @Test
+    fun `a folder holding everything says so with its full count and nothing elsewhere`() {
+        val active = folder.newFolder("shared-trips")
+        val files = listOf(
+            tripIn(active, "trip-20261108-175512-001.csv"),
+            tripIn(active, "trip-20261107-091200-001.csv"),
+        )
+
+        val counts = TripsViewModel.countsFor(files, active)
+
+        assertEquals(2, counts.here)
+        assertNull(counts.elsewhere)
+        assertEquals(0, TripsViewModel.countsFor(emptyList(), active).here)
+    }
+
+    @Test
+    fun `the storage card is fed the split counts and not the whole list`() {
+        // The arithmetic above is only honest if the card uses it. This is the wiring: the card's
+        // number comes from the split, and the other folder's count reaches the sentence too.
+        val settings = moduleFile("src/main/java/com/alefinot/dashboardpp/ui/screens/SettingsScreen.kt")
+            .readText()
+
+        assertFalse(
+            "the Storage card counted every drive the list shows, including the ones sitting in " +
+                "the other folder than the one its own label names",
+            settings.contains("tripFiles = trips.rows.value.size"),
+        )
+        assertTrue(settings.contains("counts.here"))
+        assertTrue(
+            "the card takes the split the index pass published, rather than re-deriving it",
+            settings.contains("trips.tripCounts.value"),
+        )
+        assertTrue(
+            "the sentence that counts the card's files belongs to StorageCopy, like every other " +
+                "storage sentence in the app",
+            settings.contains("StorageCopy.cardCounts"),
+        )
+        assertTrue(
+            "the card has to know whether the remainder is the app's own folder before it words " +
+                "that remainder",
+            settings.contains("otherTripFilesInOwnFolder"),
+        )
     }
 
     @Test

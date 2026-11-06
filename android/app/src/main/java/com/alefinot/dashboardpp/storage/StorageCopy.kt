@@ -38,6 +38,28 @@ object StorageCopy {
     fun drives(n: Int): String = count(n, "drive")
 
     /**
+     * The Storage card's count line, which hangs off a folder label: `<folder> · counts`. Because
+     * the folder is named, the counts are that folder's and nobody else's - and an install that
+     * has been through a grant really does hold files in both roots, so the line has to admit the
+     * remainder instead of quietly folding it in (bench, 2026-11-06: a tablet whose shared folder
+     * had just been created and held nothing read `Documents/Dashboard++ · 5 trip files`).
+     *
+     * [here] is the count of trip files inside the folder the card names; [elsewhere] is the count
+     * of trip files the Trips list shows that live outside it, and [elsewhereInOwnFolder] says
+     * whether that outside is the app's own folder - the sentence a grant leaves behind - or a
+     * folder only a path can describe. The free-space tail stays with the caller, which owns the
+     * byte formatter. (The parameter is not called `tripFiles`: that name belongs to the
+     * pluralising helper above, and a parameter would silence it.)
+     */
+    fun cardCounts(here: Int, carCount: Int, elsewhere: Int, elsewhereInOwnFolder: Boolean): String {
+        val strays = if (elsewhere > 0) {
+            val where = if (elsewhereInOwnFolder) "the app's own folder" else "another folder"
+            " \u00b7 + ${tripFiles(elsewhere)} in $where"
+        } else ""
+        return "\u00b7 ${tripFiles(here)} \u00b7 ${cars(carCount)}" + strays
+    }
+
+    /**
      * The Storage card's button label. Every Android version the app runs on has a way into the
      * shared folder ([AppRoot.GrantPath]), so every one of them gets a button; what differs is the
      * door it opens - the All files access page from API 30 up, the system's storage dialog below

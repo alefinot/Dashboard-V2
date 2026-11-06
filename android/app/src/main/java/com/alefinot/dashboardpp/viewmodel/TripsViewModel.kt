@@ -160,6 +160,19 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
     /** How many drives live in a folder other than the one in use, and that folder's path. */
     data class Elsewhere(val count: Int, val path: String)
 
+    /**
+     * One walk's verdict about where the listed files sit: how many the folder in use holds, and
+     * the rest. The Trips header shows the total plus the remainder; the App settings Storage card
+     * names one folder, so it shows [here] alone and only admits [elsewhere] as its own sentence.
+     * Published from the same pass so the two pages cannot disagree about the split.
+     */
+    data class TripCounts(val here: Int, val elsewhere: Elsewhere?)
+
+    private val _tripCounts = MutableStateFlow(TripCounts(0, null))
+
+    /** The split above, as of the last index pass; see [countsFor]. */
+    val tripCounts: StateFlow<TripCounts> = _tripCounts
+
     fun refresh() {
         scope.launch(Dispatchers.IO) {
             _busy.value = true
@@ -215,7 +228,9 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             // Read from the same walk that counted the files, so the header's "where" and
             // its "how much" cannot disagree about which folder they are describing.
             _shared.value = AppRoot.isSharedAvailable(getApplication())
-            _elsewhere.value = elsewhereFor(files, store.dir())
+            val counts = countsFor(files, store.dir())
+            _tripCounts.value = counts
+            _elsewhere.value = counts.elsewhere
             index.retain(files.map { it.absolutePath }.toSet())
             _busy.value = false
             // Any file whose summary is missing gets summarised in the
@@ -304,12 +319,26 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
          * folder the list is not showing rows from, and it costs nothing: the files are
          * already in hand.
          */
-        fun elsewhereFor(files: List<File>, writingTo: File): Elsewhere? {
+        /**
+         * The list the Trips tab shows, split by where its files actually sit: how many the folder
+         * in use holds, and how many came from somewhere else (naming that somewhere). One walk's
+         * decision, returned as a pair, because the Trips header and the App settings Storage card
+         * both need the two numbers and must not arrive at different ones: the card names a single
+         * folder, so it may only claim the files that are inside it.
+         */
+        fun countsFor(files: List<File>, writingTo: File): TripCounts {
             val here = runCatching { writingTo.canonicalPath }.getOrDefault(writingTo.absolutePath)
             val strays = files.filter { parentOf(it) != here }
-            if (strays.isEmpty()) return null
-            return Elsewhere(strays.size, strays.first().parentFile?.absolutePath ?: "")
+            return TripCounts(
+                here = files.size - strays.size,
+                elsewhere = strays.firstOrNull()?.let {
+                    Elsewhere(strays.size, it.parentFile?.absolutePath ?: "")
+                },
+            )
         }
+
+        fun elsewhereFor(files: List<File>, writingTo: File): Elsewhere? =
+            countsFor(files, writingTo).elsewhere
     }
 
     private fun summarise(row: TripRow) {

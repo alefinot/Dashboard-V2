@@ -91,6 +91,37 @@ class StorageCopyTest {
     // ---------------------------------------------------------------- the sentences
 
     @Test
+    fun `the storage card counts only the folder it names and admits the rest`() {
+        // The card's headline is `<folder> · counts`, so a count that includes files outside that
+        // folder contradicts the label two words above it. Bench, 2026-11-06: a tablet that had
+        // just been granted storage read `Documents/Dashboard++ · 5 trip files` over an empty
+        // folder, because the number came from a list that reads both roots.
+        assertEquals(
+            "\u00b7 0 trip files \u00b7 0 cars",
+            StorageCopy.cardCounts(0, 0, 0, false),
+        )
+        assertEquals(
+            "\u00b7 3 trip files \u00b7 1 car",
+            StorageCopy.cardCounts(3, 1, 0, false),
+        )
+        assertEquals(
+            "\u00b7 0 trip files \u00b7 0 cars \u00b7 + 5 trip files in the app's own folder",
+            StorageCopy.cardCounts(0, 0, 5, true),
+        )
+        assertEquals(
+            "\u00b7 1 trip file \u00b7 2 cars \u00b7 + 1 trip file in the app's own folder",
+            StorageCopy.cardCounts(1, 2, 1, true),
+        )
+        assertEquals(
+            // The rest is not always the app's own folder: revoke All files access and the
+            // recorder moves to it, leaving drives behind in Documents. Then only a path is
+            // honest, so the tail stays the unnamed one the Trips page uses.
+            "\u00b7 2 trip files \u00b7 0 cars \u00b7 + 4 trip files in another folder",
+            StorageCopy.cardCounts(2, 0, 4, false),
+        )
+    }
+
+    @Test
     fun `no runtime-path sentence points at an all files switch`() {
         // The guard survives the fix, only narrower and true: below API 30 there is no All files
         // access, so a sentence that sends an Android 8.1-10 owner hunting for one is still a lie.

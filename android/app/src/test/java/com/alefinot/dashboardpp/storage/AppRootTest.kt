@@ -28,6 +28,26 @@ import org.junit.Test
  */
 class AppRootTest {
 
+    // ---- folder identity: is this path the folder a sentence just named? ----------
+
+    @Test
+    fun `a folder is recognised even when it is spelled another way`() {
+        // The Storage card says where drives the folder it names does not hold are - "the app's own
+        // folder" or "another folder" - and that choice is made by comparing the folder the files
+        // were found in with the app's private root. Comparing strings would call the same folder
+        // by two names.
+        val docs = tempDir("identity")
+        val trips = File(docs, "Dashboard++/trips").apply { mkdirs() }
+        val roundabout = File(docs, "Dashboard++/../Dashboard++/trips").absolutePath
+
+        assertTrue(AppRoot.sameFolder(trips.absolutePath, roundabout))
+        assertTrue(AppRoot.sameFolder(trips.path, trips.path))
+        assertFalse(
+            "the private root is not the shared root, however both are spelled",
+            AppRoot.sameFolder(trips.absolutePath, File(docs, "app-private/trips").absolutePath),
+        )
+    }
+
     // ---- the decision: shared, or the app-private fallback ------------------
 
     @Test

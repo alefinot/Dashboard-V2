@@ -273,6 +273,18 @@ object AppRoot {
         // internal storage always is. The chain is why baseFor needs no null.
         context.applicationContext.getExternalFilesDir(null) ?: context.applicationContext.filesDir
 
+    /**
+     * Whether two paths name the same folder, however each of them is spelled. Sentences about
+     * "the app's own folder" and "another folder" are decided with this: comparing raw strings
+     * would call one folder by two names (`..`, a mounted volume, a path built by hand) and tell
+     * the owner their drives are somewhere they are not.
+     */
+    fun sameFolder(a: String, b: String): Boolean {
+        val ca = runCatching { File(a).canonicalPath }.getOrDefault(a)
+        val cb = runCatching { File(b).canonicalPath }.getOrDefault(b)
+        return ca == cb
+    }
+
     /** mkdirs, tolerating a directory that already exists or a volume that refuses. */
     private fun ensureDir(f: File): File {
         if (!f.isDirectory) f.mkdirs()

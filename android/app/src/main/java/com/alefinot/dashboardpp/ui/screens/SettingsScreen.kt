@@ -435,10 +435,19 @@ fun SettingsScreen(
  * creates the folder it reports on, `StatFs` asks the volume for its free space, and
  * the car count is a first read of the garage — none of which belongs on the UI
  * thread of a page that recomposes every time a switch on it moves.
+ *
+ * [tripFiles] counts the files inside the folder the card names, and [otherTripFiles] the
+ * drives the Trips list shows from the other root. They are kept apart because the card's
+ * headline names exactly one folder: an install that has been through a grant holds files in
+ * both, and one number spanning both sat under a path that held none of them (bench,
+ * 2026-11-06, a tablet whose shared folder had just been created: `Documents/Dashboard++ ·
+ * 5 trip files` over an empty folder).
  */
 private class StorageSnapshot(
     val shared: Boolean,
     val tripFiles: Int,
+    val otherTripFiles: Int,
+    val otherTripFilesInOwnFolder: Boolean,
     val cars: Int,
     val freeBytes: Long,
 ) {
@@ -447,6 +456,8 @@ private class StorageSnapshot(
         suspend fun of(context: Context, vm: ConnectionViewModel, trips: TripsViewModel): StorageSnapshot {
             val shared = AppRoot.isSharedAvailable(context)
             val where = AppRoot.tripsDir(context)
+            val counts = trips.tripCounts.value
+            val strays = counts.elsewhere
             val free = try {
                 val fs = StatFs(where.absolutePath)
                 fs.availableBytes
@@ -457,7 +468,16 @@ private class StorageSnapshot(
             }
             return StorageSnapshot(
                 shared = shared,
-                tripFiles = trips.rows.value.size,
+                // The split comes from the Trips index pass - the same walk that produced the
+                // list the owner is looking at - so the card and that list cannot disagree about
+                // which folder holds what. `trips.rows` is deliberately not counted here: it
+                // spans every folder the app has recorded into.
+                tripFiles = counts.here,
+                otherTripFiles = strays?.count ?: 0,
+                // "the app's own folder" is only true of the app's own folder. After a revoked
+                // grant the remainder sits in Documents instead, and only a path describes that.
+                otherTripFilesInOwnFolder = strays != null &&
+                    AppRoot.sameFolder(strays.path, AppRoot.privateTripsDir(context).absolutePath),
                 cars = try { vm.vehicleCards().first().size } catch (e: Exception) { 0 },
                 freeBytes = free,
             )
@@ -478,8 +498,9 @@ private class StorageSnapshot(
  */
 @Composable
 private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
-    val counts = "\u00b7 ${StorageCopy.tripFiles(snapshot.tripFiles)} \u00b7 ${StorageCopy.cars(snapshot.cars)}" +
-        (if (snapshot.freeBytes >= 0) " \u00b7 ${hudBytes(snapshot.freeBytes)} free" else "")
+    val counts = StorageCopy.cardCounts(
+        snapshot.tripFiles, snapshot.cars, snapshot.otherTripFiles, snapshot.otherTripFilesInOwnFolder,
+    ) + (if (snapshot.freeBytes >= 0) " \u00b7 ${hudBytes(snapshot.freeBytes)} free" else "")
     Column(
         Modifier.fillMaxWidth().hudCard()
             .padding(horizontal = 14.dp, vertical = 12.dp),
