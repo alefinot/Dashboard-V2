@@ -34,6 +34,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -365,26 +367,42 @@ private fun PerfCard(
     }
 }
 
-/** `.perf-row`: a dim 12 px label, a white mono figure, 3 px above and below. */
+/**
+ * `.perf-row`: a dim 12 px label, a white mono figure, 3 px above and below.
+ *
+ * The label is the part that keeps its width and the figure takes the rest, right-aligned -
+ * that is the page's `justify-content: space-between` in Compose, and it matters the moment
+ * the column stops being 920 px. In the other order the figure is measured first and claims
+ * everything: on a phone a spread line ("now 37108 · min 37108 · max 38160 · avg 37405 over
+ * 60 s") ate the row and "free heap" arrived one letter per line (bench, Xiaomi Mi 9 Lite,
+ * 2026-11-07). So the label never wraps and the figure is the thing that does.
+ */
 @Composable
 private fun PerfRow(label: String, value: String, warn: Boolean = false) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(RowGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
             style = HudePerfLabel(),
             color = HudColors.TextMuted,
-            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             value,
             style = HudePerfRowValue(),
             color = if (warn) HudColors.Amber else HudColors.TextPrimary,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
         )
     }
 }
+
+/** The least room a figure keeps next to its label. The page's flex leaves none; a phone needs some. */
+private val RowGap = 12.dp
 
 /**
  * `.perf-bar-label`: muted 12 px caption on the left, the values on the right with the
@@ -401,13 +419,15 @@ private fun CaptionLine(
 ) {
     Row(
         modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(RowGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
             style = HudePerfLabel(),
             color = HudColors.TextMuted,
-            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             buildAnnotatedString {
@@ -426,6 +446,8 @@ private fun CaptionLine(
                 }
             },
             style = HudePerfLabel(),
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f),
         )
     }
 }
