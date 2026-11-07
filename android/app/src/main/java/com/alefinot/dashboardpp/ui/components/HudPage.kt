@@ -53,7 +53,7 @@ import com.alefinot.dashboardpp.ui.theme.hudGlass
  * The page frame every screen shares, taken from the ESP's own Web UI - the page the
  * unit used to serve from `src/webui.html`. That page is deleted (BLE-only firmware),
  * so this file is the surviving copy of its layout; the CSS the numbers below were
- * read from is still in `git show HEAD^:src/webui.html`.
+ * read from is still in `git show 7104bf96^:src/webui.html`.
  *
  * On a 1920 px tablet the app used to draw a 13 px label at the far left of a 1900 px
  * line and put the switch it belongs to 1800 px away on the right. The page never

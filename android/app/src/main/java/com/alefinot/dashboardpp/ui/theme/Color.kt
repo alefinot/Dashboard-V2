@@ -11,7 +11,7 @@ import androidx.compose.ui.graphics.Color
  * The page is deleted (BLE-only firmware), so these values are the surviving copy
  * and this file is now the source of the palette. The line numbers below are where
  * each was read, in the last revision that had the page (recoverable with
- * `git show HEAD^:src/webui.html` before the step 0 cleanup).
+ * `git show 7104bf96^:src/webui.html`, the commit before the step 0 cleanup).
  */
 object HudColors {
     /** `--bg-base` (#000) - the page body, and now the app's background too. */

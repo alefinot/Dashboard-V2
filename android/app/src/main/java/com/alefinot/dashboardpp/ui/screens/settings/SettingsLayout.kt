@@ -7,7 +7,7 @@ import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore.SettingsState
  *
  * The rules are the unit's own page's rules, copied deliberately. The page a driver had
  * been using for a year (`src/webui.html`, deleted with the Web UI - recoverable with
- * `git show HEAD^:src/webui.html`) was a search box over one long list; the app has
+ * `git show 7104bf96^:src/webui.html`) was a search box over one long list; the app has
  * the same list, and an owner who has learned where `FUEL_EXC_RES_OHM` lives on the unit
  * should land in the same place on the phone. Two of those rules are load-bearing enough
  * to be written down as code rather than left to a screen:
