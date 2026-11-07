@@ -145,6 +145,16 @@ class DrivesFromBothFoldersTest {
                 "that remainder",
             settings.contains("otherTripFilesInOwnFolder"),
         )
+        assertTrue(
+            "opening the page has to make the index look at the volume again: the owner may have " +
+                "spent the time the app was backgrounded deleting a drive in a file manager",
+            settings.contains("trips.refresh()"),
+        )
+        assertTrue(
+            "and the card has to be rebuilt when that look finishes, instead of keeping the answer " +
+                "that was published before the owner left the app",
+            settings.contains("trips.tripCounts.collectAsStateWithLifecycle"),
+        )
     }
 
     @Test

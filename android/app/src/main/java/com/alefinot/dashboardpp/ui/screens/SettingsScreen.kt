@@ -315,7 +315,14 @@ fun SettingsScreen(
         // the folder it reports on, and asks the volume for free space) and so stays off
         // the main thread.
         var storage by remember { mutableStateOf<StorageSnapshot?>(null) }
-        LaunchedEffect(storageTick) {
+        // The card counts with the Trips index, so the index is the thing that has to be fresh.
+        // Two effects, because they answer different questions: this one asks the volume again the
+        // moment the page is opened or the app comes back to it - the owner may have spent that
+        // time deleting a drive in a file manager, or granting storage, which moves the files -
+        // and the one below rebuilds the card from whatever that look publishes.
+        LaunchedEffect(storageTick) { trips.refresh() }
+        val tripCounts by trips.tripCounts.collectAsStateWithLifecycle()
+        LaunchedEffect(storageTick, tripCounts) {
             storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
         }
         // Android 8.1 through 10: there, the ordinary runtime permission is what makes Documents

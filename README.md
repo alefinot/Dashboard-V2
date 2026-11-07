@@ -17,7 +17,7 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
 Two generations are described in these pages, and they are not the same product:
 
 - **A current-build unit** — anything built from this tree, i.e. **V2.0.0** and the Changelog
-  entries it collects on top of V1.5.1, the current build being **V2.0.2** — is **BLE-only, with no
+  entries it collects on top of V1.5.1, the current build being **V2.0.3** — is **BLE-only, with no
   Wi-Fi stack at all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
   the LAN install route **and the weather-fetch task**), `src/webui.html` and
   `scripts/gzip_webui.py` were **deleted on 2026-11-02**, and there is no build flag that
@@ -847,7 +847,7 @@ The parameter table shrank on 2026-11-02, when the portal and the network stack 
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.2`, `versionCode 65` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.3`, `versionCode 71` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -1636,8 +1636,8 @@ compared against `sha256sum firmware.bin`.
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
-every build (`[image tag] firmware.bin declares itself 2.0.2 (marker at 0x24488)`), the
-unit prints it on the console at every boot (`FW 2.0.2, image marker DPPVER=2.0.2` — that
+every build (`[image tag] firmware.bin declares itself 2.0.3 (marker at 0x24488)`), the
+unit prints it on the console at every boot (`FW 2.0.3, image marker DPPVER=2.0.3` — that
 log line exists because the marker had stopped surviving the link: its only reader lived
 in `web.cpp`, and once `web.cpp` left the build the linker's section garbage-collection
 deleted the literal, which is why every image built for a while carried no tag at all),
@@ -1701,7 +1701,49 @@ In Demo Mode:
 
 ## Changelog
 
-### Unreleased (firmware) — a settings read lost every full-MTU frame (no version bump yet)
+### V2.0.3 — released 2026-11-07 (firmware 2.0.3, app `versionName` 2.0.3 / `versionCode` 71)
+
+What this release carries.
+
+**Firmware 2.0.3** — a settings read that silently lost every full-MTU frame, so Dashboard settings
+opened with *138 keys missing* on a phone that negotiated MTU 517 while the unit's own log looked
+clean. That fix sat unversioned in this tree since it landed; it is in a release now, and the entry
+below is its write-up. `FW_VERSION` 2.0.2 → 2.0.3 with no other firmware change, so the image tag and
+the release title agree - which is the whole reason the tag exists.
+
+**App 2.0.3 / 71** — the Settings ▸ Storage card now counts only the folder it names, and admits what
+is elsewhere (`+ 5 trip files in the app's own folder`); and it asks the Trips index to look at the
+volume again when the page opens, so returning from a file manager where a drive was deleted - or from
+the system grant page - no longer leaves it quoting a number from before the owner left the app. Both
+are written up in the two `App 2.0.2/…` entries underneath, which describe code that was merged before
+this release was cut.
+
+Built and measured from this commit: `pio run` → *1,573,063 B flash, 82.8% of the app slot*,
+`[image tag] firmware.bin declares itself 2.0.3 (marker at 0x24488)`; `gradlew test` green; `assembleDebug`
+→ `versionCode 71`, `versionName 2.0.3`. On the SM-T590 (Android 10) that has drives only in its own
+folder, the card reads *Documents/Dashboard++ · 0 trip files · 0 cars · + 5 trip files in the app's own
+folder · 16506.8 MB free*, and it follows the truth when a drive file is added and then deleted by hand
+while the app is backgrounded: *+ 6*, then back to *+ 5*.
+
+### App 2.0.3/71 — the Storage card looks at the volume again when the page opens (`versionCode` 70 → 71; `versionName` 2.0.2 → 2.0.3)
+
+The card counts with the Trips index, and nothing in the app ever asked that index to re-walk the
+volume: the count on screen was whatever the last index pass had published, which on a cold start
+happens to be fresh (the Trips tab pre-composes), and otherwise is as old as the last time something
+called `refresh()`. Delete a drive in a file manager, come back, and the card - and the Trips header
+underneath it - keep quoting the number from before the owner left the app.
+
+Opening the page (or resuming to it, which is what returning from a file manager or the system grant
+page is) now runs the index pass, and the card is rebuilt from what it publishes rather than latching
+the first answer: two `LaunchedEffect`s, one to ask, one to redraw when the answer arrives. Kept
+separate on purpose - a single effect that both asked and keyed on the published counts would re-ask
+every time the answer changed. Source-pinned in `viewmodel/DrivesFromBothFoldersTest` alongside the
+rest of the card's wiring.
+
+Measured on the SM-T590 with drives in the app's own folder: copy a drive CSV into the folder while
+the app is backgrounded and resume → *+ 6 trip files*; delete it and resume → *+ 5*.
+
+### Firmware 2.0.3 — a settings read lost every full-MTU frame (released in V2.0.3)
 
 A Xiaomi 15 paired to 2.0.2 opened **Dashboard settings** with an amber line in the header:
 *138 keys the schema knows are missing from the read*. The unit was innocent — it logged
@@ -1724,7 +1766,7 @@ is why one phone in the field showed it and the bench Mi 9 Lite never did. The O
 from a different calculation (`otaChunkForLink()` rounds down to a multiple of 16 → 496 B), so it
 never touched the ceiling — which is why BLE installs were never affected by this.
 
-### App 2.0.2/70 — the Storage card counts only the folder it names (`versionCode` 68 → 70; firmware unchanged at 2.0.2)
+### App 2.0.2/70 — the Storage card counts only the folder it names (`versionCode` 68 → 70; firmware unchanged at 2.0.2, released as part of V2.0.3)
 
 A Galaxy Tab A 10.1 that had just been granted storage read **`Documents/Dashboard++ · 5 trip files`**
 over a folder holding nothing. Label and number came from different places: the label is the folder in
