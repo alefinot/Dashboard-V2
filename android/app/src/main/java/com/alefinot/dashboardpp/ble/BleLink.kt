@@ -17,6 +17,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.location.LocationManager
 import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
@@ -284,6 +285,12 @@ class BleLink(context: Context) {
             close(IOException("no_scanner"))
             return@callbackFlow
         }
+        // Ask Android whether it would answer at all before spending the sweep's window on a
+        // radio that is going to call back zero times. See [locationServiceOn].
+        if (!locationServiceOn()) {
+            close(IOException("location_off"))
+            return@callbackFlow
+        }
 
         val found = LinkedHashMap<String, BleDevice>()
         val callback = object : ScanCallback() {
@@ -315,6 +322,39 @@ class BleLink(context: Context) {
             return@callbackFlow
         }
         awaitClose { runCatching { scanner.stopScan(callback) } }
+    }
+
+    /**
+     * Whether Android would hand this scan a single result.
+     *
+     * On Android 11 and below the system folds the position **switch** into the BLE rule: with
+     * `ACCESS_FINE_LOCATION` granted and the switch off, `startScan()` accepts the request, costs
+     * the sweep its whole window, and calls back zero times. Nothing in the callback distinguishes
+     * that from a unit that is switched off, so the empty list was read as "the dashboard did not
+     * answer" and the owner was sent to check a unit that was never asked (SM-T590 on Android 10,
+     * 2026-11-07: the garage hunt found nothing while the same unit happily served the phone next
+     * to it — which holds a saved pairing and so dials an address instead of scanning). Android 12
+     * moved the gate to `BLUETOOTH_SCAN`, which the manifest declares with `neverForLocation`, and
+     * the same manifest caps `ACCESS_FINE_LOCATION` at `maxSdkVersion="30"`; this check stops at
+     * the same line the manifest does.
+     *
+     * It fails **open**: a missing or unreadable [LocationManager] answers "on", because a wrong
+     * refusal here blocks a sweep Android was going to deliver, and that is the failure this app
+     * can least explain to a user. Only a definite off stops the sweep.
+     */
+    private fun locationServiceOn(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return true
+        val lm = appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            ?: return true
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                lm.isLocationEnabled
+            } else {
+                // 8.0 and 8.1 have no isLocationEnabled: the switch is the two providers behind it.
+                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                    lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+            }
+        }.getOrDefault(true)
     }
 
     /**

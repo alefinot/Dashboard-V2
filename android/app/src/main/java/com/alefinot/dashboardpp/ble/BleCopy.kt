@@ -13,7 +13,9 @@ package com.alefinot.dashboardpp.ble
  *
  * The strings are deliberately specific about what to *do*. A Bluetooth failure has
  * three real causes — the unit is off or out of range, the phone is not allowed to
- * use the radio, or the pairing went wrong — and each needs a different fix, so a
+ * use the radio (which on Android 11 and older includes its location switch: with the
+ * switch off, a scan answers nothing at all), or the pairing went wrong — and each
+ * needs a different fix, so a
  * generic "connection failed" line is not a smaller mistake but a bigger one.
  */
 
@@ -23,6 +25,10 @@ fun scanFailureText(reason: String?): String = when (reason) {
     "no_bluetooth" -> "This phone has no Bluetooth LE radio."
     "permission" -> "Bluetooth permission denied. Allow it in Android settings."
     "no_scanner" -> "Android would not start a BLE scan. Try again."
+    "location_off" ->
+        "Android 11 and older give no BLE scan results at all while the location switch is off, " +
+            "even with permission granted. Nothing has asked the dashboard yet: turn location on " +
+            "and scan again."
     else -> "Bluetooth scan failed: ${reason ?: "unknown"}"
 }
 
