@@ -506,4 +506,40 @@ class ConnectionCoreTest {
         assertNull(ConnectionCore.forgetUnit(true, false).note)
         assertTrue(ConnectionCore.forgetUnit(true, true).note!!.contains("Bluetooth settings"))
     }
+
+    // ------------------------------------------------------------------- selecting a card
+
+    /**
+     * The one rule that decides whether a tap on a card takes a live connection down with it.
+     *
+     * Pressing a card is how a card is *selected*, so pressing the connected one is the ordinary
+     * thing a user does, not an edge case. It used to end the session anyway, and that specific
+     * mismatch cannot heal: the radio is deliberately left connected, the reconnect guards treat a
+     * live link as no reason to dial, and the code that turns a live link into a session only runs
+     * when the link's state changes - so an unchanged `Ready` never re-adopts it. On the bench
+     * (SM-T590, 2026-11-07) the app sat showing `NO DASHBOARD IN RANGE` over a link it still held,
+     * while a second phone dialling that same unit timed out after 20 s.
+     *
+     * Selecting another card still ends the session: the next drive has to be tagged to the
+     * vehicle actually being driven.
+     */
+    @Test
+    fun `pointing the app at the connected card keeps the session, another card ends it`() {
+        assertFalse(
+            "selecting the card that is connected must keep the session",
+            CardSelection.endsLiveSession("v2", "v2"),
+        )
+        assertTrue(
+            "selecting a different card must end it - the drive belongs to the vehicle being driven",
+            CardSelection.endsLiveSession("v2", "v7"),
+        )
+        assertFalse(
+            "nothing is connected, so there is nothing to end",
+            CardSelection.endsLiveSession(null, "v2"),
+        )
+        assertFalse(
+            "and no card at all selected answers the same way",
+            CardSelection.endsLiveSession(null, ""),
+        )
+    }
 }
