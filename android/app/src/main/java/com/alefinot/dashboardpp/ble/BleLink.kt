@@ -38,6 +38,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.cancellation.CancellationException
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -201,6 +202,22 @@ class BleLink(context: Context) {
     @Volatile
     private var connectedAtMs = 0L
 
+    /**
+     * When and where the **last** client was closed, for the settle floor in [connect].
+     *
+     * The stack needs a moment between `close()` on an address and a new `connectGatt()` on the
+     * same one. Measured on the bench on 2026-11-07: a redial issued ~18 ms after the previous
+     * client went down came back with `requestMtu()` refused (link logged at MTU 23 one
+     * millisecond after `dial up`) and `discoverServices()` refused, and the same call
+     * `discover()` makes seconds later was accepted. The floor costs a quarter of a second on a
+     * redial and removes a whole class of "the phone refuses to reconnect until you restart it".
+     */
+    @Volatile
+    private var lastCloseAtMs = 0L
+
+    @Volatile
+    private var lastClosedAddress: String? = null
+
     @Volatile
     private var telemChar: BluetoothGattCharacteristic? = null
 
@@ -223,13 +240,20 @@ class BleLink(context: Context) {
     private val rpcFrames = FrameAssembler()
 
     // One in-flight GATT operation at a time; each is completed by its callback.
-    private var connectDone: CompletableDeferred<Boolean>? = null
-    private var bondDone: CompletableDeferred<Boolean>? = null
-    private var serviceDone: CompletableDeferred<Boolean>? = null
-    private var mtuDone: CompletableDeferred<Int>? = null
-    private var descriptorDone: CompletableDeferred<Int>? = null
-    private var writeDone: CompletableDeferred<Int>? = null
-    private var otaWriteDone: CompletableDeferred<Int>? = null
+    //
+    // Volatile, and not for tidiness: every one of these is assigned on the connect coroutine's
+    // thread and *completed* on a binder callback thread, so without a visibility guarantee the
+    // callback may read a stale `null` and drop the answer it was carrying. That reads on the bench
+    // exactly like a stack that refuses the call - `mtu negotiated=23`, `discover refused` - which is
+    // why it is fixed here rather than left as a style question. The deferreds themselves are
+    // thread-safe; only the references were racing.
+    @Volatile private var connectDone: CompletableDeferred<Boolean>? = null
+    @Volatile private var bondDone: CompletableDeferred<Boolean>? = null
+    @Volatile private var serviceDone: CompletableDeferred<Boolean>? = null
+    @Volatile private var mtuDone: CompletableDeferred<Int>? = null
+    @Volatile private var descriptorDone: CompletableDeferred<Int>? = null
+    @Volatile private var writeDone: CompletableDeferred<Int>? = null
+    @Volatile private var otaWriteDone: CompletableDeferred<Int>? = null
 
     private val seq = AtomicInteger(1)
     private val pending = ConcurrentHashMap<Int, Pending>()
@@ -258,6 +282,15 @@ class BleLink(context: Context) {
     } catch (e: IllegalArgumentException) {
         // An address this adapter never saw is not bonded to it; the store is only
         // trusted to hold well-formed strings, and a malformed one answers the same way.
+        false
+    } catch (e: SecurityException) {
+        // On Android 12+ both `getRemoteDevice` and `bondState` are gated on BLUETOOTH_CONNECT, and
+        // this answer is asked from the vehicle page's FORGET THIS UNIT, which runs uncaught in the
+        // view model's scope. A card the owner is trying to forget must never be able to take the
+        // process with it - and "this phone cannot say" is genuinely not bonded, for every decision
+        // this feeds: there is no pairing the app may claim to hold. (Bench audit 2026-11-07, item
+        // found by the whole-tree call-site inventory; the API 31+ path is otherwise untested here.)
+        Log.w(DPP_CONN_LOG_TAG, "isBonded refused by permission address=$address")
         false
     }
 
@@ -358,6 +391,37 @@ class BleLink(context: Context) {
     }
 
     /**
+     * Sit out the remainder of [CLOSE_SETTLE_MS] before opening another client for [address].
+     *
+     * Android tears a GATT client down asynchronously: `close()` returns immediately, and the
+     * stack is still reaping that address's connection when the next `connectGatt()` lands on it.
+     * The client that arrives too early is accepted and then crippled - it connects, and then the
+     * calls that follow are refused: `requestMtu()` returns false in the same millisecond (so the
+     * link is logged at MTU 23 with no `onMtuChanged` at all), `discoverServices()` returns false,
+     * and the connection is dropped seconds later. Every one of those numbers is in the bench log
+     * of 2026-11-07 as `mtu negotiated=23`, `discover refused by the stack` and
+     * `linkAgeMs=7` - and the same dial, a quarter of a second later, comes up at MTU 517 and
+     * stays up.
+     *
+     * The floor is per address, because it is about that address's teardown: dialling a different
+     * unit is a different client and is never held back. It is also deliberately short and always
+     * logged - a wait nobody can see reads to a user as a hung CONNECT button, and an unlogged
+     * quarter-second makes every later number in a capture suspect.
+     */
+    private suspend fun settleFor(address: String, why: String) {
+        val closed = lastCloseAtMs
+        if (closed <= 0L || lastClosedAddress != address) return
+        val since = System.currentTimeMillis() - closed
+        val waitMs = CLOSE_SETTLE_MS - since
+        if (waitMs <= 0L) return
+        Log.d(
+            DPP_CONN_LOG_TAG,
+            "redial settle waited=${waitMs}ms address=$address sinceClose=${since}ms reason=$why",
+        )
+        delay(waitMs)
+    }
+
+    /**
      * Connects, bonds, negotiates the MTU, discovers the service and subscribes.
      *
      * Returns only when the link is ready or has failed; the screen watches
@@ -373,6 +437,8 @@ class BleLink(context: Context) {
         if (!radio.isEnabled) return fail("bluetooth_off")
 
         _state.value = BleLinkState.Connecting(name)
+
+        settleFor(address, "entry")
 
         val device = try {
             radio.getRemoteDevice(address)
@@ -416,6 +482,15 @@ class BleLink(context: Context) {
                 // advertisement instead of demanding a connection now. When the unit is simply
                 // gone this costs the same timeout it would have cost anyway.
                 disconnectInternal("patient retry after a direct timeout")
+                // The same floor as at the top of this method, and this is the dial that needs it
+                // more: it follows a `close()` a few milliseconds ago, in the same breath. Without
+                // it the bench produced, twice on 2026-11-07, a patient dial that came up
+                // (`gatt connected status=0`), had `requestMtu()` refused inside the millisecond
+                // (`mtu negotiated=23` with no `onMtuChanged` in between), had `discoverServices()`
+                // refused, and was dropped seven milliseconds after it connected - the pattern of a
+                // client the stack is still reaping for that address. With it, the same dial comes
+                // up at MTU 517 and stays up.
+                settleFor(address, "patient retry")
                 Log.d(DPP_CONN_LOG_TAG, "dial patient address=$address autoConnect=true timeoutMs=$CONNECT_TIMEOUT_MS")
                 val patient = CompletableDeferred<Boolean>()
                 connectDone = patient
@@ -470,6 +545,24 @@ class BleLink(context: Context) {
             _state.value = BleLinkState.Ready(name, address, mtu).also { lastPeer = it }
             Log.d(DPP_CONN_LOG_TAG, "ready name=$name address=$address mtu=$mtu")
             true
+        } catch (e: CancellationException) {
+            // Somebody cancelled the attempt - a second SEARCH pressed over this one, the screen
+            // leaving the foreground, the vehicle changing under the hunt. That is not a fact about
+            // the radio, and today it was reported as one: this method used to end in
+            // `catch (e: Exception)`, which swallows cancellation and returns `false`, so the
+            // ladder spent a rung and printed `link failed reason=StandaloneCoroutine was
+            // cancelled` about its own coroutine machinery (bench, 2026-11-07).
+            //
+            // Two things are true on the way out. The client this call opened is closed - a
+            // cancelled attempt that leaves a client registered is what made the *next* dial see
+            // `services=0` and a refused `discoverServices()`. And the state goes to `Idle`, not
+            // `Failed`: "no link, nobody is trying" is the honest answer, and the reconnect guards
+            // read a lingering `Connecting` as a link being built, which would park every rearm
+            // behind an attempt that no longer exists.
+            Log.d(DPP_CONN_LOG_TAG, "connect cancelled address=$address cause=${e.message ?: e.javaClass.simpleName}")
+            closeGatt("attempt cancelled")
+            _state.value = BleLinkState.Idle
+            throw e
         } catch (e: Exception) {
             // A disconnect reported by the stack already said why; keep that reason
             // instead of replacing it with whatever the next await threw.
@@ -920,9 +1013,46 @@ class BleLink(context: Context) {
     // GATT callbacks
     // -----------------------------------------------------------------------
 
+    /**
+     * Whether a callback belongs to the client this link currently holds, and therefore whether
+     * its answer may be allowed to touch anything.
+     *
+     * One `BluetoothGattCallback` instance is handed to every `connectGatt()` this class makes, so
+     * every callback used to complete *whatever operation was armed at that moment*, with no way to
+     * tell which client the stack was talking about. That is the bug the bench caught on
+     * 2026-11-07: the *previous* client's `STATE_DISCONNECTED` arrived 18 ms into a fresh attempt,
+     * completed the *new* attempt's `connectDone` with `false`, and `closeGatt()` then threw the
+     * brand-new link away at `linkAgeMs=7`. Same shape, second symptom: a status-0 connection on
+     * which `requestMtu()` and `discoverServices()` were both refused, `mtu negotiated=23` logged
+     * one millisecond after `dial up`, and a redial that then saw `services=0`.
+     *
+     * Android gives the callback no token of its own, so identity is the only thing there is to
+     * compare, and `BluetoothGatt` does not implement `equals()` — which makes `===` exactly what
+     * is wanted, not an accident. A callback from a client this class no longer holds is a fact
+     * about a dead link, and the only honest thing to do with it is log it and drop it. The
+     * deliberate teardown that ended that client already logged its own `teardown cause=` line with
+     * the link's age, so nothing about the story is lost — the pair of lines is the whole event.
+     *
+     * It answers `false` while a teardown is in flight (`gatt == null`) on purpose: after
+     * [closeGatt] the operations are already unarmed, so the callback has nothing left to answer.
+     */
+    private fun ownsClient(from: BluetoothGatt, event: String): Boolean {
+        val live = gatt
+        if (live != null && from === live) return true
+        Log.d(
+            DPP_CONN_LOG_TAG,
+            "callback from a client this link no longer holds ignored event=$event" +
+                " address=${from.device.address}" +
+                " from=0x${System.identityHashCode(from).toString(16)}" +
+                " live=${if (live == null) "none" else "0x" + System.identityHashCode(live).toString(16)}",
+        )
+        return false
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (!ownsClient(g, "state=$newState status=$status")) return
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 connectedAtMs = System.currentTimeMillis()
                 Log.d(DPP_CONN_LOG_TAG, "gatt connected status=$status address=${g.device.address}")
@@ -946,10 +1076,12 @@ class BleLink(context: Context) {
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (!ownsClient(g, "mtu=$mtu status=$status")) return
             mtuDone?.complete(if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23)
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (!ownsClient(g, "services status=$status")) return
             serviceDone?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
@@ -958,6 +1090,7 @@ class BleLink(context: Context) {
             descriptor: BluetoothGattDescriptor,
             status: Int,
         ) {
+            if (!ownsClient(g, "descriptor=${descriptor.uuid} status=$status")) return
             descriptorDone?.complete(status)
         }
 
@@ -966,6 +1099,7 @@ class BleLink(context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            if (!ownsClient(g, "write=${characteristic.uuid} status=$status")) return
             // One in-flight write at a time across both characteristics, so only one of the two
             // deferreds is ever armed.
             writeDone?.complete(status)
@@ -977,6 +1111,10 @@ class BleLink(context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
+            // A frame from a zombie client is worse than no frame: both assemblers are per
+            // characteristic and shared by the live link, so a FIRST/LAST pair that belonged to the
+            // dead one splices a snapshot into the middle of a config chunk.
+            if (!ownsClient(g, "notify=${characteristic.uuid}")) return
             onNotify(characteristic.uuid, value)
         }
 
@@ -985,6 +1123,7 @@ class BleLink(context: Context) {
             g: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            if (!ownsClient(g, "notify=${characteristic.uuid}")) return
             @Suppress("DEPRECATION")
             onNotify(characteristic.uuid, characteristic.value ?: return)
         }
@@ -1025,10 +1164,32 @@ class BleLink(context: Context) {
         telemChar = null
         rpcChar = null
         otaChar = null
+        // Every operation this client was allowed to be waiting on is answered NOW, from here, and
+        // never again by the stack: the guard in [ownsClient] drops that client's callbacks from this
+        // instant, so a deferred left armed here would sit until its own timeout - `bond`'s poll out
+        // of a 180 s budget, `connectDone` out of 20 s - turning a clean teardown into a link card
+        // that says "PAIRING" for three minutes after the unit went out of range. Values are the
+        // same ones the failure paths already use, so nobody downstream can mistake these for
+        // answers from the air.
+        connectDone?.complete(false)
+        connectDone = null
+        bondDone?.complete(false)
+        bondDone = null
+        serviceDone?.complete(false)
+        serviceDone = null
+        mtuDone?.complete(23)
+        mtuDone = null
+        descriptorDone?.complete(BluetoothGatt.GATT_FAILURE)
+        descriptorDone = null
+        writeDone?.complete(BluetoothGatt.GATT_FAILURE)
+        writeDone = null
         // A transfer waiting on its next write must learn about this now, not four seconds later
         // when its own timeout fires.
         otaWriteDone?.complete(BluetoothGatt.GATT_FAILURE)
+        otaWriteDone = null
         mtu = 23
+        lastCloseAtMs = System.currentTimeMillis()
+        lastClosedAddress = client.device.address
         runCatching { client.disconnect() }
         runCatching { client.close() }
     }
@@ -1062,6 +1223,13 @@ class BleLink(context: Context) {
         const val MTU_TIMEOUT_MS = 5_000L
         const val BOND_TIMEOUT_MS = 180_000L
         const val DISCOVER_TIMEOUT_MS = 10_000L
+
+        /**
+         * How long to sit after closing a client before opening another one for the **same**
+         * address. See [lastCloseAtMs] for the bench measurement that put the number here; it is
+         * the same settling pause [discover] already found it needed for its own retries.
+         */
+        const val CLOSE_SETTLE_MS = 250L
 
         /**
          * How many times [discover] asks the stack before giving up on a link that will not
