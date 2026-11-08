@@ -1,7 +1,7 @@
 {
  "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and scripts/config_schema_presentation.json (labels, grouping).",
  "schemaVersion": 1,
- "firmware": "2.0.1",
+ "firmware": "2.0.3",
  "rows": 179,
  "groups": [
   {
