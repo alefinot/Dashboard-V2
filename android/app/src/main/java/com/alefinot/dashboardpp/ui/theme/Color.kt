@@ -2,32 +2,11 @@ package com.alefinot.dashboardpp.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-/**
- * The palette of the ESP's own Web UI, copied from the CSS custom properties that
- * were in `src/webui.html` (`--bg-base`, `--bg-card`, `--border-color`,
- * `--accent-*`, `--text-*`). The app and the page are meant to read as one
- * product, so the values came from the page rather than from a matching guess.
- *
- * The page is deleted (BLE-only firmware), so these values are the surviving copy
- * and this file is now the source of the palette. The line numbers below are where
- * each was read, in the last revision that had the page (recoverable with
- * `git show 7104bf96^:src/webui.html`, the commit before the step 0 cleanup).
- */
 object HudColors {
     /** `--bg-base` (#000) - the page body, and now the app's background too. */
     val Bg = Color(0xFF000000)
     val BgAlt = Color(0xFF000000)
 
-    /**
-     * `--bg-card` rgba(16,22,34,.75) - the frosted sheet the page puts on its
-     * overlays: `#searchBar`, `.confirm-dialog`, `.ip-banner`. It is not the fill
-     * of `.card` (see `CardFill` below): the page has two different fills, and
-     * only the overlays carry `backdrop-filter: blur(12px)` plus `--card-shadow`.
-     * The blur sits on a flat black body, so what is actually visible is the
-     * translucency, the hairline and the shadow; `Modifier.hudGlass` reproduces
-     * those three, which is what matches - and it works below API 31, where a
-     * real blur would not.
-     */
     val Panel = Color(0xBF101622)
     /** `.card` rgba(22,30,46,.6) - the surface the page builds most of itself from. */
     val CardFill = Color(0x99161E2E)
@@ -45,11 +24,6 @@ object HudColors {
     val Msg = Color(0x990F172A)
     /** `.perf-card` rgba(18,25,38,.8) - a tile inside a card. */
     val CardInner = Color(0xCC121926)
-    /**
-     * `--bg-tertiary` #0f1422 - the empty part of a `.perf-bar`, and the "free"
-     * slice of the flash bar. It is darker than a card on purpose: the page draws
-     * a bar as a recess in the tile, not as a second surface on top of it.
-     */
     val Track = Color(0xFF0F1422)
     /** `--bg-input` #121824 - the fill of `input[type=text|number]` and `select`. */
     val Field = Color(0xFF121824)
@@ -84,12 +58,6 @@ object HudColors {
     /** `rgba(255,23,68,.08)` - a warning strip's fill. */
     val RedDim = Color(0x14FF1744)
 
-    /**
-     * The Performance Monitor's partition palette, in the order the old page's
-     * `updatePerf()` cycled through it: purple, amber, cyan, blue, emerald. These
-     * are not the accent tokens - the page wanted five slices a reader can tell
-     * apart at 8 px, not five meanings - so they keep their own Tailwind values.
-     */
     val PartitionColors = listOf(
         Color(0xFFA855F7),
         Color(0xFFF59E0B),

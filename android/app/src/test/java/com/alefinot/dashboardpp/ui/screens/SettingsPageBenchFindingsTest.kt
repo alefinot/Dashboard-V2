@@ -5,29 +5,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Five things the bench showed the native settings page doing wrong, each pinned here because
- * none of them are reachable from a JVM test of the store: they live in the composition, and
- * the module has no Compose test harness. Same method as [ConnectActionsOnOnePageTest] and
- * [SettingsTabReplacesTheWebPageTest] — read the source, assert the fix is in it, so the next
- * edit that quietly removes one fails a test instead of a tablet.
- *
- * What the bench found, in the order the user found it:
- *   1. typing a word that matched a setting in another group left an empty page saying
- *       "nothing matches", with no lead to the group that held it. (The tab strip was replaced
- *       by the accordion for exactly this reason: a search now opens the groups it finds and
- *       hides the ones it does not, so there is no empty page to lead anyone out of.);
- *   2. a restore refused fourteen keys with one sentence saying they had "no use", which read
- *      as fourteen failed writes;
- *   3. the advanced switch in the header announced itself as a sentence ("show advanced
- *      settings") and every row switch as the row's label, so TalkBack had no way to tell them
- *      apart;
- *   4. after RESTART the page said "restarting, the link will drop…" forever, because the
- *      effect that clears the note was below the early return that draws the link panel, and
- *      opening the panel destroyed it;
- *   5. with no link at all the page drew every row with an empty box — a wall of controls that
- *      looked broken and refused every tap.
- */
 class SettingsPageBenchFindingsTest {
 
     private val root = File("src/main/java/com/alefinot/dashboardpp/ui/screens")
@@ -38,16 +15,6 @@ class SettingsPageBenchFindingsTest {
         return f.readText()
     }
 
-    /** Comment-free source, so a remembered description in a comment cannot satisfy a guard. */
-    /**
-     * A card whose action this page cannot carry on its own, and one calibration the page cannot
-     * do at all. The firmware card's work belongs to `OtaController` and the link, not to a
-     * settings row, so the guard is (a) the card states what an install risks, and (b) no settings
-     * screen starts an install by calling an RPC directly — an install that skipped the controller
-     * would own a 1.5 MB transfer nobody is tracking, and could not resume after a dropped link.
-     * The "match to reference" calibrations still cannot be invented: they need a live reading
-     * this page does not hold.
-     */
     @Test
     fun aCardWithNoActionAvailableSaysSoInsteadOfInventingOne() {
         val layout = codeOnly("settings/SettingsLayout.kt")
@@ -126,10 +93,6 @@ class SettingsPageBenchFindingsTest {
         )
     }
 
-    /**
-     * The cleared-note effect has to stay in composition while another page is up. This guard
-     * compares offsets in the file: the effect must appear before the early return.
-     */
     @Test
     fun theRestartNoteIsClearedWhenTheLinkComesBack() {
         val page = codeOnly("DashboardSettingsScreen.kt")

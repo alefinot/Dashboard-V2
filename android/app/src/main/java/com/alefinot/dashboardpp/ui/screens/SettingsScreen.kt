@@ -84,19 +84,6 @@ import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.weather.WeatherSettings
 import com.alefinot.dashboardpp.weather.WeatherStatus
 
-/**
- * The "APP SETTINGS" tab — controls that apply to the Android app itself. The unit's own
- * configuration (its rows, save / reboot / factory reset) is on the dashboard settings page
- * next door, and is not duplicated here.
- *
- * This is a tab, not an overlay: nothing to dismiss and no back handler to
- * install. It is also the settings page when there is no device, which is the point
- * of the nullable [unit]: the trip files, the motion switch and the storage figures
- * belong to the phone, so they stay readable and editable offline. Only the lines
- * that describe a device go quiet - the unit's name and the firmware. The vehicle page is
- * where a device is forgotten now: a card is a vehicle, not an address, and deleting
- * one needs the name on the screen to confirm it.
- */
 @Composable
 fun SettingsScreen(
     vm: ConnectionViewModel,
@@ -114,17 +101,12 @@ fun SettingsScreen(
     val recordingEnabled by settings.recordingEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     val motionOn by settings.motionEnabled.collectAsStateWithLifecycle(initialValue = true)
-    // The weather feed has its own store and its own coordinator: the switch and the
-    // typed city are the owner's, the schedule belongs to the process-wide feed that the
-    // link and the trip service are also waking (one schedule, or the unit gets two).
     val weatherSettings = remember { WeatherSettings(context) }
     val weatherFeed = remember { WeatherRuntime.coordinator(context) }
     val weatherOn by weatherSettings.enabled.collectAsStateWithLifecycle(initialValue = true)
     val weatherCity by weatherSettings.cityFallback
         .collectAsStateWithLifecycle(initialValue = CityFallback(null, null))
     val weatherStatus by weatherFeed.status.collectAsStateWithLifecycle()
-    // null means "not edited yet", which is what lets the field show the stored city
-    // once the store has answered instead of starting out empty and staying that way.
     var cityEdit by remember { mutableStateOf<String?>(null) }
     var weatherLine by remember { mutableStateOf("") }
     val appVersion = remember {
@@ -141,10 +123,6 @@ fun SettingsScreen(
             .padding(horizontal = HudPage.Gutter)
             .padding(top = 10.dp, bottom = 24.dp),
     ) {
-        // `.header`: the page's h2 in its gradient, centred, over an `.ip-banner` pill that
-        // says what this page is about in one line. The old heading was a left-aligned
-        // "APP SETTINGS" and the switches it introduced sat at the opposite edge of a
-        // 1920 px screen from their labels.
         HudPageHeader(title = "App Settings") {
             HudBanner(
                 "app $appVersion  ·  " + (unit ?: "no dashboard linked"),
@@ -159,9 +137,6 @@ fun SettingsScreen(
         )
         Spacer(Modifier.height(12.dp))
 
-        // What the app is talking to, as three cards across the page's grid. They were one
-        // card with three stacked label/value pairs, which put the value under the label it
-        // belongs to only after a scroll; across the column they read at a glance.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             IdCard("UNIT", unit ?: "NOT LINKED", Modifier.weight(1f))
             IdCard("FIRMWARE", version ?: "—", Modifier.weight(1f))
@@ -169,9 +144,6 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        // The page's switches live in cards with the sentence that explains them, not on
-        // bare rows whose label is at the left edge of the screen and whose switch is at the
-        // right one. `label { color: var(--accent-cyan) }` is still the page's own colour.
         Column(
             Modifier.fillMaxWidth().hudCard()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -186,11 +158,6 @@ fun SettingsScreen(
             ) { on ->
                 scope.launch {
                     settings.setRecordingEnabled(on)
-                    // The switch is a preference first and a service second: offline
-                    // there is nothing to sample, so turning it on saves the intent for
-                    // the next connection instead of starting a recorder with no device
-                    // behind it. Whose drives they are travels with the start command,
-                    // because the recorder cannot ask the dashboard that.
                     if (on) {
                         val owner = vm.recorderTarget()
                         if (owner != null) {
@@ -283,9 +250,6 @@ fun SettingsScreen(
                 Text(weatherLine, color = HudColors.TextMuted, style = HudeCfgNote())
             }
             Spacer(Modifier.height(8.dp))
-            // Both providers' terms ask for credit and for the app to say who it is, and
-            // BigDataCloud's free reverse endpoint refuses a call made from a server or a
-            // non-browser client, so the names here are the two that are actually called.
             Text(
                 "Weather data by Open-Meteo.com \u00b7 place names by OpenStreetMap " +
                     "Nominatim contributors",
@@ -295,12 +259,6 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        // ── Storage ─────────────────────────────────────────────────────
-        // Where the drive files are going, and the one control that can change it.
-        // Re-read whenever the page comes back to the foreground, because the grant is
-        // made on a system page this card opens: a card that latched the answer from its
-        // first composition would go on telling the owner the folder is private after
-        // they granted it, which is the one thing this card exists to tell them.
         var storageTick by remember { mutableIntStateOf(0) }
         val lifecycle = LocalLifecycleOwner.current
         DisposableEffect(lifecycle) {
@@ -310,26 +268,12 @@ fun SettingsScreen(
             lifecycle.lifecycle.addObserver(observer)
             onDispose { lifecycle.lifecycle.removeObserver(observer) }
         }
-        // Null until the first read finishes, so the card arrives a frame late rather than
-        // promising a folder it has not confirmed. The read touches the volume (it creates
-        // the folder it reports on, and asks the volume for free space) and so stays off
-        // the main thread.
         var storage by remember { mutableStateOf<StorageSnapshot?>(null) }
-        // The card counts with the Trips index, so the index is the thing that has to be fresh.
-        // Two effects, because they answer different questions: this one asks the volume again the
-        // moment the page is opened or the app comes back to it - the owner may have spent that
-        // time deleting a drive in a file manager, or granting storage, which moves the files -
-        // and the one below rebuilds the card from whatever that look publishes.
         LaunchedEffect(storageTick) { trips.refresh() }
         val tripCounts by trips.tripCounts.collectAsStateWithLifecycle()
         LaunchedEffect(storageTick, tripCounts) {
             storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
         }
-        // Android 8.1 through 10: there, the ordinary runtime permission is what makes Documents
-        // writable at all, and this is the page the owner is standing on if the dialog at launch
-        // went unanswered or was declined. From Android 11 nothing like it can be asked - All
-        // files access is a special access and no code can bring its page up for them, only hand
-        // them the page.
         val legacyStorageAsk = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission(),
         ) { storageTick++ }
@@ -370,10 +314,6 @@ fun SettingsScreen(
                     storageLine = hudBytes(trips.storageBytes.value) + " recorded · " +
                         trips.rows.value.size + " trip files"
                 }
-                // The page never asks by turning one button into two: `confirmDialog()`
-                // puts a modal box over the screen, and the only ways out are its two
-                // buttons or Escape. Same here - and deleting every recorded drive is
-                // exactly the kind of action that should not be one careless tap deep.
                 HudButton(
                     "DELETE ALL TRIPS",
                     modifier = Modifier.weight(1f),
@@ -385,9 +325,6 @@ fun SettingsScreen(
                 Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
             }
             Spacer(Modifier.height(10.dp))
-            // Not "recording stops when the link drops" any more, which stopped being true
-            // the moment auto-start became per-vehicle and a drive you never confirmed
-            // started anyway. This is what is kept and what is gone.
             Text(
                 "Auto-start is per vehicle: a card with recording enabled begins logging when " +
                     "its dashboard connects, and stops when the vehicle is turned off. A drive " +
@@ -406,10 +343,6 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
-        // No connect, no search, no address box, no forget: a device belongs to a
-        // vehicle, so every one of those actions sits on the vehicle page's card and
-        // nowhere else. What is left here are the app's own switches, which work
-        // whether or not a dashboard is on the network.
     }
 
     if (showConfirmClear) {
@@ -428,28 +361,6 @@ fun SettingsScreen(
 }
     }
 
-/**
- * One label/value pair as its own `.card`: the page's `.perf-label` over `.perf-value`.
- *
- * The three of them used to be stacked inside one card, so "UNIT" sat above "MOTOSBU" above
- * "FIRMWARE" above the version, and reading the app's own number meant scrolling past two
- * other facts. Across the column they are one line each.
- */
-/**
- * What the Storage card reports, read off the volume in one pass.
- *
- * A snapshot rather than four calls made from the composition: the folder check
- * creates the folder it reports on, `StatFs` asks the volume for its free space, and
- * the car count is a first read of the garage — none of which belongs on the UI
- * thread of a page that recomposes every time a switch on it moves.
- *
- * [tripFiles] counts the files inside the folder the card names, and [otherTripFiles] the
- * drives the Trips list shows from the other root. They are kept apart because the card's
- * headline names exactly one folder: an install that has been through a grant holds files in
- * both, and one number spanning both sat under a path that held none of them (bench,
- * 2026-11-06, a tablet whose shared folder had just been created: `Documents/Dashboard++ ·
- * 5 trip files` over an empty folder).
- */
 private class StorageSnapshot(
     val shared: Boolean,
     val tripFiles: Int,
@@ -469,20 +380,12 @@ private class StorageSnapshot(
                 val fs = StatFs(where.absolutePath)
                 fs.availableBytes
             } catch (e: Exception) {
-                // A volume that cannot answer for its free space still tells the owner
-                // where the files are; the number is the part that is dropped.
                 -1L
             }
             return StorageSnapshot(
                 shared = shared,
-                // The split comes from the Trips index pass - the same walk that produced the
-                // list the owner is looking at - so the card and that list cannot disagree about
-                // which folder holds what. `trips.rows` is deliberately not counted here: it
-                // spans every folder the app has recorded into.
                 tripFiles = counts.here,
                 otherTripFiles = strays?.count ?: 0,
-                // "the app's own folder" is only true of the app's own folder. After a revoked
-                // grant the remainder sits in Documents instead, and only a path describes that.
                 otherTripFilesInOwnFolder = strays != null &&
                     AppRoot.sameFolder(strays.path, AppRoot.privateTripsDir(context).absolutePath),
                 cars = try { vm.vehicleCards().first().size } catch (e: Exception) { 0 },
@@ -492,17 +395,6 @@ private class StorageSnapshot(
     }
 }
 
-/**
- * Where the user's files are, in the words they can act on.
- *
- * The card exists because the answer used to be "inside the app's private folder",
- * which a user could not see in a file manager, could not copy over USB, and could
- * not clean up by hand — and because the answer now depends on a grant no dialog can
- * request, so the page has to say which of the two it is *and* hand them the way to
- * change it. Both states are stated plainly: granted says the path, ungranted says
- * the fallback in the warning colour rather than leaving the files somewhere the
- * owner assumes is the folder named on the Recorded Drives card.
- */
 @Composable
 private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
     val counts = StorageCopy.cardCounts(
@@ -519,9 +411,6 @@ private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
             style = HudeCfgNote(),
         )
         if (snapshot.shared) {
-            // Named file by file, because this line is also what a user follows after the editor
-            // tells them the garage could not be read: the folder is easy to find, the file inside
-            // it is the thing they have to open.
             Spacer(Modifier.height(6.dp))
             Text(
                 "${AppRoot.GARAGE_FILE} \u00b7 ${AppRoot.TRIPS}/ \u00b7 ${AppRoot.VEHICLES}/",
@@ -530,17 +419,9 @@ private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
             )
         }
         Spacer(Modifier.height(10.dp))
-        // Every Android version gets the button, because every one has a way in
-        // (`AppRoot.GrantPath`); the version decides what it does. Hiding it below API 30 - as
-        // this card did, on the theory that Android 10 has nothing to offer - hid the only control
-        // that works there, while the sentence above it went on describing a folder the owner
-        // could have had for one tap.
         val grantPath = AppRoot.grantPath(Build.VERSION.SDK_INT)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.heightIn(min = 44.dp)) {
-                // Already granted is said, not offered: a button that does nothing looks
-                // like a button that is broken, and the honest state is the one thing this
-                // card can prove.
                 HudButton(
                     StorageCopy.grantButton(snapshot.shared, grantPath),
                     style = HudButtonStyle.SECONDARY,
@@ -557,18 +438,6 @@ private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
     }
 }
 
-/**
- * Hand the owner to the system page that grants All files access.
- *
- * There is no dialog for this: `MANAGE_EXTERNAL_STORAGE` is a special access the
- * platform only hands over from a settings screen, so the app's job ends at getting
- * them there. The per-app page is the one that lands them on this app's switch, but
- * some devices route that action nowhere; the all-files page is the same decision one
- * level up, and the app's details page is where a user can always get to. A chain of
- * three rather than one, for the same reason [openPhoneBluetoothSettings] in
- * `VehicleScreen.kt` has two: a button that throws is a button the owner never uses
- * again.
- */
 private fun openStorageGrantScreen(context: Context) {
     val pkg = Uri.parse("package:" + context.packageName)
     val intents = buildList {
@@ -605,13 +474,6 @@ private fun IdCard(label: String, value: String, modifier: Modifier = Modifier) 
     }
 }
 
-/**
- * A switch with its own label and the sentence that explains it.
- *
- * The label and the switch used to be the two ends of a full-width row, which on this tablet
- * is 1800 px apart. Here the pair is one block inside a card: the words say what the switch
- * does, and the switch is next to them.
- */
 @Composable
 private fun ToggleRow(
     label: String,
@@ -630,12 +492,6 @@ private fun ToggleRow(
     }
 }
 
-/**
- * Recording status, and the reason when it is not running. "Needs update" is for
- * firmware with no /api/snapshot endpoint: the app found the device on
- * /api/live, so the honest message is that the firmware is too old, not that the
- * device is missing.
- */
 @Composable
 private fun RecordingCard(
     recording: Boolean,
@@ -646,9 +502,6 @@ private fun RecordingCard(
         recording -> "RECORDING NOW" to HudColors.Green
         else -> "NOT RECORDING" to HudColors.TextDim
     }
-    // The page's status strip (`#msg` plus its `.msg-*` variants): 8px radius, a
-    // hairline in the status colour at 30%, that colour at 8% as the fill over the
-    // status strip's own `rgba(15,23,42,.6)`, and the status colour in the label.
     Box(
         Modifier.fillMaxWidth()
             .hudCard(
@@ -685,15 +538,6 @@ private fun RecordingCard(
     }
 }
 
-/**
- * Store the owner's fallback city together with the coordinates the gazetteer gave it.
- *
- * The lookup runs here, at save time, and never once per feed: a typed city is one line
- * of text the owner changes once a year, while the schedule asks about it on every pass.
- * The answer returned is the sentence to show under the field, including the honest one
- * for a name no gazetteer knows — the text is kept so it can be edited, but there is no
- * position behind it, so the ladder will not use it.
- */
 internal suspend fun saveWeatherCity(
     typed: String?,
     feed: WeatherCoordinator,
@@ -717,11 +561,6 @@ internal suspend fun saveWeatherCity(
 internal fun placeLabel(place: Place): String =
     listOfNotNull(place.name, place.admin1, place.country).joinToString(", ")
 
-/**
- * The feed in one line: when it last reached the unit, which position it used, and what
- * it called that place. A blank is worse than the truth, because the dashboard next to
- * this screen is showing weather the phone sent and the owner cannot tell how old it is.
- */
 internal fun weatherStatusLine(status: WeatherStatus, nowMs: Long = System.currentTimeMillis()): String {
     if (status.busy) return "asking the weather service now..."
     val pushed = status.lastPushAt

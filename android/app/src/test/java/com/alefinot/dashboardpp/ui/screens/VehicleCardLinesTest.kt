@@ -10,32 +10,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * What a garage card is allowed to claim about a vehicle.
- *
- * A card is the only place the app writes a sentence about a car, and a sentence like
- * "LAST SEEN 2 DAYS AGO" next to "THIS PHONE ALREADY PAIRED WITH ANOTHER VEHICLE" is not
- * two equal pieces of text: the second is a measurement, the first is a guess about time.
- * So the wording is built here, in plain functions, where the boundary cases are testable
- * rather than visible once a year on a screen.
- *
- * The dates are counted in **UTC day boundaries**. That is a deliberate choice, not an
- * oversight: a car driven at 23:50 at home and looked at from a hotel in another zone the
- * next morning is still "yesterday", and a card that changed its story because the phone
- * moved zones would be a card reporting its own clock instead of the car.
- */
 class VehicleCardLinesTest {
 
     private val day = 24L * 60 * 60 * 1000
 
-    /**
-     * A unit this phone once dialed, and can now never dial.
-     *
-     * The line is the price of deleting the Wi-Fi transport, and the card is the only
-     * place left that can say it: there is no second route to offer, no "open the web
-     * page instead", and no reason to dress the dead end up. `BAD` rather than `WARN`
-     * because there is nothing on this phone that fixes it.
-     */
     @Test
     fun `a unit too old for Bluetooth is named as such and not as never connected`() {
         val line = cardStatusLine(
@@ -45,17 +23,10 @@ class VehicleCardLinesTest {
         )
         assertEquals(CardTone.BAD, line.tone)
         assertTrue(line.text, line.text.contains("NO BLUETOOTH ON THIS UNIT"))
-        // "LAST SEEN" would be true and useless: the unit answered long enough to record a
-        // version, and the reason it never answers now is the part worth printing.
         assertFalse(line.text, line.text.contains("LAST SEEN"))
         assertFalse(line.text, line.text.contains("NEVER CONNECTED"))
     }
 
-    /**
-     * The other half of the same rule: a card with **no** recorded version is not called
-     * pre-Bluetooth. An unknown version is an unknown version, and the app would be
-     * telling someone to go update a unit that may already be current.
-     */
     @Test
     fun `a unit that never reported a version is not accused of being old`() {
         val never = cardStatusLine(
@@ -76,8 +47,6 @@ class VehicleCardLinesTest {
         )
         assertFalse(met.text, met.text.contains("NO BLUETOOTH"))
     }
-    // 2024-10-26 13:40 UTC: mid-afternoon, so "30 hours ago" is yesterday rather
-    // than two days ago by the luck of where the timestamp happened to fall.
     private val now = 1_729_950_000_000L
 
     // ── the spec line ────────────────────────────────────────────────────────
@@ -91,8 +60,6 @@ class VehicleCardLinesTest {
 
     @Test
     fun `a half-known vehicle does not leave dangling separators or blank gaps`() {
-        // Every combination a user can realistically leave behind, and none of them may
-        // read like a form that was half filled in.
         assertEquals("CAR", specLine(Vehicle(id = "v1")))
         assertEquals("CAR · TOYOTA", specLine(Vehicle(id = "v1", maker = "Toyota")))
         assertEquals(
@@ -136,8 +103,6 @@ class VehicleCardLinesTest {
 
     @Test
     fun `day boundaries are UTC and the day before is named, not counted`() {
-        // 18:33 UTC minus 30 hours = the day before. Counting that as "1 days ago" is
-        // both wrong English and less useful than the word.
         assertEquals("LAST SEEN YESTERDAY", lastSeenLine(now - 30 * 60 * 60 * 1000, now))
         assertEquals("LAST SEEN 2 DAYS AGO", lastSeenLine(now - 2 * day - 60_000, now))
         assertEquals("LAST SEEN 6 DAYS AGO", lastSeenLine(now - 6 * day, now))
@@ -146,8 +111,6 @@ class VehicleCardLinesTest {
 
     @Test
     fun `the long end of the scale counts months and then years, singular or plural`() {
-        // A card that has been sitting since last season reading "410 DAYS AGO" is asking
-        // the user to do arithmetic.
         assertEquals("LAST SEEN 1 MONTH AGO", lastSeenLine(now - 35 * day, now))
         assertEquals("LAST SEEN 2 MONTHS AGO", lastSeenLine(now - 70 * day, now))
         assertEquals("LAST SEEN 1 YEAR AGO", lastSeenLine(now - 380 * day, now))
@@ -161,8 +124,6 @@ class VehicleCardLinesTest {
         val reason = "ESP32 at 192.168.1.50 answered /api/perf, but that unit is not the " +
             "vehicle you selected."
         val failed = cardStatusLine(v, ConnectionUiState.Failed(reason), now)
-        // Verbatim, not paraphrased: this is the exact sentence the connection code
-        // produced, and the card has no business smoothing it over.
         assertEquals(reason, failed.text)
         assertEquals(CardTone.BAD, failed.tone)
     }
@@ -182,9 +143,6 @@ class VehicleCardLinesTest {
             ),
             now,
         )
-        // The line names the firmware, not the pairing. A Bluetooth address is this
-        // phone's name for a bond: printing it where a driver reads their own car
-        // implies it identifies the unit, and it does not.
         assertEquals("CONNECTED · V1.4.6", connected.text)
         assertEquals(CardTone.GOOD, connected.tone)
 
@@ -213,18 +171,12 @@ class VehicleCardLinesTest {
             mac = null, vehicleId = "a",
         )
         assertTrue(connectedCard(a, state))
-        // The selection has moved to the van; the Corolla still owns the session, so it
-        // keeps its DISCONNECT and the van must not offer one.
         assertFalse(connectedCard(b, state))
         assertFalse(connectedCard(a, ConnectionUiState.Idle(null)))
     }
 
     @Test
     fun `a silent reconnect never animates a card, a hunt the user asked for does`() {
-        // The garage is the home screen: a cold start is the most-seen animation in the app,
-        // and a ring that spins there would put motion in front of a page the user did not
-        // ask to search. PROBE is two addresses and finishes in about a second - a ring that
-        // fast is a flicker, not progress.
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.SILENT)))
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.PROBE)))
         assertTrue(showScanRing(ConnectionUiState.Connecting(ConnectMode.SEARCH)))
@@ -234,9 +186,6 @@ class VehicleCardLinesTest {
 
     @Test
     fun `every tone maps to a colour, and no two tones share one`() {
-        // The status line carries its meaning in colour as much as in words, and a status
-        // that is the same colour as another status is information the page stops
-        // delivering. A colour-blind user or a sunlit screen is where this shows up.
         val colors = CardTone.values().map { statusColor(it) }
         assertEquals(CardTone.values().size, colors.distinct().size)
     }

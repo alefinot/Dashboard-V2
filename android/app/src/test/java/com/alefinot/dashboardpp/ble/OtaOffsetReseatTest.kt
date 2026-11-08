@@ -8,17 +8,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Where the phone continues from when it asks the unit where an install stands.
- *
- * A stall (a write whose callback never came, or a stretch with no ACK) is recovered by asking the
- * unit `ota.status` and continuing from its offset. That answer is a trap: it reports what BtTask has
- * drained into flash, not what the radio delivered, and the unit's handoff ring can be holding several
- * frames of everything the phone has already sent. Trust one such reading and the phone re-sends
- * frames the unit accepted, and the unit's offset check ends the install with `offset_mismatch` - on a
- * bench unit on 2026-11-04 at 396800 of 1593664 bytes, `write at 396304, unit expects 396800`, one
- * frame behind what the unit had already taken.
- */
 class OtaOffsetReseatTest {
 
     // ---- settledOffset: only a reading that stopped moving is a position ----

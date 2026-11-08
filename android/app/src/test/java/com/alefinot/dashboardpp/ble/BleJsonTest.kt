@@ -85,8 +85,6 @@ class BleJsonTest {
 
     @Test
     fun aFullConfigStreamMergesIntoOneMap() {
-        // The merge the link does: chunks arrive in table order, each with its own
-        // `d`, and the last one says so.
         val merged = LinkedHashMap<String, Any?>()
         val chunks = listOf(
             """{"id":9,"i":0,"last":false,"d":{"a":1,"b":2.5}}""",

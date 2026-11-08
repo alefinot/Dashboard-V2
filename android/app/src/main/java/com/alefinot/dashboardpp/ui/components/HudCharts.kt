@@ -33,17 +33,6 @@ import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * One labelled value in the Live card wall, built from `.perf-card`: that tile's
- * fill (`rgba(18,25,38,.8)`), hairline, 8px corners and 12px padding, with no
- * shadow of its own - the page shadows overlays, not tiles. Inside it, the page's
- * own pairing: a `h4` title in cyan Outfit at 13px/700/0.2px, and the figure in
- * `.perf-value`'s monospace at weight 600.
- *
- * The page has no live-data tile at all (its LIVE numbers stay on the dashboard's
- * own 3.2" screen), so this is the closest thing it does have: a small surface with
- * a cyan title and a monospace figure. The unit takes `label`'s muted 12px.
- */
 @Composable
 fun StatCell(
     label: String,
@@ -57,9 +46,6 @@ fun StatCell(
         modifier.hudCard(fill = HudColors.CardInner).padding(12.dp),
     ) {
         Column {
-            // The accent drives state, not decoration: a faulted or stale reading
-            // tints the title, the way the page puts its status colours on a border
-            // and a label rather than on a fill.
             Text(label, color = accent, style = HudeSectionTitle(0.2f / 13f))
             Text(
                 value,
@@ -77,10 +63,6 @@ fun StatCell(
     }
 }
 
-/**
- * Sparkline over an indexed series. The caller decides how to decimate (plan
- * §6: cap the polyline near 2000 points), so this stays a pure painter.
- */
 @Composable
 fun Sparkline(
     values: List<Double>,
@@ -132,11 +114,6 @@ fun Sparkline(
     }
 }
 
-/**
- * Radial speedometer, drawn the way the ESP's own gauge reads: a 270° sweep with
- * the number in the middle. The arc is vector-drawn, so it stays crisp at any
- * screen size and costs no bitmaps.
- */
 @Composable
 fun HudGauge(
     value: Double,
@@ -147,11 +124,6 @@ fun HudGauge(
     accent: Color = HudColors.Cyan,
 ) {
     val clamped = max(0.0, min(value, fullScale))
-    // A new figure arrives once a second. The arc and the number travel to it on
-    // the page's own strong ease-out instead of jumping (HudMotion.GAUGE_MS): the
-    // page has no gauge to copy, so the duration is ours, chosen so the movement
-    // settles before the next sample. Both animations are value-triggered - with no
-    // new sample the gauge holds still and costs no frames.
     val fraction by animateFloatAsState(
         (clamped / fullScale).toFloat().coerceIn(0f, 1f),
         tween(HudMotion.GAUGE_MS, easing = HudMotion.Standard),
@@ -210,8 +182,6 @@ fun HudGauge(
                 style = HudeSectionTitle(0.2f / 13f),
             )
             Text(
-                // `.speed-value` - the 44px monospace figure the dashboard itself
-                // puts in the middle of its gauge, in the accent colour.
                 shownValue.toInt().toString(),
                 color = accent,
                 style = HudeMetric(),

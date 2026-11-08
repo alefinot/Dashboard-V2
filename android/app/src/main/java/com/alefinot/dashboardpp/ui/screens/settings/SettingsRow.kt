@@ -41,19 +41,6 @@ import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/**
- * One settings row: label on the left, control on the right, and — only when there
- * is something to say — a note underneath saying what happened to the value.
- *
- * The note is the part the WebUI never had. A row that was clamped, refused, or
- * applied in RAM but not written to flash says so in the same place every time,
- * because "the unit answered `{"ok":true}`" is not the same statement as "this
- * setting is what you typed".
- *
- * Everything here is in **box units** (mph, °F, in) on the way in and out: the row
- * receives the value as the user sees it and hands back what the user typed, and
- * [ConfigStore] owns conversion, clamping and coercion.
- */
 @Composable
 fun SettingsRow(
     item: SchemaItem,
@@ -64,12 +51,6 @@ fun SettingsRow(
     onEdit: (boxX: Any?, boxY: Any?) -> Unit,
     /** Puts the row back to its compiled default with `config.reset`. */
     onReset: (() -> Unit)? = null,
-    /**
-     * Set for a value the unit streams but does not accept back — a live reading, a
-     * compiled-in version string. The row shows the value as text with this sentence
-     * under it instead of a control: the old page showed these too, but a slider that
-     * cannot move is worse than a line that says what it is.
-     */
     readOnlyHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -102,9 +83,6 @@ fun SettingsRow(
                 )
             } else {
                 Control(item, box, view, imperial, enabled, onEdit)
-                // The unit's own `config.reset`, one key at a time — the WebUI's reset
-                // button. Typing a default back in by hand would be a guess; this asks
-                // the firmware what the default is and gets it written the same way.
                 onReset?.let { back ->
                     Text(
                         "reset",
@@ -133,11 +111,6 @@ fun SettingsRow(
     }
 }
 
-/**
- * The one-line explanation a row carries: its status plus whatever the store said
- * about it (a clamp, an NVS failure, a refused key). Null when the row has nothing
- * to report — a saved row stays quiet rather than showing "saved" forever.
- */
 fun statusNote(view: RowView?): String? {
     val v = view ?: return null
     val status = when (v.status) {
@@ -174,8 +147,6 @@ private fun Control(
         RowControl.PAIR -> PairControl(item, view, enabled) { x, y -> onEdit(x, y) }
         RowControl.FUEL_TABLE -> FuelTableControl(item, view, enabled) { onEdit(it, null) }
         RowControl.SECRET -> HudInput(
-            // The unit never streams a secret back, so the box always starts empty
-            // and an empty box means "leave the stored one alone".
             value = "",
             onValueChange = { if (enabled) onEdit(it, null) },
             modifier = Modifier.width(230.dp).padding(start = 12.dp),
@@ -201,8 +172,6 @@ private fun NumberControl(
 ) {
     val decimals = SettingsUnits.decimals(item)
     val step = SettingsUnits.boxStep(item, imperial)
-    // Re-seeded whenever the confirmed value changes, so a value the store clamped
-    // shows up in the box instead of being argued with.
     var text by remember(item.key, box) {
         mutableStateOf(renderNumber((box as? Number)?.toDouble(), decimals))
     }
@@ -260,11 +229,6 @@ private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-/**
- * A picker drawn as its options, not as a dropdown: on a tablet every choice is
- * visible at a glance, and one tap commits it. The unit's own option list comes
- * from the schema — the app does not invent labels or values.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SelectControl(
@@ -303,12 +267,6 @@ private fun SelectControl(
     }
 }
 
-/**
- * A slider over the range the schema says the control may offer — never over the
- * firmware band, and never narrower than the value it starts at. The store still
- * clamps to the band; the slider simply cannot ask for a value outside what the old
- * page allowed.
- */
 @Composable
 private fun SliderControl(
     item: SchemaItem,
@@ -421,13 +379,6 @@ private fun PairControl(
     }
 }
 
-/**
- * The fuel calibration table — the ohm array the unit streams as `fuelCalOhms`.
- * Drawn readably (count, empty and full ends) and edited as the comma-separated
- * list the firmware's array actually is. A drag-to-set curve editor belongs with
- * the fuel screens, not here; what matters in the settings tab is that the table is
- * reachable, visible and restorable, which a text list already is.
- */
 @Composable
 private fun FuelTableControl(
     item: SchemaItem,

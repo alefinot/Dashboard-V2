@@ -52,46 +52,12 @@ import com.alefinot.dashboardpp.vehicles.PhotoCrop
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import java.io.File
 
-/**
- * The step between "a picture arrived" and "this card has a photo" (vehicle page plan §5).
- *
- * It exists because of an aspect problem, not a decoration problem. A camera gives a
- * landscape 4:3 frame; a card's cover wants a square. Somebody has to decide which square,
- * and it should be the person who took the picture - an automatic centre crop cuts the number
- * plate off one car and the handlebars off another. So the user drags and pinches, and the
- * square they framed is what the store is asked for, in the original file's pixels
- * ([PhotoCrop.rectFor]) - which is how a crop off a 4000x3000 shot is decoded without this
- * app ever holding the whole photograph.
- *
- * **What is shown while framing is a preview, and only a preview.** It is decoded once at up
- * to [PREVIEW_EDGE] on the longest edge - about 3.7 MB of pixels, which is the biggest
- * transient this screen is allowed - and it is drawn at the aspect the full file has, so what
- * the user frames matches what they get while the pixels under a finger stay cheap. The crop
- * itself is decoded a second time, from the untouched capture file, at the size actually
- * kept. Anyone tempted to reuse the preview bitmap for the crop should not: it is already
- * sub-sampled once, so the card would come out soft at exactly the moment the user made the
- * picture sharp.
- *
- * **The square is sized by the leftover height, not by the panel's width.** That is the one
- * layout fact on this screen worth a paragraph, because getting it wrong is invisible on a
- * wide tablet and broken on a phone: a 1:1 box as wide as a 620 dp panel is 620 dp tall,
- * which on a 640 dp-tall phone leaves the panel's own title off the top of the screen. So the
- * words and the buttons take what they need, the middle gets the rest (`weight(1f)`), and the
- * square is the shorter side of what is left.
- *
- * A tap on the scrim does nothing, and Back cancels: the plan is explicit that CANCEL keeps
- * the previous photo, and the previous photo is whatever is already on disk. This panel writes
- * nothing until USE THIS PHOTO is pressed.
- */
 @Composable
 fun PhotoCropPanel(
     source: File,
     onUse: (CropRect) -> Unit,
     onCancel: () -> Unit,
 ) {
-    // The measured side of the framed square, in pixels. Every number [PhotoCrop] works with
-    // comes from here or from the file's header, which is why nothing on this screen guesses
-    // at a size.
     var frame by remember { mutableStateOf(IntSize.Zero) }
     var full by remember(source) { mutableStateOf<Pair<Int, Int>?>(null) }
     var preview by remember(source) { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -102,17 +68,11 @@ fun PhotoCropPanel(
 
     BackHandler(enabled = true) { onCancel() }
 
-    // Dimensions first, on their own: they come from the file's header without allocating a
-    // single pixel, so the panel can say "this picture cannot be read" - and size the preview
-    // decode - before anything expensive happens.
     LaunchedEffect(source) {
         val bounds = readBounds(source)
         if (bounds == null) unreadable = true else full = bounds
     }
 
-    // The preview follows the frame, because the frame is what says how many pixels are worth
-    // decoding for it. It is measured once per open, so this decodes at most twice: once with
-    // nothing known, once with the real box (rule 14 - no decode is asked for blind).
     LaunchedEffect(source, frame.width) {
         val img = full ?: return@LaunchedEffect
         if (frame.width <= 0 || preview != null) return@LaunchedEffect
@@ -170,10 +130,6 @@ fun PhotoCropPanel(
                                         val img = full ?: return@detectTransformGestures
                                         val next = (zoom * zoomFactor).coerceIn(1f, MAX_ZOOM)
                                         zoom = next
-                                        // Clamped to the amount of picture that actually hangs
-                                        // outside the frame. Past that the finger keeps moving
-                                        // while the crop stops, which reads as the app ignoring
-                                        // the gesture rather than as the photo running out.
                                         val (maxX, maxY) = PhotoCrop.maxOffsetPx(
                                             img.first, img.second, frame.width, next,
                                         )
@@ -186,9 +142,6 @@ fun PhotoCropPanel(
                             preview?.let { bmp ->
                                 val img = full ?: return@let
                                 val density = LocalDensity.current
-                                // Cover fit at zoom 1, then the user's zoom. The displayed box
-                                // keeps the file's aspect by construction, which is what makes
-                                // FillBounds safe here instead of a distortion machine.
                                 val cover = frame.width.toFloat() / minOf(img.first, img.second)
                                 val w = (img.first * cover * zoom).toInt().coerceAtLeast(1)
                                 val h = (img.second * cover * zoom).toInt().coerceAtLeast(1)
@@ -243,10 +196,6 @@ fun PhotoCropPanel(
     }
 }
 
-/**
- * Header-only read of the file: dimensions without pixels. `null` when the file is torn,
- * truncated, or not an image at all - which the panel reports instead of showing an empty box.
- */
 private suspend fun readBounds(f: File): Pair<Int, Int>? =
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         if (!f.isFile) return@withContext null
@@ -255,15 +204,6 @@ private suspend fun readBounds(f: File): Pair<Int, Int>? =
         if (o.outWidth <= 0 || o.outHeight <= 0) null else o.outWidth to o.outHeight
     }
 
-/**
- * The framing preview: as large as the frame it is shown in (twice over, for a finger that
- * will zoom later), never larger than [PREVIEW_EDGE], and sub-sampled by the store's own rule
- * so the decoder is never asked to allocate a frame the screen cannot use.
- *
- * Twice the frame rather than once because a pinch that starts before the pixels arrive would
- * otherwise be stretching a bitmap smaller than the box, and softness during the gesture reads
- * as a broken crop.
- */
 private suspend fun decodePreview(
     f: File,
     imgW: Int,

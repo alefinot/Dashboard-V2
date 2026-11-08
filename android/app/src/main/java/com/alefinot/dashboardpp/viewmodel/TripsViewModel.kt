@@ -33,12 +33,6 @@ data class TripRow(
     val summary: TripSummary?,
     /** Who the file says the drive belongs to, from its `#vehicle=` line. */
     val vehicleId: String? = null,
-    /**
-     * The name to show for that vehicle: the card's name today when the card still
-     * exists, otherwise the name written in the file when the drive happened. A
-     * rename therefore does not rewrite history, and deleting a vehicle does not
-     * erase its drives [plan §6].
-     */
     val vehicleName: String? = null,
     /** The eFuse MAC that dashboard reported, when the file recorded one. */
     val eff: String? = null,
@@ -56,12 +50,6 @@ data class TripDetail(
     val samples: List<com.alefinot.dashboardpp.trips.TripSample>,
 )
 
-/**
- * The Trips tab's model: list (from the summary cache, not by re-reading every
- * CSV), delete, share, and detail loading. All file work runs on the IO
- * dispatcher — a 12 h trip is ~43k lines, and parsing that on the main thread
- * would jank the tab.
- */
 class TripsViewModel(app: Application) : AndroidViewModel(app) {
     private val store = TripStore(app)
     private val index = TripIndex(app)
@@ -79,11 +67,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
     private val _options = MutableStateFlow<List<TripFilterOption>>(emptyList())
     val filterOptions: StateFlow<List<TripFilterOption>> = _options
 
-    /**
-     * The rows the list actually draws: every row the index pass found, narrowed by
-     * the filter. Kept in the model rather than the screen because the header's
-     * count has to agree with the cards underneath it.
-     */
     private val _visible = MutableStateFlow<List<TripRow>>(emptyList())
     val visibleRows: StateFlow<List<TripRow>> = _visible
 
@@ -121,51 +104,19 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _storageBytes = MutableStateFlow(0L)
 
-    /**
-     * Bytes of recorded CSV, as counted by the last index pass. Deliberately a flow
-     * rather than a function that walks the folder: the Trips header shows it, and a
-     * directory walk in a composition runs on the UI thread on every recomposition of
-     * that header - which, now that the page stays composed, would include every
-     * second the recorder reports while the user is looking at another page.
-     */
     val storageBytes: StateFlow<Long> = _storageBytes
 
     private val _shared = MutableStateFlow(false)
 
-    /**
-     * Whether the drive files are in `Documents/Dashboard++/` or in the app's own
-     * folder, as the Trips header says it. Carried as a flow for the same reason
-     * [storageBytes] is — a header line that asked [com.alefinot.dashboardpp.storage.AppRoot]
-     * directly would create a folder on the volume during composition, on a page the
-     * pager keeps composed from the first frame — and it rides along with the index
-     * pass, which is already on the IO dispatcher and already walking that folder.
-     */
     val shared: StateFlow<Boolean> = _shared
 
     private val _elsewhere = MutableStateFlow<Elsewhere?>(null)
 
-    /**
-     * Drives the list is showing from a folder the recorder is *not* writing to right now,
-     * and where those files are. A drive is recorded wherever the grant pointed at the time,
-     * so an install really does hold drives from both roots, and the list reads both
-     * ([com.alefinot.dashboardpp.trips.TripStore.dirs]) so a permission change never hides
-     * one. This is the line that says so, naming the other folder; without it the count in
-     * the header and the folder in the line above disagree.
-     *
-     * Carried as a flow for the same reason [shared] is — the other folder's path is only
-     * known after the walk, and the Trips pager keeps this page composed.
-     */
     val elsewhere: StateFlow<Elsewhere?> = _elsewhere
 
     /** How many drives live in a folder other than the one in use, and that folder's path. */
     data class Elsewhere(val count: Int, val path: String)
 
-    /**
-     * One walk's verdict about where the listed files sit: how many the folder in use holds, and
-     * the rest. The Trips header shows the total plus the remainder; the App settings Storage card
-     * names one folder, so it shows [here] alone and only admits [elsewhere] as its own sentence.
-     * Published from the same pass so the two pages cannot disagree about the split.
-     */
     data class TripCounts(val here: Int, val elsewhere: Elsewhere?)
 
     private val _tripCounts = MutableStateFlow(TripCounts(0, null))
@@ -182,9 +133,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 emptyMap()
             }
-            // Live names, resolved by id: the tag in the file only carries the name
-            // the card had at the time, so a rename shows up everywhere at once and
-            // a deleted card falls back to that copy instead of disappearing.
             val names = try {
                 vehicles.all().first().associate { it.id to it.name }
             } catch (e: Exception) {
@@ -198,9 +146,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
                     // A row the cache already agrees with keeps its summary.
                     index.reseat(f, hit!!, tag)
                 }
-                // The card is labelled with the drive's start from the file
-                // name, not the mtime: a live trip's mtime moves every second,
-                // and a sealed one marks the end of the drive, not its start.
                 TripRow(
                     f,
                     TripStore.startMsOf(f.name) ?: f.lastModified(),
@@ -218,33 +163,19 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
                 _filter.value != RecorderSettings.FILTER_UNKNOWN &&
                 rows.none { it.vehicleId == _filter.value }
             ) {
-                // A remembered filter can point at a vehicle that has no drives left,
-                // or at a card that was deleted. Holding it would show an empty list
-                // labelled with an id the user has never seen, so the filter goes back
-                // to ALL - which is the one thing on screen they can act on.
                 _filter.value = RecorderSettings.FILTER_ALL
             }
             _storageBytes.value = files.sumOf { it.length() }
-            // Read from the same walk that counted the files, so the header's "where" and
-            // its "how much" cannot disagree about which folder they are describing.
             _shared.value = AppRoot.isSharedAvailable(getApplication())
             val counts = countsFor(files, store.dir())
             _tripCounts.value = counts
             _elsewhere.value = counts.elsewhere
             index.retain(files.map { it.absolutePath }.toSet())
             _busy.value = false
-            // Any file whose summary is missing gets summarised in the
-            // background and pushed back into the list, so the tab paints
-            // instantly and fills in the numbers a moment later.
             rows.filter { it.summary == null }.forEach { row -> summarise(row) }
         }
     }
 
-    /**
-     * The tag for one file, from the cache row when that row knows it, otherwise
-     * from line 1 - the only case in which a badge costs anything at all, and one
-     * line, never a second walk over the samples.
-     */
     private fun tagOf(file: File, hit: CachedSummary?, fresh: Boolean): TripTag? {
         if (hit != null && fresh && hit.tagKnown) return hit.tag
         return TripTagReader.read(file)
@@ -258,26 +189,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             else -> rows.filter { it.vehicleId == filter }
         }
 
-        /**
-         * The chips: ALL, one per vehicle that actually has drives, and UNKNOWN when
-         * something has no tag (a file from before this app wrote one, or a drive with
-         * no card selected). Empty when there is nothing to narrow: one vehicle and no
-         * untagged files is already a filtered list, and a control with one choice is
-         * decoration.
-         *
-         * The one exception is the filter that is **on**. A filter hides rows, so the
-         * chip carrying it has to stay on screen while it does - otherwise the Trips page
-         * can sit at `0 of 3` with no control anywhere to turn it off. That state was
-         * reached on a real tablet: `UNKNOWN` remembered from an earlier session, every
-         * remaining file recorded under a card since, and the chip row judged itself
-         * decoration and vanished. `activeFilter` is only consulted when it actually
-         * hides something, which is what keeps the decoration rule standing for a filter
-         * that matches the whole list.
-         *
-         * Reached through the class rather than an instance because the rule worth
-         * pinning down is "when does this control exist at all", and building a
-         * ViewModel needs an Android context that has nothing to do with that rule.
-         */
         internal fun filterOptionsFor(
             rows: List<TripRow>,
             names: Map<String, String>,
@@ -294,9 +205,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             if (ids.size + (if (unknown) 1 else 0) < 2) return emptyList()
             val out = ArrayList<TripFilterOption>()
             out.add(TripFilterOption(RecorderSettings.FILTER_ALL, "ALL"))
-            // Vehicles in the order their drives first appear in the list, newest
-            // first. Ids are never shown to the user, so a vehicle whose card is gone
-            // still gets a chip - its drives are exactly what a filter for it finds.
             ids.forEach { id -> out.add(TripFilterOption(id, names[id] ?: NO_CARD_LABEL)) }
             if (unknown) out.add(TripFilterOption(RecorderSettings.FILTER_UNKNOWN, "UNKNOWN"))
             return out
@@ -313,19 +221,6 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { p.canonicalPath }.getOrDefault(p.absolutePath)
         } ?: ""
 
-        /**
-         * The drives in [files] that are not in the folder being written to, and where they
-         * are. Computed from the walk that built the list, so the sentence cannot name a
-         * folder the list is not showing rows from, and it costs nothing: the files are
-         * already in hand.
-         */
-        /**
-         * The list the Trips tab shows, split by where its files actually sit: how many the folder
-         * in use holds, and how many came from somewhere else (naming that somewhere). One walk's
-         * decision, returned as a pair, because the Trips header and the App settings Storage card
-         * both need the two numbers and must not arrive at different ones: the card names a single
-         * folder, so it may only claim the files that are inside it.
-         */
         fun countsFor(files: List<File>, writingTo: File): TripCounts {
             val here = runCatching { writingTo.canonicalPath }.getOrDefault(writingTo.absolutePath)
             val strays = files.filter { parentOf(it) != here }

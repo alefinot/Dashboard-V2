@@ -49,36 +49,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
-/**
- * The app's half of "is a dashboard connected, and which vehicle's dashboard is it".
- *
- * The ladder itself is not decided here — [ConnectionCore] decides it one step at a
- * time, and this class is the loop plus the radio calls: it reads the garage, dials
- * what the core says to dial, hands the answer back, and publishes whatever state and
- * records the core produced. Keeping the two apart is what lets the identity rules (a
- * MAC outranks a pairing, an unclaimed unit is offered rather than adopted) be tested
- * without a phone wired to a dashboard.
- *
- * Three things the old version of this class did are deliberately gone:
- *
- *  - **The boot ladder.** Cold start used to check a cached IP, guess the SoftAP, then
- *    run mDNS and a subnet sweep — up to 15 s of network before the app showed
- *    anything, and the thing it was hunting for was *any* Dashboard++. Now cold start
- *    reads the garage, marks the selected card, and dials that card's pairing: one
- *    connection attempt, no multicast lock, and the vehicle page is the first frame
- *    either way.
- *  - **The last-connected cache.** `ConnectionCache` remembered one IP for the whole
- *    app. That is now the card's own `bleAddress`, which is better in every way that
- *    matters: it is per vehicle, it is what Android's own bond table agrees with, and it
- *    is something the user can see and forget.
- *  - **Typing an address as a way in.** An address used to be a thing a user could enter
- *    when the sweep failed. A Bluetooth address is not a thing a human can read off a
- *    unit, and typing one cannot pair: the way in is a scan and a pairing, so the panel
- *    that offered it is gone rather than repurposed.
- *
- * The link is [BleRuntime]'s, not this class's: a GATT connection belongs to the phone,
- * and the settings page and the trip recorder use the same one the ladder brings up.
- */
 class ConnectionViewModel(
     context: Context,
     private val vehicles: VehicleStore = VehicleStore(context),
@@ -102,38 +72,14 @@ class ConnectionViewModel(
 
     private var adapterReceiver: BroadcastReceiver? = null
 
-    /**
-     * Retries already spent on the current failure, which is what [ReconnectLadder]
-     * counts. It is held here rather than in the ladder object because the ladder is a
-     * pure rule and this is the stateful half of the same design.
-     */
     private var attempts = 0
 
-    /**
-     * The quiet restart of a ladder that gave up, if one is waiting. One at a time, always
-     * replaced, cancelled by anything the user touches.
-     */
     private var rearm: Job? = null
 
-    /**
-     * Quiet dials already spent on the current failure. It decides only the *pause* before
-     * the next one ([ReconnectLadder.rearmDelayMs]) and survives the screen going off, so a
-     * page that comes back is still on the five-minute cadence rather than back at minute
-     * one. Reset when a link comes up.
-     */
     private var rearms = 0
 
-    /**
-     * True between the vehicle page's `ON_START` and `ON_STOP`. Every dial the reconnect
-     * machinery starts on its own is refused while it is false; see [onForegroundChanged].
-     */
     private var foreground = false
 
-    /**
-     * True while the last word about the current failure was a give-up — the only state the
-     * quiet restart serves. Cleared by a link coming up and by any press, because both mean
-     * something else owns the ladder now.
-     */
     private var gaveUp = false
 
     val uiState = mutableStateOf<ConnectionUiState>(ConnectionUiState.Idle(null))
@@ -141,11 +87,6 @@ class ConnectionViewModel(
     /** True while a radio sweep is running. */
     val scanning = mutableStateOf(false)
 
-    /**
-     * What the last sweep turned up, newest advertisement first as the radio reported
-     * it. The vehicle page renders these as PAIR rows; the core decides what they are
-     * worth, and this list is only ever what the antenna heard.
-     */
     val scanResults = mutableStateOf<List<Found>>(emptyList())
 
     /** Why the last sweep could not run, in words — never a stack trace, never a code. */
@@ -154,98 +95,34 @@ class ConnectionViewModel(
     /** Whether the phone's radio is on, as last heard from the system. */
     val adapterOn = mutableStateOf(false)
 
-    /**
-     * True when the radio's runtime permissions are missing. The shell owns the one
-     * launcher that asks; this is the flag that keeps the garage honest about why a
-     * scan produced nothing.
-     */
     val permissionMissing = mutableStateOf(false)
 
-    /**
-     * A dashboard that answered and is claimed by no card. The vehicle page turns this
-     * into a NAME IT offer; nothing writes it into a record until the user says so,
-     * because adopting silently is how two cards end up owning one dashboard.
-     */
     val unclaimed = mutableStateOf<UnclaimedUnit?>(null)
 
-    /**
-     * Set when a card's pairing was cleared but this phone still holds the Bluetooth
-     * **bond**. The app can forget a unit on its own side; Android's bond is the phone's
-     * to remove, and `removeBond` is not a public API here, so the page says which half
-     * is done and hands over the way to the other. Cleared whenever a new pairing is
-     * started, because a fresh ask makes the note stale.
-     */
     val bondNote = mutableStateOf<String?>(null)
 
-    /**
-     * One line for the vehicle page, set when a connect landed on a card other than the
-     * one that was selected — the unit's MAC outranks the pairing that was dialed, so
-     * the selection moved (plan §4) and the page has to say why it shows a different
-     * vehicle than the card that was pressed.
-     */
     val notice = mutableStateOf<String?>(null)
 
     /** The card the app is currently reaching for. */
     val selectedVehicleId = mutableStateOf<String?>(null)
 
-    /**
-     * Why the unit's clock was not set from this phone, or null when it was.
-     *
-     * A dashboard with no time source stamps its own rows with a clock that reads
-     * 1970-01-01, and the WebUI has always fixed that by pushing the phone's clock every
-     * time its page loaded. With no page loading any more, the push has to ride the link:
-     * once per link, on the way in, from whoever owns the link — this view model, because
-     * it is the thing that notices a link came up.
-     *
-     * It is a **line in the link status**, never a dialog: the app works without it (trip
-     * files are stamped by the phone, and the trip timeline is the app's own record), so a
-     * modal for a cosmetic loss would train the user to dismiss dialogs without reading
-     * them.
-     */
     val timeNote = mutableStateOf<String?>(null)
 
     /** The link whose clock was last pushed; null means "this link, not yet". */
     private var clockPushedFor: String? = null
 
-    /**
-     * The link the weather feed was first woken for. Same trick as [clockPushedFor]:
-     * `Ready` is re-published when the MTU or the name changes, and each of those would
-     * otherwise look like a new link to the feed.
-     */
     private var weatherWokenFor: String? = null
 
     /** The 60 s feed tick. Owned here because this is where a link's life is visible. */
     private var weatherTick: Job? = null
 
-    /**
-     * Bumped every time a card's photo changes on disk. A cover that recomposes on it
-     * follows a crop that landed while the editor was open; without it the composable keeps
-     * the bitmap it decoded when the screen opened and the card shows a picture the user has
-     * already replaced.
-     */
     val photoVersion = mutableIntStateOf(0)
 
     /** The garage, for the vehicle page. */
     fun vehicleCards() = vehicles.all()
 
-    /**
-     * Why the vehicle page is empty when a garage file is there (see [VehicleStore.damageNote]).
-     * Suspends until the file has been read, so null means the app looked and found nothing to
-     * apologise about — not that it has not looked yet.
-     */
     suspend fun garageDamage(): String? = vehicles.damageNote()
 
-    /**
-     * What the trip recorder has to write as the owner of the files it creates: the
-     * link it is pointed at, the card that owns it, that card's name right now,
-     * and the MAC the dashboard reported when the link came up.
-     *
-     * The recorder cannot work this out by itself — the unit's stream carries no
-     * identity of the unit that answers, and a trip file outlives the connection —
-     * so the app hands it these values when it starts the service [plan §6]. Null
-     * when nothing is connected: a file with a half-known owner would be a guess,
-     * and an untagged file is the honest version of the same thing.
-     */
     suspend fun recorderTarget(): RecorderTarget? {
         val c = uiState.value as? ConnectionUiState.Connected ?: return null
         val name = try {
@@ -254,10 +131,6 @@ class ConnectionViewModel(
             null
         }
         return RecorderTarget(
-            // The key the trip files are filed under - the same expression the vehicle card
-            // and the session map use, so a drive found by the card is the drive whose
-            // session is resumed. Note it is not `c.address`: a Bluetooth address names this
-            // phone's pairing, and a re-pair would start a second trip mid-drive.
             UnitIdentity.key(mac = c.mac, bleAddress = c.address),
             c.vehicleId, name.orEmpty(), c.mac.orEmpty(),
         )
@@ -266,11 +139,6 @@ class ConnectionViewModel(
     fun boot() {
         watchAdapter()
         watchLink()
-        // The weather schedule is the phone's, not the link's: it fetches whether or not a
-        // unit is connected, so a unit that comes up between two fetches can be handed the
-        // frame in hand (`WeatherCoordinator.unitWoke`) instead of showing an empty card
-        // until the interval expires. Started here, once, because "is a fetch due" does not
-        // depend on having anyone to send it to yet.
         startWeatherTick()
         adapterOn.value = link.enabled()
         permissionMissing.value = missingBlePermissions().isNotEmpty()
@@ -280,27 +148,10 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * The vehicle page became visible ([on] true) or stopped being visible (false).
-     *
-     * The view model is `remember`ed inside `setContent`, so nothing above it can tell it
-     * about the screen; [com.alefinot.dashboardpp.ui.screens.DashboardRoot] observes the
-     * lifecycle and calls this from `ON_START` / `ON_STOP`. It is what turns "no retries
-     * with the screen off" from a comment into a rule, and it is the only reason the quiet
-     * restart can promise to stop when the phone goes in a pocket.
-     *
-     * Coming back to the foreground with a give-up in effect dials **at once**: the reason
-     * the app was silent is that a ladder ended, not that the unit is unreachable, and
-     * waiting out another five-minute tick to prove it would be the machinery making the
-     * user wait for something they did not start. The first `ON_START` of a process never
-     * dials here, because [gaveUp] is false and [boot] has already dialed.
-     */
     fun onForegroundChanged(on: Boolean) {
         Log.d(DPP_CONN_LOG_TAG, "foreground on=$on gaveUp=$gaveUp rearms=$rearms")
         foreground = on
         if (!on) {
-            // Only the timer is cancelled. The counter survives, because the screen going
-            // off is not a new failure and says nothing about the unit.
             rearm?.cancel()
             rearm = null
             return
@@ -311,14 +162,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * ADD VEHICLE -> SEARCH: dial what the selected card remembers, then sweep the radio.
-     *
-     * This is the only path that ever scans, and it exists because the user pressed a
-     * button. A BLE sweep costs a runtime permission, an on radio, and the phone
-     * listening for advertisements from units it has never met - none of which belongs
-     * behind a launch or a reconnect timer.
-     */
     fun rescan() {
         attempts = 0
         gaveUp = false
@@ -327,18 +170,6 @@ class ConnectionViewModel(
         startAttempt(ConnectMode.SEARCH)
     }
 
-    /**
-     * The user picked one of the dashboards the sweep listed.
-     *
-     * This is the one place a unit is chosen by hand rather than by the ladder, and it is
-     * worth the extra parameter in [ConnectionCore.decide]: with two units advertising
-     * (a second Dashboard++, or somebody else's), the ladder's rule is "strongest signal
-     * first", which is a good guess and still a guess. Tapping a name outranks it.
-     *
-     * The attempt resumes a sweep that already ran rather than starting a new one — the
-     * list on screen **is** the sweep's result, and putting the phone back on the radio
-     * for fifteen seconds to re-derive it would be a second ask the user did not make.
-     */
     fun pairWith(found: Found) {
         attempts = 0
         gaveUp = false
@@ -347,35 +178,16 @@ class ConnectionViewModel(
         startAttempt(ConnectMode.SEARCH, pinned = found, preScanned = scanResults.value)
     }
 
-    /**
-     * Clear this card's pairing and identity, leaving the card, its name and its photo.
-     *
-     * The difference from DELETE THE CARD is the whole point of having both: a card is a
-     * vehicle, and a pairing is one phone's way of reaching it. Moving a dashboard to
-     * another car, or un-pairing a bench unit without losing the trips and the name, is
-     * this action; deleting the vehicle from the app's world is the editor's.
-     *
-     * It also drops the link when that card owns it — forgetting a unit you are standing
-     * on would otherwise leave a live session attributed to a card that just said it does
-     * not know the unit. Android's bond is out of reach (see [bondNote]), so the page is
-     * told when that half is left undone.
-     */
     fun forgetUnit(vehicleId: String) {
         scope.launch {
             val card = vehicles.get(vehicleId) ?: return@launch
             val bonded = card.bleAddress?.let { link.isBonded(it) } == true
             val decision = ConnectionCore.forgetUnit(card.bleAddress != null, bonded)
             if (card.bleAddress == null && card.mac == null) {
-                // Nothing to forget. Saying so is better than a note that looks like it
-                // did something.
                 bondNote.value = "That card holds no pairing on this phone."
                 return@launch
             }
             if (!vehicles.put(card.copy(bleAddress = null, mac = null))) {
-                // The pairing is still in the file, so the card is still paired once the app
-                // restarts. `bondNote` is the line this page already uses to say a forget came
-                // out half-done (the Android bond is out of reach), so a third half is said there
-                // rather than in a new place the user has to learn.
                 bondNote.value = vehicles.saveFailure("Pairing not forgotten") +
                     " The card may look unpaired until the app is restarted."
                 return@launch
@@ -393,43 +205,18 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * The radio stopped being forbidden.
-     *
-     * The launch attempt failed for a reason the phone controlled, so the answer is to
-     * reach for the pairing again - quietly, exactly as at launch, because the user did not
-     * ask for a search and a permission grant is not a request to put a scan on the radio.
-     * Guarded both ways: a grant that lands while an attempt is already running, or after a
-     * link came up, must not start a second one.
-     */
     fun retryAfterRadio() {
         val st = uiState.value
         if (st is ConnectionUiState.Connecting || st is ConnectionUiState.Connected) return
         startAttempt(ConnectMode.SILENT)
     }
 
-    /**
-     * How many vehicle cards this phone holds, read off the store's current value.
-     *
-     * A cold store reads as zero, which is the wrong answer for a phone with three cards
-     * whose cover then offers first-run instructions; the store is opened (and its rows
-     * read) before the shell composes, so in practice the value is already there. It is
-     * only ever used to choose a sentence.
-     */
     suspend fun vehicleCount(): Int = try {
         vehicles.all().first().size
     } catch (e: Exception) {
         0
     }
 
-    /**
-     * Reach for [vehicleId] - the vehicle page's CONNECT.
-     *
-     * [mode] is SEARCH for a card the user wants found (its pairing first, then a radio
-     * sweep) and PROBE for a card they want retried now (its pairing only). Either way
-     * the previous attempt is cancelled first: one unit at a time, and the recorder
-     * follows the state, so it seals and stops on its own.
-     */
     fun connectVehicle(vehicleId: String, mode: ConnectMode = ConnectMode.SEARCH) {
         attempts = 0
         gaveUp = false
@@ -445,14 +232,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * The shell's CONNECT for the card that is already selected.
-     *
-     * It goes through the ladder before reaching for the radio, because the two ways
-     * this can be hopeless - this phone has no pairing for that card, or Bluetooth is
-     * off - have answers the user needs to read, and dialing anyway produces a timeout
-     * twenty seconds later that explains nothing.
-     */
     fun huntNow(mode: ConnectMode = ConnectMode.PROBE) {
         attempts = 0
         gaveUp = false
@@ -468,24 +247,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Highlight [vehicleId] without reaching for it.
-     *
-     * A connected session always belongs to the card it connected through, so selecting
-     * a different card while one is connected ends that connection - otherwise the next
-     * drive would be tagged to a vehicle that is not the one being driven. The recorder
-     * stops because the state is no longer `Connected`, which is the same path a
-     * DISCONNECT takes. The link itself is left alone: the next attempt dials its own
-     * peer, and tearing the radio down here would drop a link the settings page may be
-     * using.
-     *
-     * Selecting the card that is already connected ends nothing, and that is the whole
-     * point of [CardSelection]: pressing a card is how a card is selected, so doing it to
-     * the connected one is the common case, not an edge — and because the radio is left
-     * alone by design, an `Idle` session over a live link is a state nothing can notice or
-     * repair. The rule and the bench capture that proved it needed stating are in
-     * [CardSelection]'s comment.
-     */
     fun selectVehicle(vehicleId: String) {
         attempts = 0
         gaveUp = false
@@ -514,30 +275,10 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * The editor's starting point for a card that already exists: the stored record, so the
-     * form opens prefilled with what the app already knows instead of with blanks.
-     *
-     * [onDraft] runs on [scope], off the main thread; it only assigns Compose state, which
-     * is safe from any thread. A card that vanished while the form was being opened answers
-     * null, and the screen closes itself rather than editing a ghost.
-     */
     fun editDraft(vehicleId: String, onDraft: (Vehicle?) -> Unit) {
         scope.launch { onDraft(vehicles.get(vehicleId)) }
     }
 
-    /**
-     * The editor's starting point for a dashboard that answered and belongs to no card.
-     *
-     * The id is taken from the store here, not when the form is saved, because [VehicleStore.nextId]
-     * reserves it in the transaction that reads it - a second adoption started while this form
-     * is open cannot then be handed the same id. A cancelled form costs a skipped number, and
-     * that is the cheaper mistake: card ids double as trip tags, so an id is never handed out
-     * twice.
-     *
-     * `lastConnectedAtMs` is set because the unit did just answer - the card is born with a
-     * real "last seen", not an empty one.
-     */
     fun adoptDraft(onDraft: (Vehicle?) -> Unit) {
         val unit = unclaimed.value ?: return
         scope.launch {
@@ -555,21 +296,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Write the user's half of a card, or refuse the write. [onDone] gets null when the
-     * card is stored and the refusal's wording when it is not, so the form can stay open
-     * with the reason in it instead of closing on a write that never happened.
-     *
-     * Two rules are applied here rather than in the form, so they cannot be skipped by a
-     * second caller (task 8's adoption, a future import): a blank name is filled with the
-     * unit's identity tail, and a card carrying another card's MAC is refused outright -
-     * that is the exact state this refactor exists to make impossible, and a warning the
-     * user can press through would leave two cards describing one dashboard.
-     *
-     * Everything the app measured (`mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion`,
-     * `createdAtMs`, the photo) is kept by [mergeTypedFields]; a save that rebuilt the
-     * record from the form would drop the evidence that binds the card to the unit.
-     */
     fun saveVehicle(typed: Vehicle, onDone: (refusal: String?) -> Unit = {}) {
         scope.launch {
             val all = vehicles.all().first()
@@ -582,13 +308,9 @@ class ConnectionViewModel(
                 return@launch
             }
             if (!vehicles.put(finished)) {
-                // The card stayed on disk as it was. Closing the form here would tell the user the
-                // edit happened; the refusal keeps it open with the reason in it.
                 onDone(vehicles.saveFailure())
                 return@launch
             }
-            // A card that did not exist before becomes the selected one: the user made it
-            // from a unit that is in front of them, and the next thing they do is connect.
             if (stored == null) {
                 vehicles.select(finished.id)
                 selectedVehicleId.value = finished.id
@@ -598,31 +320,9 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Forget a vehicle: its card, its JPEG, and the recorder's session row for the unit it
-     * was. The drives it took stay exactly where they are - a trip's file name
-     * carries this card's id, and the log outlives the card on purpose.
-     *
-     * The session row goes *before* the card is removed, because a row is a claim about a
-     * unit; if the card disappears first, a crash in between leaves the claim pointing at
-     * nothing. Removing the row first leaves the worst case as a card that still exists
-     * with a clean identity, which the next connect refills.
-     *
-     * The weather cache row and the in-memory frame go with it for the same reason: the
-     * position the feed asks about belongs to this vehicle, and a row left behind for a
-     * unit nobody owns is a coordinate that will be dialed again by whoever inherits the
-     * link. The typed city stays - it is the owner's, not the unit's.
-     *
-     * [onDone] reports the outcome the way [saveVehicle] does: `null` when the file agrees the
-     * card is gone, the refusal sentence when it does not. A refused delete is the worst of
-     * the garage writes to leave quiet — the editor closed, the card vanished from the screen,
-     * and the next start the card is back because the file never took the removal.
-     */
     fun deleteVehicle(vehicleId: String, onDone: (refusal: String?) -> Unit = {}) {
         scope.launch {
             val v = vehicles.get(vehicleId) ?: run {
-                // Nothing to delete: the card is already gone from the garage, which is the
-                // outcome the caller asked for.
                 onDone(null)
                 return@launch
             }
@@ -633,17 +333,10 @@ class ConnectionViewModel(
             WeatherSettings(appContext).clearCaches(listOf(key))
             HostFrames.clear(key)
             if (!vehicles.delete(vehicleId)) {
-                // The card survived the delete. Its caches went first (that ordering is the one a
-                // crash can survive), so what the user is holding is a card that will come back
-                // after a restart — which is exactly the thing they must be told, because the
-                // editor they just closed said it was gone.
                 onDone(vehicles.saveFailure("Card not deleted"))
                 return@launch
             }
             if (selectedVehicleId.value == vehicleId) {
-                // The store clears its own pointer; the VM's copy has to follow, and the
-                // garage needs *some* card selected afterwards or the ladder has nothing to
-                // reach for on the next network change. The neighbour takes the slot.
                 val next = vehicles.all().first().firstOrNull()
                 if (next != null) {
                     vehicles.select(next.id)
@@ -661,33 +354,10 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * A card's photo, decoded no larger than the [maxEdgePx] box it is going to be drawn
-     * in, answered on [scope] because decoding is file I/O. Page and editor ask for a box
-     * rather than for "the photo" - that is what keeps a garage of six cars from holding six
-     * full-size bitmaps (rule 14, and the head of [VehiclePhotoStore]).
-     *
-     * Read it together with [photoVersion]: the version is what tells the screen that the
-     * answer it cached is no longer the one on disk.
-     */
     fun photo(vehicleId: String, maxEdgePx: Int, onReady: (Bitmap?) -> Unit) {
         scope.launch { onReady(vehicles.photos.read(vehicleId, maxEdgePx)) }
     }
 
-    /**
-     * The gallery route: copy what the picker chose into this card's scratch capture, and
-     * answer the file the crop screen will show, or `null` when the copy could not be made.
-     *
-     * The copy is not a formality. A picker hands over a `content://` URI owned by another
-     * app, whose stream may not be seekable and whose grant can lapse while the crop screen
-     * is open - so everything after this point works on a file this app owns, which is also
-     * what makes a retry after a screen rotation possible (see
-     * [VehiclePhotoStore.stageFrom]).
-     *
-     * [onStaged] runs on the **main** thread, unlike most callbacks here. The copy is file
-     * I/O and happens on [scope], but what the caller does with the answer is open a panel,
-     * and a screen opened from a background thread is a crash rather than a slow frame.
-     */
     fun stagePickedPhoto(uri: Uri, vehicleId: String, onStaged: (File?) -> Unit) {
         scope.launch {
             val staged = vehicles.photos.stageFrom(uri, vehicleId)
@@ -695,17 +365,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Offer the system camera a scratch capture: the file it writes into and the
-     * `content://` URI the intent is launched with, or `null` when there is nothing to
-     * offer - which the editor reports as the camera not being available instead of taking
-     * a photograph that has nowhere to land and then claiming it worked.
-     *
-     * Answered on the **main** thread for the same reason as [stagePickedPhoto]: the caller
-     * turns this straight into `launch(uri)`, and an intent may only be launched from the
-     * main thread. The FileProvider call behind it is not I/O, so there is nothing to move
-     * off the UI here; a device with no writable cache dir is the only way it answers null.
-     */
     fun cameraCapture(vehicleId: String, onCapture: (VehiclePhotoStore.Capture?) -> Unit) {
         scope.launch {
             val capture = vehicles.photos.captureFor(vehicleId)
@@ -713,31 +372,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Cut the square the user framed into the card's photo, then point the record at it.
-     *
-     * Two writes, and the order carries the reasoning. The JPEG has to exist before a record
-     * claims it, otherwise a saved card can name a file that never arrived - the card would
-     * draw a placeholder and the editor would offer to open nothing. So the store lands the
-     * picture first, and only then does [VehicleStore.put] store the name. A crash between
-     * the two costs a JPEG on disk that no record names yet: invisible, and the next crop
-     * overwrites it.
-     *
-     * The record is read *before* the crop is attempted, which also closes a window: a card
-     * deleted while the crop screen was open has no photo to receive, and writing one would
-     * leave a picture named after a card that no longer exists.
-     *
-     * [onDone] runs on [scope] with the file the photo landed at, or `null` when the crop
-     * failed - in which case the card keeps the photo it had and the editor says so rather
-     * than closing. A user who cancels the crop screen never reaches this method:
-     * [cancelPhoto] removes the scratch capture and the previous photo stays, which is the
-     * plan's "CANCEL keeps the previous photo".
-     *
-     * The second argument of [onDone] is the refusal when the JPEG landed but the record
-     * naming it did not — a picture on disk that no card points at, which the card shows for
-     * now and loses on the next start. It is the one case where a closed crop step is right
-     * (the crop worked, the framing cannot be recovered) and a quiet one would not be.
-     */
     fun applyPhotoCrop(
         source: File,
         vehicleId: String,
@@ -756,9 +390,6 @@ class ConnectionViewModel(
                 return@launch
             }
             if (!vehicles.put(card.copy(photoFile = landed.name))) {
-                // The JPEG is in `vehicles/` and the card on screen wears it; the file on disk
-                // still names the old picture. Saying nothing would leave the owner hunting for
-                // a photo that is not in their folder.
                 photoVersion.intValue++
                 onDone(landed, vehicles.saveFailure("Photo not attached"))
                 return@launch
@@ -773,20 +404,6 @@ class ConnectionViewModel(
         scope.launch { vehicles.photos.clearCapture(vehicleId) }
     }
 
-    /**
-     * Take a card's photo off: the JPEG first, then the record's pointer.
-     *
-     * That order is the one a crash can survive. A record whose `photoFile` names a file that
-     * is gone reads back as "no photo" ([VehiclePhotoStore.read] answers null and the card
-     * draws its glyph), which is a cosmetic lie for one boot. The reverse - a file deleted
-     * after the record still names it, or a record pointing at a file that was never written
-     * - is the case where the editor offers a photo the app cannot show.
-     *
-     * When the record would not take the removal, [onRefused] says so: the JPEG is gone from
-     * the folder, so a card that still points at it will draw nothing after the next start,
-     * and "the photo is still attached" is worth knowing while the user is looking at a
-     * picture that is already deleted.
-     */
     fun removePhoto(vehicleId: String, onRefused: (String) -> Unit = {}) {
         scope.launch {
             vehicles.photos.delete(vehicleId)
@@ -799,13 +416,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * A card field the ladder tried to remember and the file would not take — a firmware
-     * version, a last-connect time. Not announced: nobody asked for this write, the value is
-     * in memory and on screen, and the next successful connect refills it. It is logged
-     * because it is the one garage write that can fail with nobody watching, and "the app
-     * forgot the version again" should have a line behind it.
-     */
     private fun logPersistMiss(vehicleId: String, from: String) {
         Log.w(DPP_CONN_LOG_TAG, "garage write refused ($from) vehicle=$vehicleId — " +
             "identity/version fields stay in memory only")
@@ -815,8 +425,6 @@ class ConnectionViewModel(
     fun disconnect() {
         ladder?.cancel()
         retry?.cancel()
-        // A deliberate DISCONNECT must not be undone by a timer sixty seconds later: the
-        // quiet restart exists to recover a link the user lost, not one they ended.
         rearm?.cancel()
         gaveUp = false
         attempts = 0
@@ -837,23 +445,6 @@ class ConnectionViewModel(
         ladder = scope.launch { runAttempt(mode, pinned, preScanned) }
     }
 
-    /**
-     * Drive [ConnectionCore.decide] until it produces a terminal step.
-     *
-     * [tried], [scanDone] and [found] are the attempt's memory - the core is pure, so
-     * the loop carries what has been dialed, whether the radio has already been swept,
-     * and what that sweep turned up, and hands it back on every step. The card list is
-     * re-read each step because a step may have written one (a connect adopts an
-     * identity), and because a card can be deleted from under an attempt: cancelling
-     * this job is how a new selection supersedes an old one, and
-     * [currentCoroutineContext] is what notices.
-     *
-     * A step is not one radio action: [NextAction.Pair] can take twenty seconds (the
-     * unit shows a passkey and a person types it), so an attempt touches at most one
-     * sweep plus one dial per unit. That is also why [ReconnectLadder] counts attempts
-     * instead of pacing a loop - a loop that retries on its own would be a radio doing
-     * something nobody asked for.
-     */
     private suspend fun runAttempt(
         mode: ConnectMode,
         pinned: Found? = null,
@@ -861,16 +452,11 @@ class ConnectionViewModel(
     ) {
         unclaimed.value = null
         scanError.value = null
-        // A sweep the user is already looking at stays on screen: `pairWith` resumes that
-        // sweep, and clearing the list would empty the row they just pressed.
         if (preScanned == null) scanResults.value = emptyList()
         var tried = emptyList<String>()
         var scanDone = preScanned != null
         var found = preScanned ?: emptyList()
         var outcome: LinkOutcome? = null
-        // This loop's own job, handed to `scheduleRearm` below. An attempt that ends in a
-        // failure is allowed to schedule its own restart, and the guard that refuses to
-        // dial over a running attempt has to be able to tell that caller from a stranger.
         val me = currentCoroutineContext().job
         while (currentCoroutineContext().isActive) {
             val r = ConnectionCore.decide(
@@ -887,21 +473,9 @@ class ConnectionViewModel(
                 }
                 is NextAction.Failed -> {
                     uiState.value = ConnectionUiState.Failed(n.reason)
-                    // A search that ended in failure has to let the radio go. The unit
-                    // serves one peer at a time, so a phone sitting on a link it never
-                    // uses keeps every other phone out of the unit - and since the unit
-                    // now holds pairing back for 10 s after a drop, holding on is what
-                    // makes a hand-over between two phones impossible.
                     if (mode == ConnectMode.SEARCH && link.state.value != BleLinkState.Idle) {
                         link.disconnect()
                     }
-                    // This is the give-up the bench actually hits (2026-11-05): the attempt
-                    // dialed the card's own pairing, nothing answered, and the app's interest
-                    // in a unit that was merely still booting ended there — foreground, for
-                    // as long as anybody cared to watch, with the unit's clock and its weather
-                    // card ageing out. A `GiveUp` reached through a link event is the same
-                    // verdict from the other direction, and both now end the failure the same
-                    // way: the slow tick takes over.
                     gaveUp = true
                     scheduleRearm(except = me)
                     Log.d(DPP_CONN_LOG_TAG, "attempt ended reason=${n.reason} mode=$mode, handing the failure to the slow tick")
@@ -925,20 +499,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Bring one link up and read who it is.
-     *
-     * The stage line follows [BleLink.state] rather than this call stack's progress,
-     * because the one stage the user has to act on - the six-digit code on the panel,
-     * typed on the phone - is a fact about Android's pairing dialog and not about the
-     * order of these lines.
-     *
-     * The identity is read *after* the link is up, on purpose: `perf.mac` is the unit's
-     * eFuse address, the only thing that survives a re-pairing or a second phone, and
-     * the version comes from the same snapshot the live tab reads. Nulls are load
-     * bearing - with no MAC the core treats the pairing as the whole claim, which is
-     * what the ambiguity rules in [ConnectionCore] exist to catch.
-     */
     private suspend fun dial(step: NextAction.Pair, mode: ConnectMode): LinkOutcome {
         uiState.value = ConnectionUiState.Connecting(mode, AttemptStage.DIAL)
         val mirror = scope.launch {
@@ -972,18 +532,6 @@ class ConnectionViewModel(
         )
     }
 
-    /**
-     * One radio sweep, collected into a list the vehicle page can offer.
-     *
-     * The list is published as it grows: on a bench the unit is usually the only thing
-     * advertising, and a page that shows it the moment the advertisement lands is a page
-     * the user can act on while the sweep is still running. [BLE_SCAN_MS] is the window
-     * the link panel used - long enough to catch a unit that advertises between
-     * connections, short enough that the radio is not left on.
-     *
-     * Nothing here decides what a found unit is *worth*: that is the core's step
-     * function reading [Found], which is why the ordering can be tested without a radio.
-     */
     private suspend fun sweep(): List<Found> {
         if (!link.available()) {
             scanError.value = scanFailureText("no_bluetooth")
@@ -1011,10 +559,6 @@ class ConnectionViewModel(
                         scanResults.value = units.toList()
                     }
                 } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-                    // The sweep's own deadline, delivered here as a cancellation: the
-                    // search found nothing, the radio is not broken. Its message names an
-                    // internal coroutine class - printing it produced "Bluetooth scan
-                    // failed: StandaloneCoroutine was cancelled" on the bench.
                     throw e
                 } catch (e: Exception) {
                     scanError.value = scanFailureText(e.message)
@@ -1038,12 +582,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * What the shell's one permission launcher should ask for; empty when nothing is
-     * missing. One launcher, asked once, for both the scan and the connect: Android
-     * groups them under the same two runtime permissions, and a page that asks per
-     * action is a page that asks twice.
-     */
     fun blePermissionRequest(): List<String> = missingBlePermissions()
 
     /** The launcher's answer, so the page stops warning about a grant it now has. */
@@ -1054,11 +592,6 @@ class ConnectionViewModel(
 
     /** The unit's own eFuse MAC and firmware version, read over the link that is up. */
     private suspend fun readIdentity(): UnitInfo {
-        // Identity comes from `snapshot`, whose answer is one frame on any link.
-        // `perf` carries the MAC too, but that reply measured 1307 B on the bench and
-        // arrives as three fragments: a phone that never gets all three waits out its
-        // request timeout, has no MAC, can build no card, and shows nothing at all.
-        // perf stays as the fallback for firmware that predates snapshot.mac.
         val snap = link.request("snapshot")
         var mac: String? = null
         var version: String? = null
@@ -1077,21 +610,11 @@ class ConnectionViewModel(
     private data class UnitInfo(val mac: String?, val version: String?)
 
     private suspend fun applyConnect(n: NextAction.Connect) {
-        // The step before a Connect may have suspended (reading an identity, writing an
-        // adopted one), so a tap on another card can have superseded this attempt while
-        // it was in flight. Re-checking here is what keeps a dead attempt from
-        // publishing a connection the user has already moved past.
         if (!currentCoroutineContext().isActive) return
         if (n.vehicleId != selectedVehicleId.value) {
-            // The unit's MAC outranks the pairing that was dialed, so the selection
-            // moves to the card that owns it - and `notice`, already published by the
-            // caller, is what tells the user the page changed under them.
             selectedVehicleId.value = n.vehicleId
             scope.launch { vehicles.select(n.vehicleId) }
         }
-        // The count of quiet dials this link took to come back, which is the number the
-        // cadence is judged by: one means the unit was barely late, ten means the tick is
-        // the only reason the app is talking to it at all. Read before the reset, of course.
         Log.d(DPP_CONN_LOG_TAG, "linked name=${n.name} address=${n.address} vehicle=${n.vehicleId} mtu=${n.mtu} rearmsSpent=$rearms")
         attempts = 0
         rearms = 0
@@ -1109,21 +632,6 @@ class ConnectionViewModel(
 
     // ------------------------------------------------------------- the radio's events
 
-    /**
-     * Follow the radio so the app stops needing a finger for what the phone already
-     * knows: the unit rebooted, Bluetooth got turned on after the app gave up, the
-     * tablet walked back into range.
-     *
-     * There is no `ConnectivityManager` here any more, and that is the whole change: a
-     * network callback could mean anything, so acting on one meant either missing a real
-     * reconnect or reaching for a stranger's dashboard. A Bluetooth event means exactly
-     * one thing, [ReconnectLadder] decides what it is worth, and the only thing a
-     * scheduled dial can ever be is the unit this phone is paired with.
-     *
-     * The app never turns the radio on or off, and never asks: Android 12+ will not let
-     * an app enable Bluetooth without a system dialog anyway, and a sheet the app
-     * provoked at launch is the kind of surprise this app used to be full of.
-     */
     private fun watchAdapter() {
         if (adapterReceiver != null) return
         val receiver = object : BroadcastReceiver() {
@@ -1156,28 +664,11 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Mirror the link, and let the ladder answer what it reports.
-     *
-     * The guard against double-driving is [ladder]: while an attempt is running, that
-     * loop is the one holding the link and reading its result, so an event from the same
-     * failure must not start a second one. A link coming up while no attempt runs is the
-     * interesting case - the unit rebooted, or Android reconnected a bond on its own -
-     * and [adoptLiveLink] turns it into a session without dialing again.
-     */
     private fun watchLink() {
         linkWatch?.cancel()
         linkWatch = scope.launch {
             link.state.collect { s ->
                 adapterOn.value = link.enabled()
-                // Both keys below mean "this link", not "this process". A unit that is
-                // powered off and back on has lost its clock (the phone is its only clock
-                // source, and `settimeofday` is RAM) and its weather (`g_weatherData` is RAM
-                // too), so the next link has to feed both again. `Ready` is re-published
-                // when the MTU or the name changes, which is why the keys are cleared here
-                // rather than keyed on the state object. Before this, a reconnect in the
-                // same process never re-pushed the clock: the panel's date and time stayed
-                // wrong until the app was force-stopped (bench, 2026-11-06).
                 if (s !is BleLinkState.Ready) {
                     clockPushedFor = null
                     weatherWokenFor = null
@@ -1192,11 +683,6 @@ class ConnectionViewModel(
                         if (ladder?.isActive != true) {
                             onLinkEvent(LinkEvent.Dropped(s.reason))
                         } else {
-                            // The case the 2026-11-02 fix was about: a link that fell over while
-                            // an attempt was running is that attempt's business, and the ladder
-                            // in front of it will report the outcome. Logged, because "the app
-                            // swallowed its own retry" is exactly the thing a capture has to be
-                            // able to rule in or out.
                             Log.d(DPP_CONN_LOG_TAG, "link failed reason=${s.reason} while an attempt runs; that attempt owns it")
                         }
                     }
@@ -1206,26 +692,11 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Set the unit's clock once per link, and keep the answer on the page if it fails.
-     *
-     * Keyed on the address rather than on the state object because `Ready` is re-published
-     * when the MTU or the name of the same link changes — re-pushing on every one of those
-     * would be an RPC the user cannot tell apart from the unit's own traffic. Leaving any
-     * non-ready state resets the key, which is what makes the rule "every link", not "once
-     * per process".
-     *
-     * Not awaited by the ladder: a unit that will not answer `time.set` is a unit whose
-     * telemetry still arrives, and making the clock a step in the connection sequence
-     * would let a cosmetic RPC failure look like a connection failure.
-     */
     private fun pushClock(ready: BleLinkState.Ready) {
         if (clockPushedFor == ready.address) return
         clockPushedFor = ready.address
         scope.launch {
             val reply = api.pushTime()
-            // Under DPP-CONN because "the app re-linked and the panel is still showing the
-            // wrong time" is only answerable if the clock write is on the capture.
             Log.d(
                 DPP_CONN_LOG_TAG,
                 "clock pushed ${if (reply.ok) "ok" else "failed err=${reply.error}"} " +
@@ -1240,39 +711,16 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * Feed the unit's weather card as soon as a link comes up, and keep this host's
-     * heartbeat while the link lives.
-     * [BleRuntime] owns the link's status independently of the trip service, so without
-     * this the card fills in only while a recording is running.
-     *
-     * Not awaited, and never part of the connection sequence: a unit that will not take
-     * a weather frame is a unit whose telemetry still arrives, and the plan's whole point
-     * is that weather answers to the link rather than to the trip recorder.
-     */
     private fun wakeWeather(ready: BleLinkState.Ready) {
         if (weatherWokenFor != ready.address) {
             weatherWokenFor = ready.address
             val address = ready.address
             scope.launch {
-                // `unitWoke`, not `wake`: the question is "this unit has nothing to show",
-                // not "is a fetch due". It hands over whatever this process is holding and
-                // fetches only when there is nothing to hand over.
                 WeatherRuntime.coordinator(appContext).unitWoke(weatherKeyFor(address))
             }
         }
     }
 
-    /**
-     * Every minute: enough for the five-minute rule to land within a minute of its due time
-     * and for the 2 km rule to notice within a couple of kilometres at motorway speed.
-     * The wake itself is cheap when nothing is due — the coordinator reads its own memory
-     * first and asks the unit for nothing.
-     *
-     * It runs whether or not there is a link, and is not cancelled when one falls over:
-     * the fetch is for the phone's own schedule, and a unit that comes up five minutes into
-     * an interval is the case that benefits.
-     */
     private fun startWeatherTick() {
         if (weatherTick?.isActive == true) return
         weatherTick = scope.launch {
@@ -1284,11 +732,6 @@ class ConnectionViewModel(
         }
     }
 
-    /**
-     * The unit the feed runs for: the connected one when there is one, otherwise the card
-     * the owner selected. With no link there is no address to key on, so the card's MAC is
-     * the identity — the same key the trip files and the weather cache already use.
-     */
     private suspend fun feedUnitKey(): String? {
         (uiState.value as? ConnectionUiState.Connected)?.let {
             return UnitIdentity.key(it.mac, it.address)
@@ -1300,22 +743,12 @@ class ConnectionViewModel(
             .takeIf { it != UnitIdentity.UNKNOWN }
     }
 
-    /**
-     * The cache key for a link: the card's MAC when a card knows this address, so the
-     * weather cache hangs off the same identity as the trip files and the session, not off
-     * a re-pair. `UnitIdentity.key` falls back to the BLE address when no card claims it.
-     */
     private suspend fun weatherKeyFor(address: String): String =
         UnitIdentity.key(
             vehicles.all().first().firstOrNull { it.bleAddress == address }?.mac,
             address,
         )
 
-    /**
-     * A link that came up under us: name it, resolve which card it belongs to, publish
-     * it. The same identity rules as a dial, because "who does this belong to" does not
-     * depend on who asked for the link.
-     */
     private suspend fun adoptLiveLink(ready: BleLinkState.Ready) {
         val current = uiState.value as? ConnectionUiState.Connected
         if (current != null && current.address == ready.address) {
@@ -1363,21 +796,10 @@ class ConnectionViewModel(
                 attempts = 0
                 retry?.cancel()
                 uiState.value = ConnectionUiState.Failed(step.reason)
-                // "The ladder is over until a finger moves" was the design, and on the bench
-                // it was a defect: a unit that rebooted unattended stayed unreachable until
-                // somebody tapped something, and with it its clock and its weather. The tick
-                // below is the finger that does not need a person.
                 gaveUp = true
                 scheduleRearm()
             }
             is LadderStep.Retry -> {
-                // The guard is about the link, not about the dial. A dial still in flight is not
-                // a reason to forget the failure - it is usually the dial that *reported* this very
-                // event, and dropping the retry there leaves the phone silent with the unit
-                // advertising: after a firmware install rebooted the unit on the bench
-                // (2026-11-02) the app dialed once, swallowed its own retry, and never tried
-                // again for four minutes. What must not be dialled over is an attempt to build a
-                // link that is actually progressing - that one will report again on its own.
                 val now = link.state.value
                 if (now is BleLinkState.Ready || now is BleLinkState.Connecting ||
                     now is BleLinkState.Pairing
@@ -1386,17 +808,11 @@ class ConnectionViewModel(
                 }
                 attempts++
                 retry?.cancel()
-                // The ladder is dialing again, so the slow tick has nothing to say until it
-                // stops: a press or a rung of the ladder owns the failure, not the calendar.
                 gaveUp = false
                 rearm?.cancel()
                 retry = scope.launch {
                     delay(step.delayMs)
                     if (currentCoroutineContext().isActive) {
-                        // A reconnect never sweeps: the unit this phone is paired with
-                        // is the only thing worth dialing, and a sweep mid-reconnect is
-                        // how a phone in a car park ends up bonded to somebody else's
-                        // dashboard.
                         startAttempt(ConnectMode.PROBE)
                     }
                 }
@@ -1416,13 +832,6 @@ class ConnectionViewModel(
 
     // ------------------------------------------------------------- the quiet restart
 
-    /**
-     * The five guards of [ReconnectLadder.rearmWanted], read as of now.
-     *
-     * [except] is the caller's own job when the caller is an attempt: an attempt that just
-     * failed is the one dial that is definitely not in flight, and a guard that counted its
-     * own caller would refuse every restart before it was scheduled.
-     */
     private suspend fun rearmWantedNow(except: Job? = null): Boolean {
         val card = selectedCard()
         val s = link.state.value
@@ -1430,28 +839,14 @@ class ConnectionViewModel(
             foreground = foreground,
             hasPairing = card?.hasPairing == true,
             adapterOn = link.enabled(),
-            // A link that is up already answers the question, and one being built reports
-            // for itself. This is also the OTA guard, and it needs no new signal: a firmware
-            // install holds the link in `Ready` from `begin_ok` to the reboot it triggers, so
-            // a re-arm can never dial over an update in progress.
             linkBusy = s is BleLinkState.Ready || s is BleLinkState.Connecting ||
                 s is BleLinkState.Pairing,
             dialInFlight = ladder?.isActive == true && ladder !== except,
         )
     }
 
-    /**
-     * Put the next quiet dial in the calendar — if [rearmWantedNow] permits it.
-     *
-     * One tick at a time, always replaced, so every path a finger owns (a press, a rung of
-     * the ladder, a selection) cancels it by replacing it with nothing. The wait is a single
-     * [delay] rather than a loop for the same reason the ladder is a ladder: nothing in this
-     * class may put the radio on a timer that outlives the decision it was made for.
-     */
     private suspend fun scheduleRearm(except: Job? = null) {
         if (!rearmWantedNow(except)) {
-            // Named, because a capture that shows no dials has to be able to tell "the tick
-            // was never armed" from "the tick was armed and the guards said no".
             Log.d(DPP_CONN_LOG_TAG, "rearm not scheduled: guards closed (foreground=$foreground pairing=${selectedCard()?.hasPairing == true} radio=${link.enabled()} state=${link.state.value::class.simpleName} dialInFlight=${ladder?.isActive == true})")
             return
         }
@@ -1460,26 +855,13 @@ class ConnectionViewModel(
         Log.d(DPP_CONN_LOG_TAG, "rearm scheduled in ${waitMs} ms rearmsSoFar=$rearms")
         rearm = scope.launch {
             delay(waitMs)
-            // Re-read on waking: the radio can have gone off, a press can have taken the
-            // ladder, and a link can have come up by itself in the meantime.
             if (currentCoroutineContext().isActive && rearmWantedNow()) dialForRearm()
         }
     }
 
-    /**
-     * One quiet dial of the stored pairing.
-     *
-     * `PROBE`, and never `SEARCH`: restarting a ladder is not a licence to put an automatic
-     * sweep on the radio ([ConnectionMode.PROBE] keeps that rule where it belongs), and the
-     * unit this phone is paired with is still the only thing worth reaching for. The attempt
-     * counter goes back to zero because this is a new failure, not a fourth rung of the old
-     * one — whatever the link reports next gets the ladder's full patience again.
-     */
     private fun dialForRearm() {
         rearms++
         attempts = 0
-        // Still unlinked: the restart regime continues past this dial, whether it answers or
-        // not, and `onForegroundChanged` has to be able to tell that from a fresh boot.
         gaveUp = true
         Log.d(DPP_CONN_LOG_TAG, "rearm dial rearms=$rearms mode=PROBE")
         startAttempt(ConnectMode.PROBE)

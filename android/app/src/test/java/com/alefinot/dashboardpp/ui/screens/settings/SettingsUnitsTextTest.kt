@@ -3,13 +3,6 @@ package com.alefinot.dashboardpp.ui.screens.settings
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * How a value reads on a row, which is where the bench found the Tools page lying: the
- * ambient-light ADC — an `int` in the firmware's own extras chunk — was drawn as "3474.0".
- * Not because the unit sends a decimal, but because [SettingsUnits.toBox] turns every number
- * into a Double so unit swaps can do arithmetic, and the read-only line printed that Double
- * verbatim. A whole-number row has to show a whole number.
- */
 class SettingsUnitsTextTest {
 
     private fun row(kind: ValueKind, unit: String? = null) = SchemaItem(

@@ -11,23 +11,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Which rows the settings page is allowed to draw, in what order, and where the cards land.
- *
- * The unit's form map has 242 rows; the generated schema describes 179 of them; the page
- * draws a subset of those depending on the master switch and the search box. Every one of
- * those reductions is a setting the owner cannot reach, so each has to be written down with
- * its reason — and this is the check that a row never disappears twice.
- *
- * The rules themselves are the unit page's rules, and the tests are written against that
- * page's behaviour rather than against whatever the Kotlin happens to do first: the driver
- * who has learned where a setting is on the unit's screen has to land in the same place on
- * the phone, and the day the two disagree is the day the search box stops being reliable on
- * either.
- *
- * [renderablesFor] works one group at a time, which is how the page shows them, so
- * "everything" means every group in the schema.
- */
 class SettingsLayoutTest {
 
     private val group = SchemaGroup(
@@ -89,8 +72,6 @@ class SettingsLayoutTest {
         val open = keys(drawn(advanced = true))
         assertTrue("an advanced row leaked: $plain", !plain.any { it in setOf("CALIB_OFFSET", "BOOT_TIME_MS") })
         assertTrue("advanced rows never arrived", open.containsAll(listOf("CALIB_OFFSET", "BOOT_TIME_MS")))
-        // The switch that opens the advanced rows has to stay reachable with them off,
-        // or the gate is locked from the outside.
         assertTrue("the switch that opens advanced settings is itself hidden", plain.contains("ADV_MODE"))
     }
 
@@ -108,12 +89,6 @@ class SettingsLayoutTest {
         assertTrue(open.any { it.title == "Advanced card" })
     }
 
-    /**
-     * A widget card is a control plus its rows, not a control instead of them, and the
-     * control is inside the card rather than on a page of its own. The unit's page draws its
-     * button above the settings of the same card; an app that hides those rows behind a
-     * button into another screen puts values where nobody looks.
-     */
     @Test
     fun aWidgetCardCarriesItsControlAndItsOwnRows() {
         val rows = keys(drawn())
@@ -128,14 +103,6 @@ class SettingsLayoutTest {
         assertTrue("a card with a control that needs its width was packed into a column", body.wide)
     }
 
-    /**
-     * Search finds a row by its label and by the firmware key, because owners read one off
-     * the row and the other off the changelog, the docs and the unit's error strings.
-     *
-     * Word-prefix, per word, exactly like the unit page's `match()`: `exc` finds
-     * `EXC_RES_OHM`. A substring matcher would find different rows for the same typing on
-     * the phone than on the unit.
-     */
     @Test
     fun searchSeesLabelsAndKeysByWordPrefix() {
         assertEquals(listOf("GPS_RATE"), keys(drawn(query = "gps rate")))
@@ -161,11 +128,6 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * A query that names a card shows the whole card, and one that names a section shows
-     * the whole section — the unit page's rule, and the reason "noise" finds the noise bench
-     * even though nobody remembers which rows belong to it.
-     */
     @Test
     fun aTitleMatchCarriesEverythingUnderIt() {
         val cards = listOf(
@@ -193,11 +155,6 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * A group's own title is not searched — the unit page skips it on purpose. Typing a
-     * group name is not a search for a setting, and treating it as one opens a group whose
-     * cards are all empty.
-     */
     @Test
     fun aGroupTitleIsNotSearched() {
         val g = SchemaGroup("gg", "Sensors Tuning", listOf(SchemaCard("GNSS", listOf(row("GPS_RATE")))))
@@ -249,11 +206,6 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * A section heading with nothing under it is dropped, on the unit's page and here. A
-     * bare heading above an empty stretch of card is the failure mode that makes a filtered
-     * page look broken rather than filtered.
-     */
     @Test
     fun aSectionHeadingSurvivesOnlyWithRowsUnderIt() {
         val g = SchemaGroup(
@@ -276,11 +228,6 @@ class SettingsLayoutTest {
         })
     }
 
-    /**
-     * With the switch on and no search, every row in the real schema is drawn exactly once
-     * across all groups. This is the assertion that catches a card that moved somewhere the
-     * renderer skips — the failure mode that hides a setting instead of showing it wrong.
-     */
     @Test
     fun everySchemaRowIsDrawnExactlyOnceAcrossAllGroups() {
         val real = SettingsFixtures.asset
@@ -309,12 +256,6 @@ class SettingsLayoutTest {
         }
     }
 
-    /**
-     * A key the unit streams that this app's schema has no row for — a setting a newer
-     * firmware grew — has to be reachable. It cannot be placed in a group (the schema is
-     * what does the placing), so it forms a block of its own, and dropping it would make the
-     * setting stop existing on the phone with nothing on screen to say why.
-     */
     @Test
     fun aKeyTheSchemaDoesNotKnowIsReachableBySearch() {
         val guessed = SchemaItem(
@@ -335,11 +276,6 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * Only the firmware card carries a line of its own, and it says where an update
-     * actually happens. A widget's action is drawn inside its card, so no card points at
-     * another page — there is no Tools page left to point at.
-     */
     @Test
     fun onlyTheFirmwareCardSaysSomethingAboutItself() {
         val g = SchemaGroup(
@@ -374,12 +310,6 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * The counts say what the box found. A card with no rows of its own (the firmware
-     * installer) is not a setting and is not counted as one, but a group whose only hit is
-     * that card must not read "0 of 18" above it either - the card the query named is open
-     * right there.
-     */
     @Test
     fun theCountsSayWhatTheQueryFound() {
         val g = SchemaGroup(
@@ -411,11 +341,7 @@ class SettingsLayoutTest {
         )
     }
 
-    // -----------------------------------------------------------------------
-    // The accordion: one group open, and a search that opens what it finds
-    // -----------------------------------------------------------------------
-
-    private val system = SchemaGroup(
+private val system = SchemaGroup(
         id = "system",
         title = "System & General",
         icon = "system",
@@ -451,11 +377,6 @@ class SettingsLayoutTest {
     )
     private val groups = listOf(system, sensors, display)
 
-    /**
-     * Opening a group closes the one that was open, and tapping an open header closes it.
-     * The unit page's `initDetailsAnim` in one line — a 179-row page that opens everything
-     * has no structure left.
-     */
     @Test
     fun theAccordionHoldsOneGroupOpenAtATime() {
         assertEquals("sensors", tapOpen(null, "sensors"))
@@ -470,11 +391,6 @@ class SettingsLayoutTest {
         assertEquals(setOf("sensors"), openGroups("sensors", "  ", groups, true))
     }
 
-    /**
-     * A query opens every group that has a hit and closes the rest — the unit page sets
-     * `open` on matching groups and takes it off the others. A search that has to be
-     * expanded by hand looks broken: it finds rows and shows none of them.
-     */
     @Test
     fun aQueryOpensEveryGroupItFinds() {
         assertEquals(
@@ -494,17 +410,8 @@ class SettingsLayoutTest {
         )
     }
 
-    /**
-     * A group with no hits is hidden while a query runs, and every group is back the moment
-     * the box is empty. The old page needed a "2 matches in another group" hint because a
-     * tab could leave someone stranded on an empty filter; the accordion cannot, so the hint
-     * is gone — and with it the question of whether the count was a label match or a key
-     * match, which nobody could predict.
-     */
     @Test
     fun aGroupWithNoHitsIsHiddenAndTheOtherGroupsHintIsGone() {
-        // "gps" hits Fix rate in Sensors and DAYTIME_GPS in Display; System's one row is an
-        // advanced switch and stays hidden, which is the whole point of hiding.
         assertEquals(
             listOf("sensors", "display"),
             SettingsLayout.groupsShown(groups, "gps", true).map { it.id },
@@ -526,11 +433,7 @@ class SettingsLayoutTest {
         )
     }
 
-    // -----------------------------------------------------------------------
-    // Columns: the unit page's grid, on the phone and on a tablet
-    // -----------------------------------------------------------------------
-
-    /** The unit page's own breakpoints — one card on a phone, two from 600 dp, three from 900. */
+/** The unit page's own breakpoints — one card on a phone, two from 600 dp, three from 900. */
     @Test
     fun theColumnCountFollowsTheWidth() {
         assertEquals(1, columns(360))
@@ -541,11 +444,6 @@ class SettingsLayoutTest {
         assertEquals(3, columns(1280))
     }
 
-    /**
-     * Cards pack across the columns in the schema's order, and a block that needs the width
-     * (a calibration capture, a noise readout, a fuel table) takes a row of its own instead
-     * of being squeezed into a third of a tablet.
-     */
     @Test
     fun cardsPackRowWiseAndWideBlocksTakeTheirOwnRow() {
         val blocks = (1..5).map {

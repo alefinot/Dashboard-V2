@@ -8,15 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The `weather.set` payload, field for field.
- *
- * The unit's `methodWeatherSet` (`src/bt_rpc.cpp:725-741`) reads exactly ten keys and
- * defaults every one of them, so a wrong name here is not an error — it is a card that
- * quietly shows the wrong thing. These tests are the app's half of that contract
- * (AGENTS.md rule 17), including the one shape the firmware already understands but
- * the app never sent before: a missing sun time as JSON `null`.
- */
 class WeatherPushShapeTest {
 
     /** The live Open-Meteo answer from the ledger's Task 3 probe, in reading form. */
@@ -35,9 +26,6 @@ class WeatherPushShapeTest {
     fun `every value reaches the unit unconverted`() {
         val push = WeatherPolicy.buildPush(reading, "Munich")
 
-        // The firmware's units are Celsius, km/h and percent (src/bt_rpc.cpp:732-736,
-        // and the panel does its own °F conversion), so the app converting anything
-        // here would be applied twice.
         assertEquals(6.1, push.temperature, 0.0)
         assertEquals(79, push.humidity)
         assertEquals(6.8, push.windSpeed, 0.0)
@@ -80,9 +68,6 @@ class WeatherPushShapeTest {
         val body = BleApi.weatherParams(push)
 
         assertFalse(push.valid)
-        // The unit draws its own "Weather Offline (waiting for phone...)" when valid
-        // is false and never reads the rest, so zeros carry no risk of a stale number
-        // flashing on the card — the label is kept for the app's own status line.
         assertEquals("Munich", push.city)
         assertEquals(0.0, push.temperature, 0.0)
         assertEquals(0, push.humidity)
@@ -107,8 +92,6 @@ class WeatherPushShapeTest {
     fun `no name is still a legal frame`() {
         val body = BleApi.weatherParams(WeatherPolicy.stalePush(null))
 
-        // The unit's own default is "no name"; sending null keeps the app from
-        // inventing a place the owner never chose.
         assertTrue(body, body.contains("\"city\":null"))
     }
 }

@@ -44,26 +44,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/**
- * The recording lane (trip recording plan §5): a foreground service that owns one
- * 1 Hz stream from the dashboard, appends each sample to the open trip file and
- * keeps the session state machine alive while the app is in the background.
- *
- * It is a foreground service with an ongoing notification because that is the
- * only shape Android permits for work that must continue while the phone is
- * driving; the notification also says what is happening, which is the honest trade for
- * a partial wake lock.
- *
- * What changed when this became a Bluetooth app: the service used to *ask* once a second
- * (`/api/snapshot`), because HTTP offers no other way to be told anything. The unit now
- * pushes on its own characteristic and this class mostly waits, which retires the
- * one-lane negotiation this file used to carry. There was a second reader of that
- * endpoint - the ESP's own Web UI, whose tab could make the service stand down - and
- * there is no second reader now: the settings page reads
- * configuration and the performance monitor reads diagnostics, and neither samples
- * speed. What a frame is worth is decided in [TelemetryFeed]: a re-sent frame does not
- * become a sample, and a link that goes quiet gets prodded once instead of polled.
- */
 class TripLogService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var feedJob: Job? = null
@@ -72,28 +52,11 @@ class TripLogService : Service() {
     private var store: TripStore? = null
     private var settings: RecorderSettings? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    /**
-     * Which dashboard the files belong to, as `UnitIdentity.key` spells it - handed over
-     * on the start command by the view model, the only place that knows both the card and
-     * the MAC the unit reported. Deliberately not read off the link: a trip spans a
-     * re-pairing and a reboot, and the point of a device key is that it stays put while
-     * the link under it changes.
-     */
     private var deviceKey: String = ""
 
     /** When the weather feed was last woken from this service's frame stream. */
     private var lastWeatherWakeMs = 0L
 
-    /**
-     * Whose drives the files are: the card selected when this service was pointed at
-     * [ip], and the MAC that dashboard reported when the app verified it. The
-     * snapshot endpoint carries no identity of its own, so the recorder can only be
-     * told [plan §6]; the values arrive as extras on the start command.
-     *
-     * They are a point-in-time copy on purpose: "the name at record time" is what a
-     * trip's tag should hold, and renaming a vehicle later must not relabel drives
-     * that already happened.
-     */
     private var vehicleId: String = ""
     private var vehicleName: String = ""
     private var eff: String = ""
@@ -122,11 +85,7 @@ class TripLogService : Service() {
         vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
         vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
         eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
-        // A recorder already running from an earlier command keeps the file it is
-        // inside - re-pointing only changes the tag of the next file it creates.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
-        // A foreground service must announce itself immediately after
-        // startForegroundService(); without this the process is ANR'd in ~5 s.
         ServiceCompat.startForeground(
             this, NOTIF_ID, buildNotification(null, null),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
@@ -153,18 +112,6 @@ class TripLogService : Service() {
         stopSelf()
     }
 
-    /**
-     * The stream lane: wait for the unit's frames, and ask only when they stop coming.
-     *
-     * One accepted frame per pass, which is also one tick of the trip session machine —
-     * the frame rate and the tick rate were the same number when both were a poll, and
-     * they are still the same number now that only one of them is. Waiting with a
-     * timeout instead of sleeping is what makes the quiet case interesting: a link that
-     * reports `Ready` and sends nothing for [TelemetryFeed.SILENT_MS] gets exactly one
-     * `snapshot` request, which tells "the subscription dropped" apart from "the unit is
-     * rebooting" without a second mechanism. When that answer is absent too, the stale
-     * counter and the give-up back-off say so plainly.
-     */
     private fun beginFeeding() {
         if (feedJob?.isActive == true) return
         feedJob = scope.launch {
@@ -183,9 +130,6 @@ class TripLogService : Service() {
                     val ready = link.state.value is BleLinkState.Ready
                     val lastOk = TripRuntime.state.value.lastOkMs
                     if (ready && TelemetryFeed.dueForPoll(lastOk, now, false)) {
-                        // The prod is also the answer to "is this link still the unit":
-                        // a request that times out here is the failure the old loop used
-                        // to meet on its next poll, found five seconds sooner.
                         val merged = TelemetryFeed.mergeProd(lastUp, api.snapshot())
                         if (merged != null) {
                             lastUp = merged.up
@@ -211,13 +155,6 @@ class TripLogService : Service() {
         }
     }
 
-    /**
-     * The next pushed frame, or null when it cannot be read as a snapshot.
-     *
-     * A frame that will not parse is not retried: the unit sends another one a second
-     * later, and a frame that mattered would show up as the stale counter, which is the
-     * signal the user already has.
-     */
     private suspend fun nextFrame(link: BleLink): Snapshot? = Snapshot.parse(link.telemetry.first())
 
     /** True when the device has been unreachable long enough to stop the service. */
@@ -255,15 +192,6 @@ class TripLogService : Service() {
         }
     }
 
-    /**
-     * Hand this frame to the weather feed, and wake the feed on a bounded cadence.
-     *
-     * The frame itself is only a map write — the coordinator reads it later as the free
-     * answer to "has the car moved 2 km?", which is the question that would otherwise
-     * cost a `snapshot` RPC. The wake-up is throttled because the store read it does is
-     * not free: at 2 km at 100 km/h that is 72 seconds of driving, so ten seconds is
-     * plenty of resolution for the trigger and six store reads a minute instead of sixty.
-     */
     private fun noteWeatherFrame(s: Snapshot) {
         val key = deviceKey
         if (key.isEmpty()) return
@@ -274,12 +202,6 @@ class TripLogService : Service() {
         scope.launch { WeatherRuntime.coordinator(applicationContext).wake("recording", key) }
     }
 
-    /**
-     * Builds the recorder, or returns false when recording must not run at all.
-     * The user's switch is checked here as well as where the service is started:
-     * "off" has to mean no polling, no wake lock and no file, even if something
-     * else started the service by mistake.
-     */
     private suspend fun awaitRecorder(): Boolean {
         if (recorder != null) return true
         val tripStore = TripStore(this)
@@ -303,8 +225,6 @@ class TripLogService : Service() {
             shutdown()
             return false
         }
-        // Carry the last session across service restarts, so the ESP rebooting
-        // while the app was closed still continues the same trip file.
         val prior = try {
             appSettings.sessionFor(deviceKey)
         } catch (e: Exception) {
@@ -313,8 +233,6 @@ class TripLogService : Service() {
         recorder = TripRecorder(csvWriter, { startMs -> tripStore.newName(startMs) }, {
             System.currentTimeMillis()
         }, prior)
-        // The identity arrives on the intent, the recorder is built later (this is
-        // the first place it can be built): hand it over before the first sample.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
         return true
     }
@@ -428,8 +346,6 @@ class TripLogService : Service() {
         val power = getSystemService(PowerManager::class.java) ?: return
         val lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_TAG).apply {
             setReferenceCounted(false)
-            // Never hold indefinitely: a stuck session cannot drain the battery
-            // past the recording cap.
             acquire(TimeUnit.HOURS.toMillis(13))
         }
         wakeLock = lock
@@ -461,11 +377,6 @@ class TripLogService : Service() {
         /** How often the frame stream may wake the weather feed (see [noteWeatherFrame]). */
         private const val WEATHER_WAKE_INTERVAL_MS = 10_000L
         private const val WAKE_TAG = "dashboardpp:trip"
-        /**
-         * Point the recorder at a dashboard. No address in the signature anywhere: the
-         * link is the process-wide one ([BleRuntime]), and what a trip file needs is the
-         * device key, which outlives the link.
-         */
         fun start(
             context: Context,
             deviceKey: String,

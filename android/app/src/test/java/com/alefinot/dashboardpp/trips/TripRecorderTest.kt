@@ -6,12 +6,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The trip identity rules (trip recording plan §3), tested on the JVM with a
- * fake clock and a fake writer. These are the cases a driver actually hits —
- * the ESP restarting, the phone walking out of range, the app being killed —
- * and each one decides whether the drive ends up as one honest file or several.
- */
 class TripRecorderTest {
 
     private var now = 1_730_000_000_000L
@@ -72,9 +66,6 @@ class TripRecorderTest {
 
     @Test
     fun sessionPeakResetWithRisingUptimeIsAlsoAReboot() {
-        // The ESP's `max` lives in RAM only: it returns to zero on a reboot and
-        // nowhere else. A drop while uptime keeps climbing can only be a restart
-        // that happened inside a gap we were not polling in.
         recorder.onSnapshot("10.0.0.5", snap(up = 500, spd = 20.0, max = 90.0))
         now += 1_000L
         assertEquals(
@@ -91,8 +82,6 @@ class TripRecorderTest {
         assertEquals(TripEvent.SEALED, recorder.onTick())
         val sealedPath = writer.pathAt(0)
 
-        // The same boot comes back ten minutes later: `up` kept climbing and the
-        // session peak did not drop, so this is the same drive, not a new one.
         now += 600_000L
         assertEquals(
             TripEvent.REOPENED,
@@ -100,8 +89,6 @@ class TripRecorderTest {
         )
         assertEquals(1, writer.files.size)
         assertEquals(sealedPath, recorder.openTrip?.path)
-        // The running summary has to include what was already on disk, or the
-        // "Recording…" row would understate the drive after every gap.
         assertEquals(2, recorder.summary()?.samples)
     }
 
@@ -122,8 +109,6 @@ class TripRecorderTest {
     fun aDifferentIpNeverContinuesTheSameTrip() {
         recorder.onSnapshot("10.0.0.5", snap(up = 500, spd = 20.0, max = 40.0))
         now += 1_000L
-        // Another dashboard answering: its uptime is unrelated to the first one,
-        // so merging would invent a single drive out of two devices.
         recorder.onSnapshot("10.0.0.9", snap(up = 501, spd = 20.0, max = 40.0))
         assertEquals(2, writer.files.size)
     }

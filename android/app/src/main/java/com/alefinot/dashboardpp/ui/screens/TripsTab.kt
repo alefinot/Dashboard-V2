@@ -70,12 +70,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * Recorded drives (trip recording plan §5): newest first, one card per power
- * session. The trip being written today sits at the top as a live row — never
- * deletable, and it shows the running numbers the recorder holds in RAM rather
- * than re-reading the file it is appending to.
- */
 @Composable
 fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     val rows by vm.rows.collectAsStateWithLifecycle()
@@ -89,20 +83,12 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     val elsewhere by vm.elsewhere.collectAsStateWithLifecycle()
     var refreshKey by remember { mutableStateOf(0) }
 
-    // The pager keeps this page composed from the first frame on (see ConnectedTabs),
-    // so composition is no longer the same event as arrival. The index pass runs once
-    // as soon as the shell exists - that is the warm-up that makes the first swipe in
-    // a paint rather than a folder walk under the finger - and again every time the
-    // user actually gets here, which is what a fresh composition used to buy. The
-    // counter goes down to the list with it: the reveal is keyed to a visit too.
     val inView = LocalEnterActive.current
     var visits by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) { vm.refresh() }
     LaunchedEffect(inView, refreshKey, runtime.recording) {
         if (!inView) return@LaunchedEffect
         visits++
-        // While recording, the sealed trips still need their summaries; the open file
-        // is shown from the recorder's RAM instead.
         vm.refresh()
     }
 
@@ -111,13 +97,8 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             .padding(horizontal = HudPage.Gutter)
             .padding(top = 10.dp),
     ) {
-        // `.header`: the page's h2, the count as an `.ip-banner` pill, and the one line
-        // about what the cards are. Centred in `.main-content` instead of a left-aligned
-        // row across the whole 1920 px.
         HudPageHeader(title = "Trips") {
             HudBanner(
-                // What the cards underneath actually are: when a filter is on, the
-                // count says so instead of quietly shrinking.
                 if (visible.size == rows.size) {
                     "${StorageCopy.drives(rows.size)}  ·  ${formatBytes(storage)}"
                 } else {
@@ -126,10 +107,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                // Where the cards underneath came from. The folder is named because it is the
-                // place a user goes to open a drive in a spreadsheet or pull one off over USB —
-                // and the words are StorageCopy's, because on Android 10 there is no storage
-                // switch to point at, so the sentence must not promise one.
                 StorageCopy.tripsNote(
                     sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
                     AppRoot.sharedRootLabel(), AppRoot.TRIPS,
@@ -139,9 +116,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // Drives the recorder did not write here. A permission change moves where the app
-            // writes, never where the drives are, so this line is what keeps the count in the
-            // line above and the folder it names from contradicting each other.
             elsewhere?.let { strays ->
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -156,9 +130,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
         }
         Spacer(Modifier.height(10.dp))
 
-        // Narrow the list to one vehicle. The model decides when the row exists at
-        // all: with a single vehicle and nothing untagged there is nothing to narrow,
-        // and a control with one choice is decoration [plan §6].
         if (options.size > 1) {
             TripFilterChips(options, filter) { vm.setFilter(it) }
             Spacer(Modifier.height(10.dp))
@@ -175,9 +146,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
         }
 
         if (visible.isEmpty() && !runtime.recording) {
-            // The empty page, as one card: two lines floating on black used to be the only
-            // place on this tab with no surface under them, which made "nothing yet" look
-            // like a rendering failure rather than an answer.
             Column(
                 Modifier.fillMaxWidth()
                     .hudCard()
@@ -193,11 +161,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
                         style = HudeCfgNote(),
                     )
                 } else {
-                    // Files exist; the filter is what hides them. Say which chip is on,
-                    // and say where the rest went, rather than presenting an empty page.
-                    // The chip is always offered while it hides rows (see filterOptionsFor),
-                    // so the name is always resolvable; the fallback is words rather than the
-                    // filter's code, because a `?` on screen is a bug the user has to read.
                     val chip = options.firstOrNull { it.value == filter }
                     Text(
                         if (chip == null) "No drives match the current filter."
@@ -217,17 +180,10 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             Spacer(Modifier.height(12.dp))
         }
 
-        // The list of drives, with the page's own staggered reveal. It is the flexing
-        // child, so the header keeps its height and the list gets the rest.
         TripList(visible, visits, onOpen, Modifier.weight(1f))
     }
 }
 
-/**
- * The filter chips. A chip takes the page's own card treatment at its smallest -
- * hairline box, `HudeSectionCaps` type - rather than a Material chip, which would be
- * the one element on this page that does not look like the rest of the app.
- */
 @Composable
 private fun TripFilterChips(options: List<TripFilterOption>, current: String, onSelect: (String) -> Unit) {
     Row(
@@ -256,23 +212,6 @@ private fun TripFilterChips(options: List<TripFilterOption>, current: String, on
     }
 }
 
-/**
- * The list of drives, revealed the way the page fades its body in (`pageFadeIn` on
- * the body) rather than row by row: a LazyColumn throws rows away and re-creates them
- * as they scroll, so a row-local entrance would replay on every scroll back - the
- * cost the design brief rules out. One ramp drives the whole list instead, each row
- * taking its slice of it by position, so a row scrolling back into view finds the ramp
- * already at 1 and costs nothing.
- *
- * The ramp belongs to a visit, not to composition. The page is kept composed between
- * visits so that arriving is a paint rather than a rebuild, so the counter that
- * re-arms it is counted by [TripsTab] off the pager's viewport flag
- * ([LocalEnterActive]) - and a scroll never re-arms it, because it never leaves the
- * view.
- *
- * With motion off the list starts revealed: the ramp would otherwise animate from
- * nothing, which is motion the user asked not to have.
- */
 @Composable
 private fun TripList(
     rows: List<TripRow>,
@@ -280,18 +219,6 @@ private fun TripList(
     onOpen: (TripRow) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // The visit counter keys the ramp: a new visit starts it back at nothing, which is
-    // what a freshly composed page used to do by itself. At zero visits - the page
-    // composed at boot, the user somewhere else - the list sits unrevealed and
-    // animates nothing until the user gets here.
-    //
-    // `rows.size` is part of the key because the alternative is a page that counts four
-    // files and shows none. The visit and the index pass are separate events: arriving on
-    // the tab increments the visit while the folder walk is still running, and a latch
-    // armed only at the moment of the visit reads `rows` empty, never re-arms, and leaves
-    // every card at alpha 0 forever. Observed on a real tablet - header `4 · 262 kB`,
-    // filter ALL, an empty black list. An entrance animation may delay content; it may
-    // not decide whether content exists.
     var revealed by remember(visits) { mutableStateOf(visits > 0 && !HudMotion.enabled) }
     LaunchedEffect(visits, rows.size) {
         if (visits > 0 && rows.isNotEmpty()) revealed = true
@@ -324,13 +251,8 @@ private fun TripList(
 private fun LiveTripRow(state: TripRuntimeState) {
     val snap = state.snapshot
     val summary = state.summary
-    // No page rule for a live recording row, so it borrows the page's status
-    // language: `#msg` plus `.msg-success` -- emerald hairline at 30%, emerald at
-    // 8% as the wash, 8px radius.
     Box(
         Modifier.fillMaxWidth()
-            // `#msg` + `.msg-success`: 8px corners, the status strip's own fill
-            // under an emerald wash at 8%, emerald hairline at 30%. No shadow.
             .hudCard(
                 fill = HudColors.Msg,
                 borderColor = HudColors.Green.copy(alpha = 0.3f),
@@ -340,8 +262,6 @@ private fun LiveTripRow(state: TripRuntimeState) {
     ) {
         Column {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // `#msg`'s own 13px, at the weight the page gives a line it wants
-                // read first (`.cfg-warn`, `.card h4`).
                 Text("RECORDING", color = HudColors.Green, style = HudeSectionTitle(0f))
                 Spacer(Modifier.width(10.dp))
                 Text(
@@ -371,8 +291,6 @@ private fun LiveTripRow(state: TripRuntimeState) {
 private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f) {
     Box(
         Modifier.fillMaxWidth()
-            // The list's shared ramp, in alpha and in an 8px rise -- `pageFadeIn`
-            // lifts by exactly that much.
             .alpha(reveal)
             .offset { IntOffset(0, ((1f - reveal) * 8f).dp.roundToPx()) }
             .hudCard()
@@ -382,8 +300,6 @@ private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f
         Column {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    // A trip row is tabular data, so it takes the page's `table` rule:
-                    // 12px monospace, 0.5px tracking.
                     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(row.startMs)),
                     color = HudColors.TextPrimary,
                     style = HudeTable(),
@@ -421,14 +337,6 @@ private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f
 
 @Composable
 private fun VehicleBadge(row: TripRow) {
-    // The name is looked up live from the id in the file, so renaming a vehicle
-    // relabels every one of its old drives at once, and a deleted card keeps showing
-    // the name its own file recorded.
-    //
-    // The amber state is keyed on the *id*, not the label: a file can have an id and
-    // still have no readable name (tagged while the card's name was blank, card since
-    // deleted), and calling that "NO VEHICLE" would say the file knows nothing when it
-    // knows the one thing that matters [plan §6].
     val unknown = row.vehicleId == null
     val label = if (unknown) "NO VEHICLE" else row.vehicleName ?: "UNNAMED"
     Box(

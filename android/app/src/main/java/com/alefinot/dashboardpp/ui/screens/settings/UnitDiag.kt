@@ -1,19 +1,5 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
-/**
- * What the unit says about itself while it runs.
- *
- * These are transcriptions of the four diagnostic methods in `src/bt_rpc.cpp` — `methodPerf`,
- * `methodHealth`, `methodLive` and `methodBoot` — under the firmware's own key names, so a field
- * that goes missing on the unit shows up as a missing field here instead of as a plausible zero.
- * The performance monitor draws them; nothing else in the app needs them, and nothing here parses
- * a value the firmware does not actually send.
- *
- * One thing worth knowing before reading the parsers: this firmware prints its booleans with `%d`.
- * `ble_connected`, `mem_saver`, `cpu_dynamic`, `storm` all arrive as the numbers 0 or 1, never as
- * JSON `true`/`false`, so every flag here goes through [flag] and not through a cast.
- */
-
 /** A task's stack high-water mark, in words, as `uxTaskGetStackHighWaterMark` reports it. */
 data class StackRow(
     val label: String,
@@ -28,10 +14,6 @@ data class PartitionRow(
     val addr: Long,
 )
 
-/**
- * `perf` — the widest of the four. Display, CPU, memory, flash, the settings budget and the
- * Bluetooth link in one reply, which is why the monitor polls this one on its own cadence.
- */
 data class PerfReadout(
     // Display
     val fpsCurrent: Double = 0.0,
@@ -95,11 +77,6 @@ data class LiveReadout(
     val engineTempC: Double = 0.0,
 )
 
-/**
- * `boot` — why the unit is running, and what it cost to get here. This is the block that answers
- * "did it crash?": a unit that has been restarting every ten minutes looks perfectly healthy in
- * every other card.
- */
 data class BootReadout(
     val resetReason: String = "",
     val bootCount: Long = 0,
@@ -114,10 +91,6 @@ data class BootReadout(
 
 object UnitDiag {
 
-    /**
-     * A reply with no fields at all is a failed call, not a unit reporting zeros — the screen has
-     * to be able to tell those two apart, or a dead link looks like an idling engine.
-     */
     fun perf(fields: Map<String, Any?>): PerfReadout? =
         if (fields.isEmpty()) null else PerfReadout(
             fpsCurrent = num(fields, "fps_current") ?: 0.0,
@@ -190,8 +163,6 @@ object UnitDiag {
             freeHeap = num(fields, "freeHeap")?.toLong() ?: 0L,
         )
 
-    // The names are the firmware's, and the task list is whatever the unit chose to report:
-    // hard-coding three names here would drop a task the day the firmware grows one.
     private fun stacks(node: Any?): List<StackRow> {
         val map = node as? Map<*, *> ?: return emptyList()
         return map.entries.map { entry ->
@@ -253,11 +224,6 @@ object DiagFormat {
     /** The unit reports what is free; the bars the old page drew were the other half. */
     fun usedOf(total: Long, free: Long): Long = if (total <= free) 0L else total - free
 
-    /**
-     * `btLinkState()` as the firmware's heartbeats print it: 2 is a live link, 1 is advertising,
-     * 0 is the radio off. Anything else is printed as the number it is — inventing a name for a
-     * code this app does not know is how a monitor starts lying.
-     */
     fun bleState(code: Int): String = when (code) {
         2 -> "LINKED"
         1 -> "ADVERTISING"
@@ -265,11 +231,6 @@ object DiagFormat {
         else -> "state $code"
     }
 
-    /**
-     * The fuel input state, by the names the firmware gives it (`FUEL_INPUT_*` in
-     * `src/dashboard.h`). The raw ADC number on its own means nothing at the bench: 4095 is either
-     * a full tank or a wire that fell off, and only this code says which.
-     */
     fun fuelState(code: Int): String = when (code) {
         0 -> "input off — nothing wired"
         1 -> "in range"
@@ -278,12 +239,6 @@ object DiagFormat {
         else -> "state $code"
     }
 
-    /**
-     * Whether the unit came back for a reason nobody asked it to. The strings are the firmware's
-     * own (`resetReasonStr` in `src/bootinfo.cpp`), which prints every reason in the core's enum
-     * and falls back to `RST_<n>` for one it does not know — so an unknown label is treated as
-     * unasked for rather than assumed innocent, and a clean `SW (clean restart)` is not.
-     */
     fun resetLooksUnasked(reason: String): Boolean {
         val upper = reason.uppercase()
         if (upper.isEmpty() || upper == "UNKNOWN") return true
@@ -318,14 +273,6 @@ class Series(
     val average: Double,
 )
 
-/**
- * The spread of a handful of figures over the time the monitor has been open.
- *
- * A single reading tells you what the unit is doing this second; a leak, a stack that is running
- * out, and an FPS figure that only dips while the config stream runs are all things you can only
- * see as a range. The window is capped because the screen may stay open for an hour on a tablet
- * and this app has no business growing an unbounded list.
- */
 class PerfTrends(val cap: Int = 60) {
 
     private val extractors: Map<String, (PerfReadout) -> Double> = linkedMapOf(

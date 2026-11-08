@@ -8,16 +8,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Backup and restore, measured in bytes as well as keys.
- *
- * The old page sent the whole configuration to the unit as one HTTP body. Over the
- * link there is no "one body": the dashboard reassembles an inbound message up to
- * `BT_MAX_MSG` and refuses anything larger, and the config plus a 128-point fuel
- * array is bigger than that. So a restore goes back card by card, and this test is
- * what keeps "card by card" from turning into "one object again" the day someone
- * simplifies the loop.
- */
 class BackupTest {
 
     private val gateway = FakeGateway()
@@ -34,8 +24,6 @@ class BackupTest {
             gateway.stored[item.key] = item.defaultValue
             item.keyY?.let { gateway.stored[it] = item.defaultY }
         }
-        // The fuel curve is the fat one: 128 ohm readings, and the point-count row
-        // that goes with them.
         gateway.stored["fuelCalOhms"] = (0 until 128).map { 100 + it }
         gateway.stored["FUEL_TOUCH_POINTS"] = 128
         schema.extras.forEach { (key, value) -> gateway.stored.putIfAbsent(key, value) }
@@ -101,11 +89,6 @@ class BackupTest {
         }
     }
 
-    /**
-     * How a restore reads in the bar. Two clauses were joined with a separator in the join
-     * and another inside each clause, so the page printed "… ·  · 3 value(s) …", and a
-     * blank entry in the list made it worse. One separator between clauses, nothing else.
-     */
     @Test
     fun theRestoreLinePrintsEachClauseOnce() {
         val line = RestoreReport(

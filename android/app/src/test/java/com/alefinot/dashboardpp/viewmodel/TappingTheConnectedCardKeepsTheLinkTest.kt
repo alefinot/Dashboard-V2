@@ -4,25 +4,6 @@ import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The rule for "does this tap end the connection?" lives in [CardSelection], and this pins that the
- * view model actually asks it instead of deciding inline.
- *
- * The reason for a wiring guard rather than only a unit test on the predicate: the predicate is
- * three lines and nobody gets it wrong twice. What goes wrong is a call site that reads the session
- * itself and compares nothing — which is exactly what shipped until 2026-11-07:
- *
- * ```kotlin
- * if (uiState.value is ConnectionUiState.Connected) uiState.value = ConnectionUiState.Idle(null)
- * ```
- *
- * for any selection at all, including the connected card's own. The comment above that line said
- * "selecting a different card"; the code did not check for different. On the bench that left the
- * app showing `NO DASHBOARD IN RANGE` over a GATT link it was still holding — the stack still had
- * the client registered and a second phone dialling the same unit timed out after 20 s — and no
- * timer repaired it, because the reconnect guards see a live link and see no reason to dial, and
- * the adoption path only fires on a link state that *changed*.
- */
 class TappingTheConnectedCardKeepsTheLinkTest {
 
     @Test
@@ -57,8 +38,6 @@ class TappingTheConnectedCardKeepsTheLinkTest {
     private fun String.section(openingSignature: String): String {
         val start = indexOf(openingSignature)
         assertTrue("no $openingSignature in the source", start >= 0)
-        // `}` alone is not enough: a `} else {` line is also indented four, and cutting there would
-        // hide exactly the arm this guard exists to check.
         val end = indexOf("\n    }\n", start)
         assertTrue("unterminated $openingSignature", end > start)
         return substring(start, end)

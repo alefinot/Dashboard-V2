@@ -6,11 +6,6 @@ import java.io.File
 /** What trip is currently open, if any. */
 data class TripRef(val path: String, val startMs: Long)
 
-/**
- * Everything needed to recognise the same ESP power session later — including
- * after the app died — so a trip sealed when the device went out of range can
- * still be continued by the same boot of the ESP (plan §3).
- */
 data class SessionRecord(
     val ip: String,
     /** Last `up` (ESP uptime in s) accepted for this session. */
@@ -27,14 +22,6 @@ data class SessionRecord(
 
 enum class TripEvent { NONE, OPENED, REOPENED, APPENDED, SEALED_THEN_OPENED, SEALED }
 
-/**
- * The trip session state machine (trip recording plan §3): one trip per ESP
- * power session, sealed when the device stops answering, re-opened if the same
- * session comes back within 24 h, split after 12 h of continuous recording.
- *
- * Deliberately free of Android and HTTP: it is handed samples, a clock and a
- * [TripWriter], so every boundary case is unit-testable on the JVM.
- */
 class TripRecorder(
     private val writer: TripWriter,
     private val pathFor: (startMs: Long) -> String,
@@ -59,48 +46,17 @@ class TripRecorder(
     private var ip: String = initialSession?.ip ?: ""
     private var session: SessionRecord? = initialSession
 
-    /**
-     * The `#vehicle=` line for the next file this recorder creates ("" = no tag).
-     *
-     * The app - not the recorder - decides who a trip belongs to: the recorder is
-     * handed samples, and a sample carries no identity. What it is handed instead
-     * is this line, rendered by the service from the vehicle card that was selected
-     * when the drive started. It is deliberately a snapshot rather than a live
-     * lookup: renaming a vehicle later must not rewrite a drive that already
-     * happened, and [bindVehicle] during an open trip changes the next file, never
-     * the one being written.
-     */
     private var tag: String = ""
 
-    /**
-     * Say whose drive this is. Empty [vehicleId] (no card selected) means no tag:
-     * an untagged file is honest, while a tag with a half-known id would be a guess.
-     */
     fun bindVehicle(vehicleId: String, eff: String, name: String) {
         val next = TripFormat.tagLine(vehicleId, eff, name)
         if (next != tag) tag = next
     }
 
-    /**
-     * A trip sealed by the 12 h cap must not be re-opened by the next sample of
-     * the same ESP session — otherwise the cap would never actually split the
-     * the file. Remembered here rather than in [SessionRecord] so the persisted
-     * session format stays unchanged. The cost of holding it in memory only: if
-     * the app itself restarts inside the 24 h re-open window, that trip may be
-     * continued past the cap — still one file per ESP power session, which is the
-     * rule that matters, just longer than 12 h.
-     */
     private var cappedTripPath: String? = null
 
     fun ip(): String = ip
 
-    /**
-     * Point the recorder at a device. A different ip means a different unit, so
-     * any persisted session for the previous one must not be reused — and an open
-     * trip is sealed first, because two dashboards can never be one drive: their
-     * uptimes are unrelated, and merging them would invent a single trip out of
-     * two devices.
-     */
     fun bindIp(newIp: String) {
         if (ip != newIp) {
             if (openTrip != null && ip.isNotEmpty()) seal("device-changed")
@@ -176,10 +132,6 @@ class TripRecorder(
         }
     }
 
-    /**
-     * Called every tick whether or not the poll worked. Seals the trip once the
-     * device has been silent past [TripPolicy.SEAL_AFTER_MS].
-     */
     fun onTick(): TripEvent {
         val trip = openTrip ?: return TripEvent.NONE
         val last = lastSampleMs
@@ -200,9 +152,6 @@ class TripRecorder(
     private fun rebooted(prev: Snapshot, s: Snapshot): Boolean {
         // Uptime went backwards: the ESP rebooted, end of session.
         if (s.up < prev.up) return true
-        // `max` is RAM-only state on the ESP: it returns to 0 on a reboot and
-        // nowhere else (no NVS, no manual reset). If it dropped while `up` kept
-        // climbing, the unit restarted inside a window we were not polling in.
         return s.max < prev.max - MAX_SPEED_EPS
     }
 
@@ -214,9 +163,6 @@ class TripRecorder(
         if (!writer.exists(path)) return null
         if (now - r.lastSampleMs > TripPolicy.REOPEN_WINDOW_MS) return null
         if (s.up < r.lastUp) return null
-        // Same boot: the ESP's clock may not be set, but its uptime still advances
-        // at one second per second, so it cannot have gained more time than the
-        // phone has elapsed (plus slack for phone sleep and the ESP's NTP jump).
         val elapsedMs = now - r.lastSampleMs
         val upDeltaMs = (s.up - r.lastUp) * 1000L
         if (upDeltaMs > elapsedMs + TripPolicy.UP_SLACK_MS) return null
@@ -224,10 +170,6 @@ class TripRecorder(
         return r
     }
 
-    /**
-     * Re-opened files already hold samples; the running summary has to start from
-     * them or the "Recording…" row would show only the part after the gap.
-     */
     private fun seedAccumulator(path: String) {
         accumulator = TripAccumulator()
         writer.readDataLines(path).forEach { line ->
@@ -257,11 +199,6 @@ class TripRecorder(
     }
 }
 
-/**
- * Text form of a [SessionRecord] for preference storage: it is what lets a trip
- * be continued after the app was killed between drives. The ip is not stored in
- * the value — it is the storage key — so [decode] takes it as an argument.
- */
 object SessionCodec {
     private const val V = "s1"
 
@@ -301,10 +238,6 @@ object TripReader {
         return out
     }
 
-    /**
-     * Summary of a file on disk. A malformed or truncated last line is skipped —
-     * a crash mid-write costs that one sample, not the trip.
-     */
     fun summarize(path: String): TripSummary? {
         val acc = TripAccumulator()
         var any = false
@@ -325,8 +258,6 @@ object TripReader {
         try {
             f.forEachLine(action = block)
         } catch (e: Exception) {
-            // Partial reads (storage revoked, file deleted mid-read) leave the
-            // caller with whatever was parsed already.
         }
     }
 }

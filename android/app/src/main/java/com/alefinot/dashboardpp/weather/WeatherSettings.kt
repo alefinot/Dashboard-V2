@@ -14,22 +14,8 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-// One DataStore per name, per process — the delegate guarantees it, and the settings
-// card, the coordinator and the service all read the same one (same shape as
-// trips/Stores.kt).
 private val Context.weatherSettingsStore: DataStore<Preferences> by preferencesDataStore("weather_settings")
 
-/**
- * What the app remembers about one unit's weather: the position it last asked about,
- * the label that went with it, and when the last successful feed and push happened.
- *
- * [lastPushEpochMs] and [fetchEpochMs] use [WeatherSettings.NO_EPOCH] for "never" —
- * DataStore has no null, and inventing a timestamp would be worse than saying 1970.
- *
- * [offlineSent] is the plan's rule made durable: the `valid=false` frame goes out at
- * most once per transition into staleness, so an app restart cannot spend a second one
- * on a unit that already shows "Weather Offline".
- */
 data class WeatherCache(
     val lat: Double,
     val lon: Double,
@@ -51,19 +37,6 @@ data class CityFallback(val typed: String?, val place: Place?) {
     val isUsable: Boolean get() = place != null
 }
 
-/**
- * The weather feed's settings and cache.
- *
- * The cache is keyed by `UnitIdentity.key(mac, bleAddress)`, not by the address the
- * link dialed: position belongs to a vehicle, and a second car that happens to be
- * reached over the same phone must never inherit the first one's last known place.
- *
- * The typed city and its geocode are stored as **separate keys** rather than one joined
- * string, because every one of those values is free text an owner types or a gazetteer
- * returns; the per-unit cache row has to be one value (it is keyed by unit), so there
- * the free-text field is kept last and split with a limit, which is what keeps a label
- * containing a `;` whole.
- */
 class WeatherSettings(context: Context) : WeatherStore {
 
     private val store = context.applicationContext.weatherSettingsStore
@@ -85,12 +58,6 @@ class WeatherSettings(context: Context) : WeatherStore {
 
     override suspend fun cityNow(): CityFallback = cityFallback.first()
 
-    /**
-     * Store a typed city with the geocode that was looked up for it at save time.
-     * Passing null for [place] means "the owner typed something, the gazetteer had no
-     * answer" — the text is kept so it can be shown and re-tried, but it is not a
-     * position and the ladder will not use it.
-     */
     suspend fun setCity(typed: String?, place: Place?) {
         store.edit { prefs ->
             val text = typed?.trim()?.takeIf { it.isNotEmpty() }
@@ -100,8 +67,6 @@ class WeatherSettings(context: Context) : WeatherStore {
             } else {
                 prefs[KEY_CITY] = text
                 if (place == null) {
-                    // Drop any geocode left from a previous, different city: an old
-                    // coordinate behind a new name would feed weather for the wrong town.
                     listOf(KEY_CITY_LAT, KEY_CITY_LON, KEY_CITY_NAME, KEY_CITY_ADMIN1, KEY_CITY_COUNTRY)
                         .forEach { prefs.remove(it) }
                 } else {
@@ -123,11 +88,6 @@ class WeatherSettings(context: Context) : WeatherStore {
         store.edit { it[stringPreferencesKey(cacheKey(unitKey))] = encodeCache(cache) }
     }
 
-    /**
-     * Forget the cache rows of units being removed from the app. Whole-key equality, for
-     * the reason `RecorderSettings.clearSessions` spells out: one identity's key can be a
-     * text prefix of another's, and a prefix match would delete a stranger's history.
-     */
     suspend fun clearCaches(unitKeys: List<String>): Int {
         if (unitKeys.isEmpty()) return 0
         var removed = 0
@@ -162,11 +122,6 @@ class WeatherSettings(context: Context) : WeatherStore {
             return existing.filter { it in wanted }
         }
 
-        /**
-         * `w1;<lat>;<lon>;<fetchMs>;<pushMs>;<offlineSent>;<label>` — the version tag
-         * first so a row written by a future app is refused rather than mis-read, and the
-         * label last because it is the only field that can hold arbitrary provider text.
-         */
         fun encodeCache(cache: WeatherCache): String = listOf(
             "w1",
             String.format(Locale.US, "%.7f", cache.lat),
@@ -182,8 +137,6 @@ class WeatherSettings(context: Context) : WeatherStore {
             if (parts.size != 7 || parts[0] != "w1") return null
             val lat = parts[1].toDoubleOrNull() ?: return null
             val lon = parts[2].toDoubleOrNull() ?: return null
-            // A row that drifted outside the coordinate ranges is not a cache, it is
-            // corruption; refusing it sends the ladder down to the typed city instead.
             if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return null
             return WeatherCache(
                 lat = lat,

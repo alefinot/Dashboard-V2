@@ -2,29 +2,6 @@ package com.alefinot.dashboardpp.ble
 
 import kotlinx.coroutines.delay
 
-/**
- * The firmware-install transfer, in the parts that can be checked without a radio.
- *
- * A phone pushing a 1.5 MB image into a dashboard unit is the one thing this app does where a
- * silent off-by-one bricks nothing but does waste a driver's afternoon, so everything that
- * decides *what goes on the wire and how far we got* lives here, free of Android types, and is
- * unit-tested against the same rules `src/bt_ota.cpp` follows on the unit:
- *
- *  - the image travels as raw writes on the OTA characteristic, each one tagged with the byte
- *    index it belongs at: `offset(4, little endian) + payload`. Nothing frames them and no JSON
- *    wraps them, because JSON around 1.5 MB is 25 % of padding for no benefit.
- *  - the chunk size is the unit's decision, announced in `begin_ok`; the phone clamps to the
- *    ATT ceiling too, so a unit that answers a silly number cannot make the stack drop writes.
- *  - integrity is CRC-32 over every byte of the image, declared before the first write and
- *    folded up by both sides as they go. It catches a mis-framed or dropped write before the
- *    ESP32's own image check does. It is *not* a signature — nothing here authenticates the
- *    file (AGENTS.md rule 3), it only says "the bytes that arrived are the bytes that left".
- *  - resume works because the ACK is an offset. After a link drop the phone asks where the unit
- *    stands and continues from there; a phone that tries to start over from 0 is refused,
- *    because the unit's CRC has already folded bytes 0..off and re-sending them would corrupt
- *    the check.
- */
-
 /** The byte shape of one OTA data write. */
 object OtaFrames {
 
@@ -34,15 +11,6 @@ object OtaFrames {
     /** Chunk sizes are a whole multiple of this, matching the unit's flash-friendly pacing. */
     const val CHUNK_ALIGN = 16
 
-    /**
-     * The largest payload one OTA write may carry, whatever the MTU says.
-     *
-     * An ATT write carries `MTU - 3` bytes (opcode + 2-byte handle), and 4 of those belong to the
-     * offset that opens every OTA frame — so at a 517-byte MTU the ceiling is 510, and the
-     * biggest 16-byte multiple at or under it is 496. Getting this wrong by four bytes is not a
-     * performance problem: the stack rejects the write (or, on some phones, quietly fragments
-     * it) and the transfer stalls with a write timeout.
-     */
     const val CHUNK_CAP = 512
 
     /** The biggest chunk a link at [mtu] can carry, aligned and at least one byte. */
@@ -51,9 +19,6 @@ object OtaFrames {
         if (usable < 1) return 1
         val capped = minOf(usable, CHUNK_CAP)
         val aligned = (capped / CHUNK_ALIGN) * CHUNK_ALIGN
-        // A 23-byte MTU leaves 16 usable, and a 19-byte link leaves 12, which is not a whole
-        // 16-byte step. Staying under the ceiling matters more than staying aligned, so an odd
-        // remainder is allowed rather than rounding up past what the link can carry.
         return if (aligned < 1) minOf(usable, CHUNK_ALIGN) else aligned
     }
 
@@ -89,16 +54,6 @@ data class OtaImage(
     val versionTag: String?,
 )
 
-/**
- * Reading a firmware file the way the unit will read it.
- *
- * `src/config.cpp` embeds `DPPVER=<FW_VERSION>` inside `firmware.bin` so a binary can be
- * identified without a manifest, and `scripts/fix_upload_layout.py` reads that same marker when
- * a wired flash happens. The app reads it for the same reason: the file a person picked off a
- * download or out of a build folder has no name worth trusting (`firmware.bin` is what every
- * build is called), and "you are about to put 1.5.1 on a unit already running 1.5.1" is worth
- * saying out loud before 1.5 MB travels over the air.
- */
 object OtaImages {
 
     const val TAG = "DPPVER="
@@ -111,13 +66,6 @@ object OtaImages {
         b in '0'.code..'9'.code || b in 'a'.code..'z'.code || b in 'A'.code..'Z'.code ||
             b == '.'.code || b == '-'.code || b == '_'.code || b == '+'.code
 
-    /**
-     * Finds the version the image declares, or null when it carries no readable marker.
-     *
-     * The marker sits wherever the linker put it, so this is a plain search. Ending the tag at
-     * the first byte that cannot belong to a version is what stops a run of binary past the
-     * real value from being read as part of it.
-     */
     fun scanVersionTag(bytes: ByteArray): String? {
         val marker = TAG.toByteArray(Charsets.US_ASCII)
         if (bytes.size < marker.size) return null
@@ -139,8 +87,6 @@ object OtaImages {
                         end++
                     }
                     if (end > start) return String(bytes, start, end - start, Charsets.US_ASCII)
-                    // A marker with nothing readable after it is a stray byte sequence, not a
-                    // version. Keep looking.
                 }
             }
             i++
@@ -171,53 +117,14 @@ object OtaImages {
 /** One slice of the image: bytes [offset, offset+length). */
 data class OtaSegment(val offset: Int, val length: Int)
 
-/**
- * The next write to put on the wire, or null when the image is already there.
- *
- * This is the whole tiling rule, in one place, so the transfer loop cannot invent its own:
- * a segment always starts where the previous one ended and only the last is short. That is what
- * makes "did the whole file go" answerable by comparing the unit's ACK against [total] instead of
- * counting writes — and it is why a resume can start anywhere: the segment at a resumed offset is
- * computed the same way as the one the interrupted transfer was sending when the link dropped.
- */
 fun nextSegment(total: Int, chunk: Int, off: Int): OtaSegment? {
     require(chunk > 0) { "chunk must be positive" }
     if (off < 0 || off >= total) return null
     return OtaSegment(off, minOf(chunk, total - off))
 }
 
-/**
- * The offset to continue from when a `begin_ok` turns up while a transfer is running.
- *
- * `ota.begin` is answered twice by the unit: in the RPC reply, and again as a `begin_ok` event on
- * the OTA characteristic. The reply has already been applied before the loop starts, so the event
- * is a duplicate that arrives one write later. Re-adopting its offset then moves the phone back
- * behind bytes the unit already has on flash, and the unit ends the install with
- * `offset_mismatch` — measured on a bench unit on 2026-11-02, where a duplicate `begin_ok` at 0
- * arrived 0.4 s into a 1.5 MB install and killed it at 496 bytes. Before the first write nothing
- * has been sent, so the event is still the authoritative resume answer and is taken; after it, the
- * phone's own position stands. A unit that genuinely restarted mid-transfer is caught by the
- * ACK/`ota.status` recovery in the loop, which pulls the offset back from the unit when the unit
- * is behind.
- */
 fun adoptBeginOkOffset(sentTo: Int, eventOff: Int): Int = if (sentTo == 0) eventOff else sentTo
 
-/**
- * The unit's position in the image, read until it stops moving.
- *
- * `ota.status` answers with the bytes BtTask has drained into flash, not with the bytes the radio
- * delivered: the unit's handoff ring can be holding several frames of everything the phone has
- * already sent, and a drain pass takes up to ~125 ms on this bench (`OTA: ... longest Nms between
- * drains`). One reading taken during a hiccup can therefore sit behind reality by a frame or more,
- * and continuing from it re-sends frames the unit already accepted — which the unit answers with
- * `offset_mismatch`, killing the install (bench, 2026-11-04: `write at 396304, unit expects 396800`
- * at 396800 of 1593664 bytes, after a single `ota.status` answered 496 B short).
- *
- * So keep reading while the number still moves, and believe it once it stands still. Returns null if
- * the unit never answered; if it is still moving when the attempts run out, the newest reading is
- * returned — that is the closest thing to the truth available, and it errs on the side of not
- * re-sending bytes the unit has.
- */
 suspend fun settledOffset(
     read: suspend () -> Int?,
     attempts: Int = 4,
@@ -250,16 +157,6 @@ sealed interface OtaEvent {
     data class Failure(val reason: String, val off: Int) : OtaEvent
 }
 
-/**
- * Parses one `BT_F_OTA` message.
- *
- * Shapes, straight from `src/bt_ota.cpp`:
- * `{"ev":"begin_ok","chunk":512,"off":0}`, `{"ev":"ack","off":65536}`,
- * `{"ev":"done"}`, `{"ev":"error","reason":"crc","off":12345}`.
- * Anything unrecognised returns null and is ignored: an event the app cannot read must not
- * end a transfer that is going fine, and the transfer's own watchdog covers a unit that has
- * genuinely stopped.
- */
 fun parseOtaEvent(json: String): OtaEvent? {
     val obj = BleJson.obj(json) ?: return null
     return when (BleJson.string(obj, "ev")) {
@@ -267,9 +164,6 @@ fun parseOtaEvent(json: String): OtaEvent? {
             chunk = BleJson.int(obj, "chunk") ?: 0,
             off = BleJson.int(obj, "off") ?: 0,
         )
-        // An ACK without an offset is not an ACK: the offset is the whole message, and it is the
-        // resume token a dropped transfer is continued from. Reading a missing one as 0 would
-        // silently rewind a transfer that is nearly finished.
         "ack" -> BleJson.int(obj, "off")?.let { OtaEvent.Ack(off = it) }
         "done" -> OtaEvent.Done
         "error" -> OtaEvent.Failure(
@@ -280,18 +174,6 @@ fun parseOtaEvent(json: String): OtaEvent? {
     }
 }
 
-/**
- * What a failure code means, in a sentence for the firmware card.
- *
- * The codes are the unit's (`src/bt_ota.cpp` and `src/bt_rpc.cpp`), not invented here, plus the
- * handful this app raises about the file itself before anything is sent. Every unit code leaves
- * the image that was running still installed — that is the whole point of writing to the other
- * OTA slot — and the sentence says so where it matters, because "the update failed" on a driver's
- * phone reads like "my dashboard is dead".
- *
- * The list is kept beside the code that raises it on the unit; `OtaCoreTest` asserts every one of
- * them has its own sentence, so a new code on the firmware side cannot arrive here unnamed.
- */
 object OtaErrors {
 
     /** True when [code] is something the driver has to do something about. */
@@ -432,15 +314,6 @@ data class OtaView(
     fun percent(): Int = (fraction() * 100f).toInt()
 }
 
-/**
- * Keeps the transfer's progress honest.
- *
- * Two numbers matter and they are not the same number: what the phone wrote, and what the unit
- * said is on its flash. The screen shows the second, because that is the one that survives a
- * dropped link. The rate is measured over the whole transfer rather than the last ACK window —
- * a BLE link breathes with the connection interval, and a rate read from the last two ACKs
- * jumps around enough to make an ETA useless.
- */
 class OtaTracker(
     val total: Int,
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -457,10 +330,6 @@ class OtaTracker(
         private set
     var chunk: Int = 0
         private set
-    /**
-     * OTA writes this phone has put on the wire: one per [wrote] call, never one per byte, because
-     * a write is the thing the link actually costs.
-     */
     var writes: Int = 0
         private set
     var error: String? = null
@@ -470,8 +339,6 @@ class OtaTracker(
     fun apply(event: OtaEvent): Boolean = when (event) {
         is OtaEvent.BeginOk -> {
             chunk = event.chunk
-            // A unit that resumes tells us where it stands. Trust it over our own memory: it is
-            // the one holding the CRC state and the flash writes.
             if (event.off > acked) acked = event.off
             if (sent < acked) sent = acked
             if (startedAtMs < 0) startedAtMs = clock()
@@ -481,9 +348,6 @@ class OtaTracker(
         is OtaEvent.Ack -> {
             if (startedAtMs < 0) startedAtMs = clock()
             if (event.off > acked) acked = minOf(event.off, total)
-            // A lower ACK is only legitimate as part of a fresh begin_ok after a resume; applied
-            // on its own it is a stale frame from a transfer that already ended, and moving the
-            // bar backwards on the strength of that is worse than ignoring it.
             stage = OtaStage.Sending
             false
         }
@@ -499,20 +363,10 @@ class OtaTracker(
     fun wrote(bytes: Int) {
         if (sentAtMs < 0) sentAtMs = clock()
         if (startedAtMs < 0) startedAtMs = clock()
-        // Counted per call, not per new byte: a re-send after a hiccup is a real write on the link
-        // even when it covers ground the progress figure already knows about.
         writes++
         if (bytes > sent) sent = minOf(bytes, total)
     }
 
-    /**
-     * Ends the transfer with [reason]. Always terminal.
-     *
-     * The unit's [off] is the honest distance: it is the byte index the unit stopped at, which is
-     * ahead of the last ACK whenever the failure happened between two ACK windows. The bar shows
-     * where the unit actually got rather than where this phone last heard from it — that number is
-     * diagnostic only, since a failed install cannot be resumed from it.
-     */
     fun fail(reason: String, off: Int = acked): Boolean {
         error = reason
         stage = OtaStage.Failed
@@ -528,12 +382,6 @@ class OtaTracker(
         return acked * 1000.0 / elapsedMs.toDouble()
     }
 
-    /**
-     * Writes per second over the same whole-transfer window as [bytesPerSecond]. Bytes/s says how
-     * much data moved; this says how hard the link was pushed, independent of the chunk the unit
-     * asked for: 1450 writes of 1.2 kB and 1750 writes of 1.0 kB look the same in bytes and very
-     * different here. Same "no window yet -> 0.0" rule as the byte rate.
-     */
     fun writesPerSecond(): Double {
         if (startedAtMs < 0 || writes <= 0) return 0.0
         val elapsedMs = clock() - startedAtMs
@@ -541,11 +389,6 @@ class OtaTracker(
         return writes * 1000.0 / elapsedMs.toDouble()
     }
 
-    /**
-     * Seconds from the first thing the transfer did (the `begin_ok`, an ACK or the first write) to
-     * now, 0.0 before any of them. This is the "how long did that take" number the install summary
-     * shows next to the rate: a field install has no bench log to read it out of.
-     */
     fun elapsedSeconds(): Double {
         if (startedAtMs < 0) return 0.0
         val elapsedMs = clock() - startedAtMs

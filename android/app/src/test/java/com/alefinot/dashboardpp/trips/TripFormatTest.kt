@@ -6,12 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The CSV contract (trip recording plan §4). These tests are the reason the
- * column order can never drift silently: the header, the writer and the reader
- * are asserted against one another, and the file is what users keep and open in
- * a spreadsheet long after this app changes.
- */
 class TripFormatTest {
 
     @Test
@@ -59,8 +53,6 @@ class TripFormatTest {
 
     @Test
     fun truncatedLastLineIsRejectedNotFatal() {
-        // A process kill mid-write can leave a half line; readers must skip it
-        // instead of losing the whole trip.
         assertNull(TripFormat.parseLine("1730000000123,42,63.5,1,63.5,91"))
         assertNull(TripFormat.parseLine("not,a,trip,line"))
         assertNull(TripFormat.parseLine(""))
@@ -108,8 +100,6 @@ class TripFormatTest {
     @Test
     fun accumulatorMarksGapsAndKeepsOdometerDistance() {
         val acc = TripAccumulator()
-        // 0–9 s at 1 Hz, then a 40 s hole (Web UI open, or the app was closed),
-        // then 5 more samples.
         var t = 0L
         for (i in 0 until 10) {
             acc.add(TripSample(t, snap(up = i.toLong(), spd = 50.0, odo = 10.0 + i * 0.014)))

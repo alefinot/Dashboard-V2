@@ -10,33 +10,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-/**
- * The garage file: the format, and the two rules that decide what the app may do to it (shared
- * storage plan §3).
- *
- * A garage used to be a preferences file the user could not read. Now it is a JSON document in
- * their Documents folder, so it will be hand-edited, restored from a backup, and half-copied by a
- * cable — and the app's behaviour in front of a damaged file is the difference between a user
- * losing a typo and losing every card they own. Hence the shape of these tests:
- *
- * - **Round-trip first.** If the writer and the reader disagree about the container, no amount of
- *   careful damage handling matters — the app would wreck its own file on the next save.
- * - **Damage refuses, and says why.** [GarageRead.Damaged] is the state in which
- *   `VehicleStore.put`/`delete`/`select` return `false`. The reason is asserted as part of the
- *   outcome because that text is what the editor shows; a test that only checked "some damage"
- *   would let a message saying "parse error" reach a user who needs to know which card.
- * - **Absent is not damage.** An empty folder and an unreadable file look the same to a caller that
- *   only asks "did it parse?", and the two answers are opposite: write freely, or write never.
- * - **The writer is atomic.** `.tmp` then rename, the rule [VehiclePhotoStore] already follows for
- *   a JPEG. A garage written half-way is a garage the app then refuses to open. Replacing an
- *   existing file in that rename is POSIX behaviour — the app runs on Android, so the assertion that
- *   needs it is skipped on a Windows host instead of being dropped; the half that runs everywhere is
- *   that a write which fails leaves the old file byte-for-byte where it was.
- *
- * `nextId()`'s "never reissue a freed id" rule is asserted in [VehicleOrderTest] against
- * [VehicleStore.nextIdName], which is pure; through the file it is the same function reading a
- * `nextSeq` that these tests show is preserved.
- */
 class GarageFileTest {
 
     @get:Rule
@@ -79,8 +52,6 @@ class GarageFileTest {
         assertEquals(garage.nextSeq, back.nextSeq)
         assertEquals(garage.selectedId, back.selectedId)
         assertEquals(listOf(v1, v3), back.vehicles)
-        // Named separately because a record whose photo name is dropped is a card that quietly
-        // lost its picture, and the equality above would not say which field broke.
         assertEquals("v1.jpg", back.vehicles.first { it.id == "v1" }.photoFile)
         assertEquals(null, back.vehicles.first { it.id == "v3" }.photoFile)
     }
@@ -144,10 +115,6 @@ class GarageFileTest {
         assertTrue(GarageFile.decode("   \n ") is GarageRead.Damaged)
     }
 
-    /**
-     * A file from a build this app does not know is not parsed field by field: the fields this
-     * build does not know would be dropped by the next save, and the save would look like success.
-     */
     @Test
     fun `a version this build cannot write is damage`() {
         val future = GarageFile.encode(Garage(7, "v1", listOf(v1))).replace("\"version\":1", "\"version\":2")
@@ -160,16 +127,10 @@ class GarageFileTest {
             (read as GarageRead.Damaged).why.contains("2"),
         )
 
-        // A file with no version tag at all is the same case: something wrote it, and it was not
-        // this format.
         val untagged = GarageFile.encode(Garage(7, "v1", listOf(v1))).replace("\"version\":1,", "")
         assertTrue("expected damage, got ${GarageFile.decode(untagged)}", GarageFile.decode(untagged) is GarageRead.Damaged)
     }
 
-    /**
-     * Two cards with one id is a hand-edit slip, and writing that file back would fold two people's
-     * drives together under one card — ids double as trip tags.
-     */
     @Test
     fun `two cards sharing an id is damage`() {
         val text = GarageFile.encode(Garage(9, "v1", listOf(v1, v1.copy(name = "Other"))))
@@ -204,17 +165,10 @@ class GarageFileTest {
         assertTrue("expected damage, got ${GarageFile.decode(wrongShape)}", GarageFile.decode(wrongShape) is GarageRead.Damaged)
     }
 
-    /**
-     * The counter and the pointer are bookkeeping, not cards: a damaged one is worth fixing, not
-     * worth losing the garage over. They fall back to something the app can act on, and the cards
-     * survive intact.
-     */
     @Test
     fun `damaged bookkeeping costs the cards nothing`() {
         val full = GarageFile.encode(Garage(7, "v3", listOf(v1, v3)))
 
-        // Counter gone: it restarts above the highest id in the file, so a name already used as a
-        // trip tag is never handed out again.
         val noSeq = full.replace(Regex("\"nextSeq\":\\d+"), "\"nextSeq\":\"seven\"")
         val back = GarageFile.decode(noSeq)
         assertTrue("expected Ok, got $back", back is GarageRead.Ok)
@@ -253,15 +207,6 @@ class GarageFileTest {
         assertEquals(2, (read as GarageRead.Ok).garage.vehicles.size)
     }
 
-    /**
-     * Saving over an existing garage replaces it in one step: a reader never sees the old file and
-     * the new one merged, and never sees nothing.
-     *
-     * That is POSIX `rename` semantics — same directory, target exists, replacement atomic — which
-     * is exactly what Android gives this code. A Windows JVM refuses the call, so the assertion is
-     * skipped there rather than quietly rewritten into testing something the production code does
-     * not do. On the bench tablet this path runs every time a card is edited twice.
-     */
     @Test
     fun `a second write replaces the file whole`() {
         Assume.assumeFalse(
@@ -280,14 +225,6 @@ class GarageFileTest {
         assertFalse(File(dir, "vehicles.json.tmp").exists())
     }
 
-    /**
-     * A write that cannot land leaves the garage the user still owns exactly as it was.
-     *
-     * This is the assertion behind the editor's "nothing on disk changed" sentence, so it is the one
-     * that must not depend on the platform: the failure is provoked by taking write permission away
-     * from the folder, which every host refuses a `mkdirs` or a temp file for. If the OS hands out
-     * a folder that stays writable anyway, the test gives up rather than passing on nothing.
-     */
     @Test
     fun `a write that cannot land leaves the good file alone`() {
         val dir = folder.newFolder("locked")

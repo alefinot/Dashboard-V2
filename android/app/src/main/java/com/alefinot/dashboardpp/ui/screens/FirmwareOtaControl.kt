@@ -36,27 +36,6 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
 
-/**
- * The firmware card's control: put a firmware file on the unit over Bluetooth.
- *
- * What this screen is allowed to promise is bounded by what the unit can do, so it says three
- * things out loud instead of hiding them behind a progress wheel:
- *
- *  - **which file it is about to send**, by size, by CRC-32, and by the version the image
- *    declares inside itself (`DPPVER=`, `src/config.cpp`). A build folder calls every image
- *    `firmware.bin`, so the name is worth nothing and the marker is worth a lot.
- *  - **which version the unit is running now**, next to it, because "1.5.1 onto a unit already
- *    running 1.5.1" is a question worth asking before 1.5 MB goes over the air — and because a
- *    unit that answers `not_implemented` (a build from before the Bluetooth installer exists)
- *    has to be told as plainly as it can be.
- *  - **that a failed install changes nothing.** The image goes into the unit's spare flash slot
- *    and the unit only switches to it after its own checks pass, so every failure sentence this
- *    card can print ends the same way: the unit is still running what it was.
- *
- * The transfer itself lives in [OtaController], not here — it outlives this composable, and a
- * progress bar that disappears when you scroll is a progress bar that makes people press the
- * button twice.
- */
 @Composable
 internal fun FirmwareUpdateControl(
     store: ConfigStore,
@@ -65,9 +44,6 @@ internal fun FirmwareUpdateControl(
 ) {
     val context = LocalContext.current
     val view by OtaController.view.collectAsState()
-    // The second press of START. Needed whenever the card cannot do the judging itself: the same
-    // version as the unit's, or a file with no marker to compare. One flag, cleared as soon as
-    // it is acted on, so the button cannot fire twice afterwards.
     var armed by remember { mutableStateOf(false) }
 
     val unitVersion = store.buildVersion
@@ -79,10 +55,6 @@ internal fun FirmwareUpdateControl(
             onNote("no file picked")
             return@rememberLauncherForActivityResult
         }
-        // The pick grants temporary read access. The transfer can run for minutes and survive
-        // this tab closing, so ask for the persistable grant while it is available; where the
-        // provider will not give one (some cloud documents), the read that starts immediately
-        // still works and only a later resume could be left without access.
         runCatching {
             context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
@@ -124,8 +96,6 @@ internal fun FirmwareUpdateControl(
                     enabled = enabled && OtaController.canStart(),
                     onClick = {
                         if (!armed) {
-                            // Ask once when the card cannot answer the only question that
-                            // matters: is this the right file for this unit?
                             if (needsConfirmation(view, unitVersion)) {
                                 armed = true
                                 onNote(confirmReason(view, unitVersion))
@@ -146,8 +116,6 @@ internal fun FirmwareUpdateControl(
                     enabled = true,
                     onClick = {
                         armed = false
-                        // After a successful install there is nothing to abort and nothing to
-                        // apologise for — the card just goes back to waiting for the next file.
                         if (view.stage == OtaStage.Installed) OtaController.reset()
                         else OtaController.drop(context)
                     },
@@ -211,15 +179,6 @@ internal fun FirmwareUpdateControl(
     }
 }
 
-/**
- * The picked file's own name, the way the provider that handed it over spells it.
- *
- * `uri.lastPathSegment` is a document id, not a name. For a file picked out of Downloads on the
- * test tablet it came back as `msf:152` (a MediaStore download id), and that is what sat in the
- * card's summary line, where a person is supposed to be able to see which file they chose. The
- * provider knows the display name, so it is asked first; the path segment is only the fallback
- * for a provider that will not answer the query.
- */
 private fun pickedName(context: Context, uri: Uri): String {
     val fromProvider = runCatching {
         context.contentResolver.query(
@@ -232,13 +191,6 @@ private fun pickedName(context: Context, uri: Uri): String {
         ?: uri.lastPathSegment ?: "firmware.bin"
 }
 
-/**
- * Whether this file deserves a second press before it is sent.
- *
- * Two cases, both honest: the image declares the version the unit is already running (so the
- * transfer will change nothing and probably means the wrong file was picked), or it declares no
- * version at all (so the card cannot warn about anything, and the driver is flying blind).
- */
 private fun needsConfirmation(view: OtaView, unitVersion: String): Boolean {
     val tag = view.image?.versionTag ?: return true
     return unitVersion.isNotEmpty() && tag == unitVersion
@@ -276,8 +228,6 @@ private fun progressLine(view: OtaView): String {
         eta == null -> ""
         else -> " · about ${eta}s left"
     }
-    // A finished install has to carry the numbers too: this line is the only place a field install
-    // leaves a duration, a rate and a write count behind, and there is no bench log to read after.
     val finished = view.stage == OtaStage.Installed || view.stage == OtaStage.Verifying
     val writeCount = if (finished) " · ${view.writes} writes" else ""
     return "$stage · ${view.percent()}% · ${mb(view.acked)} of ${mb(view.total)}" +

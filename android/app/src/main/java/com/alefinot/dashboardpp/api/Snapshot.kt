@@ -1,14 +1,5 @@
 package com.alefinot.dashboardpp.api
 
-/**
- * One `/api/snapshot` reading: the whole vehicle + GNSS picture the ESP publishes
- * once per second. Field names match the JSON keys so the mapping below is
- * obvious next to the firmware's `snapshotGetHandler` in `src/web.cpp`.
- *
- * `hdop` and `alt` are -1 when the fix did not carry them (the firmware prints
- * -1 rather than inventing a value). `fix` is 1 only while the GNSS location is
- * valid, and `lat`/`lon` are only meaningful in that case.
- */
 data class Snapshot(
     val version: String,
     /** ESP uptime in seconds — the session identity the trip recorder splits on. */
@@ -50,12 +41,6 @@ data class Snapshot(
             (lat != 0.0 || lon != 0.0)
 
     companion object {
-        /**
-         * Parse one snapshot response. Returns null when the body is not a flat
-         * JSON object carrying `up` — that is what distinguishes our firmware's
-         * `/api/snapshot` from a 404 page or another device's answer, so the
-         * app's feature detection never has to compare version strings.
-         */
         fun parse(body: String): Snapshot? {
             val obj = FlatJson.parse(body) ?: return null
             if (!obj.containsKey("up") || !obj.containsKey("spd")) return null
@@ -93,12 +78,6 @@ data class Snapshot(
     }
 }
 
-/**
- * The `/api/live` subset the app can still show on firmware older than
- * V1.4.6, which has no `/api/snapshot`. Deliberately a different type from
- * [Snapshot]: nothing downstream may pretend speed or GNSS data exists when the
- * device never sent it.
- */
 data class LiveReadings(
     val ambient: Int,
     val odo: Double,

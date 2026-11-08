@@ -23,20 +23,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * The settings page's actions — the ones that are not a row.
- *
- * The unit's own page puts each of these inside the card it belongs to (the trip reset sits
- * in the Trip Reset card above the row that decides whether trips reset themselves), so the
- * app does the same, and an action that is not in the card next to its settings is an action
- * somebody has to go looking for. They used to live on a page of their own called TOOLS;
- * that page is gone, and each control came back to the card it belongs to.
- *
- * Every control here is an RPC the unit answers over the link, with one exception that is
- * labelled where it sits: the firmware card (`firmwareUpdate`) asks the unit to start an install,
- * and a unit whose build predates the Bluetooth installer answers `not_implemented`. The card
- * prints that answer instead of drawing a wheel that would never finish.
- */
 @Composable
 internal fun WidgetControl(
     widget: String,
@@ -57,9 +43,6 @@ internal fun WidgetControl(
         "odometerSet" -> OdometerControl(store, enabled, odoText, onOdo, onNote, scope)
         "ambientCalibrate" -> AmbientCalibrationControl(store, enabled, onNote, scope)
         "noiseBench" -> NoiseBenchControl(store, enabled, noiseLine, onNoise, scope)
-        // The one control that is not a request the unit answers today: it asks the unit to
-        // open its spare flash slot, and a unit built before the Bluetooth installer says
-        // `not_implemented`. The card prints that instead of hiding it.
         "firmwareUpdate" -> FirmwareUpdateControl(store, enabled, onNote)
         "tempCalibrate" -> NoLiveReadingControl("engine temperature", "NTC_TEMP_OFFSET", enabled)
         "batteryCalibrate" -> NoLiveReadingControl("battery voltage", "BATTERY_OFFSET", enabled)
@@ -72,13 +55,6 @@ internal fun WidgetControl(
     }
 }
 
-/**
- * The trip reset, on the card that also holds `TRIP_AUTO_RESET`.
- *
- * Two presses, because the trip distance is the one number a driver may still want: the unit
- * does not ask, so the app does. The confirmation is cleared as soon as it is acted on, so
- * the button cannot be pressed a second time by accident afterwards.
- */
 @Composable
 private fun TripResetControl(
     store: ConfigStore,
@@ -118,11 +94,6 @@ private fun TripResetControl(
     }
 }
 
-/**
- * Set the odometer. The unit answers `odo.set` with the value it stored, so the note reports
- * that number and not the one that was typed — they can differ, and the unit's is the true
- * one.
- */
 @Composable
 private fun OdometerControl(
     store: ConfigStore,
@@ -164,14 +135,6 @@ private fun OdometerControl(
     }
 }
 
-/**
- * Capture the dark and bright points of the ambient light sensor.
- *
- * `cal.ambient` reports `adjusted` when the other point moved too (the unit keeps the two
- * points a fixed distance apart), and the note says so, because a capture that moved a value
- * nobody touched looks like a bug unless the screen mentions it. The read is forced
- * afterwards: the rows of this same card just changed on the unit.
- */
 @Composable
 private fun AmbientCalibrationControl(
     store: ConfigStore,
@@ -215,13 +178,6 @@ private fun AmbientCalibrationControl(
     }
 }
 
-/**
- * The jitter bench, on its own card.
- *
- * The unit runs the bench between display frames, so the app starts it and then polls the
- * snapshot until the unit says `done` — and says what it is doing the whole time, because a
- * button that appears to do nothing for ten seconds is a button people press twice.
- */
 @Composable
 private fun NoiseBenchControl(
     store: ConfigStore,
@@ -253,10 +209,6 @@ private fun NoiseBenchControl(
                             onNoise("could not start: ${start.error}")
                             return@launch
                         }
-                        // Polled rather than waited for: the unit runs the bench between display
-                        // frames and answers `status` as it goes. Each poll republishes the line,
-                        // because a button that appears to do nothing for ten seconds is a button
-                        // people press twice.
                         var line = "started…"
                         var round = 0
                         while (round++ < 20) {
@@ -286,16 +238,6 @@ private fun NoiseBenchControl(
     }
 }
 
-/**
- * The "match to reference" calibrations the unit's page offers for the temperature and the
- * battery.
- *
- * The unit's version reads the live temperature, subtracts it from a reference the driver
- * types, and puts the difference in the offset row. That needs a live reading, and this page
- * has none — it holds the configuration, not the telemetry — so the app does not draw a button
- * that would be working from a number it does not have. The offset row is editable, and that
- * is where this lands today; the honest line says which row and why the button is missing.
- */
 @Composable
 private fun NoLiveReadingControl(what: String, offsetKey: String, enabled: Boolean) {
     Text(

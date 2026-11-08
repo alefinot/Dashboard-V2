@@ -33,8 +33,6 @@ class BleProtocolTest {
         assertEquals(506, BleProto.fragmentPayload(517))
         assertEquals(236, BleProto.fragmentPayload(247))
         assertEquals(1, BleProto.fragmentPayload(11))
-        // A hypothetical bigger MTU must not produce a payload the unit's frame
-        // buffer cannot take.
         assertEquals(BleProto.MAX_FRAGMENT, BleProto.fragmentPayload(1024))
     }
 
@@ -61,8 +59,6 @@ class BleProtocolTest {
 
     @Test
     fun twoCharacteristicsNeedTwoAssemblers() {
-        // Telemetry and RPC answers travel on different handles; sharing one
-        // accumulator would splice a snapshot into a config chunk.
         val telemetry = FrameAssembler()
         val rpc = FrameAssembler()
         val telemFrames = BleProto.frames(BleProto.T_TELEM, 1, payload(600), mtu = 247)
@@ -129,8 +125,6 @@ class BleProtocolTest {
     @Test
     fun anOversizedMessageIsRefusedInsteadOfGrowingForever() {
         val assembler = FrameAssembler()
-        // 9000 bytes at 506 per fragment: the assembler's 8192-byte cap is passed
-        // on the seventeenth fragment, before the message can finish.
         val big = BleProto.frames(BleProto.T_RESP, 1, payload(9000), mtu = 517)
         assertEquals(18, big.size)
         for (i in 0 until 16) assertNull(assembler.accept(big[i]))

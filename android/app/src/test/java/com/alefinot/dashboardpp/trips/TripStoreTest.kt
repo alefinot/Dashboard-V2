@@ -8,17 +8,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/**
- * The file name carries the trip's identity: the minute-second stamp is when the
- * drive began. The Trips list reads that stamp back out, because the file's
- * mtime is the end of the drive (or "still recording"), not its start.
- */
 class TripStoreTest {
 
     @Test
     fun `a generated name reads back as the same instant`() {
-        // Two patterns: the instant as a person writes it, and the stamp the
-        // file name uses. The round trip must land on the same second.
         val readable = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
         val startMs = readable.parse("2026-10-26 13:39:46")!!.time

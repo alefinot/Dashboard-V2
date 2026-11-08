@@ -6,14 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The weather cache row, in isolation.
- *
- * The store itself is DataStore and cannot be driven from a JVM test, so the row
- * format — the part that can silently corrupt — is pure and tested here, the same way
- * `SessionCodec` and `sessionKeysToRemove` are (AGENTS.md keeps the rules that need no
- * Android out of the Android classes).
- */
 class WeatherCacheCodecTest {
 
     private val munich = WeatherCache(
@@ -32,8 +24,6 @@ class WeatherCacheCodecTest {
 
     @Test
     fun `a label with a semicolon stays whole`() {
-        // The label is the last field and the split is limited, which is the only
-        // reason a provider name holding a ';' does not shift every later field.
         val odd = munich.copy(label = "Sturgis; South Dakota")
         assertEquals("Sturgis; South Dakota", WeatherSettings.readCache(WeatherSettings.encodeCache(odd))?.label)
     }
@@ -63,9 +53,6 @@ class WeatherCacheCodecTest {
 
         val back = WeatherSettings.readCache(WeatherSettings.encodeCache(precise))!!
 
-        // Seven decimals is a centimetre on the ground and the same precision every
-        // other coordinate in this app uses; anything coarser would make a 2 km move
-        // test depend on how the row was written.
         assertEquals(60.1234567, back.lat, 1e-7)
         assertEquals(-149.9876543, back.lon, 1e-7)
     }
@@ -75,8 +62,6 @@ class WeatherCacheCodecTest {
         assertNull(WeatherSettings.readCache(null))
         assertNull(WeatherSettings.readCache(""))
         assertNull(WeatherSettings.readCache("garbage"))
-        // A row from a future version of the app: refusing it re-derives everything,
-        // guessing it would read the wrong fields as coordinates.
         assertNull(WeatherSettings.readCache("w2;48.1;11.5;1;1;0;Munich"))
         assertNull(WeatherSettings.readCache("w1;abc;11.5;1;1;0;Munich"))
         assertNull(WeatherSettings.readCache("w1;48.1;11.5;not-a-number;1;0;Munich"))

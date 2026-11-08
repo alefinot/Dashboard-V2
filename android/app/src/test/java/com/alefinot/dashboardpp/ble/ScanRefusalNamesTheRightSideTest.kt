@@ -5,24 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * An empty BLE scan has two opposite causes and the app used to report only one of them.
- *
- * Nothing in `ScanCallback` ever says "Android refused to deliver results". With the position
- * switch off on Android 11 or older, `startScan()` is accepted, the sweep burns its whole window,
- * and the list stays empty - byte for byte what a unit that is switched off looks like. On the
- * bench (SM-T590, Android 10, 2026-11-07) that read back as *"No dashboard answered, and the scan
- * found none. Check that the unit is powered and not already linked to another phone."*, and the
- * unit was fine: the phone lying next to it was talking to it, and the tablet's location switch
- * was simply off. The app told the maintainer to go look at a dashboard that was never asked.
- *
- * So the refusal needs its own code, and the sentence needs to keep the reader on the phone's side
- * of the problem. [scanFailureText] is a pure function, so this is a behaviour test rather than a
- * source read; the source read only has to prove the gate still stands in front of the radio, and
- * still does not stand there on Android 12+ where `BLUETOOTH_SCAN` with `neverForLocation` made the
- * switch irrelevant - the same line the manifest draws with `maxSdkVersion="30"` on
- * `ACCESS_FINE_LOCATION`.
- */
 class ScanRefusalNamesTheRightSideTest {
 
     @Test
@@ -41,8 +23,6 @@ class ScanRefusalNamesTheRightSideTest {
 
     @Test
     fun eachRadioRefusalKeepsItsOwnFix() {
-        // Five radio-shaped refusals, five different fixes. If two collapse into one line, the
-        // premise the whole file is built on - a code must say what to do - is gone.
         val codes = listOf("bluetooth_off", "no_bluetooth", "permission", "no_scanner", "location_off")
         val texts = codes.map { scanFailureText(it) }
         assertTrue("refusals must stay distinguishable: $texts", texts.distinct().size == codes.size)
@@ -67,8 +47,6 @@ class ScanRefusalNamesTheRightSideTest {
             "Android 12+ must not be gated: BLUETOOTH_SCAN is declared with neverForLocation",
             Regex("VERSION_CODES\\.S\\)\\s+return true").containsMatchIn(src),
         )
-        // Failing open is the other half of the rule: a refusal that fires on a missing
-        // LocationManager would hide a working scan behind a message about a switch.
         assertTrue(
             "an unreadable LocationManager must not stop a scan",
             Regex("getOrDefault\\(true\\)").containsMatchIn(src),
@@ -88,12 +66,6 @@ class ScanRefusalNamesTheRightSideTest {
         return f.readText()
     }
 
-    /**
-     * Gradle runs a module's tests with that module as the working directory; the CLI and the IDE
-     * disagree about it, so each level upward is tried. Same reasoning as
-     * `ConnectActionsOnOnePageTest.moduleDir` - a guard that cannot find its own input is worse than
-     * no guard, because it teaches you to ignore a red run.
-     */
     private fun moduleDir(): File {
         val marker = "src/main/java/com/alefinot/dashboardpp/ble"
         var dir: File? = File(System.getProperty("user.dir"))
