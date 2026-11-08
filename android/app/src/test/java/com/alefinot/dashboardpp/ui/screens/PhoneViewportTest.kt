@@ -110,6 +110,71 @@ class PhoneViewportTest {
         )
     }
 
+    /**
+     * The settings row is the page with the most rows in the app (158 of them) and the one the
+     * desktop column was designed around. Measured on the bench phone, a number row gave its
+     * label 105 dp: "Backlight PWM Frequency (kHz)" arrived broken mid-word over two lines
+     * inside a row 42.5 dp tall, and the SELECT control's `fillMaxWidth` chip strip starved the
+     * `weight(1f)` label beside it completely. These guards keep the row honest about which
+     * shape it is drawing.
+     */
+    @Test
+    fun aSettingsRowOnAPhoneGivesItsLabelTheWholeWidth() {
+        val row = code(File(screens, "settings"), "SettingsRow.kt")
+        assertTrue(
+            "SettingsRow stopped measuring the width it was given; the row cannot know whether " +
+                "it is on a phone or on a tablet, so it goes back to one shape that only fits " +
+                "the desktop column",
+            row.contains("BoxWithConstraints"),
+        )
+        assertTrue(
+            "the row no longer branches on a measured width",
+            Regex("maxWidth\\s*<\\s*WideFormRow").containsMatchIn(row),
+        )
+        assertTrue(
+            "the breakpoint grew: a phone in portrait is 393 dp, so anything at or above this " +
+                "number means the phone gets the desktop row again",
+            Regex("val WideFormRow = (3[5-9]\\d|4\\d\\d)\\.dp").containsMatchIn(row),
+        )
+        assertTrue(
+            "the starving pattern is back — an unweighted fillMaxWidth control in the row beside " +
+                "a weight(1f) label leaves the label zero width (that is how a picker drew its " +
+                "chips and dropped its label)",
+            !Regex("fillMaxWidth\\(\\)\\.padding\\(start = 12\\.dp\\)").containsMatchIn(row),
+        )
+        // Three of the wide controls must be capped in the wide shape rather than filling it.
+        assertTrue(
+            "the wide controls lost their cap, so they compete with the label for the row again",
+            Regex("widthIn\\(max = if \\(wide\\) 420\\.dp").findAll(row).count() >= 3,
+        )
+        assertTrue(
+            "a toggle row is being stacked: a toggle needs 48 dp, not a line, and stacking the " +
+                "toggle rows costs ~30 dp on each of the dozens of switches in the schema for " +
+                "nothing",
+            Regex("item\\.control != RowControl\\.TOGGLE").containsMatchIn(row),
+        )
+    }
+
+    /**
+     * The two targets the app drew smaller than the page's own buttons: the `reset` word (a 12 sp
+     * label, 17 dp of height to hit) and the ± steppers (30 dp squares). Both are the only way to
+     * reach some values — `reset` calls the unit's own `config.reset` — so they are not
+     * decoration that can be dropped, they have to become hittable.
+     */
+    @Test
+    fun theSettingsRowControlsReachTheTouchFloor() {
+        val row = code(File(screens, "settings"), "SettingsRow.kt")
+        assertTrue(
+            "the ± steppers went back to a 30 dp clickable: a stepper that eats a miss is worse " +
+                "than none, because the value moves when the rider did not mean it to",
+            Regex("size\\(HudTouch\\.Min\\)\\.clickable").containsMatchIn(row),
+        )
+        assertTrue(
+            "the reset target lost its heightIn(min = HudTouch.Min)",
+            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(row),
+        )
+    }
+
     @Test
     fun theSpacingLadderIsNamedAndMatchesThePage() {
         val tokens = code(theme, "HudTokens.kt")

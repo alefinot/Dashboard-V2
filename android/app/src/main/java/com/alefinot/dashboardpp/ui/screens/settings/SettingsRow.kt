@@ -5,14 +5,19 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -36,14 +41,16 @@ import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * One settings row: label on the left, control on the right, and — only when there
- * is something to say — a note underneath saying what happened to the value.
+ * One settings row, in the two shapes the app has: label on the left and control on the
+ * right, or — on a phone — the label across the top with the control on a line of its own.
+ * See [WideFormRow] for where the line between those two is drawn and why.
  *
  * The note is the part the WebUI never had. A row that was clamped, refused, or
  * applied in RAM but not written to flash says so in the same place every time,
@@ -76,61 +83,108 @@ fun SettingsRow(
     val box = SettingsUnits.toBox(item, view?.value, imperial)
     val unit = SettingsUnits.label(item, imperial, unitSwap)
 
-    Column(modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    item.label + (unit?.let { " ($it)" } ?: ""),
-                    style = HudeParamName(),
-                    color = if (enabled) HudColors.TextPrimary else HudColors.TextDim,
-                )
-                if (item.labelIsGuessed) {
+    // Why the row has two shapes. The desktop row gave the control a fixed 78-250 dp and let
+    // the label keep whatever was left. Measured on the bench phone (393 dp window, 341 dp
+    // inside the card): a number row left the label 105 dp, so "Backlight PWM Frequency (kHz)"
+    // arrived broken mid-word across two lines inside a 42.5 dp row that has no room for the
+    // second one. A phone window cannot grow past `WideFormRow`, so below it the label takes the
+    // whole width and the control gets a line to itself; wider than that (tablet, desktop
+    // preview) the page's one-line row is the better shape and stays.
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        // A toggle needs 48 dp, so its label keeps ~270 dp beside it and the row stays one line
+        // tall. Breaking the row is for the controls that need a *line*: a slider, a picker's
+        // chips, a number with its steppers, a text field. Stacking a toggle row would double
+        // its height just to move a box that already fit.
+        val stacked = readOnlyHint == null && maxWidth < WideFormRow &&
+            item.control != RowControl.TOGGLE
+
+        Column(Modifier.padding(vertical = 4.dp)) {
+            @Composable
+            fun LabelBlock(width: Modifier) {
+                Column(width) {
                     Text(
-                        "guessed from ${item.key}",
-                        style = HudeCfgNote(),
+                        item.label + (unit?.let { " ($it)" } ?: ""),
+                        style = HudeParamName(),
+                        color = if (enabled) HudColors.TextPrimary else HudColors.TextDim,
+                    )
+                    if (item.labelIsGuessed) {
+                        Text(
+                            "guessed from ${item.key}",
+                            style = HudeCfgNote(),
+                            color = HudColors.TextDim,
+                        )
+                    }
+                }
+            }
+            @Composable
+            fun Trailing() {
+                if (readOnlyHint != null) {
+                    Text(
+                        SettingsUnits.text(item, box) + (unit?.let { " $it" } ?: ""),
+                        style = HudeParamName(),
                         color = HudColors.TextDim,
+                        modifier = Modifier.padding(start = 12.dp),
                     )
+                } else {
+                    Control(item, box, view, imperial, enabled, !stacked) { x, y -> onEdit(x, y) }
+                    // The unit's own `config.reset`, one key at a time — the WebUI's reset
+                    // button. Typing a default back in by hand would be a guess; this asks
+                    // the firmware what the default is and gets it written the same way.
+                    onReset?.let { back ->
+                        Box(
+                            // A 12 sp word with 10 dp of padding is a 17 dp tall target, which
+                            // is a mouse target, and this row is used with gloves. The word
+                            // stays the page's size; the box around it is what a thumb hits.
+                            Modifier.heightIn(min = HudTouch.Min)
+                                .padding(horizontal = 8.dp)
+                                .clickable(enabled = enabled, onClick = back),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "reset",
+                                style = HudeCfgNote(),
+                                color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+                            )
+                        }
+                    }
                 }
             }
-            if (readOnlyHint != null) {
-                Text(
-                    SettingsUnits.text(item, box) + (unit?.let { " $it" } ?: ""),
-                    style = HudeParamName(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
+
+            if (stacked) {
+                LabelBlock(Modifier.fillMaxWidth())
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) { Trailing() }
             } else {
-                Control(item, box, view, imperial, enabled, onEdit)
-                // The unit's own `config.reset`, one key at a time — the WebUI's reset
-                // button. Typing a default back in by hand would be a guess; this asks
-                // the firmware what the default is and gets it written the same way.
-                onReset?.let { back ->
-                    Text(
-                        "reset",
-                        style = HudeCfgNote(),
-                        color = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                        modifier = Modifier.padding(start = 10.dp)
-                            .clickable(enabled = enabled, onClick = back),
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LabelBlock(Modifier.weight(1f))
+                    Trailing()
                 }
             }
-        }
-        (listOfNotNull(statusNote(view), readOnlyHint)).let { parts ->
-            val note = parts.joinToString(" · ")
-            if (note.isNotEmpty()) {
-                Text(
-                    note,
-                    style = HudeCfgNote(),
-                    color = when (view?.status) {
-                        RowStatus.FAILED, RowStatus.RAM_ONLY, RowStatus.MISSING -> HudColors.Amber
-                        else -> HudColors.TextDim
-                    },
-                    modifier = Modifier.padding(top = 2.dp),
-                )
+            (listOfNotNull(statusNote(view), readOnlyHint)).let { parts ->
+                val note = parts.joinToString(" · ")
+                if (note.isNotEmpty()) {
+                    Text(
+                        note,
+                        style = HudeCfgNote(),
+                        color = when (view?.status) {
+                            RowStatus.FAILED, RowStatus.RAM_ONLY, RowStatus.MISSING -> HudColors.Amber
+                            else -> HudColors.TextDim
+                        },
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
         }
     }
 }
+
+/**
+ * The window width below which a settings row puts its control under its label. A phone in
+ * portrait is 393 dp and a foldable's cover screen is ~350 dp; the app's own desktop column is
+ * 920 dp, and a tablet in landscape is over 1000 dp — so this breakpoint is not a guess about a
+ * device, it is the difference between the two page shapes.
+ */
+private val WideFormRow = 480.dp
 
 /**
  * The one-line explanation a row carries: its status plus whatever the store said
@@ -151,6 +205,11 @@ fun statusNote(view: RowView?): String? {
     return text.ifEmpty { null }
 }
 
+/**
+ * The row's control. `wide` is the desktop shape: the control sits beside a label, so it carries
+ * the page's 12 dp of breathing room on its leading edge and a fixed width. Stacked, it owns the
+ * line, so it drops the indent and lets the text fields use the width they are given.
+ */
 @Composable
 private fun Control(
     item: SchemaItem,
@@ -158,32 +217,34 @@ private fun Control(
     view: RowView?,
     imperial: Boolean,
     enabled: Boolean,
+    wide: Boolean,
     onEdit: (Any?, Any?) -> Unit,
 ) {
+    val lead = if (wide) 12.dp else 0.dp
     when (item.control) {
         RowControl.TOGGLE -> HudToggle(
             on = box as? Boolean ?: false,
-            modifier = Modifier.padding(start = 12.dp),
+            modifier = Modifier.padding(start = lead),
             label = item.label,
             onToggle = { if (enabled) onEdit(it, null) },
         )
-        RowControl.SELECT -> SelectControl(item, box, enabled) { onEdit(it, null) }
-        RowControl.SLIDER -> SliderControl(item, box, imperial, enabled) { onEdit(it, null) }
-        RowControl.SWATCH -> ColorControl(item, box, enabled) { onEdit(it, null) }
-        RowControl.PAIR -> PairControl(item, view, enabled) { x, y -> onEdit(x, y) }
-        RowControl.FUEL_TABLE -> FuelTableControl(item, view, enabled) { onEdit(it, null) }
+        RowControl.SELECT -> SelectControl(item, box, enabled, wide) { onEdit(it, null) }
+        RowControl.SLIDER -> SliderControl(item, box, imperial, enabled, wide) { onEdit(it, null) }
+        RowControl.SWATCH -> ColorControl(item, box, enabled, wide) { onEdit(it, null) }
+        RowControl.PAIR -> PairControl(item, view, enabled, wide) { x, y -> onEdit(x, y) }
+        RowControl.FUEL_TABLE -> FuelTableControl(item, view, enabled, wide) { onEdit(it, null) }
         RowControl.SECRET -> HudInput(
             // The unit never streams a secret back, so the box always starts empty
             // and an empty box means "leave the stored one alone".
             value = "",
             onValueChange = { if (enabled) onEdit(it, null) },
-            modifier = Modifier.width(230.dp).padding(start = 12.dp),
+            modifier = Modifier.width(230.dp).padding(start = lead),
             placeholder = "stored — type to replace",
         )
         RowControl.TEXT -> HudInput(
             value = box?.toString() ?: "",
             onValueChange = { if (enabled) onEdit(it, null) },
-            modifier = Modifier.width(230.dp).padding(start = 12.dp),
+            modifier = Modifier.width(230.dp).padding(start = lead),
         )
         RowControl.NUMBER -> NumberControl(item, box, imperial, enabled) { onEdit(it, null) }
     }
@@ -243,19 +304,27 @@ private fun numberWidth(item: SchemaItem): Dp = when {
 @Composable
 private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
+    // The 30 dp square is the page's `.adv-btn` drawing and stays that size; the 48 dp box
+    // around it is what a thumb is aimed at, so the box is clickable and the square is not.
+    // A stepper that takes a miss is worse than no stepper: the value steps without the
+    // rider meaning to, or refuses to step at all at 30 dp.
     Box(
-        Modifier.size(30.dp).clip(shape)
-            .background(if (enabled) HudColors.Field else HudColors.Panel)
-            .border(1.dp, HudColors.Hairline, shape)
-            .clickable(enabled = enabled, onClick = onClick),
+        Modifier.size(HudTouch.Min).clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            symbol,
-            color = if (enabled) HudColors.Cyan else HudColors.TextDim,
-            fontSize = 15.sp,
-            fontFamily = FontFamily.SansSerif,
-        )
+        Box(
+            Modifier.size(30.dp).clip(shape)
+                .background(if (enabled) HudColors.Field else HudColors.Panel)
+                .border(1.dp, HudColors.Hairline, shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                symbol,
+                color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+                fontSize = 15.sp,
+                fontFamily = FontFamily.SansSerif,
+            )
+        }
     }
 }
 
@@ -270,6 +339,7 @@ private fun SelectControl(
     item: SchemaItem,
     box: Any?,
     enabled: Boolean,
+    wide: Boolean,
     onPick: (Any?) -> Unit,
 ) {
     val options = item.options ?: return
@@ -277,7 +347,12 @@ private fun SelectControl(
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+        // `widthIn`, not `fillMaxWidth`, in the wide shape: an unweighted child that claims the
+        // whole row leaves the `weight(1f)` label column nothing, which is how a picker's
+        // options used to arrive with the label of the row missing beside them. Stacked, the
+        // chips own the line and may have all of it.
+        modifier = Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
+            .padding(start = if (wide) 12.dp else 0.dp),
     ) {
         for (option in options) {
             val selected = when (val v = option.value) {
@@ -314,6 +389,7 @@ private fun SliderControl(
     box: Any?,
     imperial: Boolean,
     enabled: Boolean,
+    wide: Boolean,
     onCommit: (Double) -> Unit,
 ) {
     val decimals = SettingsUnits.decimals(item)
@@ -321,7 +397,13 @@ private fun SliderControl(
     val hi = (SettingsUnits.toBox(item, item.sliderMax, imperial) as? Number)?.toDouble() ?: 0.0
     val stored = (box as? Number)?.toDouble() ?: lo
     var draft by remember(item.key, box) { mutableStateOf(stored.coerceIn(lo, lo.coerceAtLeast(hi))) }
-    Column(Modifier.width(250.dp).padding(start = 12.dp)) {
+    Column(
+        // In the wide shape the slider is a fixed 250 dp because an unweighted child that fills
+        // the row starves the `weight(1f)` label beside it. Stacked it owns the line, so it
+        // takes the whole width — a 250 dp slider in a 341 dp row is 90 dp of dead track.
+        (if (wide) Modifier.width(250.dp) else Modifier.fillMaxWidth())
+            .padding(start = if (wide) 12.dp else 0.dp),
+    ) {
         Slider(
             value = draft.toFloat().coerceIn(lo.toFloat(), lo.coerceAtLeast(hi).toFloat()),
             onValueChange = { draft = it.toDouble() },
@@ -352,12 +434,14 @@ private fun ColorControl(
     item: SchemaItem,
     box: Any?,
     enabled: Boolean,
+    wide: Boolean,
     onCommit: (String) -> Unit,
 ) {
     var hex by remember(item.key, box) { mutableStateOf(box?.toString().orEmpty()) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 12.dp),
+        modifier = Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
+            .padding(start = if (wide) 12.dp else 0.dp),
     ) {
         Box(
             Modifier.size(26.dp).clip(RoundedCornerShape(4.dp))
@@ -396,27 +480,44 @@ fun parseHex(text: String?): Color? {
 
 fun normalizeHex(text: String): String = "#" + text.trim().removePrefix("#").lowercase()
 
-/** An `*_X` / `*_Y` pair as two steppers. The unit keeps them as two rows; the page drew one. */
+/**
+ * An `*_X` / `*_Y` pair as two steppers. The unit keeps them as two rows; the page drew one.
+ *
+ * The two axes are grouped so the pair wraps as a pair: two number clusters with steppers are
+ * ~430 dp and the phone's card gives 317 dp, which in a `Row` simply falls off the edge.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PairControl(
     item: SchemaItem,
     view: RowView?,
     enabled: Boolean,
+    wide: Boolean,
     onCommit: (Double, Double) -> Unit,
 ) {
     val x = (view?.value as? Number)?.toDouble() ?: 0.0
     val y = (view?.yValue as? Number)?.toDouble() ?: 0.0
     val onlyX = item.copy(label = "X")
     val onlyY = item.copy(key = item.keyY ?: item.key, label = "Y", min = item.minY, max = item.maxY)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(start = 12.dp),
+
+    @Composable
+    fun Axis(name: String, value: Double, schema: SchemaItem, onValue: (Double) -> Unit) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(name, style = HudeCfgNote(), color = HudColors.TextDim)
+            NumberControl(schema, value, false, enabled, onValue)
+        }
+    }
+
+    // No cross-axis alignment: `FlowRow` in this Compose version has no such parameter, and each
+    // axis is a `Row` of its own, so the only thing left to align is the two lines.
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
+            .padding(start = if (wide) 12.dp else 0.dp),
     ) {
-        Text("X", style = HudeCfgNote(), color = HudColors.TextDim)
-        NumberControl(onlyX, x, false, enabled) { nx -> onCommit(nx, y) }
-        Text("Y", style = HudeCfgNote(), color = HudColors.TextDim)
-        NumberControl(onlyY, y, false, enabled) { ny -> onCommit(x, ny) }
+        Axis("X", x, onlyX) { nx -> onCommit(nx, y) }
+        Axis("Y", y, onlyY) { ny -> onCommit(x, ny) }
     }
 }
 
@@ -432,13 +533,17 @@ private fun FuelTableControl(
     item: SchemaItem,
     view: RowView?,
     enabled: Boolean,
+    wide: Boolean,
     onApply: (List<Double>) -> Unit,
 ) {
     val points = (view?.value as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toDouble() }
     var text by remember(item.key, points) {
         mutableStateOf(points.joinToString(", ") { renderNumber(it, 1) })
     }
-    Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
+    Column(
+        Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
+            .padding(start = if (wide) 12.dp else 0.dp),
+    ) {
         Text(
             "${points.size} points · " +
                 (points.firstOrNull()?.let { "${renderNumber(it, 1)} Ω empty" } ?: "empty ?") +
