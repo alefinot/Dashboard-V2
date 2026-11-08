@@ -101,8 +101,9 @@ fun Sparkline(
 ) {
     Canvas(modifier.fillMaxWidth()) {
         if (values.size < 2) return@Canvas
-        val lo = domain?.start ?: values.min()
-        val hi = domain?.endInclusive ?: values.max()
+        val scale = sparkScale(values, domain)
+        val lo = scale.start
+        val hi = scale.endInclusive
         val span = if (hi - lo < 1e-6) 1.0 else hi - lo
         val w = size.width
         val h = size.height
@@ -152,6 +153,27 @@ fun Sparkline(
         }
         drawPath(path, color = line, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
     }
+}
+
+/**
+ * The vertical scale a [Sparkline] paints into, as a pure function so the rule that decides it
+ * can be tested without a canvas.
+ *
+ * A pinned [domain] is used exactly as it was given — that is the whole point of passing one.
+ * Otherwise the scale is the series' own low and high, with one exception: a series that does not
+ * move has no span, and dividing by a unit span parks its line on the bottom edge of the box,
+ * where a flat trace is indistinguishable from no trace (a drive at a steady altitude drew an
+ * empty-looking ALTITUDE card on the bench, 2026-11-08). Half a unit of air on each side puts
+ * that line in the middle, which is what a flat line is supposed to look like.
+ */
+internal fun sparkScale(
+    values: List<Double>,
+    domain: ClosedFloatingPointRange<Double>?,
+): ClosedFloatingPointRange<Double> {
+    domain?.let { return it }
+    val lo = values.minOrNull() ?: return 0.0..1.0
+    val hi = values.maxOrNull() ?: return 0.0..1.0
+    return if (hi - lo < 1e-6) (lo - 0.5)..(hi + 0.5) else lo..hi
 }
 
 /**
