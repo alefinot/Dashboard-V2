@@ -60,6 +60,33 @@ import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
+/**
+ * The unit's Performance Monitor, drawn as the panel the ESP's own Web UI used to serve.
+ *
+ * Every number here is the unit talking about itself: `perf`, `health`, `live` and `boot` from
+ * `src/bt_rpc.cpp`. Nothing on this page is something the app could work out for itself — that is
+ * the point. The questions it exists to answer are bench questions: is the display really running
+ * at `TARGET_FPS`, is the heap flat over ten minutes or climbing, how much stack does each task
+ * have left, did this unit reboot without anybody asking, and how much room is left in the settings
+ * budget.
+ *
+ * The layout is the deleted page's `#perf-panel`, not a stack of rows:
+ *
+ *  - **Display | System** side by side on anything tablet-sized, one above the other on a
+ *    phone, the way `.perf-grid` reflows below 600 px. Display carries the frame figures;
+ *    System carries uptime, the SPI clock, the heap line and the read cadence.
+ *  - **CPU Performance** and **Memory & Storage** span the grid. Both are `.perf-card`
+ *    tiles with a caption line over a 20 dp `--bg-tertiary` bar, and Memory keeps the
+ *    segmented flash bar, its legend and the settings-budget line under it.
+ *  - **The app-only cards** — the Bluetooth link, task stacks, why the unit is running, the
+ *    inputs it is measuring and the spread over the time the page was open — use the same
+ *    tile so they read as part of the panel rather than as an appendix.
+ *  - **Serial Output Monitor** is the one card that did not travel: serial is a cable on the
+ *    bench, and this app has no wire to the unit.
+ *
+ * Reading costs link round trips and `perf` is the widest reply on the link, so the cadence is a
+ * choice rather than a constant. It defaults to 2 s, and leaving the screen stops it.
+ */
 @Composable
 fun PerfMonitorScreen(
     store: ConfigStore,
@@ -72,6 +99,8 @@ fun PerfMonitorScreen(
     val linked = linkState is BleLinkState.Ready
 
     var cadence by remember { mutableStateOf(Cadence.TWO) }
+    // Bumped by READ NOW and by changing the cadence: both restart the effect below, which reads
+    // once in full and then keeps to the cadence.
     var round by remember { mutableStateOf(0) }
     var perf by remember { mutableStateOf<PerfReadout?>(null) }
     var health by remember { mutableStateOf<HealthReadout?>(null) }
@@ -82,6 +111,11 @@ fun PerfMonitorScreen(
     var reading by remember { mutableStateOf(false) }
     val trends = remember { PerfTrends() }
 
+    /**
+     * One round of reads. A tick takes `perf` and `live`; a full round also takes `health` (the
+     * largest free block, which `perf` does not report) and `boot`, which changes only when the
+     * unit restarts — so polling it every two seconds buys nothing.
+     */
     suspend fun read(full: Boolean) {
         reading = true
         try {
@@ -102,6 +136,8 @@ fun PerfMonitorScreen(
             error = when {
                 !perfCall.ok && !liveCall.ok ->
                     "the unit did not answer: ${perfCall.error ?: liveCall.error}"
+                // An ok reply with nothing in it is its own failure: the unit said yes and sent no
+                // numbers, and drawing that as a page full of dashes would blame the unit later.
                 perfCall.ok && parsed == null -> "perf answered, but sent no fields"
                 !perfCall.ok -> "perf refused: ${perfCall.error}"
                 !liveCall.ok -> "live refused: ${liveCall.error}"
@@ -109,10 +145,15 @@ fun PerfMonitorScreen(
             }
             lastRead = clock()
         } finally {
+            // A cancelled round leaves the page anyway; a round that threw must not leave the
+            // header stuck saying "reading…" over numbers that stopped moving.
             reading = false
         }
     }
 
+    // One effect drives everything: keyed on the cadence and on the round, so changing cadence or
+    // pressing READ NOW restarts it, and so that leaving the screen — or switching the cadence to
+    // off — cancels the loop instead of leaving a poller running on a link the settings page needs.
     LaunchedEffect(cadence, round) {
         read(full = true)
         if (cadence == Cadence.OFF) return@LaunchedEffect
@@ -124,6 +165,9 @@ fun PerfMonitorScreen(
     }
 
     Column(Modifier.hudPage()) {
+        // `.header` + `.ip-banner` + the controls the page kept in its toolbar. The header is
+        // centred over the column; READ NOW sits in the corner slot where a browser put its
+        // advanced-mode switch.
         Column(
             Modifier.fillMaxWidth()
                 .padding(horizontal = HudPage.Gutter)
@@ -142,6 +186,8 @@ fun PerfMonitorScreen(
                 HudBanner(
                     text = when (val state = linkState) {
                         is BleLinkState.Ready -> "linked to ${state.name} · MTU ${state.mtu}"
+                        // A link that is down freezes the figures where they were; the pill has to
+                        // say whether there is anything to freeze in the first place.
                         else -> if (perf == null) {
                             "no link — waiting for the unit"
                         } else {
@@ -181,6 +227,9 @@ fun PerfMonitorScreen(
                     },
                 )
             }
+            // The clock is part of the link's state, and the only place it is reported is
+            // here — the app pushed it on the way in, and if that failed the unit's own
+            // stamps are the thing that is wrong, which is a fact about the numbers below.
             timeNote?.let {
                 Text(
                     it,
@@ -203,17 +252,23 @@ fun PerfMonitorScreen(
         val l = live
         val h = health
         val b = boot
+        // `health` reports the largest single free block, `boot` carries a fallback copy; the
+        // System card says whichever one the unit has actually sent.
         val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) }
             ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
             ?: "--"
         // `.perf-grid` is two 1fr tracks above 600 px and one `auto-fit` track below it.
         val twoUp = LocalConfiguration.current.screenWidthDp >= 600
 
+        // The list is the only child that flexes, so the header stays put while the panel scrolls
+        // under it - the page's `details` content did the same inside its own container.
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter),
         ) {
             item { Spacer(Modifier.height(10.dp)) }
 
+            // Display | System. The row is measured to its taller card and both fill that height,
+            // which is what `align-items: stretch` did to the page's grid row.
             if (twoUp) {
                 item {
                     Row(
@@ -248,6 +303,9 @@ fun PerfMonitorScreen(
             item { Spacer(Modifier.height(10.dp)) }
             item { MemoryCard(p) }
 
+            // The cards below are this app's own bench additions. They did not exist on the page
+            // (its Serial Output Monitor took the last full-width slot), but they are the reason
+            // the monitor is worth opening on a phone, so they keep the same `.perf-card` tile.
             item { Spacer(Modifier.height(10.dp)) }
             item { LinkCard(p) }
             item { Spacer(Modifier.height(10.dp)) }
@@ -280,6 +338,12 @@ private enum class Cadence(val label: String, val millis: Long) {
 
 // ─── The page's `.perf-card` recipe ────────────────────────────────────────────
 
+/**
+ * `.perf-card`: rgba(18,25,38,.8), 12 px of padding, 8 px corners and the page's
+ * `--border-color` hairline. `CardInner` is that fill, `Hairline` is that border, and
+ * `HudRadius.CardShape` is its 8 px radius - so this is the page's tile, not a
+ * `.card` with different spacing.
+ */
 @Composable
 private fun PerfCard(
     title: String,
@@ -296,11 +360,23 @@ private fun PerfCard(
             style = HudeSectionTitle(0.2f / 13f),
             color = HudColors.Cyan,
         )
+        // `.perf-card h4 { margin: 0 0 8px 0 }` - the tile's heading sits closer to its
+        // first row than `.card h4`'s 5 px, because the grid is denser.
         Spacer(Modifier.height(8.dp))
         content()
     }
 }
 
+/**
+ * `.perf-row`: a dim 12 px label, a white mono figure, 3 px above and below.
+ *
+ * The label is the part that keeps its width and the figure takes the rest, right-aligned -
+ * that is the page's `justify-content: space-between` in Compose, and it matters the moment
+ * the column stops being 920 px. In the other order the figure is measured first and claims
+ * everything: on a phone a spread line ("now 37108 · min 37108 · max 38160 · avg 37405 over
+ * 60 s") ate the row and "free heap" arrived one letter per line (bench, Xiaomi Mi 9 Lite,
+ * 2026-11-07). So the label never wraps and the figure is the thing that does.
+ */
 @Composable
 private fun PerfRow(label: String, value: String, warn: Boolean = false) {
     Row(
@@ -328,6 +404,12 @@ private fun PerfRow(label: String, value: String, warn: Boolean = false) {
 /** The least room a figure keeps next to its label. The page's flex leaves none; a phone needs some. */
 private val RowGap = 12.dp
 
+/**
+ * `.perf-bar-label`: muted 12 px caption on the left, the values on the right with the
+ * numbers in `strong`. The page leaves the separators muted and paints only the figures
+ * white, which is what [parts] carries - each `String to strong` pair is appended with
+ * the matching span.
+ */
 @Composable
 private fun CaptionLine(
     label: String,
@@ -435,6 +517,8 @@ private fun SystemCard(
     PerfCard("System", modifier) {
         PerfRow("Uptime", p?.let { DiagFormat.uptime(it.uptimeS) } ?: "--")
         PerfRow("SPI Bus", p?.let { "${it.spiHz / 1_000_000} MHz" } ?: "--")
+        // The page put the low-water mark and the mem-saver flag inside the heap value
+        // rather than giving each its own row, and that is how a bench reader scans it.
         PerfRow(
             "Heap",
             p?.let {
@@ -451,6 +535,8 @@ private fun SystemCard(
                     ?: "--",
             )
         }
+        // `#p-live-poll` and the dim detail line under it: what the monitor is doing, and
+        // when it last heard from the unit.
         PerfRow(
             "Live Poll",
             if (cadence == Cadence.OFF) "off" else "every ${cadence.label}",
@@ -503,6 +589,9 @@ private fun MemoryCard(p: PerfReadout?, modifier: Modifier = Modifier) {
         val ramUsed = if (p == null) 0L else DiagFormat.usedOf(p.heapSize, p.freeHeap)
         val ramPct = if (p == null || p.heapSize <= 0L) 0.0 else ramUsed * 100.0 / p.heapSize
 
+        // `.perf-bar-label` before the 20 px bar, with the used / total / percent figures
+        // in `strong` and the units around them muted - the page's own caption, not a
+        // prose sentence.
         BarBlock(
             label = "RAM Usage",
             parts = if (p == null) {
@@ -549,6 +638,9 @@ private fun MemoryCard(p: PerfReadout?, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(6.dp))
         FlashLegend(p)
 
+        // Settings-storage budget. NVS runs out of ENTRY SLOTS, not bytes, and it can keep
+        // hundreds free while refusing a write (its tidier needs a spare page), so
+        // `available` is the number worth watching - and it keeps the page's colours.
         if (p != null && p.nvsEntriesTotal > 0L) {
             val available = p.nvsEntriesAvailable
             val total = p.nvsEntriesTotal
@@ -581,6 +673,12 @@ private fun MemoryCard(p: PerfReadout?, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The flash bar as `#fl-partitions-bar`: one flex slice per partition that has bytes in
+ * it, in the page's five-colour rotation, and the unclaimed width left as `--bg-tertiary`
+ * for free space. A partition with nothing written draws nothing, exactly as the page's
+ * `used <= 0` guard does.
+ */
 @Composable
 private fun FlashBar(p: PerfReadout?) {
     val total = p?.flashTotal ?: 0L
@@ -632,6 +730,8 @@ private fun FlashLegend(p: PerfReadout?) {
                     "(${DiagFormat.pct(part.used, total)})",
             )
         }
+        // The free slice keeps the same swatch but in the track colour with a hairline,
+        // because a track-coloured square on a card-coloured tile would otherwise vanish.
         if (free > 0L) {
             LegendItem(
                 color = HudColors.Track,
@@ -690,6 +790,9 @@ private fun StacksCard(p: PerfReadout?, modifier: Modifier = Modifier) {
         if (p == null || p.stacks.isEmpty()) {
             PerfRow("Stack left", "--")
         } else {
+            // These are words of stack still free, read from the unit's own high-water marks:
+            // the number that has to stay away from zero, and the one that says a task is
+            // about to overflow before it does.
             for (stack in p.stacks) {
                 PerfRow(
                     "Stack left · ${stack.label}",

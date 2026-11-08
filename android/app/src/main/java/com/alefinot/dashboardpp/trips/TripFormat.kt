@@ -3,8 +3,25 @@ package com.alefinot.dashboardpp.trips
 import com.alefinot.dashboardpp.api.Snapshot
 import java.util.Locale
 
+/**
+ * One logged line of a trip CSV: the phone's receive time plus the ESP's own
+ * sample. The ESP clock is often unset (`timeValid` false, no NTP on the config
+ * portal), so the phone clock is the only wall time we can trust — and `up_s`
+ * keeps every line tied to the device's own timeline, which is what the session
+ * logic and the reboot detector work on.
+ */
 data class TripSample(val tsMs: Long, val snapshot: Snapshot)
 
+/**
+ * Who a trip file belongs to, as written in its first line. The id is the app's
+ * own stable key (a rename does not move it), the MAC is what the dashboard
+ * reported when the drive started, and the name is a copy of what the card said
+ * at that moment - kept so a deleted vehicle still has a readable history, while
+ * the current name is always looked up live from the id.
+ *
+ * A tag with no id does not exist: a file either says who it belongs to or it is
+ * an untagged trip, which the Trips list reports as unknown rather than guessing.
+ */
 data class TripTag(val vehicleId: String, val eff: String, val name: String) {
     /** The part after `#vehicle=` - what the summary cache stores alongside the file. */
     fun raw(): String = "$vehicleId|$eff|$name"
@@ -18,6 +35,12 @@ data class TripTag(val vehicleId: String, val eff: String, val name: String) {
     }
 }
 
+/**
+ * CSV shape of a trip log (trip recording plan §4). Header first, then one line
+ * per sample in a fixed 25-column order, oldest first. The file is append-only
+ * and always valid on disk: a process kill costs only the samples that were
+ * never polled, never the file.
+ */
 object TripFormat {
     val COLUMNS = listOf(
         "ts_ms", "up_s", "spd", "src", "avg", "max", "trp_km", "trp_l", "ikml",
@@ -28,6 +51,17 @@ object TripFormat {
     const val HEADER = "ts_ms,up_s,spd,src,avg,max,trp_km,trp_l,ikml,akml,odo," +
         "fuel_l,fuel_pct,fuel_st,volts,temp,amb,sats,hdop,alt,lat,lon,fix,tmr_st,tmr_s"
 
+    /**
+     * The vehicle tag line, written above the header. A `#` line is a comment: the
+     * 25-column data rows are a fixed-format table that `parseLine` demands at its
+     * exact width, so the only way to add anything without breaking every file
+     * already on disk is a line that is not a data line [plan §6].
+     *
+     * The three fields never contain `|`, `;`, CR or LF: `sanitizeField` replaces
+     * them. That is not paranoia about the vehicle name - the name is bounded where
+     * it is typed - it is what lets the same raw string sit inside the summary
+     * cache's `;`-separated row without a second escaping rule.
+     */
     fun tagLine(vehicleId: String, eff: String, name: String): String {
         val id = sanitizeField(vehicleId)
         if (id.isEmpty()) return ""
@@ -63,6 +97,8 @@ object TripFormat {
 
     fun line(sample: TripSample): String {
         val s = sample.snapshot
+        // Doubles use Double.toString: locale-independent ('.' always), so the
+        // CSV stays parseable no matter what locale the phone is set to.
         return buildString(128) {
             append(sample.tsMs); append(',')
             append(s.up); append(',')
@@ -92,6 +128,11 @@ object TripFormat {
         }
     }
 
+    /**
+     * Parse one data line. Null on a malformed line — including the truncated
+     * last line a crash mid-write can leave behind, which must not cost the rest
+     * of the trip.
+     */
     fun parseLine(line: String): TripSample? {
         val p = line.split(',')
         if (p.size != COLUMNS.size) return null
@@ -131,13 +172,31 @@ object TripFormat {
 
     fun isHeader(line: String): Boolean = line.startsWith("ts_ms,up_s")
 
+    /**
+     * True for anything a trip file reader should not hand to `parseLine`: blank,
+     * the header, and the tag line (and any comment a user might add by hand).
+     * One place, because the same three skips appear in every reader loop, and a
+     * loop that forgets one does not crash - it counts a comment as a sample.
+     */
     fun skippable(line: String): Boolean =
         line.isBlank() || isHeader(line) || isComment(line)
 
+    /**
+     * The lines a new trip file starts with: the vehicle's tag when there is one,
+     * then the header. Kept as a pure list so the shape of a file's head - which
+     * every reader of a trip file depends on, and which the Trips page and the
+     * export both lean on - can be stated in a test without an Android [Context]
+     * to open a file.
+     */
     fun fileHead(tag: String): List<String> =
         if (tag.isBlank()) listOf(HEADER) else listOf(tag, HEADER)
 }
 
+/**
+ * A trip's headline numbers, derived from its samples. One accumulator feeds
+ * both the live "Recording…" row (the recorder keeps it in RAM) and the sealed
+ * file read by the Trips list, so the two can never disagree about a formula.
+ */
 data class TripSummary(
     val startMs: Long,
     val endMs: Long,
@@ -210,6 +269,8 @@ class TripAccumulator(private val gapMs: Long = TripPolicy.GAP_MS) {
         lastTripKm = s.trpKm
         if (s.spd > maxSpeed) maxSpeed = s.spd
         speedSum += s.spd
+        // 0 means "no reading" for coolant and battery, not a plausible 0 °C or
+        // 0 V, so those samples must not drag the min down.
         if (s.volts > 0.0) {
             if (minVolts.isNaN() || s.volts < minVolts) minVolts = s.volts
             if (maxVolts.isNaN() || s.volts > maxVolts) maxVolts = s.volts
@@ -284,6 +345,11 @@ object TripPolicy {
     /** One power session is split after this long (parked with ignition on). */
     const val MAX_TRIP_MS = 12L * 3600_000L
 
+    /**
+     * Slack when matching a returning session's uptime to the phone's elapsed
+     * time. Both clocks tick at roughly 1 s/s; this absorbs phone sleep, NTP
+     * corrections on the ESP and a poll that lands late.
+     */
     const val UP_SLACK_MS = 120_000L
 
     /** Sample gap that counts as a hole in the log rather than a missed poll. */

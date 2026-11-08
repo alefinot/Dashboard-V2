@@ -7,6 +7,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.runBlocking
 
+/**
+ * A place name for the unit's weather card, from two providers and one fallback.
+ *
+ * Both provider answers below are pasted from live calls made while this test was
+ * written (2026-11-05), because the parser is only worth trusting against the
+ * shape the service really returns: Nominatim's `address` block, Open-Meteo's
+ * `results` array, and the fact that Open-Meteo answers a no-match search with
+ * **no `results` key at all** (`{"generationtime_ms":0.14}`) rather than an empty list.
+ */
 class PlaceNamesTest {
 
     /** Records what was asked, and answers from a queue. */
@@ -27,6 +36,8 @@ class PlaceNamesTest {
         val url = PlaceNames.searchUrl("München am See")
 
         assertTrue(url, url.startsWith(PlaceNames.SEARCH_URL))
+        // The typed name goes out percent-encoded; a raw space or a raw umlaut in
+        // the query would be a malformed URL, and the provider would answer nothing.
         assertTrue(url, url.contains("name=M%C3%BCnchen+am+See"))
         assertTrue(url, !url.contains(" "))
         assertTrue(url, url.contains("count=3"))
@@ -39,11 +50,15 @@ class PlaceNamesTest {
         val url = PlaceNames.reverseUrl(48.13743, 11.57549)!!
 
         assertTrue(url, url.startsWith(PlaceNames.REVERSE_URL))
+        // Seven decimals, matching every other coordinate this app sends; and
+        // accept-language=en is what turns München into Munich for us.
         assertTrue(url, url.contains("lat=48.1374300"))
         assertTrue(url, url.contains("lon=11.5754900"))
         assertTrue(url, url.contains("format=jsonv2"))
         assertTrue(url, url.contains("addressdetails=1"))
         assertTrue(url, url.contains("accept-language=en"))
+        // zoom=12 asks for a city, not a house: at the default zoom Nominatim
+        // answers the nearest building, which is not a name for a dashboard.
         assertTrue(url, url.contains("zoom=12"))
     }
 
@@ -119,6 +134,8 @@ class PlaceNamesTest {
             |"address":{"suburb":"Old Town","city":"Munich","state":"Bavaria",
             |"country":"Germany","country_code":"de"}}""".trimMargin()
 
+        // "Old Town" is the nearest named place, and useless on a dashboard: the
+        // administrative name is the one a driver recognises.
         assertEquals("Munich", PlaceNames.parseReverse(body))
     }
 
@@ -135,6 +152,8 @@ class PlaceNamesTest {
 
     @Test
     fun `the district alone is not a name and neither is a bare display string`() {
+        // suburb / neighbourhood are skipped on purpose; only the county is left,
+        // which is better than coordinates.
         assertEquals(
             "Landkreis Rosenheim",
             PlaceNames.parseReverse("""{"address":{"suburb":"Grafing","county":"Landkreis Rosenheim"}}"""),
@@ -155,6 +174,9 @@ class PlaceNamesTest {
             assertEquals("Munich", names.reverseName(48.13, 11.57))
             assertEquals(1, http.calls)
 
+            // Etiquette: Nominatim's usage policy is one request per second, and the
+            // car's position updates once a second — so a request inside the window is
+            // refused locally and the caller falls back. This is not a network failure.
             clock += 500
             assertNull(names.reverseName(48.14, 11.58))
             assertEquals(1, http.calls)
@@ -172,6 +194,8 @@ class PlaceNamesTest {
         assertEquals("47.398 N 11.000 E", PlaceNames.coordinateLabel(47.398, 11.0))
         assertEquals("33.860 S 151.210 E", PlaceNames.coordinateLabel(-33.86, 151.21))
         assertEquals("51.500 N 0.120 W", PlaceNames.coordinateLabel(51.5, -0.12))
+        // Locale.US: a European phone locale would print 47,398 and the unit would
+        // read it as a broken string.
         assertTrue(PlaceNames.coordinateLabel(47.398, 11.0), !PlaceNames.coordinateLabel(47.398, 11.0).contains(","))
     }
 
@@ -179,6 +203,9 @@ class PlaceNamesTest {
 
     @Test
     fun `a place name is folded to the ninety-five glyphs the panel carries`() {
+        // Both Conthrax VLW files in fonts/ hold exactly U+0020..U+007E (their own
+        // headers say 95 glyphs): no ü, no °, no en dash. A diacritic-free form is
+        // the difference between a readable name and a gap in the text.
         assertEquals("Munchen", PlaceNames.panelLabel("München"))
         assertEquals("Zurich", PlaceNames.panelLabel("Zürich"))
         assertEquals("Lodz", PlaceNames.panelLabel("Łódź"))

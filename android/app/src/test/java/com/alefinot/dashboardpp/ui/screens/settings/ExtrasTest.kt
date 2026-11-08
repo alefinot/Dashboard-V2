@@ -9,6 +9,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The values the unit streams on top of its `CFG_TABLE` rows: the ambient light reading,
+ * the ESP core and build versions, the fuel ohm array. The generated asset describes them
+ * — a label for each, and which of them are readings rather than settings — and the first
+ * cut of the settings tab parsed that and then ignored it.
+ *
+ * On a bench unit that showed up as a row called "Ambientlightvalue" with a stepper and a
+ * reset button next to it, which the unit answered `unknown_key` to after spending a flash
+ * cycle on a full re-save. A reading is not a control, and a version string is not a
+ * setting; these tests keep them that way.
+ */
 class ExtrasTest {
 
     private val gateway = FakeGateway()
@@ -41,6 +52,10 @@ class ExtrasTest {
         "fuelCalOhms" to mapOf("kind" to "floatArray", "label" to "Fuel sender calibration (ohm)", "countKey" to "FUEL_TOUCH_POINTS"),
     )
 
+    /**
+     * The asset's own description, parsed into something the renderer can act on. Before
+     * this existed the flags were read into a map and thrown away.
+     */
     @Test
     fun theAssetSaysWhichStreamedValuesAreReadings() {
         val schema = SettingsFixtures.asset
@@ -115,6 +130,10 @@ class ExtrasTest {
         )
     }
 
+    /**
+     * Restoring a file that carries readings: they are left alone, counted as left out,
+     * and not counted as refused — the unit never got the chance to say no.
+     */
     @Test
     fun aRestoreLeavesReadingsOutOfTheUnitAndSaysSo() {
         val store = store(liveExtras, mapOf("core_version" to "3.3.12"))
@@ -140,6 +159,10 @@ class ExtrasTest {
         )
     }
 
+    /**
+     * A key the schema really does not know is editable on purpose — but it must at least
+     * show the value the unit sent, or it looks like a setting nobody ever set.
+     */
     @Test
     fun anUnlabelledKeyStillCarriesItsValue() {
         val store = store(liveExtras, mapOf("SOME_NEW_THING" to 42))
@@ -151,6 +174,13 @@ class ExtrasTest {
         assertEquals(42, (view!!.value as Number).toInt())
     }
 
+    /**
+     * A file that carries both a reading and a hidden setting is skipped for two different
+     * reasons, and the report has to say both: "this app does not show WIFI_SSID" is a
+     * fact about the app, "core_version is not a setting" is a fact about the value. One
+     * blended sentence covering fourteen keys read on the bench as fourteen write failures,
+     * which is the thing the user reported first.
+     */
     @Test
     fun aRestoreNamesEachReasonForKeyItLeftOut() = runBlocking {
         val store = store(

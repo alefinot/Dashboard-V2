@@ -3,6 +3,17 @@ package com.alefinot.dashboardpp.ui.screens.settings
 import com.alefinot.dashboardpp.ble.BleJson
 import com.alefinot.dashboardpp.ble.BleProto
 
+/**
+ * A unit that answers immediately, and answers wrong on purpose.
+ *
+ * Everything the settings store does that is worth testing — debouncing, clamping,
+ * what a refused write leaves on screen — has nothing to do with GATT, and none of it
+ * can be tested against a real dashboard on a bench. So the fake records what it was
+ * asked to do, and the tests read that back.
+ *
+ * [write] cuts its input the same way [BleConfigGateway] does, so a test that asserts
+ * "no message over the unit's cap" is measuring the bytes the real link would carry.
+ */
 class FakeGateway : ConfigGateway {
 
     /** The values this fake unit holds, as the read would stream them. */
@@ -54,6 +65,9 @@ class FakeGateway : ConfigGateway {
             writes += piece
             pieceBytes += BleJson.encode(piece).length
             writtenKeys += piece.keys
+            // A write the unit refused does not reach its flash. (The real firmware
+            // applies piece by piece, so a refusal in the middle leaves the earlier
+            // pieces in; this fake is all-or-nothing, which is the case the tests need.)
             if (result.ok) stored.putAll(piece)
         }
         return result

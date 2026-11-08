@@ -2,6 +2,27 @@ package com.alefinot.dashboardpp.ui.screens.settings
 
 import com.alefinot.dashboardpp.ble.BleJson
 
+/**
+ * The app's copy of what the unit's settings *are*.
+ *
+ * `config.get` answers with values and nothing else: it says `TARGET_FPS = 60` but
+ * not that the key is an integer from 5 to 120, called "Target Refresh Rate", whose
+ * box counts in FPS. That description lives in two places — the row table in
+ * `src/config.cpp` (kind, band, default, buffer) and the presentation tree in
+ * `scripts/config_schema_presentation.json` (label, group, unit, options), which
+ * survived the unit's page being deleted — and `scripts/gen_config_schema.py` joins
+ * them into this file's input, `assets/config_schema.json`.
+ *
+ * So this class is a loader, not a list of settings someone typed out. A new
+ * firmware row appears here the next time the generator runs, and
+ * `python scripts/gen_config_schema.py --check` is what fails when the asset has
+ * been left behind. The numbers in the asset are in **device units** (Hz, ms, mm):
+ * a `unitScale` of 1000000 on `SPI_BUS_SPEED` says the human edits it in MHz.
+ *
+ * Parsing is by hand (via [BleJson]) rather than `org.json` for the same reason the
+ * BLE protocol code is: the `org.json` classes in the mockable `android.jar` throw,
+ * and the shape of this asset is exactly what wants testing without a tablet.
+ */
 object ConfigSchemaAsset {
 
     /** The asset's name under `assets/`. */
@@ -19,16 +40,32 @@ object ConfigSchemaAsset {
 /** One choice in a picker. `value` is exactly what `config.set` will be sent. */
 data class SchemaOption(val value: Any?, val label: String)
 
+/**
+ * How the firmware stores the row — the `CK_*` column of `CFG_TABLE`.
+ *
+ * `COLOR`, `XY` and `FUEL_TABLE` are not storage kinds: they are groups the schema
+ * builder recognised (a `char[]` holding `#RRGGBB`, an `_X`/`_Y` pair, the ohm array
+ * behind `FUEL_TOUCH_POINTS`). They are kinds here because the control follows from
+ * them and a plain `str`/`int` rendering of them would be wrong.
+ */
 enum class ValueKind { INT, FLOAT, BOOL, STR, SECRET, COLOR, XY, FUEL_TABLE, UNKNOWN }
 
 /** How the row is edited. Derived from [ValueKind] plus what the schema says about it. */
 enum class RowControl { TOGGLE, NUMBER, TEXT, SECRET, SELECT, SLIDER, SWATCH, PAIR, FUEL_TABLE }
 
+/**
+ * One editable row, or one pair of rows drawn as a single control (`*_X` + `*_Y`).
+ */
 data class SchemaItem(
     val key: String,
     val kind: ValueKind,
     val control: RowControl,
     val label: String,
+    /**
+     * True when the label came from the key, not from the presentation tree — which
+     * is the schema's way of saying "nobody wrote a name for this one". The row is
+     * still editable; it is just worth a human's attention.
+     */
     val labelIsGuessed: Boolean = false,
     /** The second key of an `xy` pair. Null for every other row. */
     val keyY: String? = null,
@@ -38,6 +75,12 @@ data class SchemaItem(
     val max: Double? = null,
     val minY: Double? = null,
     val maxY: Double? = null,
+    /**
+     * The window the control offers, narrower than the band on purpose: the old
+     * page's sliders never spanned the whole firmware band (`FADE_DURATION_MS`
+     * slides 100..5000 while the row allows 0..10000), and a number field sometimes
+     * quotes a friendlier range than the column's. In device units.
+     */
     val uiMin: Double? = null,
     val uiMax: Double? = null,
     /** Step of a slider or stepper, in device units (already multiplied by [unitScale]). */
@@ -77,6 +120,17 @@ data class SchemaCard(
     val items: List<SchemaItem>,
     /** A whole card is advanced, not only the rows inside it. */
     val advanced: Boolean = false,
+    /**
+     * A card whose work is not a list of rows: `tripReset`, `noiseBench`,
+     * `firmwareUpdate`, the calibration capture flows. The page draws those controls inside
+     * the card, above the rows of the same card - the way the unit's own page does it - and
+     * a widget this build cannot draw says so on the card instead of disappearing.
+     *
+     * Only card-level widgets are parsed. The asset also carries a `widget` on one **row**
+     * (`pointCount` on `FUEL_TOUCH_POINTS`), which is a leftover name from the unit page's
+     * markup — the id of the input inside the fuel calibration table — not an action. The row
+     * itself is drawn as a number, and the fuel table is drawn from its own value kind.
+     */
     val widget: String? = null,
 )
 
@@ -85,9 +139,20 @@ data class SchemaGroup(
     val id: String,
     val title: String,
     val cards: List<SchemaCard>,
+    /**
+     * The name of the badge the unit's own page draws beside the group title - `system`,
+     * `display`, `sensors`, `layout`, `more`. Only the **name** is carried: the drawing
+     * lives in `res/drawable/ic_grp_<name>.xml` in the UI layer, and a name this build
+     * does not know draws no badge rather than breaking the page. Null only for an asset
+     * generated before the field existed.
+     */
     val icon: String? = null,
 )
 
+/**
+ * The whole asset. Built once per process and kept in memory: 43 KB of parsed
+ * maps is nothing next to the ESP's own heap worries, and it is read-only.
+ */
 data class ConfigSchema(
     val schemaVersion: Int,
     val firmware: String,
@@ -120,6 +185,16 @@ data class ConfigSchema(
 
     fun isHidden(key: String): Boolean = hidden.contains(key)
 
+    /**
+     * One of the values the unit streams that is not a `CFG_TABLE` row: a live ADC
+     * reading, a compiled-in version string, the fuel ohm array.
+     *
+     * The asset already knows which of these are read-only and which are live; the
+     * first cut of the settings tab parsed them and then ignored them, so on a bench
+     * unit `ambientLightValue` arrived as "Ambientlightvalue" with a stepper next to
+     * it and a reset button that the unit answers `unknown_key` to. Marking them here
+     * is what keeps a reading from being offered as a control.
+     */
     data class ExtraSpec(
         val key: String,
         val label: String,
@@ -262,6 +337,10 @@ data class ConfigSchema(
             )
         }
 
+        /**
+         * Which control a row gets. A picker wins over everything (the page drew a
+         * `<select>` for it); a slider is next; only then the storage kind.
+         */
         fun controlFor(
             kind: ValueKind,
             options: List<SchemaOption>?,
@@ -280,6 +359,10 @@ data class ConfigSchema(
     }
 }
 
+/**
+ * Typed reads over the untyped maps [BleJson] produces, where every JSON number
+ * arrives as a `Double` and a missing key is simply absent.
+ */
 object ConfigJson {
 
     fun str(m: Map<*, *>, key: String): String? = m[key] as? String

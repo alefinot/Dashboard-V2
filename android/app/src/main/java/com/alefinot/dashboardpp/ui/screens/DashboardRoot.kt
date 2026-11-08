@@ -17,10 +17,31 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
 
+/**
+ * The app's one screen, in every state.
+ *
+ * This used to be a `when` over the connection state, with six branches and three
+ * screens of its own: a splash, a full-page scan ring, and the dead ends. Each of them
+ * covered the whole window to say one sentence, and what they hid was the part of the app
+ * that never needed a dashboard — the trips that are already recorded, and the settings
+ * that belong to the phone.
+ *
+ * There is one screen now, and it opens on the vehicle page: the place where a
+ * connection is made, unmade and named. [ShellRouting] decides what the shell *says* for
+ * a state; this file only decides that it is always the same shell.
+ */
 @Composable
 fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
+    // One TripsViewModel for the whole session: it owns the file index and the
+    // summary cache, and outlives tab switches (trip recording plan §5).
     val trips = remember { TripsViewModel(activity.application) }
     LaunchedEffect(Unit) { vm.boot() }
+    // The view model is remembered inside `setContent`, so the composable is the only thing
+    // in the app that knows whether the screen is in front of somebody. That fact is what
+    // makes "no reconnects with the screen off" enforceable: `ON_START` / `ON_STOP` bound
+    // the window in which the quiet restart of a given-up ladder may put a dial on the air,
+    // and coming back to `ON_START` with a give-up in effect dials straight away instead of
+    // waiting out another tick.
     val lifecycle = LocalLifecycleOwner.current
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
@@ -34,6 +55,9 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
     val s = vm.uiState.value
+    // Keep content inside the safe area: with targetSdk 35 edge-to-edge is
+    // enforced, so without these insets the HUD chrome draws behind the
+    // status bar / nav bar.
     Box(
         Modifier
             .fillMaxSize()

@@ -57,6 +57,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * One recorded drive: headline figures, the route on a map, and the series
+ * charts (trip recording plan §6). Charts are drawn by hand from the CSV — a
+ * charting library would be another dependency and a worse fit for a fixed HUD
+ * look — and every series is bucketed to a bounded point count so a 12 h trip
+ * (43k samples) costs the same paint as a 5 minute one.
+ */
 @Composable
 fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -89,6 +96,8 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     val s = detail.summary
     val samples = detail.samples
 
+    // The screen sits on the page's flat black; `.card` frames the map and
+    // `.perf-card` frames each chart.
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
       Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -100,6 +109,9 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             )
         }
         Spacer(Modifier.height(4.dp))
+        // Whose drive this was. The answer comes from the file's own first line, not
+        // from the app: it was written when the drive started, and the garage may
+        // have been renamed or emptied since then [plan §6].
         Text(vehicleLine(row), color = HudColors.TextMuted, style = HudeCfgNote())
         Text(
             buildString {
@@ -186,6 +198,11 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         HudButton("SHARE GPX", style = HudButtonStyle.SECONDARY) { context.startActivity(vm.shareGpx(row)) }
         Spacer(Modifier.height(6.dp))
+        // Where the file those buttons just handed over actually lives, in the same words the
+        // Trips header and the settings page use. Said here because this is the moment a user
+        // wonders where a drive went, and because the CSV is no longer copied anywhere to be
+        // shared: the share sheet opens the file in that folder, so the folder is the thing
+        // worth knowing. Only the CSV — the GPX is built for the occasion and lives in the cache.
         Text(
             StorageCopy.tripFileNote(
                 sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
@@ -219,6 +236,11 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * Point budget for the hand-drawn charts. A bucketed 600-point polyline already
+ * exceeds the pixel width of the widest phone screen, so anything past this only
+ * costs paint time; the bucketing keeps peaks rather than averaging them away.
+ */
 private const val CHART_POINTS = 600
 
 @Composable
@@ -226,6 +248,8 @@ private fun ChartRow(title: String, unit: String, values: List<Double>, accent: 
     // Each chart sits on a `.perf-card` tile: rgba(18,25,38,.8), 8px radius, hairline.
     Column(
         Modifier.fillMaxWidth()
+            // `.perf-card`, the tile the page puts inside a card: rgba(18,25,38,.8),
+            // 8px corners, hairline, 12px padding, no shadow of its own.
             .hudCard(fill = HudColors.CardInner)
             .padding(12.dp),
     ) {
@@ -244,6 +268,12 @@ private fun ChartRow(title: String, unit: String, values: List<Double>, accent: 
     Spacer(Modifier.height(10.dp))
 }
 
+/**
+ * The one line naming whose drive this is. A file with no tag says so in words
+ * rather than showing a blank: a blank reads like a bug, and the honest answer is
+ * that the file does not know. The MAC is shown when the file has it - it is the
+ * only identity left when the card it was filed under has since been deleted.
+ */
 private fun vehicleLine(row: TripRow): String = when {
     row.vehicleId == null ->
         "No vehicle recorded on this file - it predates per-vehicle tagging."
@@ -266,6 +296,8 @@ private fun GridRow(first: @Composable () -> Unit, second: @Composable () -> Uni
 
 @Composable
 private fun SummaryGrid(s: TripSummary) {
+    // `.section-title`: cyan, 11px, 700, 0.8px tracking - the page's name for a
+    // group inside a card, which is exactly what this grid is.
     Text("SUMMARY", color = HudColors.Cyan, style = HudeSectionCaps())
     Spacer(Modifier.height(8.dp))
     GridRow(

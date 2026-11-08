@@ -4,6 +4,15 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The version arithmetic behind "this unit cannot be reached at all".
+ *
+ * The app speaks one transport now, and units that predate it are still in the world -
+ * flashed before the GATT server existed, and not reflashed by a phone that cannot reach
+ * them. The card has to say so, and the sentence rests on a comparison a string compare
+ * would get wrong: `firmwareVersion = "1.10.2"` sorts **below** "1.4.6" as text and above
+ * it as numbers, and the units print dotted numbers.
+ */
 class FirmwareVersionTest {
 
     @Test
@@ -23,6 +32,15 @@ class FirmwareVersionTest {
         assertFalse(firmwareAtLeast("v1.4.6", "1.5.0"))
     }
 
+    /**
+     * Anything that does not read as a version answers **reachable**.
+     *
+     * A label is a fact about the unit; a failure to read it is a fact about this code.
+     * The damage from a false "too old" is a user going to update a current unit, or
+     * believing a card that lies about their car; the damage from a false "reachable" is a
+     * failed connect, which is what the attempt's own words are for. `1.x.2` is included
+     * because reading it as "1.2" would be inventing a fact about someone's dashboard.
+     */
     @Test
     fun `an unreadable or missing label is never called too old`() {
         for (v in listOf(null, "", "   ", "unknown", "1", "snapshot-v1.5.0-rc1", "1.x.2")) {

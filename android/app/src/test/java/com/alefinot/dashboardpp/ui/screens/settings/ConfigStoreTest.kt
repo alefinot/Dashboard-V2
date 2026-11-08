@@ -12,6 +12,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The store's promises, tested against a fake unit.
+ *
+ * The old settings page had the unit's own form, so these rules came free: the form
+ * could not offer a value outside its own bands, and it re-read itself after a write.
+ * Once the rows are drawn by this app, the rules have to be written down and tested,
+ * because the failure mode of getting one wrong is a number on the screen that was
+ * never accepted anywhere.
+ */
 class ConfigStoreTest {
 
     private val gateway = FakeGateway()
@@ -97,6 +106,13 @@ class ConfigStoreTest {
         assertEquals(63L, (gateway.stored["SPEED_MAX"] as Number).toLong())
     }
 
+    /**
+     * The SAVE button's job. A debounce window is a place a value can die — the link drops,
+     * the phone sleeps, someone walks off to the bike — and a driver who has just finished
+     * editing wants those rows on the unit rather than in the phone's RAM with a timer on
+     * them. It reports the rows it sent, and the pending count is what disables the button
+     * when there is nothing left to send.
+     */
     @Test
     fun saveWritesWhatIsStillWaitingWithoutWaitingForTheDebounce() = runBlocking {
         val a = int("SPEED_MAX", def = 60)
@@ -120,6 +136,12 @@ class ConfigStoreTest {
         assertEquals("an empty flush does not spend a round trip", pieces, gateway.writes.size)
     }
 
+    /**
+     * A row the unit refuses did not reach the unit, and the SAVE count has to say so: a button
+     * that reports "wrote 2" across a refusal told the driver something that was never true.
+     * It is not counted as *pending* though — the row is back on the value the unit confirmed,
+     * so there is nothing left in the phone to send, and the row itself is where the reason is.
+     */
     @Test
     fun saveCountsARowTheUnitRefusedAsNotReachingTheUnit() = runBlocking {
         val a = int("SPEED_MAX", def = 60)
@@ -139,6 +161,10 @@ class ConfigStoreTest {
         assertEquals("the refused row is back on the unit's value", 0, store.state.value.pending)
     }
 
+    /**
+     * An `xy` row holds two keys and answers one write. Counting keys would send that row twice
+     * (and charge the unit for a flash cycle it did not need), so a flush works through rows.
+     */
     @Test
     fun anXyRowIsOneRowToSave() = runBlocking {
         val xy = SchemaItem(
@@ -330,6 +356,8 @@ class ConfigStoreTest {
         store.syncIfNeeded()
         store.syncIfNeeded()
         assertEquals("the tab re-read the config on every entry", 1, gateway.fetchCount)
+        // Past the TTL it does re-read: the unit may have been changed by another
+        // client, and the bar says when the values were last looked at.
         ticks += 20_000
         store.syncIfNeeded()
         assertEquals(2, gateway.fetchCount)
@@ -362,6 +390,12 @@ class ConfigStoreTest {
 
     // ---------------------------------------------------------------- reads vs typing
 
+    /**
+     * A read can land while the user is still typing — the TTL expired, a RETRY after a
+     * link hiccup, another part of the app asking for the config. A number that vanishes
+     * out of the box a moment after it was typed reads as the unit ignoring the driver,
+     * so the typed value wins the race and is still the value that gets written.
+     */
     @Test
     fun aTypedValueSurvivesASecondRead() = runBlocking {
         val item = int("SPEED_MAX", def = 60)
@@ -376,6 +410,11 @@ class ConfigStoreTest {
         assertEquals("the value that reached the unit", 77L, (gateway.stored["SPEED_MAX"] as Number).toLong())
     }
 
+    /**
+     * A boot-only change stays pending until the unit is back, and no read can tell that
+     * it is: `config.get` answers the same either way. So the badge outlives a re-read,
+     * and only the app's own restart request clears it.
+     */
     @Test
     fun theRebootBadgeOutlivesASecondRead() = runBlocking {
         val item = int("GPS_RATE", def = 10, reboot = true)
@@ -394,6 +433,12 @@ class ConfigStoreTest {
         assertEquals(emptySet<String>(), store.state.value.rebootPending)
     }
 
+    /**
+     * A boot-only row that ends up back where the last read found it needs no restart.
+     * On the bench the row went 1 → 2 → 1 and the badge went on saying "1 boot-only
+     * change: DISPLAY_ROTATION" for the rest of the session; a warning that is wrong once
+     * gets ignored the next time it is right.
+     */
     @Test
     fun puttingABootOnlyRowBackTheWayItWasDropsTheBadge() = runBlocking {
         val item = int("DISPLAY_ROTATION", min = 0.0, max = 3.0, def = 1, reboot = true)
@@ -417,6 +462,12 @@ class ConfigStoreTest {
 
     // ---------------------------------------------------------------- advanced switch
 
+    /**
+     * ADV_MODE is a firmware row, but this page owns it in the header instead of in a
+     * card, so the schema has no row for it. The switch still has to reach the unit — and
+     * when the unit says no, the switch has to fall back rather than show an advanced
+     * mode that is not on.
+     */
     @Test
     fun theAdvancedSwitchIsWrittenEvenThoughNoCardCarriesIt() = runBlocking {
         val schema = SettingsFixtures.schema(
@@ -434,6 +485,8 @@ class ConfigStoreTest {
         )
         assertFalse(store.state.value.advanced)
 
+        // Refused: the switch goes back to what the unit says rather than showing an
+        // advanced mode that is not on, and the refusal gets named.
         gateway.writeQueue.addLast(WriteResult(ok = false, error = "nvs"))
         store.setAdvanced(true)
         assertFalse("the switch stayed on after the unit refused", store.state.value.advanced)
@@ -454,6 +507,12 @@ class ConfigStoreTest {
 
     // ---------------------------------------------------------------- restore
 
+    /**
+     * A backup carries keys this app does not show — Wi-Fi and NTP settings the schema
+     * keeps out of the cards even though the unit stores them. They are not written back,
+     * and they are not failures: the honest report says they were left as the unit has
+     * them, and counts them apart from the ones the unit refused.
+     */
     @Test
     fun aRestoreLeavesKeysThisAppDoesNotShowAlone() = runBlocking {
         val store = store(int("A_ONE", def = 1), hidden = listOf("WIFI_SSID", "WIFI_PASS"))

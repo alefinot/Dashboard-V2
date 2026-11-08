@@ -6,11 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
+/**
+ * The shareable artefacts (trip recording plan §6): GPX for map apps, and the
+ * file names a user sees when they open the folder or share a drive.
+ */
 class TripExportTest {
 
     private val base = 1_730_000_000_000L
 
     private fun route(): List<TripSample> = listOf(
+        // No fix yet — must not become a track point, or the route would start
+        // with a line from (0,0) in the ocean.
         TripSample(base, snap(up = 10, spd = 0.0, lat = 0.0, lon = 0.0, fix = 0)),
         TripSample(
             base + 1000L,
@@ -58,6 +64,8 @@ class TripExportTest {
 
     @Test
     fun writeProducesAReadableFile() {
+        // A plain java.io temp file rather than a JUnit TemporaryFolder rule, so
+        // the test needs no extra dependency.
         val tmp = File.createTempFile("trip", ".gpx")
         try {
             GpxWriter.write(tmp, route(), "drive")

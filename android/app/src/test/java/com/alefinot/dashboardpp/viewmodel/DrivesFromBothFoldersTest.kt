@@ -10,6 +10,17 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
+/**
+ * The Trips list reads every folder the app has recorded into, so the header has to admit
+ * when some of what it shows was not written in the folder in use (shared storage plan §5).
+ *
+ * [com.alefinot.dashboardpp.storage.AppRoot] decides which folder that is, and it cannot be
+ * decided in a JVM test — `Environment.isExternalStorageManager()` is not merely unavailable
+ * there, it throws. So what is tested here is the half that is pure arithmetic: given the
+ * files a folder walk actually found, does the app notice the ones that came from somewhere
+ * else, and does it name the right place? The recorder's own folder is passed in as a plain
+ * argument for the same reason.
+ */
 class DrivesFromBothFoldersTest {
 
     @get:Rule
@@ -148,6 +159,9 @@ class DrivesFromBothFoldersTest {
 
     @Test
     fun `a folder reached by two paths is one folder`() {
+        // `..` and symlinked volumes are how a comparison goes wrong in practice: without
+        // canonicalisation the app would tell the owner some of their drives live in a
+        // second folder that is the same folder written differently.
         val active = folder.newFolder("shared-trips")
         val same = File(active.parentFile, "shared-trips/../shared-trips")
         val files = listOf(tripIn(active, "trip-20261108-175512-001.csv"))
@@ -158,6 +172,10 @@ class DrivesFromBothFoldersTest {
 
     @Test
     fun `the trip list reads every folder the recorder has used`() {
+        // TripStore.dirs() is the reader's answer and cannot run off-device (it needs a
+        // Context), so at least pin the promise it makes to the list: the folder in use
+        // first, then the app-private one, and the two are named by AppRoot rather than
+        // spelled out here.
         val src = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/TripStore.kt")
         val body = src.readText()
 
@@ -173,6 +191,10 @@ class DrivesFromBothFoldersTest {
         )
     }
 
+    /**
+     * Same helper as `AppXmlWiringTest`: the test task's working directory is the Gradle
+     * module in a normal build and the project root in the IDE.
+     */
     private fun moduleFile(relative: String): File {
         val fromModule = File(relative)
         if (fromModule.exists()) return fromModule

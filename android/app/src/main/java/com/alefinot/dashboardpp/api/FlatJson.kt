@@ -1,5 +1,16 @@
 package com.alefinot.dashboardpp.api
 
+/**
+ * Minimal reader for the flat JSON objects the ESP answers with on the read-only
+ * endpoints (`{"a":1,"b":"x"}`).
+ *
+ * It exists instead of org.json because the trip code is unit-tested on the JVM:
+ * the org.json classes in the mockable android.jar are stubs that throw, so a
+ * parser built on them could not be tested. The ESP payloads we read are flat
+ * objects of numbers and short strings, which is exactly the grammar handled
+ * here — anything nested or malformed returns null and the caller treats the
+ * response as unusable.
+ */
 object FlatJson {
 
     /** Values come back as raw strings; the caller converts and defaults them. */
@@ -31,6 +42,8 @@ object FlatJson {
                 // number / true / false / null — terminated by , or the closing }
                 var j = i
                 while (j < end && body[j] != ',') j++
+                // A nested object or array would introduce a second '{'/'[' here;
+                // we do not consume those, so the endpoint must be flat.
                 if (body.substring(i, j).any { it == '{' || it == '[' }) return null
                 value = body.substring(i, j)
                 i = j
@@ -49,6 +62,11 @@ class JsonFields(private val map: Map<String, String>) {
     fun dbl(key: String, fallback: Double = 0.0): Double =
         map[key]?.toDoubleOrNull() ?: fallback
 
+    /**
+     * Ints arrive as plain integers, but reading them through toDouble keeps the
+     * parser honest about a value the firmware might one day print with a
+     * fraction (e.g. "1.0") instead of failing the whole sample.
+     */
     fun int(key: String, fallback: Int = 0): Int =
         map[key]?.toDoubleOrNull()?.toInt() ?: fallback
 

@@ -1,5 +1,30 @@
 package com.alefinot.dashboardpp.storage
 
+/**
+ * What the app says out loud about where its files are, as pure functions of the state the
+ * screen already computed.
+ *
+ * Two reasons this lives here rather than in the three screens that use it:
+ *
+ * **The English has to agree across the app.** The Trips header, a trip's detail page and the
+ * App settings Storage card all describe the same folder, and they used to each carry their own
+ * sentence. One of them promised a switch that does not exist on every device ("grant storage
+ * access in App Settings", written for Android 11 and read on Android 10, where there is no
+ * such switch), and none of the others could contradict it because nothing compared them. Here
+ * the version decides the sentence once and the screens only pick a colour.
+ *
+ * **The version matters, so the sentence has to be testable without a device.** A JVM test can
+ * hand [AppRoot.GrantPath] values to these functions and assert what an Android 8.1, an Android
+ * 10 and an Android 13 are each told; there is no way to make this process claim to be API 29.
+ *
+ * The rule the copy follows: **the app never points at a switch this Android version does not
+ * have.** Below API 30 there is no All files access to point at, and pointing an owner at an
+ * App-info page that has no storage entry costs them a trip to Settings for nothing (measured on
+ * the bench Mi 9 at API 29: AUTO-START, Displays, Manage Space — no storage row). What Android
+ * 8.1 through 10 do have is the storage permission, so there the copy talks about *allowing* it
+ * and the button raises the system's dialog; from API 30 up the copy talks about granting access
+ * and the button opens the settings page. Same offer, correct door.
+ */
 object StorageCopy {
 
     /** "1 car", "4 cars". A bare `"$n cars"` says "1 cars", which is the bug this exists for. */
@@ -12,6 +37,20 @@ object StorageCopy {
 
     fun drives(n: Int): String = count(n, "drive")
 
+    /**
+     * The Storage card's count line, which hangs off a folder label: `<folder> · counts`. Because
+     * the folder is named, the counts are that folder's and nobody else's - and an install that
+     * has been through a grant really does hold files in both roots, so the line has to admit the
+     * remainder instead of quietly folding it in (bench, 2026-11-06: a tablet whose shared folder
+     * had just been created and held nothing read `Documents/Dashboard++ · 5 trip files`).
+     *
+     * [here] is the count of trip files inside the folder the card names; [elsewhere] is the count
+     * of trip files the Trips list shows that live outside it, and [elsewhereInOwnFolder] says
+     * whether that outside is the app's own folder - the sentence a grant leaves behind - or a
+     * folder only a path can describe. The free-space tail stays with the caller, which owns the
+     * byte formatter. (The parameter is not called `tripFiles`: that name belongs to the
+     * pluralising helper above, and a parameter would silence it.)
+     */
     fun cardCounts(here: Int, carCount: Int, elsewhere: Int, elsewhereInOwnFolder: Boolean): String {
         val strays = if (elsewhere > 0) {
             val where = if (elsewhereInOwnFolder) "the app's own folder" else "another folder"
@@ -20,10 +59,18 @@ object StorageCopy {
         return "\u00b7 ${tripFiles(here)} \u00b7 ${cars(carCount)}" + strays
     }
 
+    /**
+     * The Storage card's button label. Every Android version the app runs on has a way into the
+     * shared folder ([AppRoot.GrantPath]), so every one of them gets a button; what differs is the
+     * door it opens - the All files access page from API 30 up, the system's storage dialog below
+     * that. Only the granted state is disabled, and it is disabled because it is already true.
+     */
     fun grantButton(shared: Boolean, path: AppRoot.GrantPath): String = when {
         shared -> "STORAGE ACCESS GRANTED"
         else -> when (path) {
             AppRoot.GrantPath.ALL_FILES -> "GRANT STORAGE ACCESS"
+            // Below API 30 there is no settings page to hand them; the app can put the system's
+            // own dialog in front of them, which is what this button does.
             AppRoot.GrantPath.RUNTIME_PERMISSION -> "ALLOW STORAGE"
         }
     }
@@ -59,6 +106,11 @@ object StorageCopy {
         }
     }
 
+    /**
+     * The sentence on a trip's detail page, where the owner is standing next to the file.
+     * [shared] is whether *this file* sits on the shared root — not whether the app could put it
+     * there, which is the question [path] answers.
+     */
     fun tripFileNote(
         shared: Boolean,
         path: AppRoot.GrantPath,

@@ -8,6 +8,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * What a `config.get` that arrives in pieces has to become: one joined set of values,
+ * the unit's extras beside the rows, and nothing quietly dropped because the schema
+ * had not heard of it.
+ *
+ * The frame-level merge (bytes → JSON pieces) is [com.alefinot.dashboardpp.ble.BleProtocolTest]'s
+ * business; this is the layer above it, where a row is either drawn or missing and the
+ * difference is a setting the owner cannot find.
+ */
 class ConfigMergeTest {
 
     private val gateway = FakeGateway()
@@ -45,6 +54,12 @@ class ConfigMergeTest {
         assertEquals("an xy row lost its second half", 20, (xy.yValue as Number).toInt())
     }
 
+    /**
+     * A value the unit streams that no schema row describes — the sign that the schema
+     * was not regenerated after a firmware change. It stays in the map, is exported,
+     * and is drawn under a heading that says it is a guess. Dropping it would be a
+     * setting that silently disappears.
+     */
     @Test
     fun aKeyWithNoSchemaRowSurvivesTheRead() = runBlocking {
         gateway.stored = linkedMapOf(

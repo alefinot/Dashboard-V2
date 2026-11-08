@@ -8,6 +8,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The performance monitor's whole job is to tell the truth about a unit that is running, so the
+ * parsing and the formatting are tested here rather than eyeballed on a bench: the field names
+ * come from `methodPerf` / `methodHealth` / `methodLive` / `methodBoot` in `src/bt_rpc.cpp`, and
+ * a field this app mis-reads is a number somebody then acts on.
+ *
+ * The fixtures are the firmware's own format strings with plausible values, not invented shapes.
+ */
 class UnitDiagTest {
 
     /** `methodPerf`, transcribed from the `btCatf` calls in bt_rpc.cpp. */
@@ -71,6 +79,11 @@ class UnitDiagTest {
         assertEquals(30L, p.nvsEntriesAvailable)
     }
 
+    /**
+     * The unit answers `ble_connected`, `mem_saver`, `cpu_dynamic` and `ble_pairing` with `%d`,
+     * so they arrive as numbers, never as JSON booleans. Reading them with `as? Boolean` yields
+     * null, and a monitor that reports a LINKED unit as offline is worse than no monitor at all.
+     */
     @Test
     fun theUnitSendsItsFlagsAsNumbersNotBooleans() {
         val p = perf()!!
@@ -95,6 +108,11 @@ class UnitDiagTest {
         assertEquals("state 7", DiagFormat.bleState(7))
     }
 
+    /**
+     * Task stacks are reported per task and named by the firmware; a fixed list of three names
+     * here would silently drop the fourth the day a task is added (and the low-water mark is
+     * the number that catches a stack overflow before it happens).
+     */
     @Test
     fun stackHighWaterMarksKeepTheNamesTheFirmwareGivesThem() {
         val p = perf()!!
@@ -125,6 +143,8 @@ class UnitDiagTest {
 
     @Test
     fun aShortReplyLosesNothingItShouldNot() {
+        // An older firmware, or one that ran out of the shared reply buffer mid-body, streams
+        // fewer keys. The screen still has to draw what came.
         val p = UnitDiag.perf(mapOf("fps_current" to 21.5, "free_heap" to 1024.0))
         assertNotNull(p)
         p!!
@@ -139,6 +159,8 @@ class UnitDiagTest {
 
     @Test
     fun nothingAtAllIsNoReadingRatherThanAZeroReading() {
+        // An empty field map means the call failed. The caller must be able to tell that from
+        // a unit that is genuinely reporting 0 fps, or the screen shows a healthy-looking zero.
         assertNull(UnitDiag.perf(emptyMap()))
         assertNull(UnitDiag.health(emptyMap()))
         assertNull(UnitDiag.live(emptyMap()))
@@ -183,6 +205,11 @@ class UnitDiagTest {
         assertEquals(88.0, l.engineTempC, 1e-9)
     }
 
+    /**
+     * `boot` is the one that answers "did it crash?": the reset reason, the boot counter, and
+     * the heap figures carried across the reboot. A monitor without it cannot tell a unit that
+     * has been up for two days from one that has been quietly restarting every ten minutes.
+     */
     @Test
     fun bootReportsWhyTheUnitIsRunning() {
         val b = UnitDiag.boot(
@@ -225,6 +252,8 @@ class UnitDiagTest {
 
     @Test
     fun aFailedReplyIsNotReportedAsAUnitReportingZeroes() {
+        // A BLE error and a unit that genuinely has 12345 bytes free arrive at the screen the same
+        // way unless this is explicit, and the second is a fact while the first is not.
         assertNull(UnitDiag.perf(emptyMap()))
         assertNull(UnitDiag.health(emptyMap()))
         assertNull(UnitDiag.live(emptyMap()))
@@ -233,6 +262,8 @@ class UnitDiagTest {
 
     @Test
     fun theFuelInputStateIsSaidTheWayTheFirmwareMeansIt() {
+        // The bare ADC number means nothing at the bench: 4095 is either a full tank or a wire that
+        // came off, and only the input state says which. Codes are the firmware's FUEL_INPUT_*.
         assertEquals("input off — nothing wired", DiagFormat.fuelState(0))
         assertEquals("in range", DiagFormat.fuelState(1))
         assertTrue(DiagFormat.fuelState(2).contains("OPEN CIRCUIT"))
@@ -242,6 +273,8 @@ class UnitDiagTest {
 
     @Test
     fun aRebootNobodyAskedForIsTheOneThingThatHasToStandOut() {
+        // The labels are the firmware's own (resetReasonStr in src/bootinfo.cpp): it prints every
+        // reason in the core's enum and falls back to RST_<n> for one it does not know.
         assertFalse(DiagFormat.resetLooksUnasked("POWERON"))
         assertFalse(DiagFormat.resetLooksUnasked("SW (clean restart)"))
         assertFalse(DiagFormat.resetLooksUnasked("EXT"))
@@ -259,6 +292,8 @@ class UnitDiagTest {
 
     @Test
     fun usedOfSomethingIsTotalMinusFree() {
+        // The unit reports free heap and heap size; the bar the old page drew was the other way
+        // round. Getting this backwards shows a healthy unit as nearly full.
         assertEquals(190055L, DiagFormat.usedOf(294912, 104857))
         assertEquals(0L, DiagFormat.usedOf(100, 100))
         assertEquals(0L, DiagFormat.usedOf(100, 140))
@@ -316,6 +351,11 @@ class UnitDiagTest {
         cpuTempC = fps,
     )
 
+    /**
+     * The monitor is opened from the last row of the settings scroll and closed again; a screen
+     * that only exists in the source is how a feature ends up unreachable. Read from source,
+     * because the module has no Compose test harness.
+     */
     @Test
     fun theSettingsScrollOpensItAndNothingButTheLinkFeedsIt() {
         val page = moduleSource("DashboardSettingsScreen.kt")
@@ -325,6 +365,8 @@ class UnitDiagTest {
         )
         assertTrue(
             "the scroll does not name the entry where a user will look for it",
+            // The row carries the WebUI's own title case since the 1.6.0 restyle; what the guard
+            // cares about is that the entry is NAMED in the scroll, not how it is capitalised.
             Regex("\"Performance Monitor\"").containsMatchIn(page),
         )
         val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
@@ -340,6 +382,11 @@ class UnitDiagTest {
         }
     }
 
+    /**
+     * An auto-refresh loop that outlives the screen keeps spending link round trips after the
+     * user has left, and a loop with no delay at all can starve the settings read it shares the
+     * link with. Both are locked here: the loop is keyed to the cadence, and it waits.
+     */
     @Test
     fun theAutoReadLoopIsKeyedToItsCadenceAndWaitsBetweenReads() {
         val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
@@ -352,12 +399,19 @@ class UnitDiagTest {
             "an unmanaged scope means the loop survives leaving the screen",
             Regex("GlobalScope").containsMatchIn(screen),
         )
+        // The wait has to be inside the loop, and the loop has to end on cancellation rather than on
+        // a flag somebody remembers to flip.
         assertNotNull(
             "the auto-read loop must wait inside a loop that ends on cancellation",
             Regex("while\\s*\\([^)]*isActive[^)]*\\)[\\s\\S]{0,240}?delay\\s*\\(").find(screen),
         )
     }
 
+    /**
+     * A monitor that keeps reading after the link drops shows a frozen set of numbers as if they
+     * were live. The screen has to say what it is holding: the last read, and whether the unit
+     * is still there.
+     */
     @Test
     fun aStaleReadIsLabelledAsStale() {
         val screen = moduleSource("settings/PerfMonitorScreen.kt")

@@ -56,10 +56,45 @@ import kotlinx.coroutines.isActive
 import kotlin.math.PI
 import kotlin.math.cos
 
+/**
+ * The breathing half of a live recording state. The page defined `pulseGlow`
+ * (`src/webui.html:70` - `box-shadow: 0 0 12px rgba(0,229,255,.2)` at the ends of
+ * the keyframe, `0 0 24px rgba(0,229,255,.5)` in the middle) and, on the last
+ * reading of that file before it was deleted, never attached it to a selector: the
+ * page had no recording indicator to animate. The app has that state, so the chip
+ * borrows the page's own keyframe instead of inventing a motion. The page set no
+ * duration for it, because nothing used it; 2 s is the app's number, chosen so one
+ * breath spans two 1 Hz samples - slow enough to read as a pulse and not as a blink.
+ */
 private const val CHIP_PULSE_MS = 2000L
 
+/**
+ * The breath is recomputed ~16 times a second instead of on every frame: a glow
+ * that takes a second to reach its bright stop has nothing to show between those
+ * steps, and a per-frame loop measured 48 repaints a second on the test tablet
+ * (SM-T590) for as long as the recorder ran.
+ */
 private const val CHIP_PULSE_STEP_MS = 60L
 
+/**
+ * The native live view: the same data the unit's deleted web page rendered, drawn
+ * natively so the app can chart and log it (trip recording plan §5). It is read-only
+ * by design - configuration belongs to the settings page, so there is only ever one
+ * writer of the unit's state and no second implementation of the config logic to drift.
+ *
+ * It reads [TripRuntime] and nothing else. That used to be an optimisation - "one
+ * poller only" - and now it is the whole design: the unit pushes one frame a second on
+ * its own characteristic, the recording service follows that stream, and this page renders
+ * what the service published. A page that fetched for itself would be a second reader of
+ * one link, which is how the HTTP version of this app needed a lane to arbitrate.
+ *
+ * So there is no address in the signature, and there is no fallback path. Over the old
+ * transport this page had to cope with a device that answered `/api/live` but not
+ * `/api/snapshot` - firmware from before that endpoint existed - which meant a second
+ * data model, a "limited data" notice and a whole branch of the layout. A unit this app
+ * can pair with answers `snapshot`; anything else is a link that did not come up, and the
+ * state says so in one place.
+ */
 @Composable
 fun LiveTab(active: Boolean) {
     var state by remember { mutableStateOf(TripRuntime.state.value) }
@@ -73,11 +108,19 @@ fun LiveTab(active: Boolean) {
 
     Column(
         Modifier.hudPage()
+            // `html { background-color: #000000 }`, `body { background-color:
+            // --bg-base }`: the page's ground is flat black, with no gradient and
+            // no glow anywhere. Nothing is added here - the cards' translucent
+            // fills do the modelling, exactly as they do on the page.
             .verticalScroll(rememberScrollState())
             .padding(horizontal = HudPage.Gutter)
             .padding(top = 10.dp, bottom = 24.dp),
     ) {
         HudEnter(modifier = Modifier.fillMaxWidth()) {
+            // `.header`: the page's h2 in its gradient, centred, with the run state as the
+            // corner pill where the unit page keeps its advanced switch. The heading used to
+            // sit at the left edge of a 1920 px screen with its chip beside it, which read as
+            // a toolbar rather than as the top of a page.
             HudPageHeader(
                 title = "Live",
                 trailing = { StatusChip(state, active) },
@@ -87,6 +130,12 @@ fun LiveTab(active: Boolean) {
 
         val snapshot = state.snapshot
         if (snapshot != null) {
+            // `.card`, unmodified: rgba(22,30,46,.6), a 5% hairline, 8px corners,
+            // no shadow. The page's cards carry no gradient wash of their own, so
+            // the cyan on this screen comes from the gauge itself.
+            // `pageFadeIn` per panel, offset by one stagger step: the readout
+            // arrives just after the heading, the figures just after that, and the
+            // whole screen has settled inside a single page entrance.
             HudEnter(
                 modifier = Modifier.fillMaxWidth(),
                 delayMs = HudMotion.STAGGER_MS,
@@ -115,6 +164,11 @@ fun LiveTab(active: Boolean) {
                 if (snapshot != null) {
                     SnapshotCells(snapshot)
                 } else {
+                    // The page is here, the link may be up, and nothing has been
+                    // measured yet. Say that and nothing more: the reason a frame is
+                    // missing belongs to the link, and the vehicles page already shows
+                    // it. Two pages inventing two explanations is how "no data" used to
+                    // turn into a walk through four screens.
                     Text(
                         "Waiting for the dashboard…",
                         color = HudColors.TextMuted,
@@ -153,22 +207,43 @@ private fun fuelStateLabel(st: Int): String = when (st) {
 private fun fmt(value: Double, places: Int = 1): String =
     String.format(java.util.Locale.US, "%.${places}f", value)
 
+/**
+ * The run state as one of the page's pills (`.ip-banner` radius) carrying a
+ * `.msg-success` / `.msg-error` tint: the accent at 8% behind the glass, a 30%
+ * accent hairline, accent text.
+ */
 @Composable
 private fun StatusChip(state: TripRuntimeState, active: Boolean) {
     val (label, target) = when {
         state.recording -> "RECORDING" to HudColors.Green
+        // Nothing has come back yet on this connection - that is not the same
+        // claim as "the dashboard stopped answering", which is what NO DATA means.
         state.lastOkMs == 0L -> "CONNECTING" to HudColors.TextDim
         state.polling && state.stale -> "NO DATA" to HudColors.Red
         state.polling -> "LOGGING IDLE" to HudColors.Cyan
         else -> "NOT RECORDING" to HudColors.TextDim
     }
+    // The state changes without the user touching anything (the recorder starts,
+    // the page takes the connection, data goes stale), so both halves of the pill
+    // move: the colour over the page's 0.2s control easing, the word crossfading
+    // into its place.
     val color by animateColorAsState(
         target,
         tween(HudMotion.SWITCH_MS, easing = HudMotion.Ease),
         label = "chipColor",
     )
+    // `pulseGlow`, held by the pill while RECORDING. The fraction is a state object
+    // read *inside* the draw lambda below: a step of the breath invalidates the
+    // chip's own layer, not the Live screen behind it. When the state stops
+    // recording the breath is left at its dim stop, and the pill settles back to the
+    // plain tint the CSS gives a `.msg-*` pill.
     val glow = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(state.recording, active) {
+        // `active` is not decoration: the page is now composed whether or not the
+        // user is looking at it, and a breath that runs off-screen invalidates that
+        // chip's layer ~30 times a second for nobody. It restarts from the dim stop
+        // when the page comes back, which is where a breath starting from rest
+        // belongs anyway.
         if (!state.recording || !active) {
             glow.floatValue = 0f
             return@LaunchedEffect
@@ -176,12 +251,20 @@ private fun StatusChip(state: TripRuntimeState, active: Boolean) {
         val start = android.os.SystemClock.elapsedRealtime()
         while (isActive) {
             val p = (android.os.SystemClock.elapsedRealtime() - start) % CHIP_PULSE_MS
+            // The keyframe sits at one stop for 0% and 100% and the other for 50%,
+            // which is a cosine and not a triangle: it eases at both ends, so there
+            // is no snap at the bottom of the breath.
             glow.floatValue = 0.5f - 0.5f * cos(2f * PI.toFloat() * p / CHIP_PULSE_MS)
             delay(CHIP_PULSE_STEP_MS)
         }
     }
     Box(
         Modifier
+            // `.ip-banner` for the shape (--bg-card pill, hairline, 4x12 padding),
+            // `.msg-success`/`.msg-error` for the state: that colour as a 30%
+            // hairline and an 8% wash, and in the label. The padding sits on the
+            // label rather than the box, so the layer that draws the breath spans
+            // the whole pill and its ring lands on the hairline.
             .hudCard(
                 shape = HudRadius.PillShape,
                 fill = HudColors.Panel,
@@ -189,6 +272,8 @@ private fun StatusChip(state: TripRuntimeState, active: Boolean) {
             )
             .background(color.copy(alpha = 0.08f), HudRadius.PillShape),
     ) {
+        // `#ip-banner` is 13px with no weight of its own, and `#msg`'s variants put
+        // the colour in the text: same here.
         Crossfade(label, animationSpec = tween(HudMotion.SWITCH_MS), label = "chipText") {
             Text(
                 it,
@@ -205,6 +290,14 @@ private fun StatusChip(state: TripRuntimeState, active: Boolean) {
                 path.addRoundRect(
                     RoundRect(Rect(0f, 0f, size.width, h), CornerRadius(h / 2f, h / 2f)),
                 )
+                // The page's shadow is a blur outside the pill, and this layer has no
+                // blur to give it (blurring what is behind needs API 31, the app
+                // supports 26), so the halo is three strokes growing inward from the
+                // hairline - a stroke is centred on the path, so the outer half of
+                // each is cut off by the layer. Their alphas peak under the page's
+                // bright stop (.5) so the stack never reads heavier than the single
+                // shadow it stands in for, and all three ride the same cosine the
+                // keyframe does.
                 drawPath(
                     path,
                     color.copy(alpha = 0.05f + 0.07f * g),
@@ -284,6 +377,8 @@ private fun SnapshotCells(s: Snapshot) {
                 modifier = Modifier.fillMaxWidth(),
             )
         },
+        // "amb" is the ambient LIGHT sensor (raw value, no unit) — the page showed
+        // it as a bare reading, so this does too. Not a temperature.
         { StatCell("LIGHT", s.amb.toString(), modifier = Modifier.fillMaxWidth()) },
     )
     RowOf(

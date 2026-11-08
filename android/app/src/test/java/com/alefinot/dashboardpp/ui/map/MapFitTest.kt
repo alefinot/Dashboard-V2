@@ -7,6 +7,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.osmdroid.util.GeoPoint
 
+/**
+ * Framing is pure arithmetic, so the degenerate cases that cost the app an ANR
+ * on the device are testable here: an unmeasured view (width and height 0, which
+ * is what Compose hands the AndroidView update block) and a track with no
+ * extent. Both must resolve to a center plus a fixed zoom and must never be
+ * handed to MapView.zoomToBoundingBox.
+ */
 class MapFitTest {
 
     private val munich = listOf(
@@ -22,6 +29,8 @@ class MapFitTest {
 
     @Test
     fun `an unmeasured view is never framed with a bounding box`() {
+        // This is the ANR path: 0 width means osmdroid computes its zoom with
+        // Math.log of a negative ratio, gets NaN and loops in getCloserPixel.
         val plan = MapFit.plan(munich, 0, 0, 19.0)!!
         assertFalse(plan.useBoundingBox)
         assertTrue(plan.zoom.isFinite())
@@ -30,6 +39,8 @@ class MapFitTest {
 
     @Test
     fun `a stationary track has no extent to fit`() {
+        // Demo mode, or a car at a traffic light with a live fix: every sample
+        // carries the same coordinates.
         val still = List(120) { GeoPoint(48.136857, 11.576125) }
         val plan = MapFit.plan(still, 1200, 800, 19.0)!!
         assertFalse(plan.useBoundingBox)

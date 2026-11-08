@@ -7,6 +7,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The two halves of the firmware↔app contract on one line: whatever
+ * `snapshotGetHandler` in `src/web.cpp` prints has to parse here, and a device
+ * without the endpoint (404 page, or another vendor's server) must be rejected
+ * rather than half-believed.
+ */
 class SnapshotParseTest {
 
     /** Verbatim shape of the firmware's response, key order included. */
@@ -53,6 +59,8 @@ class SnapshotParseTest {
 
     @Test
     fun missingHdopAndAltitudeArriveAsMinusOneNotZero() {
+        // The firmware prints -1 when the fix carried no hdop/altitude; the app
+        // must show "no reading", never a plausible 0.
         val body = withFix.replace("\"hdop\":1.20", "\"hdop\":-1")
             .replace("\"alt\":743", "\"alt\":-1")
         val s = Snapshot.parse(body)!!

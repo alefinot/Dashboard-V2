@@ -7,6 +7,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
+// The page's headings ask for 'Outfit', then 'Inter', then system-ui. None of those can
+// travel to the ESP, so the app uses the system sans too; the page falls back the same way.
 val HudeDisplayFamily = FontFamily.SansSerif
 
 // `body` and `p` ask for 'Inter', then system-ui; on Android that resolves to Roboto.
@@ -15,6 +17,11 @@ val HudeBodyFamily = FontFamily.SansSerif
 // Data, tables and the clock ask for 'JetBrains Mono', then ui-monospace: the system mono.
 val HudeMonoFamily = FontFamily.Monospace
 
+/**
+ * The splash shown while no ESP is found — an app-owned screen, so this is the
+ * one style in the file with no CSS rule behind it. The WebUI's own discovery
+ * surface is `.discovery-banner`, already tokenized in HudTokens.
+ */
 val HudeSplash = TextStyle(
     fontFamily = HudeDisplayFamily,
     fontWeight = FontWeight.W800,
@@ -23,6 +30,19 @@ val HudeSplash = TextStyle(
     lineHeight = 34.sp,
 )
 
+/**
+ * The page's type scale, measured off the WebUI's CSS rather than invented.
+ *
+ * They are functions of one number, the letter-spacing in em: a style is a name
+ * plus a size plus a tracking value, and carrying the size around in the call
+ * site would put the page's numbers back in the hands of every screen. Pass 1 to
+ * take the page's tracking.
+ *
+ * The headings are the page's own: `HudeHeading` is `h2` (the only heading the
+ * page writes), and `HudeSectionTitle` is `.card h4` — the page has no h1, h3 or
+ * h5 rule, so a screen heading painted any other way is the app arguing with its
+ * own WebUI. The h2 is filled by `HudBrushes.title`.
+ */
 fun HudeSectionTitle(spacingEm: Float = 0.04f) = TextStyle(
     fontFamily = HudeDisplayFamily,
     fontSize = 13.sp,
@@ -102,6 +122,11 @@ fun HudeMetricUnit(spacingEm: Float = 0.15f) = TextStyle(
     lineHeight = 14.sp,
 )
 
+/**
+ * `.section-title`: 11px, 700, uppercase, 0.8px tracking, `--accent-cyan`. The
+ * page uses it to name a group inside a card; the app uses it for the same job
+ * (callers pass already-uppercased strings, so `text-transform` stays in the CSS).
+ */
 fun HudeSectionCaps(spacingEm: Float = 0.8f / 11f) = TextStyle(
     fontFamily = HudeDisplayFamily,
     fontSize = 11.sp,
@@ -128,6 +153,11 @@ fun HudeCfgNote(spacingEm: Float = 0f) = TextStyle(
     lineHeight = 17.sp,
 )
 
+/**
+ * `.cfg-help`: same 11px and line-height as `.cfg-note`, in `--text-muted`
+ * instead of `--text-dim`, because the page rewrites these lines live (scan
+ * status, excitation reading) and they should read as content, not as advice.
+ */
 fun HudeCfgHelp(spacingEm: Float = 0f) = TextStyle(
     fontFamily = HudeBodyFamily,
     fontSize = 11.sp,
@@ -154,6 +184,13 @@ fun HudeCfgLiveStrong(spacingEm: Float = 0f) = TextStyle(
     lineHeight = 17.sp,
 )
 
+/**
+ * `.perf-value`: `color: #fff; font-weight: 600; font-family: 'JetBrains Mono'`.
+ * It declares no size - it inherits 12px from `.perf-row`, which is a two-column
+ * row, not a tile. A tile's figure is its only content, so the app takes the
+ * page's 13px body band at the same weight and family; that one step is the only
+ * number here not read straight off the rule.
+ */
 fun HudePerfValue(spacingEm: Float = 0.5f / 13f) = TextStyle(
     fontFamily = HudeMonoFamily,
     fontSize = 13.sp,
@@ -162,6 +199,12 @@ fun HudePerfValue(spacingEm: Float = 0.5f / 13f) = TextStyle(
     lineHeight = 18.sp,
 )
 
+/**
+ * `.perf-row .perf-value` at the size it actually inherits: the rule declares no
+ * size of its own and `.perf-row` says 12px, so inside a monitor row the figure
+ * is 12px. [HudePerfValue]'s 13px is the tile band, where the figure is the only
+ * thing on the surface - the row is a pairing, and both halves stay at 12px.
+ */
 fun HudePerfRowValue(spacingEm: Float = 0.5f / 12f) = TextStyle(
     fontFamily = HudeMonoFamily,
     fontSize = 12.sp,
@@ -179,6 +222,10 @@ fun HudeButtonLabel(spacingEm: Float = 0f) = TextStyle(
 )
 
 fun HudeTypography(): Typography = Typography(
+    // The Material slots exist so Material3 components inside our own composables
+    // (Chip, TextButton inside HudButton, OutlinedTextField) inherit the page's
+    // text rather than Material's defaults. No screen reads these directly — the
+    // screens call the tokens above by name.
     displayLarge = HudeSplash,
     displayMedium = HudeHeading(),
     displaySmall = HudeHeading(),

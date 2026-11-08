@@ -49,6 +49,23 @@ import com.alefinot.dashboardpp.ui.theme.HudeHeading
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudGlass
 
+/**
+ * The page frame every screen shares, taken from the ESP's own Web UI - the page the
+ * unit used to serve from `src/webui.html`. That page is deleted (BLE-only firmware),
+ * so this file is the surviving copy of its layout; the CSS the numbers below were
+ * read from is still in `git show 7104bf96^:src/webui.html`.
+ *
+ * On a 1920 px tablet the app used to draw a 13 px label at the far left of a 1900 px
+ * line and put the switch it belongs to 1800 px away on the right. The page never
+ * did that: `.main-content` is a 920 px column with `margin: 0 auto`, and everything -
+ * header, search, groups, action grid - lives inside it. This file is that rule, plus
+ * the three pieces the page repeated at the top of the column (`h2`, `.ip-banner`,
+ * `details > summary`), so a screen composes them instead of re-deriving them.
+ *
+ * The numbers are the page's own, in dp: on a 1.5x tablet 1 CSS px and 1 dp are the same
+ * physical size, which is why the app can copy the page's pixel values rather than
+ * scaling them.
+ */
 object HudPage {
 
     /** `.main-content { max-width: 920px }` - the column every page is drawn in. */
@@ -58,14 +75,38 @@ object HudPage {
     val Gutter = 16.dp
 }
 
+/**
+ * The centred content column: `widthIn` first so 920 dp is a *ceiling*, then
+ * `fillMaxWidth` so a phone gets the whole width rather than a 920 dp box hanging off
+ * the left edge. Put this before `fillMaxHeight()`/`fillMaxSize()` in a modifier chain -
+ * the other order fixes the width to the parent's before the cap can apply.
+ */
 fun Modifier.hudContentColumn(): Modifier = widthIn(max = HudPage.Width).fillMaxWidth()
 
+/**
+ * `.main-content` for a page root: fill the window, cap the content at 920 dp and centre
+ * what is left. `wrapContentWidth` is what does the centring - the layout keeps the
+ * window's size and places its (narrower) content in the middle of it, which is exactly
+ * `margin: 0 auto`.
+ *
+ * A page uses this on the one container it already has (`Column`, `LazyColumn`), so the
+ * column cap costs a page no extra nesting.
+ */
 fun Modifier.hudPage(): Modifier = this
     .fillMaxSize()
     .wrapContentWidth(Alignment.CenterHorizontally)
     .widthIn(max = HudPage.Width)
     .fillMaxWidth()
 
+/**
+ * `.header`: the page's `h2` in its gradient, centred over whatever the page says about
+ * itself, with an optional control pinned to the top-right corner.
+ *
+ * The corner slot is the page's `.adv-mode-toggle` (`position: absolute; top: 6px;
+ * right: 4px`). It is only placed there when the column is wide enough to keep it clear
+ * of the title; on a phone-sized column it drops under the text instead, because a
+ * control sitting on top of the heading is worse than one two lines lower.
+ */
 @Composable
 fun HudPageHeader(
     title: String,
@@ -107,6 +148,12 @@ fun HudPageHeader(
     }
 }
 
+/**
+ * `.ip-banner`: the pill the page puts under its title - `inline-flex`, 4x12 padding,
+ * radius 30, `--bg-card` fill, a 1 px hairline, 11 px `--text-muted`. The caller passes
+ * the status colour, so the same pill says "linked" in green and "no link" in dim
+ * without a second recipe.
+ */
 @Composable
 fun HudBanner(
     text: String,
@@ -123,6 +170,11 @@ fun HudBanner(
     }
 }
 
+/**
+ * `details`: the accordion shell - `--bg-card` fill, 1 px hairline, 12 px corners, and
+ * `--card-shadow`, with the border turning `rgba(0,229,255,.25)` while open. The header
+ * band is a child so it can paint `rgba(18,25,38,.6)` over the top of the same sheet.
+ */
 @Composable
 fun HudAccordion(
     open: Boolean,
@@ -154,6 +206,19 @@ fun HudAccordion(
     )
 }
 
+/**
+ * `summary`: the 32 px cyan icon badge, the 14 px/700 title, the count, and the circular
+ * chevron - the four things the page's group rows are made of.
+ *
+ * The chevron is drawn, not typed. It used to be a `"▾"`/`"▸"` character, and this
+ * device's sans font has no glyph for either: the row rendered a boxed question mark
+ * where the arrow should be. A vector has no font to depend on and can turn on the
+ * page's own 0.3 s instead of swapping two characters.
+ *
+ * [badge] is null for rows that are not schema groups (the readings block, the
+ * performance monitor): those have no firmware-supplied icon, and inventing one would
+ * claim the app knows what the group is.
+ */
 @Composable
 fun HudAccordionHeader(
     title: String,

@@ -36,6 +36,22 @@ data class WeatherTarget(
 /** Why (or whether) the next feed should run. */
 enum class WeatherDue { FIRST, INTERVAL, MOVED, NEVER }
 
+/**
+ * The weather feed's schedule and its position ladder, with no Android and no I/O in
+ * it — every rule the coordinator applies is here so it can be read, changed and
+ * argued about in one place.
+ *
+ * The intervals are the plan's, with one of them borrowed from the firmware's own
+ * behaviour: `TIME_REPUSH_MS` is six hours because that is the drift the unit's RTC
+ * error budget already assumes (README: "the +200 ppm figure is what its worst-case
+ * clock error per day assumes"), and re-pushing the clock costs 24 bytes.
+ *
+ * `INTERVAL_MS` is the phone's own clock, and since 2026-11-06 it is **not** tied to the
+ * link: the feed runs whether or not a unit is connected, so a unit that comes up between
+ * two fetches can be handed the frame in hand instead of an empty card (see
+ * [WeatherCoordinator.unitWoke]). That is what the owner asked for after the bench showed
+ * a rebooted panel waiting a quarter of an hour for weather it already had.
+ */
 object WeatherPolicy {
 
     const val INTERVAL_MS = 5 * 60 * 1000L
@@ -58,9 +74,21 @@ object WeatherPolicy {
     /** A finished OTA install moves the unit; feed again within a minute. */
     const val RETRY_AFTER_OTA_MS = 60 * 1000L
 
+    /**
+     * The position the unit itself reports, or null when it has none.
+     *
+     * `Snapshot.hasPosition` is the whole rule and deliberately not restated here: it
+     * is what already keeps route points honest, and it means `fix == 1`, coordinates
+     * in range, and not the 0,0 a receiver prints before it has ever fixed.
+     */
     fun positionOf(snapshot: Snapshot?): LatLon? =
         snapshot?.takeIf { it.hasPosition }?.let { LatLon(it.lat, it.lon) }
 
+    /**
+     * Fix, else the unit's cached position younger than [CACHE_MAX_AGE_MS], else the
+     * city the owner typed. Null means there is no place to ask about, and the feed
+     * says so rather than inventing a coordinate.
+     */
     fun positionLadder(
         fix: Snapshot?,
         cached: CachedPosition?,
@@ -75,6 +103,11 @@ object WeatherPolicy {
         return null
     }
 
+    /**
+     * Great-circle distance in km. The cheap formula, not a flat-earth approximation:
+     * at 48° N a degree of longitude is ~75 km, so a box test would call a 2 km east-west
+     * drive "the same place" and miss a 1.5 km north-south one as a move.
+     */
     fun movedKm(a: LatLon, b: LatLon): Double {
         val dLat = Math.toRadians(b.lat - a.lat)
         val dLon = Math.toRadians(b.lon - a.lon)
@@ -82,6 +115,14 @@ object WeatherPolicy {
         return 2 * EARTH_RADIUS_KM * asin(minOf(1.0, sqrt(h)))
     }
 
+    /**
+     * Should the feed run now? A move outranks the clock: a car driving into different
+     * weather must not wait out the remaining minutes of the fetch interval to get a
+     * forecast that is already wrong.
+     *
+     * [last] is the position the last successful feed used; [current] is the best
+     * position right now. Either may be null, in which case there is no move to measure.
+     */
     fun due(nowMs: Long, lastFetchMs: Long?, last: LatLon?, current: LatLon?, enabled: Boolean): WeatherDue {
         if (!enabled) return WeatherDue.NEVER
         if (lastFetchMs == null) return WeatherDue.FIRST
@@ -90,9 +131,21 @@ object WeatherPolicy {
         return WeatherDue.NEVER
     }
 
+    /**
+     * Is the panel's picture too old to present as current? Null [lastSuccessMs] means
+     * there has been no successful feed since the app started, so there is nothing to
+     * mark stale — the coordinator treats that case separately.
+     */
     fun stale(nowMs: Long, lastSuccessMs: Long?): Boolean =
         lastSuccessMs != null && nowMs - lastSuccessMs >= STALE_AFTER_MS
 
+    /**
+     * The reading to display, with the label the ladder settled on.
+     *
+     * Deliberately no unit conversion anywhere: the payload's units are the firmware's
+     * (°C, km/h, %) and the panel does its own °F conversion for Imperial mode
+     * (src/ui.cpp:2435), so a conversion here would be applied twice.
+     */
     fun buildPush(reading: OpenMeteoReading, label: String): WeatherPush = WeatherPush(
         temperature = reading.temperatureC,
         humidity = reading.humidityPct,
@@ -106,6 +159,13 @@ object WeatherPolicy {
         valid = true,
     )
 
+    /**
+     * The frame that tells the unit "this is not current any more". The numbers are
+     * zero on purpose: the unit ignores the whole payload when `valid` is false and
+     * draws its own "Weather Offline (waiting for phone...)" (src/ui.cpp:2417), so
+     * there is no stale value to carry, and zero is the one thing that cannot be
+     * mistaken for a reading.
+     */
     fun stalePush(label: String?): WeatherPush = WeatherPush(
         temperature = 0.0,
         humidity = 0,

@@ -7,6 +7,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Shared input for the settings tests: the generated asset, and a small hand-built
+ * schema for the cases that need to know exactly one row.
+ *
+ * The asset is read from the module's own `src/main/assets`, the same way
+ * `AppXmlWiringTest` finds its manifest — a settings test that asserted against a
+ * copy of the schema would be testing the copy.
+ */
 object SettingsFixtures {
 
     val assetText: String by lazy {
@@ -58,6 +66,11 @@ object SettingsFixtures {
     }
 }
 
+/**
+ * The schema is generated from the firmware, so the interesting assertion is not
+ * "does it parse" but "does it still describe the firmware's own rules": unique
+ * keys, defaults inside the firmware's band, hidden keys nowhere on screen.
+ */
 class ConfigSchemaTest {
 
     @Test
@@ -70,6 +83,8 @@ class ConfigSchemaTest {
             assertTrue("duplicate key ${item.key}", seen.add(item.key))
             item.keyY?.let { assertTrue("duplicate y key $it", seen.add(it)) }
             assertTrue("empty label for ${item.key}", item.label.isNotEmpty())
+            // The control has to suit the value, or the row writes the wrong shape of
+            // JSON: a switch for a number would send `true` to an int column.
             val ok = when (item.kind) {
                 ValueKind.BOOL -> item.control == RowControl.TOGGLE || item.control == RowControl.SELECT
                 ValueKind.INT, ValueKind.FLOAT ->
@@ -111,6 +126,14 @@ class ConfigSchemaTest {
         }
     }
 
+    /**
+     * A hidden key is one the unit has in NVS but cannot act on. Drawing it would
+     * be a lie, so the renderer must never reach one. The list is empty as of the
+     * BLE-only cleanup (`7104bf96` deleted the 14 dead V2 keys out of `CFG_TABLE`
+     * instead of hiding them), and this test stays as the guard for the day the
+     * generator lists one again — a key retired from the firmware but left in a
+     * backup is exactly the case it catches.
+     */
     @Test
     fun noHiddenKeyReachesAGroup() {
         val schema = SettingsFixtures.asset
@@ -120,6 +143,11 @@ class ConfigSchemaTest {
         }
     }
 
+    /**
+     * Every row the unit's form map labels, and every row the firmware says needs a
+     * reboot, has to be reachable: an advanced row is hidden behind a switch, and a
+     * reboot row has to be behind that switch only if the firmware says so too.
+     */
     @Test
     fun rebootRowsMatchTheFirmware() {
         val schema = SettingsFixtures.asset
@@ -137,6 +165,12 @@ class ConfigSchemaTest {
         }
     }
 
+    /**
+     * The unit carries ADV_MODE in `CFG_TABLE`, but this page owns it in the header next
+     * to the search box rather than in a card, so the schema leaves it out of the card
+     * list. What has to hold is that it is not drawn twice — the store writes it without
+     * a card row (`theAdvancedSwitchIsWrittenEvenThoughNoCardCarriesIt`).
+     */
     @Test
     fun theAdvancedSwitchIsNotDrawnAsAnOrdinaryRow() {
         val schema = SettingsFixtures.asset
@@ -148,6 +182,11 @@ class ConfigSchemaTest {
         )
     }
 
+    /**
+     * What `config.set` in `bt_rpc.cpp` can actually store. A control for anything else
+     * would send the unit a value it has no branch for, and the row would quietly never
+     * land — the generator's list and the firmware's list have to be the same list.
+     */
     @Test
     fun everyRowIsATypeTheFirmwareCanStore() {
         val writable = setOf(

@@ -7,6 +7,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The weather schedule and the position ladder, as pure arithmetic.
+ *
+ * These are the two decisions the coordinator makes, and they are the two that an
+ * owner can disagree about without any hardware in front of them: when is a refresh
+ * due, and which position gets asked about. `MIN`/`HOUR` here are the plan's numbers;
+ * the tests pin them so a later "tweak" is a visible decision, not a silent one.
+ */
 class WeatherPolicyTest {
 
     private val minute = 60_000L
@@ -31,11 +39,15 @@ class WeatherPolicyTest {
         assertEquals(PositionSource.FIX, target.source)
         assertEquals(48.13743, target.lat, 0.0)
         assertEquals(11.57549, target.lon, 0.0)
+        // A fix carries no name of its own: that is the one case where the app
+        // owes itself a reverse geocode.
         assertNull(target.labelHint)
     }
 
     @Test
     fun `a position the unit does not actually have is not a position`() {
+        // fix == 0: the frame carries lat/lon from the last fix, and the unit says
+        // so by sending fix 0. Snapshot.hasPosition is the single rule for this.
         assertNull(WeatherPolicy.positionOf(snap(48.13743, 11.57549, fix = 0)))
         // The 0,0 null island a receiver reports before it has ever fixed.
         assertNull(WeatherPolicy.positionOf(snap(0.0, 0.0)))
@@ -55,6 +67,8 @@ class WeatherPolicyTest {
 
         assertEquals(PositionSource.CACHE, target.source)
         assertEquals(47.98, target.lat, 0.0)
+        // The cached label is what lets a link come up and push weather with no
+        // network call at all.
         assertEquals("Wolfratshausen", target.labelHint)
     }
 
@@ -67,6 +81,8 @@ class WeatherPolicyTest {
             nowMs = now,
         )!!
 
+        // Twenty-four hours is the plan's cap: a fixed-mount unit that has not moved
+        // still gets the city its owner typed rather than a day-old coordinate.
         assertEquals(PositionSource.CITY, target.source)
         assertEquals("Munich", target.labelHint)
     }
@@ -128,6 +144,8 @@ class WeatherPolicyTest {
 
     @Test
     fun `a move is due even when the interval says otherwise`() {
+        // MOVED has to beat the clock, or a car driving into different weather waits
+        // up to fifteen minutes for a forecast that is already wrong.
         val t = WeatherPolicy.due(
             now + minute, lastFetchMs = now,
             last = LatLon(48.13743, 11.57549), current = LatLon(48.40, 11.90), enabled = true,
@@ -143,6 +161,10 @@ class WeatherPolicyTest {
     @Test
     fun `the schedule constants are the plan's numbers`() {
         // Pinned on purpose: the 6 h time gap is the firmware's RTC drift figure
+        // (README), and the rest are the plan's. Changing one is a decision.
+        // The interval dropped from 15 min to 5 on 2026-11-06, with the maintainer asking
+        // for a panel that is current when a link comes up rather than one that waits out a
+        // quarter of an hour; the fetch now runs off the app's own clock, not off the link.
         assertEquals(5 * minute, WeatherPolicy.INTERVAL_MS)
         assertEquals(2.0, WeatherPolicy.MOVE_TRIGGER_KM, 0.0)
         assertEquals(24 * hour, WeatherPolicy.CACHE_MAX_AGE_MS)
@@ -164,6 +186,8 @@ class WeatherPolicyTest {
 
     @Test
     fun `two minutes parked is neither a move nor stale`() {
+        // The combination the plan cares about: a unit parked for two hours keeps its
+        // weather "current" (under the 3 h cap) while the 5 min clock still refreshes.
         val last = LatLon(48.13743, 11.57549)
         assertEquals(WeatherDue.NEVER, WeatherPolicy.due(now + 2 * minute, now, last, last, true))
         assertFalse(WeatherPolicy.stale(now + 2 * minute, lastSuccessMs = now))
@@ -173,6 +197,8 @@ class WeatherPolicyTest {
 
     @Test
     fun `the distance arithmetic holds where it can be checked`() {
+        // Munich (48.14, 11.58) to Seeshaupt, straight north-south: 0.01 deg of
+        // latitude is about 1.11 km, and longitude must not matter here.
         assertEquals(1.11, WeatherPolicy.movedKm(LatLon(48.0, 11.0), LatLon(48.01, 11.0)), 0.02)
         assertEquals(0.0, WeatherPolicy.movedKm(LatLon(48.0, 11.0), LatLon(48.0, 11.0)), 0.0)
         // The anti-meridian must not read as a jump around the world.

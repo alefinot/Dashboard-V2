@@ -7,6 +7,12 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
+/**
+ * GPX 1.1 export of a trip's route (trip recording plan §6). Only samples with a
+ * valid position become track points; `ele` is written when the fix carried
+ * altitude, and speed goes in `extensions` in m/s, the unit GPX consumers expect
+ * there — the CSV remains the complete record, this is the shareable route.
+ */
 object GpxWriter {
     private val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")

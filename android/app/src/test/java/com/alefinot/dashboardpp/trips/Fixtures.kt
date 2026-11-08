@@ -2,6 +2,10 @@ package com.alefinot.dashboardpp.trips
 
 import com.alefinot.dashboardpp.api.Snapshot
 
+/**
+ * Shared fixtures for the trip tests: one snapshot builder with sensible driving
+ * defaults, so each test only spells out the fields it is actually about.
+ */
 fun snap(
     up: Long,
     spd: Double = 0.0,

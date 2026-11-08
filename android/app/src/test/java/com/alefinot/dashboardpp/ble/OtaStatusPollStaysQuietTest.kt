@@ -6,6 +6,26 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The app asks the unit "where are you?" only when something has gone quiet — never on a timer.
+ *
+ * An `ota.status` request is a 34-byte RPC round trip on the same ATT opportunity the chunk stream
+ * is using, and the unit ACKs every `OTA_ACK_BYTES` (4 KiB, `src/bt_ota.cpp`) whether or not the
+ * phone asks. Polling during a healthy transfer therefore buys a second, redundant answer to a
+ * question already answered, and takes the slot a chunk could have had: task A4 of
+ * `INSTALL-SPEED-PLAN-2026-11-03` exists to stop that.
+ *
+ * On the tree this guard was written against, the behaviour is already right: `api.otaStatus()` is
+ * called from exactly two places, and both sit behind a condition that says the ACK stream or a
+ * write went quiet (the retry branch after a write the stack did not complete, and the
+ * `STALL_SILENCE_MS` branch after silence). The plan described a timer that does not exist here.
+ * So the value of this test is the rule, not a behaviour change: the day somebody adds a
+ * "refresh progress every second" poll to the install, or a status timer in the card, the run goes
+ * red and names the file.
+ *
+ * It reads the sources because nothing at test time holds a radio or a frame counter, and counting
+ * frames on a bench capture is a manual step (A5), not a unit test.
+ */
 class OtaStatusPollStaysQuietTest {
 
     /** Every way the app can ask the unit where an install stands (the definition itself excluded). */
@@ -19,6 +39,8 @@ class OtaStatusPollStaysQuietTest {
         val body = codeOnly(mainSource("ble/OtaController.kt"))
         val lines = body.lines()
 
+        // Split on the call itself: `body` keeps line structure because codeOnly blanks comments
+        // rather than removing them.
         val callLines = lines.indices.filter { statusCall.containsMatchIn(lines[it]) }
         assertEquals(
             "expected exactly the two known ota.status call sites (write-failure recovery, and the " +
@@ -36,6 +58,11 @@ class OtaStatusPollStaysQuietTest {
         }
     }
 
+    /**
+     * The card draws progress from the controller's StateFlow. If it started asking the unit for
+     * it, the poll would be running on the UI's clock with no idea that a chunk phase is in
+     * progress — exactly the self-competition A4 is about.
+     */
     @Test
     fun theFirmwareCardAsksNothing() {
         val card = codeOnly(mainSource("ui/screens/FirmwareOtaControl.kt"))

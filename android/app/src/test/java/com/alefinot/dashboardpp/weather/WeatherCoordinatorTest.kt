@@ -15,6 +15,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * The weather feed's schedule, end to end, with the unit and the network both faked.
+ *
+ * What is under test here is not parsing — that has its own files — but **what the app
+ * decides to do**: which calls a wake spends, which it refuses to spend, and what it
+ * remembers for the next wake. Those are the rules the plan set (5 min, 2 km, 3 h, one
+ * offline frame per transition, one snapshot RPC per cycle, a unit writing firmware left
+ * alone), and they are the ones that are invisible on a bench unless something is wrong.
+ */
 class WeatherCoordinatorTest {
 
     private val unitKey = "mac:AABBCCDDEEFF"
@@ -110,6 +119,9 @@ class WeatherCoordinatorTest {
         val note = feed.status.value.note!!
         assertTrue(note, note.contains("IllegalStateException"))
         assertTrue(note, note.contains("something about the store"))
+        // The first frame inside this app is the part a developer can act on. In a
+        // coroutine the frame is an `invokeSuspend`, so what the note has to give is the
+        // file and line — which is exactly enough to land in the right source.
         assertTrue(note, Regex("""at \w+\(\w+\.kt:\d+\)""").containsMatchIn(note))
         assertTrue(http.forecasts.isEmpty())
         assertNull(feed.status.value.source)
@@ -272,6 +284,8 @@ class WeatherCoordinatorTest {
         feed.wake("tick", unitKey)
 
         assertEquals(1, unit.pushes.size)
+        // The fetch is remembered even though the unit refused, so the phone does not pay
+        // Open-Meteo twice for one frame.
         assertEquals(t0, store.rows.getValue(unitKey).fetchEpochMs)
 
         now = t0 + 30_000L

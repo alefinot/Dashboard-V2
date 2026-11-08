@@ -59,11 +59,24 @@ data class RestoreReport(
     val applied: Int,
     /** Keys the unit refused to take. */
     val refused: Int,
+    /**
+     * Keys the file carried that this app does not write back: settings it hides on
+     * purpose, and values that are readings rather than settings. Kept apart from
+     * [refused] — those are the unit saying no, these never reached the unit — and
+     * mixing the two made a clean restore read as fourteen failures.
+     */
     val leftOut: Int,
     val nvsErrors: Int,
     val batches: Int,
     val problems: List<String> = emptyList(),
 ) {
+    /**
+     * One line for the page's bar. Each reason is its own clause — the unit refusing a
+     * write, a value not sticking in flash, a key this app leaves alone — because one
+     * number under one sentence reads as "14 of the 188 failed". The separator goes only
+     * between clauses: an earlier version added one in the join *and* in each clause, so
+     * two problems printed as "… ·  · 3 values…".
+     */
     val summary: String
         get() = "restored $applied keys in $batches batches" +
             (if (refused > 0) " · $refused refused by the unit" else "") +
@@ -71,6 +84,28 @@ data class RestoreReport(
             problems.filter { it.isNotBlank() }.joinToString("") { " · $it" }
 }
 
+/**
+ * The settings page's model: schema + the unit's values + local edits.
+ *
+ * Three rules the class is built around, each one learned from the WebUI this
+ * replaces (see the plan's §3.4):
+ *
+ *  1. **No editing before `config.get` has been joined to the schema.** The page
+ *     went blank the same way; here the sync bar owns that window and the rows do
+ *     not exist until there is a value to put in them.
+ *  2. **A number never leaves the app outside the firmware's band.** The old page
+ *     left that to the unit, which clamps silently and answers `{"ok":true}` — a
+ *     row that looks saved over a value nobody typed. Out-of-band input is clamped
+ *     here and the row says what it was clamped to.
+ *  3. **The screen shows what was confirmed.** A refused write reverts its row; an
+ *     `nvsErrors` answer marks it RAM-only; a key the unit stopped reporting is
+ *     marked missing.
+ *
+ * Writes are per row (or per `xy` pair), not per form: a switch goes out when it is
+ * flipped, a number when typing stops. The unit applies a partial object, so there
+ * is no "Save all" to get wrong and a half-finished edit cannot lose another row's
+ * change.
+ */
 class ConfigStore(
     private val gateway: ConfigGateway,
     private val schema: ConfigSchema,
@@ -105,6 +140,12 @@ class ConfigStore(
     /** Last value the unit accepted, per firmware key: what a failed write reverts to. */
     private val confirmed = LinkedHashMap<String, Any?>()
 
+    /**
+     * What the last `config.get` reported, per key. [confirmed] moves with every accepted
+     * write, so it cannot answer "has this row been put back the way the unit already had
+     * it" — and that is the one question that decides whether a boot-only change still
+     * needs a restart.
+     */
     private val readBack = LinkedHashMap<String, Any?>()
 
     /** Per-row status and messages, keyed by the row's primary key. */
@@ -139,6 +180,8 @@ class ConfigStore(
                 null
             }
             if (fetch == null) {
+                // Whatever is on screen stays: a failed read must not empty a form
+                // the user may already be editing.
                 _state.update {
                     it.copy(
                         sync = SyncPhase.Failed("The unit did not answer the read."),
@@ -153,6 +196,10 @@ class ConfigStore(
 
     private fun applyFetch(fetch: ConfigFetch) {
         val now = clock()
+        // A row the user is still typing in (or whose write is in flight) survives the
+        // read. A re-read happens on its own — entering the tab after the TTL, a RETRY
+        // after a failed link — and a number that vanishes from the box a quarter of a
+        // second after it was typed is the kind of thing that gets blamed on the unit.
         val pending = LinkedHashMap<String, Any?>()
         for ((key, view) in rowViews) {
             if (view.status == RowStatus.PENDING) values[key]?.let { pending[key] = it }
@@ -164,9 +211,13 @@ class ConfigStore(
         confirmed.putAll(fetch.values)
         readBack.clear()
         readBack.putAll(fetch.values)
+        // The debounce timers are deliberately left running: cancelling them is how a
+        // typed value would be dropped rather than written.
         rowViews.clear()
         val missing = ArrayList<String>()
         for (item in schema.allItems) {
+            // A secret row is streamed as an empty string by design; that is not a
+            // missing value and must not be treated as one.
             val present = values.containsKey(item.key) ||
                 (item.keyY != null && values.containsKey(item.keyY))
             if (!present) {
@@ -182,18 +233,30 @@ class ConfigStore(
                 )
             }
         }
+        // Values the unit streams that the schema has no row for. They are kept,
+        // exported and drawn under a heading of their own rather than dropped — a
+        // schema nobody regenerated should be a visible gap, not a setting that
+        // quietly disappears.
         val unknown = values.keys
             .filter {
                 !schema.isHidden(it) && it != schema.advancedKey && schema.item(it) == null &&
                     schema.extra(it) == null
             }
             .map { guessItem(it, values[it]) }
+        // An unlabelled key still has a value worth showing. Without a row view its row
+        // renders an empty box, which reads as "this setting was never set" when the
+        // unit in fact sent something for it.
         for (item in unknown) {
             rowViews[item.key] = RowView(values[item.key], null, RowStatus.SYNCED, null)
         }
+        // Values the asset says are readings rather than settings, with what the unit
+        // sent for them. They are drawn read-only on the Tools page.
         val status = schema.statusExtras.mapNotNull { spec ->
             if (!values.containsKey(spec.key)) return@mapNotNull null
             val raw = values[spec.key]
+            // The asset says an ADC reading is a whole number; JSON hands it over as a
+            // Double, and "2678.0" under "Ambient light reading" reads like a measurement
+            // that precise. Normalized here so the Tools page draws what the asset says.
             val shown = if (spec.kind.equals("int", ignoreCase = true)) {
                 (raw as? Number)?.toInt() ?: raw
             } else {
@@ -216,10 +279,20 @@ class ConfigStore(
                 advanced = truth(values[schema.advancedKey]),
                 imperial = truth(values["UNITS_IMPERIAL"]),
                 missingKeys = missing,
+                // `rebootPending` is deliberately not touched here. A re-read cannot say
+                // whether the unit came back since a boot-only change, so the badge keeps
+                // its meaning until the app is the one that asked for the restart (see
+                // [clearRebootPending]); clearing it on every read would hide a change
+                // that is still not in effect.
             )
         }
     }
 
+    /**
+     * A row the schema does not describe, guessed from the JSON type the unit sent:
+     * editable, labelled from its key, flagged as a guess. Better a control with an
+     * ugly name than a setting nobody can reach.
+     */
     private fun guessItem(key: String, value: Any?): SchemaItem {
         val kind = when (value) {
             is Boolean -> ValueKind.BOOL
@@ -238,8 +311,15 @@ class ConfigStore(
         )
     }
 
+    /**
+     * Edits one row. [boxX] and [boxY] are in the units the box shows (mph, °F, in),
+     * exactly as typed; conversion, clamping and coercion to the firmware's type all
+     * happen here so no caller has to remember any of them.
+     */
     fun edit(item: SchemaItem, boxX: Any?, boxY: Any? = null) {
         if (item.kind == ValueKind.SECRET) {
+            // Secrets are streamed back empty, so an empty box means "leave the
+            // stored one alone" — posting "" would clear a passphrase.
             if ((boxX as? String).isNullOrBlank()) {
                 markRow(item, RowStatus.SYNCED, "kept what is stored")
                 return
@@ -280,6 +360,11 @@ class ConfigStore(
         }
     }
 
+    /**
+     * What a row should say when the typed value is not the value the unit will
+     * hold. The unit clamps silently and reports success, so an app that forwards an
+     * out-of-band number shows a saved row over a number nobody entered.
+     */
     private fun clampNotice(item: SchemaItem, boxX: Any?): String? {
         if (item.kind != ValueKind.INT && item.kind != ValueKind.FLOAT) return null
         val typed = (boxX as? Number)?.toDouble() ?: return null
@@ -328,6 +413,8 @@ class ConfigStore(
         val payload = LinkedHashMap<String, Any?>()
         values[item.key]?.let { payload[item.key] = coerce(item.kind, it) }
         item.keyY?.let { ky -> values[ky]?.let { payload[ky] = it } }
+        // A row with nothing in it has no value to send; that is not a failure, it is nothing
+        // to do, and reporting it as one would put a red row on a screen that did nothing.
         if (payload.isEmpty()) return true
         val result = try {
             gateway.write(payload)
@@ -335,6 +422,8 @@ class ConfigStore(
             WriteResult(ok = false, error = e.message ?: "link error")
         }
         if (!result.ok) {
+            // Revert to what the unit last confirmed rather than leaving a number on
+            // screen that was never accepted anywhere.
             values[item.key] = confirmed[item.key]
             item.keyY?.let { values[it] = confirmed[it] }
             markRow(item, RowStatus.FAILED, result.error)
@@ -352,6 +441,10 @@ class ConfigStore(
             message,
         )
         if (item.reboot) {
+            // A boot-only row only needs a restart if it ended up somewhere other than
+            // where the last read found it. On the bench the row went 1 → 2 → 1 and the
+            // badge kept saying "1 boot-only change: DISPLAY_ROTATION" for the rest of the
+            // session; a warning that lies once gets ignored the next time it is true.
             val backToRead = payload.isNotEmpty() && payload.all { (k, v) ->
                 readBack.containsKey(k) && sameValue(readBack[k], v)
             }
@@ -382,9 +475,30 @@ class ConfigStore(
         _state.update { it.copy(rows = LinkedHashMap(rowViews), pending = pendingKeys().size) }
     }
 
+    /**
+     * The keys this app has changed and the unit has not confirmed.
+     *
+     * A refused write puts its value back to the confirmed one, so it drops out of this list
+     * on the spot; a row still waiting out its debounce stays in it. An `xy` row answers with
+     * both keys, which is why [flush] works through items rather than keys.
+     */
     private fun pendingKeys(): List<String> =
         values.keys.filter { key -> !sameValue(confirmed[key], values[key]) }.toList()
 
+    /**
+     * Write everything that has not been written, now, without waiting out the debounce.
+     *
+     * The button exists because someone who has just changed four rows and is walking to the
+     * bike wants those four values on the unit, not in the phone's RAM with a timer on them.
+     * [Flush] counts rows: [Flush.rows] is how many went out, [Flush.notWritten] how many did
+     * not land — refused by the firmware, or lost because the link went away in the middle.
+     *
+     * A refused row is not counted as still pending, and that is deliberate: the row has gone
+     * back to what the unit last confirmed, so there is nothing left in the phone for SAVE to
+     * send, and repeating a value the firmware already said no to buys another flash cycle and
+     * the same answer. The row is where the bad news is written; the count only refuses to
+     * claim a clean sweep.
+     */
     suspend fun flush(): Flush {
         val items = LinkedHashSet<SchemaItem>()
         for (key in pendingKeys()) {
@@ -434,6 +548,13 @@ class ConfigStore(
         }
     }
 
+    /** The tab's own master switch. It is a settings row, so it writes like one. */
+    /**
+     * The tab's own master switch. `ADV_MODE` is a firmware row like any other (it is
+     * in `CFG_TABLE`, and the unit keeps it in NVS), but the schema keeps it out of the
+     * card list because this page carries it in the header next to the search box — so
+     * there is no row to [edit] here, and the key is written on its own instead.
+     */
     fun setAdvanced(on: Boolean) {
         val key = schema.advancedKey
         values[key] = on
@@ -447,6 +568,8 @@ class ConfigStore(
             if (result.ok) {
                 confirmed[key] = on
             } else {
+                // The switch goes back to what the unit says rather than showing an
+                // advanced mode that is not on.
                 values[key] = confirmed[key]
                 _state.update {
                     it.copy(
@@ -459,6 +582,11 @@ class ConfigStore(
         }
     }
 
+    /**
+     * The app asked the unit to restart, so the boot-only rows it changed are on their
+     * way in. Nothing else clears them: `config.get` answers the same whether or not the
+     * unit has come back, so the app would be guessing.
+     */
     fun clearRebootPending() {
         _state.update { it.copy(rebootPending = emptySet()) }
     }
@@ -471,17 +599,36 @@ class ConfigStore(
             out[key] = value
         }
         for ((key, value) in schema.extras) {
+            // A live ADC reading or a compiled-in version string is not a setting, and
+            // putting one in a backup says the file can put it back. It cannot: the unit
+            // has no row to write it into.
             if (unshippable(key)) continue
             out.putIfAbsent(key, value)
         }
         return BleJson.encode(out)
     }
 
+    /**
+     * A live ADC reading, or a version string compiled into the firmware, is not a setting:
+     * the unit has no row to write it into, so a backup that carries one promises something
+     * it cannot deliver — and the unit answers `unknown_key` when it is offered one.
+     *
+     * Keys the schema does not name at all are different: a document written by a newer
+     * schema may well restore onto a unit that has learned them, and refusing is the unit's
+     * call to make, not this app's guess.
+     */
     private fun unshippable(key: String): Boolean {
         val spec = schema.extra(key) ?: return false
         return spec.readOnly || spec.live || !spec.editable
     }
 
+    /**
+     * Restores a backup document, **card by card** rather than as one object: the
+     * whole config plus the fuel ohm array is larger than the unit's inbound message
+     * cap, and a card is the largest group that still means something if one batch
+     * turns out to be refused. Each batch is cut again by [RpcFraming] if it is
+     * still too large.
+     */
     suspend fun restore(text: String): RestoreReport {
         val parsed = BleJson.obj(text)
             ?: return RestoreReport(0, 0, 0, 0, 0, listOf("that file is not a settings backup"))
@@ -509,6 +656,10 @@ class ConfigStore(
             nvs += result.nvsErrors
             applyLocally(batch)
         }
+        // Keys the schema does not know — another firmware's rows — still go back
+        // rather than being dropped by the restore. `ADV_MODE` belongs in this group:
+        // it is a firmware row that the schema keeps out of the cards, and a backup
+        // that did not bring it back would quietly turn advanced mode off.
         val rest = parsed.filter { (key, _) ->
             !schema.isHidden(key) && schema.item(key) == null && !unshippable(key)
         }
@@ -524,6 +675,11 @@ class ConfigStore(
                 refused += rest.size
             }
         }
+        // Two different reasons a key in the file does not get written, and they mean
+        // different things to whoever holds the backup: the hidden keys are real settings
+        // this app chooses not to show (Wi-Fi credentials, NTP), while the readings are not
+        // settings at all. "This unit has no use for them" is simply untrue of a Wi-Fi
+        // credential the unit streamed out itself a minute earlier.
         val hidden = parsed.keys.filter { schema.isHidden(it) }.distinct()
         val readings = parsed.keys.filter { !schema.isHidden(it) && unshippable(it) }.distinct()
         if (hidden.isNotEmpty()) {
@@ -578,6 +734,11 @@ class ConfigStore(
         else -> false
     }
 
+    /**
+     * `1`, `1L` and `1.0` are the same setting. The unit's JSON decides whether a number
+     * comes back as an Int, a Long or a Double, while writes are coerced to the row's
+     * kind, so `==` on the boxes would call a put-back value a change.
+     */
     private fun sameValue(a: Any?, b: Any?): Boolean = when {
         a is Number && b is Number -> a.toDouble() == b.toDouble()
         a is Boolean && b is Boolean -> a == b
@@ -593,11 +754,20 @@ class ConfigStore(
         val rows: Map<String, RowView> = emptyMap(),
         /** Values the unit streams that the schema has no row for. */
         val unknown: List<SchemaItem> = emptyList(),
+        /**
+         * Values the asset describes as readings, not settings — the ambient light ADC,
+         * the ESP core and build versions — with what the unit sent. Read-only.
+         */
         val unitStatus: List<Pair<ConfigSchema.ExtraSpec, Any?>> = emptyList(),
         val advanced: Boolean = false,
         val imperial: Boolean = false,
         /** Reboot-required rows changed since the read they are measured against. */
         val rebootPending: Set<String> = emptySet(),
+        /**
+         * Rows changed here that the unit has not confirmed — the debounce window and an
+         * in-flight write both count. The page's SAVE button is disabled at zero and says
+         * how many rows it is about to write at anything else.
+         */
         val pending: Int = 0,
         val missingKeys: List<String> = emptyList(),
         val error: String? = null,

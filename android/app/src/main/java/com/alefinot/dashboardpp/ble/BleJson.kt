@@ -1,5 +1,20 @@
 package com.alefinot.dashboardpp.ble
 
+/**
+ * The small JSON reader and writer the BLE link needs.
+ *
+ * The HTTP client could hand every answer to `FlatJson` because the old endpoints
+ * all replied with one flat object. BLE answers are envelopes -
+ * `{"id":n,"ok":true,"r":{...}}` - and a `config.get` chunk nests the settings
+ * under `d`, so the link needs a parser that follows braces. It is written here,
+ * on the JVM, for the same reason `FlatJson` exists: the org.json classes in the
+ * mockable `android.jar` throw, and protocol framing is exactly the code that has
+ * to be tested without a radio.
+ *
+ * The result is untyped on purpose. The only consumers are settings values, whose
+ * firmware types are known from the key, and [Snapshot.parse], which still reads
+ * telemetry as the same flat text the unit used to send over HTTP.
+ */
 object BleJson {
 
     /** A compact encoding of [value], for the request bodies built in code. */
@@ -22,6 +37,10 @@ object BleJson {
     fun params(vararg pairs: Pair<String, Any?>): String =
         pairs.joinToString(",", "{", "}") { (key, value) -> quote(key) + ":" + encode(value) }
 
+    /**
+     * Parses [text] into maps, lists and scalars (numbers as [Double]). Null for
+     * anything malformed, including trailing garbage after the value.
+     */
     fun parse(text: String): Any? {
         val reader = Reader(text)
         return try {

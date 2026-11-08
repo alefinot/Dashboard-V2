@@ -61,6 +61,38 @@ import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import com.alefinot.dashboardpp.vehicles.VehicleType
 import java.io.File
 
+/**
+ * One card's details, editable — a panel over the garage, not a route.
+ *
+ * It is a panel for the same reason the page's delete confirmation is a box inside the card
+ * rather than a window: the page behind
+ * is the point, and closing this returns the user to their garage with the bar, the pager
+ * and their place in it exactly as they left it. A route could only ever drop them back on
+ * some other page.
+ *
+ * The form edits **the user's half** of the record — name, type, plate, maker, model, year,
+ * notes. What the app measured is shown and not editable, because it is not the user's to
+ * type: the eFuse identity is what binds the card to the physical dashboard behind them, and
+ * the remembered addresses are what a return trip is dialled from. Showing them is the
+ * honest part: a card that has no identity says so, and that explains why it cannot be
+ * recognised automatically.
+ *
+ * The name field's placeholder is not a decorative example. Leaving the name blank is
+ * allowed on purpose (the save fills in the identity tail rather than losing the edit on the
+ * back gesture), so the placeholder tells the user what the card will be called if they do —
+ * [NAME IT] on an unclaimed unit lands here with the name empty, where that matters most.
+ *
+ * Deleting asks first, through the app's own confirm dialog, because the consequence is not
+ * the card: the drives this vehicle took outlast it by design.
+ *
+ * The photo well at the top of the form is the third place a picture is asked for - after the
+ * garage and before anything else a new card is worth. Both routes end in the same crop step
+ * ([PhotoCropPanel]) rather than writing the picture straight in, because the card's cover is
+ * a square and a photograph is not, and an automatic crop cuts the plate off one car and the
+ * handlebars off another. Nothing lands on disk until USE THIS PHOTO: a gallery pick and a
+ * camera shot both sit in a scratch capture the editor throws away when the user backs out of
+ * the crop, so closing the editor mid-way cannot leave half a photo on a card.
+ */
 @Composable
 fun VehicleEditorScreen(
     vm: ConnectionViewModel,
@@ -71,6 +103,8 @@ fun VehicleEditorScreen(
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    // Cancelling the confirmation is a separate Back step from closing the form: the first
+    // press should un-arm the destructive one, not throw away the edits beside it.
     var confirming by remember(draft.id) { mutableStateOf(false) }
     BackHandler(enabled = confirming) { confirming = false }
     BackHandler(enabled = !confirming) { onDismiss() }
@@ -83,6 +117,12 @@ fun VehicleEditorScreen(
     var year by remember(draft.id) { mutableStateOf(draft.year) }
     var notes by remember(draft.id) { mutableStateOf(draft.notes) }
 
+    // Photo state, all of it keyed to this card. [cropFrom] is a staged scratch capture the
+    // user is framing; [pendingCapture] is the file handed to the camera, kept between the
+    // intent and its result because the result callback gets a boolean, not the file.
+    // [hasPhoto] and [well] describe what the card already has - the well shows the *stored*
+    // picture, and follows the VM's photo version, so a crop that lands repaints it without
+    // this screen holding onto the bitmap.
     var cropFrom by remember(draft.id) { mutableStateOf<File?>(null) }
     var pendingCapture by remember(draft.id) { mutableStateOf<VehiclePhotoStore.Capture?>(null) }
     var hasPhoto by remember(draft.id) { mutableStateOf(draft.photoFile != null) }
@@ -91,6 +131,9 @@ fun VehicleEditorScreen(
 
     val wellEdgePx = with(LocalDensity.current) { WELL_EDGE.dp.toPx().toInt() }
     LaunchedEffect(draft.id, vm.photoVersion.intValue) {
+        // Asked for at twice the box: the well is drawn from a bitmap that is at least as
+        // large as it is, and the store caps the decode at the edge the photo was kept at
+        // anyway (rule 14 - a page of cards asks for card-sized pixels, and so does this).
         vm.photo(draft.id, wellEdgePx * 2) { well = it }
     }
 
@@ -119,6 +162,8 @@ fun VehicleEditorScreen(
                 photoNote = null
                 cropFrom = capture.file
             }
+            // A cancelled shot is not an error, but the scratch file may hold the start of a
+            // write, so it goes rather than being mistaken for a capture on the next attempt.
             capture != null -> {
                 vm.cancelPhoto(draft.id)
                 photoNote = null
@@ -127,6 +172,11 @@ fun VehicleEditorScreen(
         }
     }
 
+    /**
+     * Ask the VM for a scratch capture, then point the camera at it. The order matters and is
+     * the plan's: a device with nothing to offer answers null, and the editor says the camera
+     * is not available rather than launching an intent whose photograph would land nowhere.
+     */
     fun askForCamera() {
         vm.cameraCapture(draft.id) { capture ->
             if (capture == null) {
@@ -201,6 +251,13 @@ fun VehicleEditorScreen(
                 )
                 Spacer(Modifier.height(16.dp))
 
+                // The evidence half, read-only. A blank identity is stated rather than left
+                // out: it is the reason this card cannot be recognised when it answers, and
+                // hiding that would leave the user guessing why the other card exists.
+                // The two lines are not interchangeable. The MAC is the dashboard's own claim
+                // about itself and survives anything; the paired address is this phone's link to
+                // that radio, and it changes if the pairing is redone — which is why it is
+                // labelled as a pairing and never offered as an identity.
                 Field(
                     "IDENTITY (FROM THE DASHBOARD)",
                     draft.mac ?: "not reported by this dashboard",
@@ -225,6 +282,9 @@ fun VehicleEditorScreen(
                 )
                 Spacer(Modifier.height(12.dp))
 
+                // A row of three rather than a spinner: the app has no dropdown in its
+                // furniture, and on a tablet all three choices are visible at once and one
+                // tap away, which is what a dropdown was for in the first place.
                 Text("TYPE", color = HudColors.TextMuted, style = HudeFormLabel())
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -292,7 +352,13 @@ fun VehicleEditorScreen(
         }
     }
 
-if (confirming) {
+    // Both overlays sit above the form rather than inside it: the form is scrolled, and a
+    // confirmation or a crop that scrolled with it would be off the screen by the time the
+    // user reached the bottom of the fields.
+
+    if (confirming) {
+        // The plan's sentence, in the app's own dialog - and no card id in it. The drives are
+        // found by name now; naming a row key in a warning would be a detail nobody can use.
         HudConfirmDialog(
             message = "The card goes, its photo goes with it, and the addresses it remembered " +
                 "stop being dialled. The drives this vehicle took stay in the trip log.",
@@ -309,6 +375,12 @@ if (confirming) {
             source = staged,
             onUse = { rect ->
                 vm.applyPhotoCrop(staged, draft.id, rect) { landed, refusal ->
+                    // Both answers close the crop step; only a failure leaves a note. A null
+                    // landed means the picture never became a file, so the card still has the
+                    // photo it had. A landed file with a refusal is the other half: the JPEG is
+                    // in the folder and the card on screen wears it, but the record naming it did
+                    // not reach the disk, so it walks off at the next start. Saying so now beats
+                    // a photo the owner cannot find in their own folder.
                     cropFrom = null
                     when {
                         landed == null -> photoNote =
@@ -333,6 +405,15 @@ if (confirming) {
     }
 }
 
+/**
+ * The photo well: the card's picture at the top of the form, and the three things that can
+ * be done to it. A card with no photo shows the bar's car glyph rather than a blank frame,
+ * the same honesty the garage cover keeps - an empty square that shows nothing looks broken,
+ * and an empty square that shows the glyph says "vehicle, no photo yet".
+ *
+ * REMOVE only appears when the record claims a photo, because "remove" for a card that has
+ * none is a button that does nothing.
+ */
 @Composable
 private fun PhotoWell(
     hasPhoto: Boolean,
@@ -390,6 +471,11 @@ private fun PhotoWell(
 /** Edge of the editor's photo well, in dp. Twice the card cover, and still one hand's width. */
 private const val WELL_EDGE = 164
 
+/**
+ * A label over a value. With [onValueChange] it is an editable field; without it the value
+ * is text the user reads but does not type — the same furniture either way, so the read-only
+ * rows above the form do not look like a different kind of control.
+ */
 @Composable
 private fun Field(
     label: String,

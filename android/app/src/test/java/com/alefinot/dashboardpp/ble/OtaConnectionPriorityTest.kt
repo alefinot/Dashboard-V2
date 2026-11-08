@@ -6,6 +6,24 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Where the phone is allowed to ask for the fast BLE connection interval, and where it is obliged
+ * to hand the ordinary one back.
+ *
+ * `CONNECTION_PRIORITY_HIGH` is the largest single multiplier on a firmware push (plan
+ * `INSTALL-SPEED-PLAN-2026-11-03`, task A2): the ordinary `BALANCED` interval is 30-50 ms, the fast
+ * one 11.25-15 ms, and the bench install ran one 496-byte write every 79 ms. It is also the change
+ * with the nastiest failure mode in this app — there are field reports of OEM stacks tearing down a
+ * link that is held on HIGH, and a link torn down mid-install costs the driver a RESUME press
+ * inside the unit's silence window. So the rule this guard holds is narrow on purpose: **ask for it
+ * for the chunk phase of an install, and nowhere else; give it back on every path out of that
+ * phase.**
+ *
+ * Nothing at test time can hold a radio, and Android exposes no way to read back the interval that
+ * was actually agreed, so the only honest check is structural: which files call it, and how often.
+ * A guard that could see the negotiated interval would be better; there is no such API, and
+ * pretending otherwise would produce a test that asserts a value this app can never observe.
+ */
 class OtaConnectionPriorityTest {
 
     /** The one place the stack may be asked for the fast interval. */
@@ -38,6 +56,12 @@ class OtaConnectionPriorityTest {
         )
     }
 
+    /**
+     * The part that actually protects a driver: an install that ends by any route — accepted,
+     * refused, paused, aborted, exception, or a link that simply fell over — has to leave the phone
+     * back on the ordinary interval. Both sides of the boundary carry a net: the transfer's own
+     * `finally`, and the link's teardown, which every disconnect runs through.
+     */
     @Test
     fun theOrdinaryIntervalIsHandedBackFromBothSides() {
         val bleLink = codeOnly(mainSource("BleLink.kt"))
@@ -55,6 +79,10 @@ class OtaConnectionPriorityTest {
         )
     }
 
+    /**
+     * A2 is a phone-side change with no wire change. If any of this reaches the unit, the plan's
+     * "no rule 17 surface" boundary is broken and the bench capture no longer matches the app.
+     */
     @Test
     fun askingForAnIntervalSendsNothingToTheUnit() {
         val bleLink = codeOnly(mainSource("BleLink.kt"))
@@ -84,6 +112,12 @@ class OtaConnectionPriorityTest {
         .replace(Regex("/[*].*?[*]/", RegexOption.DOT_MATCHES_ALL), " ")
         .replace(Regex("//.*"), " ")
 
+    /**
+     * Gradle runs a module's tests with that module as the working directory; the CLI and the IDE
+     * disagree about it, so each level upward is tried. Same reasoning as
+     * `ConnectActionsOnOnePageTest.moduleDir` — a guard that cannot find its own input is worse than
+     * no guard, because it teaches you to ignore a red run.
+     */
     private fun moduleDir(): File {
         val marker = "src/main/java/com/alefinot/dashboardpp/ble"
         var dir: File? = File(System.getProperty("user.dir"))

@@ -51,6 +51,16 @@ import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
 
+/**
+ * `button` from the Web UI, copied: 8px radius, a 135° cyan→blue gradient fill, a
+ * cyan hairline, 9x14 padding, 12px/600 label.
+ *
+ * There is deliberately no ripple: the page's press feedback is `button:active` -
+ * the fill brightens, the shadow deepens and the whole button scales to 0.98 - and
+ * that is what this does on press, on the page's own 0.25s. Copying the look while
+ * keeping Material's white ripple would put a gesture the page never makes back
+ * into the same control.
+ */
 enum class HudButtonStyle { PRIMARY, SECONDARY, WARNING, DANGER }
 
 @Composable
@@ -69,6 +79,8 @@ fun HudButton(
         tween(HudMotion.SHORT_MS, easing = HudMotion.Standard),
         label = "buttonScale",
     )
+    // `button` and `button:hover` are the two gradient states; a touch screen has
+    // no hover, so the pressed state takes hover's job.
     val brush: Brush? = when (style) {
         HudButtonStyle.PRIMARY ->
             if (pressed) HudBrushes.buttonActive() else HudBrushes.button()
@@ -117,6 +129,21 @@ fun HudButton(
     }
 }
 
+/**
+ * `.adv-switch`, copied to the pixel: a 34x18 track, radius 9, `#2a2a2a` off /
+ * rgba(0,255,255,.25) on, and a 14px knob inset 2px that slides 16px and turns
+ * accent-cyan - on the switch's own 0.2s transition, in the CSS's own `ease`.
+ *
+ * The control is 34x18dp but the touch target around it is 44dp tall. On the page
+ * the whole `<label>` wraps the switch, so its tappable area is larger than the
+ * control as well; 34x18dp on its own would be a hard target to hit on a phone in
+ * a moving car.
+ *
+ * [label] is what the control is *of*. The old page got that from the text next to
+ * its `<input type=checkbox>`; a Compose `Box` drawn from scratch has nothing to
+ * announce, so a screen reader reads this switch as an unnamed box and cannot say
+ * whether it is on. Passing the label makes it a named, checkable switch.
+ */
 @Composable
 fun HudToggle(
     on: Boolean,
@@ -146,6 +173,9 @@ fun HudToggle(
                 .size(width = 34.dp, height = 18.dp)
                 .clip(CircleShape)
                 .background(track)
+                // `toggleable`, not `clickable`: it puts the on/off state on the node,
+                // so TalkBack says "advanced settings, switch, off" and `uiautomator`
+                // reports checkable/checked instead of an unnamed clickable box.
                 .semantics {
                     if (label != null) contentDescription = label
                     stateDescription = if (on) "on" else "off"
@@ -169,6 +199,19 @@ fun HudToggle(
     }
 }
 
+/**
+ * The page's two field recipes, copied. `#searchBar`: 10px radius, glass fill,
+ * 8x16 padding, 13px text, `transition: all .25s ease`, and on focus a cyan
+ * border, `rgba(20,28,45,.9)` behind it and `0 0 16px rgba(0,229,255,.2)` around
+ * it - which is why the focused search field here gets a *cyan* shadow: Compose
+ * shadows take a colour, so the glow is the same shadow, in the page's colour.
+ * `input[type=text|number]` / `select`: 6px radius, `--bg-input` fill, 6x10
+ * padding, 12px text, `transition: all .2s ease`, `#182030` on focus.
+ *
+ * `#searchBar`'s 40px left padding is room for the `.search-icon` glyph, so a search
+ * field that is given a [leading] slot (the magnifier) indents its text by the same 40dp
+ * and draws the slot at 14dp, the way the page's absolutely-positioned icon does.
+ */
 enum class HudInputStyle { SEARCH, FIELD }
 
 @Composable
@@ -272,6 +315,15 @@ fun ScanProgressRing(progress: Float, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * The ring a sweep shows while it is looking for a dashboard (`.scan-ring`).
+ *
+ * The sweep has two halves with different information: the subnet walk reports how far it
+ * has got, and mDNS plus the 50 ms probes answer with no count at all. So the ring has two
+ * forms — an arc that fills while there is a fraction to show, and a turning ring while
+ * there is nothing to count. With animation switched off it holds still at a partial arc:
+ * the state is "a search is running", and that does not need motion to be understood.
+ */
 @Composable
 fun ScanRing(progress: Float, modifier: Modifier = Modifier) {
     when {

@@ -21,6 +21,14 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import java.io.File
 
+/**
+ * osmdroid needs one global setup before any MapView exists: where tiles are
+ * cached, and a User-Agent that identifies us. The tile policy at
+ * openstreetmap.org/robots requires a real contact in the UA header — anonymous
+ * or generic agents get throttled or blocked — so the app's own repository is
+ * named there. The cache goes under the app's external files dir rather than
+ * osmdroid's default so it is removed cleanly on uninstall.
+ */
 object OsmdroidSetup {
     @Volatile
     private var done = false
@@ -37,7 +45,14 @@ object OsmdroidSetup {
             val cache = File(base, "osmtiles")
             if (!cache.exists()) cache.mkdirs()
             Configuration.getInstance().apply {
+                // Base path first: its getter falls back to asking a Context
+                // that osmdroid only knows after Configuration.load(), which we
+                // never call — so leaving it unset logs a caught NPE on every
+                // MapView construction.
                 setOsmdroidBasePath(base)
+                // Explicit setters: the getter for the tile cache is overloaded
+                // (with and without a Context), so the synthetic property syntax
+                // would not resolve.
                 setOsmdroidTileCache(cache)
                 setUserAgentValue(USER_AGENT)
             }
@@ -46,12 +61,28 @@ object OsmdroidSetup {
     }
 }
 
+/**
+ * The logged track drawn over OSM raster tiles.
+ *
+ * Degradation is deliberate (plan §6): if tiles cannot be fetched — no data
+ * connection, tile host blocked, cache empty — osmdroid paints its empty canvas
+ * and the vector track, start and end markers still render. The route is our
+ * recorded data, not the tile server's, so an offline phone still sees the shape
+ * of the drive; only the basemap is missing.
+ */
 @Composable
 fun RouteMap(points: List<GeoPoint>, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     OsmdroidSetup.ensure(context)
     val holder = remember { MapHolder() }
     AndroidView(
+        // Clipped here, not in the host: osmdroid sizes its tile painting from
+        // the canvas it is handed (TilesOverlay keeps a mCanvasRect taken from
+        // Canvas.getClipBounds), and Compose draws an interop View into its own
+        // canvas without clipping it to the slot. Left alone, the basemap paints
+        // over the whole screen — status bar, cards, summary cells — while the
+        // track and markers stay inside the view's real bounds. On top of the
+        // visual mess it also fetches and decodes tiles nobody can see.
         modifier = modifier.clipToBounds(),
         factory = { ctx -> holder.build(ctx) },
         update = { map -> holder.applyTrack(map, points) },
@@ -65,6 +96,11 @@ private class MapHolder {
     private var map: MapView? = null
     private var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
+    /**
+     * Framing is applied once per point set and viewport size. Re-fitting on
+     * every recomposition would yank the viewport back while the user is
+     * panning around the route.
+     */
     private var fitted: Long? = null
 
     /** Filtered track, kept so framing can run after the first layout. */
@@ -77,12 +113,19 @@ private class MapHolder {
         // Data connection on: tiles are a bonus, never a dependency (see above).
         view.setUseDataConnection(true)
         view.setTilesScaledToDpi(true)
+        // OSM's own maximum for the standard layer is z19; below z4 the whole
+        // world is useless for a drive, so stop the pinch there.
         view.setMaxZoomLevel(19.0)
         view.setMinZoomLevel(4.0)
         map = view
         return view
     }
 
+    /**
+     * The track is drawn as soon as the view exists; framing waits for a real
+     * size, because a `AndroidView` update block runs before layout and framing
+     * an unmeasured map is not merely wrong — see [MapFit].
+     */
     fun applyTrack(view: MapView, points: List<GeoPoint>) {
         track = MapFit.usable(points)
         drawTrack(view)
@@ -141,12 +184,16 @@ private class MapHolder {
         fitted = key
         if (plan.useBoundingBox) {
             val density = view.resources.displayMetrics.density
+            // strokeSize is the pixel padding kept around the track so the start
+            // and end markers are never flush with the map edge.
             view.zoomToBoundingBox(
                 BoundingBox.fromGeoPoints(track),
                 true,
                 (28 * density).toInt(),
             )
         } else {
+            // A single position, or a map that has no size to fit into: point
+            // the camera at it and leave the zoom decision to us.
             view.controller.setZoom(plan.zoom)
             view.controller.setCenter(plan.center)
         }
@@ -173,6 +220,11 @@ private class MapHolder {
         return marker
     }
 
+    /**
+     * Marker drawn in code rather than loaded from a drawable resource: a filled
+     * disc with a dark ring, which is both legible on light and dark basemaps and
+     * consistent with the HUD palette.
+     */
     private fun dot(density: Float, color: Int): GradientDrawable {
         val size = (18f * density).toInt()
         return GradientDrawable().apply {

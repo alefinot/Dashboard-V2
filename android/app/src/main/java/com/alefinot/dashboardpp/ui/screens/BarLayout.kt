@@ -5,8 +5,32 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudIcons
 
+/**
+ * The modes of the shell: the vehicle page, the native live view, the unit's own
+ * configuration (its settings page, labelled for what it configures), recorded trips,
+ * and this app's own settings.
+ *
+ * The vehicle page is first-class now because it is where a connection is made. Before
+ * it existed, every page assumed a device was already there and the app opened on the
+ * live view; a dashboard that was not reachable left the whole app with one sentence and
+ * no way out except an address box. So the bar has a slot for it, the pager has a page
+ * for it, and the app opens there.
+ */
 enum class AppTab { LIVE, TRIPS, VEHICLES, WEB, SETTINGS }
 
+/**
+ * The bottom bar and the pager, as data.
+ *
+ * This used to be two lists — `BarSlots` for the row of icons, `BarPages` for the swipe
+ * order — and they were allowed to differ, because the bar carried a Coming Soon slot
+ * with no screen behind it and putting that in the pager would make the swipe pass
+ * through a hole. Two lists plus an exception is how an empty centre survives a redesign:
+ * the middle of the bar held a gauge, and the app's most important decision (which
+ * vehicle am I connected to?) had no slot at all.
+ *
+ * So: one list, in one order, used for both. Index 2 is the middle of five, and the
+ * middle of this bar has always been the thing the app is mostly in.
+ */
 object BarLayout {
 
     /** Left to right. Dragging a finger left walks right along the bar and the two agree. */
@@ -25,6 +49,11 @@ object BarLayout {
     /** The pager index for a bar slot. Every slot has one; there are no dead slots. */
     fun pageOf(tab: AppTab): Int = pages.indexOf(tab)
 
+    /**
+     * How a slot is drawn: the centre is larger and heavier, and the rest are tinted
+     * rather than painted, so a dimmed slot (a trips list with no store behind it, an
+     * ESP slot with no device in it) reads as unusable instead of merely quieter.
+     */
     data class Glyph(
         val desc: String,
         val size: Dp,

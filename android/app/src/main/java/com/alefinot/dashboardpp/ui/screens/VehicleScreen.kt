@@ -69,6 +69,44 @@ import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.delay
 
+/**
+ * The vehicle page — the garage, and the app's home.
+ *
+ * A card here is a **vehicle**, not an address: a thing that exists in the world and that
+ * a phone can be near, which is why it can be picked while nothing is answering, and why
+ * "which car am I in?" is a question this page can answer with Wi-Fi off. That
+ * distinction is the reason the hunt was rewritten (see [ConnectionCore] and
+ * [ConnectionViewModel]): an address is not a vehicle, and a list of addresses is not a
+ * garage.
+ *
+ * What this page owns:
+ *  - the list, one card per paired vehicle — the selected one first, then the ones that
+ *    have connected most recently ([com.alefinot.dashboardpp.vehicles.VehicleStore.sorted]);
+ *  - the selection: tapping a card makes that vehicle the one the app reaches for, and a
+ *    vehicle that has never been seen on a network is still selectable;
+ *  - the honest state of each card: connected, saved, being reached for, or never seen.
+ *
+ * A card with nothing to show says so with a placeholder instead of a stock picture. When
+ * a card is selected and the app is trying to reach it, or has failed to, the card carries
+ * the [ConnectionUiState]'s own words **verbatim** — the same sentence the view model
+ * gives the covers, because a paraphrased failure is how an app ends up saying
+ * "searching" about a network that already answered.
+ *
+ * Forgetting a vehicle lives in the editor it opens from, not on the card: DELETE asks for
+ * the name that is written on the card before it goes, photo, record and saved sessions
+ * with it. Recorded trips stay, badged with the name they were driven under.
+ *
+ * This page is also the app's **only** place for connect actions - CONNECT, DISCONNECT,
+ * SEARCH, the PAIR rows a sweep produces, and FORGET UNIT. The Live and ESP covers
+ * deliberately carry none of them: a device belongs to a vehicle, so reaching for one
+ * starts by choosing a card, and a second copy of the same control somewhere else is what
+ * makes a connection impossible to explain.
+ *
+ * The sweep list sits here too, on the ADD VEHICLE card rather than on a page of its own.
+ * It used to be a hunt that ended wherever it ended; now it is a question this page asks
+ * ("which dashboard is out there?") and answers with names, and the row the user taps
+ * becomes that vehicle's pairing.
+ */
 @Composable
 fun VehicleScreen(
     connection: ConnectionViewModel,
@@ -76,8 +114,14 @@ fun VehicleScreen(
     onNameUnclaimed: () -> Unit,
 ) {
     val context = LocalContext.current
+    // Collected once per view model: `vehicleCards()` hands back a cold flow, and calling
+    // it in place would rebuild and restart the collection on every recomposition.
     val cards = remember(connection) { connection.vehicleCards() }
     val vehicles by cards.collectAsStateWithLifecycle(initialValue = emptyList())
+    // Why this page is empty, when empty is not the truth. A garage file that will not parse is
+    // shown as no cards (the app refuses to write over what it cannot read), and the only line
+    // about it has to come from the store, because nothing else on the page can tell the two
+    // apart. Re-asked when the cards change, so a repaired file stops the warning on its own.
     val garageDamage by produceState<String?>(initialValue = null, vehicles) {
         value = connection.garageDamage()
     }
@@ -85,13 +129,27 @@ fun VehicleScreen(
     val state = connection.uiState.value
     val notice by connection.notice
     val unclaimed by connection.unclaimed
+    // Whether the sweep button has to read SEARCH AGAIN instead of SEARCH FOR DASHBOARD++. It
+    // is decided here, from the same tested mapping the covers use ([ShellRouting]), rather than
+    // handed down by the shell: the rule and the sentence it changes belong on the same page,
+    // and a pass-through parameter is one more thing that can drift out of agreement with the
+    // state it was computed from.
     val findIsRetrySearch = ShellRouting.view(state).findIsRetrySearch
 
+    // What the last sweep heard, and why it may have heard nothing. Both are read here
+    // rather than passed down: the list belongs under the button that started it, and a
+    // sweep with no visible answer is indistinguishable from a sweep that found nothing
+    // unless the page says which one happened.
     val found = connection.scanResults.value
     val scanWhy = connection.scanError.value
     val radioMissing = connection.adapterOn.value == false
     val bondNote = connection.bondNote.value
 
+    // The clock the derived status lines ("LAST SEEN YESTERDAY") are measured against.
+    // Read once per composition and refreshed once a minute while this page is on screen:
+    // a card should not have to be revisited to stop saying "today" after midnight, and a
+    // per-frame clock would rebuild every card sixty times a second for a sentence that
+    // changes once a day.
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -107,6 +165,10 @@ fun VehicleScreen(
             .padding(horizontal = HudPage.Gutter)
             .padding(top = 10.dp, bottom = 24.dp),
     ) {
+        // `.header`: the page's `h2`, its status pill, then the line about what the page is.
+        // Centred, capped, and inside `.main-content` - the column this page never had, which
+        // put a 13 sp card title at the far left of a 1920 px screen and its buttons under the
+        // right edge of it.
         val selectedName = vehicles.firstOrNull { it.id == selectedId }?.name?.ifBlank { null }
         HudPageHeader(title = "Vehicles") {
             HudBanner(
@@ -129,6 +191,12 @@ fun VehicleScreen(
         Spacer(Modifier.height(16.dp))
 
         if (vehicles.isEmpty()) {
+            // One line. The card below already explains what its two buttons do, so an
+            // empty garage only has to say that nothing has been met yet - a second
+            // paragraph about what a search is would be the page talking to itself.
+            //
+            // Unless it is not empty at all. A file the app will not parse is a different
+            // sentence, in a different colour, because the fix is the file and not a search.
             Text(
                 garageDamage?.let {
                     "There is a garage file on disk, but this build cannot read it ($it), so no " +
@@ -145,9 +213,16 @@ fun VehicleScreen(
                 VehicleCard(
                     vehicle = v,
                     selected = v.id == selectedId,
+                    // Only the selected card can be mid-attempt: the others are
+                    // records, not candidates, and saying "connecting" about a card
+                    // the app is not reaching for would be a lie. The connected card
+                    // is matched separately so it can always offer its own way out.
                     state = if (v.id == selectedId) state else null,
                     connected = connectedCard(v, state),
                     nowMs = nowMs,
+                    // There is no sweep percentage to show: a BLE scan reports units,
+                    // not progress, so the ring spins (P3 replaces the dial with the
+                    // pair/search split, which has no ring at all).
                     ringProgress = 0f,
                     photo = cardPhoto(connection, v.id),
                     onClick = { connection.selectVehicle(v.id) },
@@ -160,11 +235,21 @@ fun VehicleScreen(
             }
         }
 
+        // Two sentences that are not this page's to write, and that no card can
+        // represent: a unit answered that no card claims, or the unit that answered
+        // belongs to a different card than the one selected. Both are published by the
+        // view model and would otherwise be lost, and either one means a card on this
+        // list is about to be described wrongly.
         notice?.let {
             NoticeCard("THE APP AND THE CARD DISAGREE", it, HudColors.Amber)
             Spacer(Modifier.height(10.dp))
         }
         unclaimed?.let {
+            // The unit is named the way it advertises (`DPP-<eFuse>`), not by the
+            // Bluetooth address: an address is this phone's handle for a link, it is
+            // printed nowhere on the unit, and asking someone to name a car after it
+            // would be asking them to adopt a serial number. The MAC is the identity,
+            // and it is shown because that is the string worth checking.
             NoticeCard(
                 "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
                 "${it.name} (firmware ${it.version ?: "unknown"}, " +
@@ -178,6 +263,9 @@ fun VehicleScreen(
         }
 
         bondNote?.let {
+            // The half this app could not do. `removeBond` is not a public API, so the
+            // honest sentence is "the card forgot it, this phone has not" plus the way
+            // to the screen where it can be finished.
             NoticeCard(
                 "THIS PHONE IS STILL BONDED TO THAT UNIT",
                 it,
@@ -199,6 +287,23 @@ fun VehicleScreen(
     }
 }
 
+/**
+ * A card's photo, decoded at the size the cover is drawn and no larger, and recomposed when
+ * [ConnectionViewModel.photoVersion] says the picture on disk changed under us.
+ *
+ * Twice the cover's long edge rather than once: the cover is 76 dp, which is 113 px on this
+ * tablet's density but 228 px on a modern phone, and a bitmap decoded at the smaller number
+ * goes soft the moment the app runs on hardware denser than the one the layout was sketched
+ * on. [VehiclePhotoStore.read] takes the request as a ceiling, not a promise - it never
+ * decodes larger than the JPEG it kept (1280 px at most, usually much less), so asking for
+ * twice the box costs nothing on the cards that have no photo to speak of.
+ *
+ * The one sharp edge is a slow read answering late: the request runs on the VM's scope, so a
+ * stale answer can land after a fresh one and paint the previous picture for a moment. It is
+ * self-correcting (the next recomposition keyed on [ConnectionViewModel.photoVersion] asks
+ * again) and it is a card cover, not a diagnosis, so the race is left as it is rather than
+ * bought with a request serial number on every card on the page.
+ */
 @Composable
 private fun cardPhoto(connection: ConnectionViewModel, vehicleId: String): Bitmap? {
     val edgePx = with(LocalDensity.current) { 76.dp.toPx().toInt() * 2 }
@@ -209,6 +314,19 @@ private fun cardPhoto(connection: ConnectionViewModel, vehicleId: String): Bitma
     return photo
 }
 
+/**
+ * The cover panel: photo, scan ring, or car glyph - one of the three, in that order.
+ *
+ * [ContentScale.Crop] on a landscape cover is the deliberate half-truth: a stored photo is a
+ * square (the editor frames it that way), and filling the panel means showing its middle
+ * band. That is the band the user framed with their fingers, and the alternative -
+ * letterboxing a square into 76x54 - would make the garage look like a wall of stamps.
+ *
+ * The photo wins over the scan ring, which is a change from the placeholder-only cover: a
+ * card being hunted for still says so in its status line and in the footer's phase line, and
+ * the ring in the cover was never the only notice. Repeating it over a user's own photograph
+ * would be the app asking to be looked at instead of looking at the car.
+ */
 @Composable
 private fun CardCover(
     photo: Bitmap?,
@@ -247,6 +365,36 @@ private fun CardCover(
     }
 }
 
+/**
+ * One vehicle card, drawn with the page's `.card` skin like the trip rows: same fill,
+ * same hairline, same corners, so a list of vehicles and a list of drives read as the
+ * same kind of thing on the same page.
+ *
+ * The selection is an edge, not a badge: the selected card takes the page's accent
+ * hairline and a faint top highlight, because it is a standing fact about the app rather
+ * than a status that comes and goes. The cover shows the vehicle's photo when the card has
+ * one, and until then it is a placeholder panel drawn with the bar's own car glyph so the
+ * shape means "vehicle" in both places — and it is drawn dim on purpose. An empty frame
+ * that shows the glyph is honest about being empty; one that shows a stock car is not.
+ * A square photo is cropped to this landscape cover rather than letterboxed, which puts the
+ * middle of the picture where the vehicle is (see [CardCover]). While the app is hunting
+ * for **this** card's unit the cover becomes the sweep's ring instead: that is where a
+ * user is looking when they press SEARCH, and the full-screen ring that used to answer the
+ * question is gone.
+ *
+ * What a card offers depends on what the card *is*, not on what the page is doing: the
+ * selected and paired card also offers FORGET UNIT, which clears the pairing and the
+ * identity this card holds and leaves the card, its name and its photo alone - the
+ * difference between "this phone should stop reaching that dashboard" and "this vehicle
+ * does not exist" (see [VehicleEditorScreen]'s DELETE THE CARD).
+ *
+ * The connected card always offers DISCONNECT (even if the selection has moved on, because
+ * that is the card with a session to end), and any other selected card offers CONNECT.
+ * Every card offers EDIT, including a card nobody is standing on: a card is a record about
+ * a vehicle, and records are edited whether or not they are the one being reached for. A
+ * card that is neither selected nor connected offers *only* that, because a wall of
+ * connection buttons for cars nobody is looking at is not a garage.
+ */
 @Composable
 private fun VehicleCard(
     vehicle: Vehicle,
@@ -282,6 +430,10 @@ private fun VehicleCard(
                     color = if (selected) HudColors.Cyan else HudColors.TextPrimary,
                     style = HudeHeading().copy(fontSize = 17.sp),
                 )
+                // What the user called this vehicle, in their own words: the plate is the
+                // thing they look for in a car park, and the spec line is the difference
+                // between two cards with similar names. A blank field draws no line at all
+                // (see [plateLine]) - a card with empty gaps reads like a form.
                 plateLine(vehicle)?.let {
                     Spacer(Modifier.height(4.dp))
                     Text(it, color = HudColors.TextDim, style = HudePerfLabel())
@@ -298,6 +450,11 @@ private fun VehicleCard(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // The unit's identity is reference, not headline: it is what the app knows it
+                // reached, and it is the string to check the card against at the bench. A card
+                // that leads with a radio handle is a card that is still thinking of itself as a
+                // bookmark - the MAC is shown because it is burnt into the dashboard, and the
+                // pairing is only ever a label next to it.
                 if (!connected) {
                     vehicle.identityLabel().takeIf { it.isNotEmpty() }?.let {
                         Spacer(Modifier.height(4.dp))
@@ -329,6 +486,12 @@ private fun VehicleCard(
             ) { onEdit() }
         }
 
+        // A row of its own, because the label has to be read rather than squeezed: what
+        // this button clears is the **pairing**, not the vehicle, and that distinction is
+        // the difference between it and DELETE THE CARD in the editor. Offered on the card
+        // the user is standing on, and only when that card holds a pairing - a card with
+        // nothing to forget would grow a button that does nothing, and a wall of unpair
+        // controls for four other cars is how a dashboard gets detached by accident.
         if (selected && vehicle.hasPairing) {
             Spacer(Modifier.height(8.dp))
             HudButton(
@@ -348,6 +511,15 @@ private fun VehicleCard(
     }
 }
 
+/**
+ * One dashboard the radio heard, by the name it advertises and the signal it arrived on.
+ *
+ * The address is deliberately absent from the row: it is the handle this phone would
+ * invent for the link, not something printed on the unit, and a list of addresses is how
+ * a sweep stops being answerable ("is that my car or the neighbour's?"). RSSI is kept
+ * because it is the one thing that does answer that - the dashboard in the boot room is
+ * the loud one.
+ */
 @Composable
 private fun SweepRow(unit: Found, onPair: (Found) -> Unit) {
     Row(
@@ -369,6 +541,11 @@ private fun SweepRow(unit: Found, onPair: (Found) -> Unit) {
     }
 }
 
+/**
+ * Hand off to the phone's own Bluetooth screen. Some devices route that action to a
+ * vendor screen that is not there, so the fall back is the settings home rather than a
+ * crash: the note above the button is the information, the button is a convenience.
+ */
 private fun openPhoneBluetoothSettings(context: android.content.Context) {
     val intents = listOf(
         Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
@@ -384,6 +561,12 @@ private fun openPhoneBluetoothSettings(context: android.content.Context) {
     }
 }
 
+/**
+ * A fact the connection published that no card can carry: either the unit that answered
+ * belongs to another card, or it belongs to none, or this phone is still bonded to a unit
+ * the card just stopped trusting. All three are drawn here because the page has to
+ * contradict its own cards out loud rather than let a wrong card stand.
+ */
 @Composable
 private fun NoticeCard(
     title: String,
@@ -402,6 +585,9 @@ private fun NoticeCard(
         Spacer(Modifier.height(8.dp))
         Text(text, color = HudColors.TextMuted, style = HudeCfgNote())
         if (actionLabel != null && onAction != null) {
+            // The offer is only worth making if it can be accepted where it is made: a
+            // notice the user has to go hunting for a control on to act on is a notice they
+            // will dismiss instead.
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.heightIn(min = 44.dp)) {
@@ -412,6 +598,22 @@ private fun NoticeCard(
     }
 }
 
+/**
+ * The last thing in the garage, and the only way a new vehicle gets in: [plan §5] puts
+ * every entry point on this page because it is the page a user is already standing on.
+ * SEARCH is the button: it dials what the selected card remembers and then sweeps the
+ * radio, which is everything the app can do about a dashboard it has not met.
+ *
+ * What the sweep heard is listed under the button, as named rows the user can pick. That
+ * list is the reason the box next to it is gone rather than renamed: a Bluetooth address
+ * is not printed anywhere on a Dashboard++, typing one cannot pair with anything, and the
+ * unit's own name is on its screen and in this list - so the way in is a sweep and a tap,
+ * and the pairing happens here [plan §4].
+ *
+ * A tap is not decoration: it pins that unit to the front of the ladder ([Found] goes to
+ * [ConnectionViewModel.pairWith]), which is what makes two dashboards in range, or a
+ * neighbour's, an actual choice instead of a race between signal strengths.
+ */
 @Composable
 private fun AddVehicleCard(
     onSearch: () -> Unit,
@@ -436,6 +638,9 @@ private fun AddVehicleCard(
         ) { onSearch() }
         Spacer(Modifier.height(10.dp))
 
+        // A sweep that could not run, or found nothing, has to say which. Silence here is
+        // what made the old network hunt untrustworthy: an empty list and a blocked radio
+        // looked the same, so the user pressed the button again.
         if (found.isEmpty()) {
             scanWhy?.let {
                 Text(it, color = HudColors.Amber, style = HudeCfgNote())

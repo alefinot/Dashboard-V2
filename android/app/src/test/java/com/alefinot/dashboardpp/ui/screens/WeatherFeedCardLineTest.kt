@@ -8,6 +8,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * The one line the Weather Feed card shows about a feed the owner cannot see any other
+ * way. The card itself is Compose and untestable here; this is the sentence it draws,
+ * which is where the honest wording matters.
+ */
 class WeatherFeedCardLineTest {
 
     private val t0 = 1_762_000_000_000L
@@ -55,6 +60,8 @@ class WeatherFeedCardLineTest {
             weatherStatusLine(WeatherStatus(lastPushAt = t0, source = PositionSource.CACHE, label = "x"), t0)
                 .contains("last known position"),
         )
+        // A feed that knows no position at all is a feed that has nothing to show, and
+        // the line must not imply that the unit reported one.
         assertTrue(
             weatherStatusLine(WeatherStatus(lastPushAt = t0), t0).contains("unknown position"),
         )
