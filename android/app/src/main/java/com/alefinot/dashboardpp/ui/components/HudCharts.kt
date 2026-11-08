@@ -80,6 +80,12 @@ fun StatCell(
 /**
  * Sparkline over an indexed series. The caller decides how to decimate (plan
  * §6: cap the polyline near 2000 points), so this stays a pure painter.
+ *
+ * `domain` pins the vertical scale. Left alone the painter scales to the series, which is
+ * what a trip chart wants (a 4 k-sample route has one shape and the screen should show all of
+ * it); a five-minute battery trace wants the opposite, because a 12.4-12.7 V window stretched
+ * to fill the box reads as a flat line and hides both the sag and the margin. `mark` draws a
+ * dashed rule at a figure inside that domain - the limit the number is being judged against.
  */
 @Composable
 fun Sparkline(
@@ -89,11 +95,14 @@ fun Sparkline(
     fill: Color? = null,
     strokeWidth: Float = 2f,
     zeroBaseline: Boolean = true,
+    domain: ClosedFloatingPointRange<Double>? = null,
+    mark: Double? = null,
+    markColor: Color = HudColors.Red,
 ) {
     Canvas(modifier.fillMaxWidth()) {
         if (values.size < 2) return@Canvas
-        val lo = values.min()
-        val hi = values.max()
+        val lo = domain?.start ?: values.min()
+        val hi = domain?.endInclusive ?: values.max()
         val span = if (hi - lo < 1e-6) 1.0 else hi - lo
         val w = size.width
         val h = size.height
@@ -107,6 +116,19 @@ fun Sparkline(
                 start = Offset(0f, h - 1f),
                 end = Offset(w, h - 1f),
                 strokeWidth = 1f,
+            )
+        }
+        // The rule the figure is judged against, dashed so it cannot be mistaken for the
+        // trace. Only drawn when it falls inside the painted scale: a limit the series never
+        // approaches is not information, and a line clipped to the top edge reads as "at the
+        // limit", which is the opposite of the truth.
+        if (mark != null && mark in lo..hi) {
+            drawLine(
+                color = markColor.copy(alpha = 0.45f),
+                start = Offset(0f, yFor(mark)),
+                end = Offset(w, yFor(mark)),
+                strokeWidth = 1f,
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)),
             )
         }
         val path = Path()
