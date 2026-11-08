@@ -12,6 +12,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -49,6 +50,7 @@ import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
+import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
 
 /**
@@ -122,6 +124,12 @@ fun HudButton(
                 enabled = enabled,
                 onClick = onClick,
             )
+            // The page's 9 px of vertical padding around 13 px of text makes a button
+            // ~31 dp tall, which is a fine mouse target and a poor thumb target. The
+            // drawing is left exactly as the page draws it; the box is lifted to
+            // Android's floor, so a button is now 48 dp of button rather than 31 dp of
+            // button and 17 dp of "why did I hit the row above".
+            .heightIn(min = HudTouch.Min)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -134,10 +142,10 @@ fun HudButton(
  * rgba(0,255,255,.25) on, and a 14px knob inset 2px that slides 16px and turns
  * accent-cyan - on the switch's own 0.2s transition, in the CSS's own `ease`.
  *
- * The control is 34x18dp but the touch target around it is 44dp tall. On the page
- * the whole `<label>` wraps the switch, so its tappable area is larger than the
- * control as well; 34x18dp on its own would be a hard target to hit on a phone in
- * a moving car.
+ * The control is 34x18dp but the touch target around it is `HudTouch.Min` (48 dp) tall.
+ * On the page the whole `<label>` wraps the switch, so its tappable area is larger than
+ * the control as well; 34x18dp on its own would be a hard target to hit on a phone in a
+ * moving car.
  *
  * [label] is what the control is *of*. The old page got that from the text next to
  * its `<input type=checkbox>`; a Compose `Box` drawn from scratch has nothing to
@@ -167,7 +175,7 @@ fun HudToggle(
         tween(HudMotion.SWITCH_MS, easing = HudMotion.Ease),
         label = "switchKnobX",
     )
-    Box(modifier.size(width = 44.dp, height = 44.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.size(width = HudTouch.Min, height = HudTouch.Min), contentAlignment = Alignment.Center) {
         Box(
             Modifier
                 .size(width = 34.dp, height = 18.dp)

@@ -58,6 +58,12 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // Keep content inside the safe area: with targetSdk 35 edge-to-edge is
     // enforced, so without these insets the HUD chrome draws behind the
     // status bar / nav bar.
+    //
+    // This Box is the one place that pads for the system bars. A surface inside it
+    // must not pad for them again: the bottom bar used to add
+    // `windowInsetsPadding(navigationBars)` on top of the inset already taken here,
+    // which is invisible on a phone in gesture navigation (that inset is ~0) and
+    // costs a real 48 dp strip under the tab bar on a device with three buttons.
     Box(
         Modifier
             .fillMaxSize()

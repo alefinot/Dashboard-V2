@@ -9,15 +9,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -585,10 +582,12 @@ private fun BottomBar(
         Modifier
             .fillMaxWidth()
             .onGloballyPositioned { barOrigin = it.positionInRoot() }
-            // The bar is the app's bottom edge, so it has to clear the system
-            // navigation bar rather than sit under it. On a window that already fits
-            // the system bars these insets read as zero.
-            .windowInsetsPadding(WindowInsets.navigationBars),
+            // No inset padding here on purpose. `DashboardRoot` already pads the whole
+            // app for the system bars, and a Compose `windowInsetsPadding` does not
+            // consume the inset it used, so a second one on the bar's own bottom edge
+            // reserved the navigation bar twice - 48 dp of dead strip under the tab bar
+            // wherever the device draws three buttons.
+            ,
     ) {
         PillSheet(pager, bounds, barOrigin)
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp)) {

@@ -26,6 +26,18 @@ import androidx.compose.ui.unit.dp
  * they are the `elevation` arguments of `hudGlass` and `HudButton`. The touch
  * target sizes are Android's, not the page's - see `HudToggle`.
  */
+/**
+ * Android's touch-target floor, not the page's: the Web UI is clicked with a mouse,
+ * and its `.card button` is 9 px of padding around 13 px of text. On a phone mounted
+ * at the bars that is a target the rider has to look at to hit, so every control the
+ * app draws grows to this without its drawing changing size (the visual box stays
+ * the page's; the clickable box around it reaches 48 dp).
+ */
+object HudTouch {
+    /** Material's minimum touch target. */
+    val Min = 48.dp
+}
+
 object HudRadius {
     /** `.card`, `.perf-card`, `#msg`, `button`: border-radius 8px. */
     val Card = 8.dp
@@ -45,6 +57,37 @@ object HudRadius {
     val RowShape = RoundedCornerShape(Row)
     val FieldShape = RoundedCornerShape(Field)
     val PillShape = RoundedCornerShape(Pill)
+}
+
+/**
+ * The spacing scale the Web UI actually uses. Its CSS repeats four numbers over and
+ * over - 8 px inside a card, 12 px in a `.form-row`, 16 px of page gutter, 24 px
+ * between panels - and the app had been writing those (and a dozen one-off values
+ * next to them) as literals in 20 files. Names, not new numbers: the ladder is the
+ * page's, and nothing here is allowed to invent a step between two of these.
+ *
+ * `Gap` is what a `Row`/`Column` of siblings uses; `Tile` is the padding inside a
+ * `.card`; `Page` is `HudPage.Gutter`, repeated here so a caller that already imports
+ * the theme needs one import.
+ */
+object HudSpace {
+    /** Hairline separation - `.perf-row`'s 3 px rounded up to the app's 4. */
+    val Hair = 4.dp
+
+    /** The gap between two siblings in a strip or a row of controls. */
+    val Gap = 8.dp
+
+    /** `.form-row { gap: 12px }` and `.perf-card { padding: 12px }`. */
+    val Tile = 12.dp
+
+    /** `.main-content { padding: 16px 12px }` - the app's page gutter. */
+    val Page = 16.dp
+
+    /** The gap between two panels, and a dialog's content padding. */
+    val Panel = 24.dp
+
+    /** One step of the stagger a list uses as it arrives. */
+    val Stack = 6.dp
 }
 
 /**
