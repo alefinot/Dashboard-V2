@@ -301,30 +301,30 @@ private fun numberWidth(item: SchemaItem): Dp = when {
     else -> 78.dp
 }
 
+/**
+ * The page's `.adv-btn`: a 30 dp square, drawn and hit at 30 dp.
+ *
+ * The phone pass widened this to a 48 dp touch box and the maintainer asked for the small button
+ * back (2026-11-08), so the row keeps its density here at the cost of [HudTouch.Min] - and the
+ * field beside it is the primary input anyway: type the value, press Done. The ± are the quick
+ * nudge on a value that is already visible.
+ */
 @Composable
 private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
-    // The 30 dp square is the page's `.adv-btn` drawing and stays that size; the 48 dp box
-    // around it is what a thumb is aimed at, so the box is clickable and the square is not.
-    // A stepper that takes a miss is worse than no stepper: the value steps without the
-    // rider meaning to, or refuses to step at all at 30 dp.
     Box(
-        Modifier.size(HudTouch.Min).clickable(enabled = enabled, onClick = onClick),
+        Modifier.size(30.dp).clip(shape)
+            .background(if (enabled) HudColors.Field else HudColors.Panel)
+            .border(1.dp, HudColors.Hairline, shape)
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier.size(30.dp).clip(shape)
-                .background(if (enabled) HudColors.Field else HudColors.Panel)
-                .border(1.dp, HudColors.Hairline, shape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                symbol,
-                color = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                fontSize = 15.sp,
-                fontFamily = FontFamily.SansSerif,
-            )
-        }
+        Text(
+            symbol,
+            color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+            fontSize = 15.sp,
+            fontFamily = FontFamily.SansSerif,
+        )
     }
 }
 

@@ -156,22 +156,31 @@ class PhoneViewportTest {
     }
 
     /**
-     * The two targets the app drew smaller than the page's own buttons: the `reset` word (a 12 sp
-     * label, 17 dp of height to hit) and the ± steppers (30 dp squares). Both are the only way to
-     * reach some values — `reset` calls the unit's own `config.reset` — so they are not
-     * decoration that can be dropped, they have to become hittable.
+     * `reset` was a 12 sp word with 10 dp of padding — a 17 dp tall target — and it is the only
+     * way to reach the unit's own `config.reset` for a key, so it is not decoration that can be
+     * ignored: it had to become hittable.
+     *
+     * The ± steppers deliberately do *not* appear in this test. They were widened to the same
+     * 48 dp box in this pass and the maintainer asked for the small buttons back (2026-11-08), so
+     * the stepper cluster keeps the page's 30 dp squares and its tight gaps; the field beside
+     * them is the primary input.
      */
     @Test
-    fun theSettingsRowControlsReachTheTouchFloor() {
+    fun theSettingsRowReachesTheTouchFloorWhereItStillHasTo() {
         val row = code(File(screens, "settings"), "SettingsRow.kt")
-        assertTrue(
-            "the ± steppers went back to a 30 dp clickable: a stepper that eats a miss is worse " +
-                "than none, because the value moves when the rider did not mean it to",
-            Regex("size\\(HudTouch\\.Min\\)\\.clickable").containsMatchIn(row),
-        )
         assertTrue(
             "the reset target lost its heightIn(min = HudTouch.Min)",
             Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(row),
+        )
+        assertFalse(
+            "the ± steppers grew into a 48 dp box again — the maintainer asked for the small " +
+                "buttons, and this is the assertion that notices them being re-grown",
+            Regex("size\\(HudTouch\\.Min\\)\\.clickable").containsMatchIn(row),
+        )
+        assertTrue(
+            "the stepper stopped being the page's 30 dp square",
+            Regex("size\\(30\\.dp\\)\\.clip\\(shape\\)[\\s\\S]{0,160}clickable\\(enabled = enabled, onClick = onClick\\)")
+                .containsMatchIn(row),
         )
     }
 
