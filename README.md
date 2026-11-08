@@ -372,8 +372,8 @@ where $R_{\text{room}} =$ `NTC_R25` (default=10,000 $\Omega$), $T_{\text{room}} 
 The **Sensors Tuning** cards on the app's dashboard-settings page calibrate the two analog sensors against a reference, reading the 1 Hz frames the unit already pushes on its telemetry characteristic (`live` / `snapshot` — no raw-ADC conversion needed). On a ≤ 1.4.x unit the same cards were in the portal and polled `GET /api/live`:
 - **Fuel level Sensor** — the live sender resistance (Ω) is shown next to a fault state (`open` / `shorted` / `out of range` / `no sender`). Two ways to build the table (`fuelCalOhms`): **Fill from empty/full ohm** pre-fills a linear ramp from `FUEL_OHM_EMPTY` to `FUEL_OHM_FULL` (a good start, no driving needed), or drive the tank through its levels and **Capture** the live reading into each slot — slot `0` = empty, slot `N-1` = full. Changing the point count regenerates the ramp. The card is titled without the pin number (issue #55), and the excitation-resistor suggestion is computed from the empty/full ohms on the page plus the fixed 3.3 V rail.
 - **Speedometer** — `SPEED_SOURCE_MODE`, `SPEED_SOURCE_HOLD_MS`, the two hall-vs-GPS deviation bands (`GPS_MIN_DEV_KMH`, `MAX_SPEED_DELTA_KMH`), the GPS start/stop pair (`GPS_START_KMH`, `GPS_STOP_SETTLE_MS`) and the wheel-signal filters (`HALL_MEDIAN_SAMPLES`, `HALL_PERIOD_GUARD`, `HALL_PULSE_MIN_US`), in that order (issue #56). The GNSS hardware rows (baud, satellite counts) stay in the GPS block.
-- **Engine Temperature** — the live reading is shown; type a reference temperature and press **Apply** to set `NTC_TEMP_OFFSET`. `NTC_R25`, `NTC_R_BALANCE` and `NTC_BETA` are under **Advanced**.
-- **Battery Voltage** — the live reading is shown; type a reference voltage (e.g. a multimeter) and press **Apply** to set `BATTERY_OFFSET`. `BATTERY_SCALE` (divider ratio) is under **Advanced**.
+- **Engine Temperature** — the live reading is shown; type a reference temperature and press **Apply** to set `NTC_TEMP_OFFSET`. `NTC_R25`, `NTC_R_BALANCE` and `NTC_BETA` are the same card's advanced rows, drawn under the offset row.
+- **Battery Voltage** — the live reading is shown; type a reference voltage (e.g. a multimeter) and press **Apply** to set `BATTERY_OFFSET`. `BATTERY_SCALE` (divider ratio) is the same card's advanced row, drawn under it.
 - Calibrating against a live reading means no raw-ADC arithmetic in the browser: the offset is derived on the device from the value it is currently seeing.
 
 ---
@@ -761,7 +761,7 @@ ESP-IDF's NVS layer has its own internal locking, so a torn write is unlikely �
 
 #### Power, Sleep & Advanced Mode
 - `POWER_SENSE_OFF_MS` (default=10000): How long `POWER_SENSE_PIN` (GPIO4) must stay continuously LOW before the unit plays the goodbye screen and deep-sleeps (500–120000 ms). Any HIGH restarts the window, so ignition bounce and supply dips cannot stall the GPS task or sleep the dash (issue #26). Only used when `ENABLE_POWER_SENSE` is on. The app row (**Sleep After Power Loss**) is shown and edited in **seconds** (0.5–120, in 0.5 s steps) and converted on save; NVS, config backups and the firmware keep milliseconds (issue #57).
-- `ADV_MODE` (default=false): the global **Advanced Mode** switch at the top of the app's dashboard-settings page. When on, advanced and technical settings (CPU, GPS, Polling Rates, technical display options and sensor-calibration internals) appear as normal rows in their groups; when off they stay hidden, so the common setup path stays short. It is an NVS row, so the choice follows the unit rather than the phone.
+- `ADV_MODE` (default=false): the old **Advanced Mode** filter. It is a settings-surface flag, not a firmware one: nothing in `src/` reads it (the only references are its `CFG_TABLE` row and the `dashboard.h` extern), so it changes no behaviour on the unit — it used to decide which rows the WebUI and then the app drew. Since 2026-11-08 the app draws **every** row the unit reports and offers no switch for this key, so the phone neither shows nor writes it. It stays in `CFG_TABLE` because it is an NVS row that config backups are written from and restore to, so an existing owner's value survives; changing it takes a backup restore (or a `config.set` over the link by hand). See *The settings tab* for the removal.
 
 #### Display & Visual Design
 - `DISPLAY_ROTATION` (default=3): Screen rotation (0, 1, 2, 3).
@@ -989,7 +989,7 @@ Around that stream, the link carries three more things: the app pushes the phone
 Slot 3 draws the unit's configuration in Compose instead of loading the unit's web page in a WebView. The page has the same shape as the unit's own settings page, because that page is the reference the driver already has.
 
 - **The schema is generated, not retyped.** `scripts/gen_config_schema.py` reads the 179 rows of `CFG_TABLE` in `src/config.cpp` (through `scripts/cfg_table.py`, so every generator parses the table the same way) plus the labels, groups, cards, help text and icon names from `scripts/config_schema_presentation.json`, and writes `android/app/src/main/assets/config_schema.json`: control types, bounds, units, formats, `reboot_required`, the advanced gate, the action widgets, and the `hidden` list of keys that exist in the table but must not be drawn — it is empty today, because the 14 dead V2 keys it used to name were deleted with the rest of the Wi-Fi settings rather than hidden. The file carries `rows: 179`, `schemaVersion` and the `firmware` version it was generated against. `--check` re-derives the file and reports any drift instead of writing it. That check is run by hand — nothing in Gradle calls the generator — so keeping the asset and the firmware together is a discipline on whoever touches `CFG_TABLE`, not a build gate. Group badges come from `scripts/icons_to_drawables.py`, which reads the same presentation file and converts its `iconSVG` paths into `VectorDrawable`s (`res/drawable/ic_grp_*.xml`, five of them); the schema carries only the icon *name*, so there is one source for each picture and one for each path. Until 2026-11-02 both generators read their presentation data out of `src/webui.html`; when the page was deleted that data moved to the JSON file rather than being rewritten by hand.
-- **An accordion, not a tab strip.** Five groups under the unit page's own titles — System & General, Display, Sensors Tuning, UI Layout, and *More settings* for the rows the page does not label — each with the badge the page draws above its heading, one group open at a time, and an advanced switch gated on the schema *naming* `ADV_MODE` rather than on that key having a card row (it has none: the gate belongs to the page header in both implementations). The old app had six group pills plus a separate tools page; standing on the System tab and typing "gps" found nothing, on a page that could not say the rows were one tap away.
+- **An accordion, not a tab strip.** Five groups under the unit page's own titles — System & General, Display, Sensors Tuning, UI Layout, and *More settings* for the rows the page does not label — each with the badge the page draws above its heading, one group open at a time, and no advanced filter: the tab draws all 158 rows, the 16 the schema marks `advanced` included — the maintainer had the header's Advanced Mode switch removed on 2026-11-08, so `ADV_MODE` is still read with the rest of the table and still restored by a config backup, but nothing in the app gates on it any more. The old app had six group pills plus a separate tools page; standing on the System tab and typing "gps" found nothing, on a page that could not say the rows were one tap away.
 - **Search behaves like the unit page's.** The matcher is word-prefix, not substring (`GPS` finds `GPS Module`, `exc` finds `EXC_RES_OHM`, `cu` does not find "fuel"), and typing a query opens the groups it finds and **hides** the groups it does not, with each group header naming how many other groups have hits. A row is searchable by its label, its key (and the second key of an `x`/`y` pair) and its unit — not by its help sentence, and not by its current value, because those are not what a person sees on the row they are looking for. A card whose title matches keeps all of its rows (typing "noise" asks for the noise bench, not one row of it), and a search can never walk through the advanced gate: the gate is a statement about the row, not about how hard someone looked.
 - **Cards flow.** One column below 600 dp, two from 600, three from 900 — the unit page's own breakpoints, 900 being where a tablet's landscape width lands. Cards fill their row in schema order, and a card that carries an action widget (the noise bench, the odometer setter, the firmware panel) takes a row to itself rather than being squeezed into a third of a tablet.
 - **Writes go to the unit as you type, and the unit decides what that cost.** An edit is sent after a 600 ms debounce (the unit's own page autosaves on a 2 s timer; the app is quicker because `SAVE` is sitting in its bar), and `config.set` applies the value live **and** writes it to flash in the same call. When the flash write fails the unit says so — `nvsErrors` — and the row is marked *in RAM only*: it is on the dashboard until it reboots, and the row says that rather than pretending otherwise. `SAVE` is therefore not a commit button; it is a flush — write everything still waiting out its debounce, right now — and its note counts rows written and rows that never reached the unit separately, because a row the unit refused has already reverted and there is nothing to resend. `pending` is measured in rows, not in edits, so a slider dragged through ten values is one thing to save.
@@ -1700,6 +1700,38 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### App 2.0.3/80 — the phone layout pass (`versionCode` 71 → 80, not released)
+
+The app was laid out for the 1920 px web page it was ported from. Measured against its actual
+target — a Mi 9 Lite, app window **393 × 776 dp**, 361 dp content box, 748 dp scroll viewport —
+the type ramp was already right and the spacing was not. Portrait is now locked
+(`screenOrientation="portrait"`), only one system bar is padded (the gesture bar was counted twice,
+costing 15 dp of every page), and the ladder `HudSpace` / `HudTouch` replaced the ad-hoc paddings.
+
+Four things came out of it:
+
+- **Live rebuilt** as a card stack styled like Dashboard++ Setup's cards, with 5 min / 5 s traces
+  (60 samples) on altitude, speed, voltage and coolant, each drawn on a pinned domain so a 2500
+  Ω drive and a 105 °C engine are marked on a scale that does not lie. The round speed gauge
+  stayed; all 19 figures are still there.
+- **A settings row's value box sits on its setting's name.** Only `SELECT`, `SLIDER`, `PAIR` and
+  `FUEL_TABLE` take a line of their own; the ± steppers stayed the page's 30 dp squares, both
+  pinned by `PhoneViewportTest.aSettingsRowKeepsItsValueBoxBesideItsName`.
+- **The ESP setup header gave back 83 dp** (254 dp → 171 dp above the first group): the Advanced
+  Mode card is gone, the identity pill carries the link state, and the paddings came in. All five
+  groups plus *Values the unit reports* and *Performance Monitor* are on screen without scrolling.
+- **Row reset is an icon** (`HudIcons.Reset`), 18 dp in the same touch box, with a
+  `contentDescription` that names the setting — `reset Display Width to its default`.
+
+`ADV_MODE` follows from the header change: the app has no advanced switch any more, so it shows all
+158 rows and no longer writes that key (see the `ADV_MODE` entry above). Nothing in the firmware
+reads it, and a config backup still restores it.
+
+Built and measured from this commit: `gradlew testDebugUnitTest` → 641 tests, 0 failures;
+`assembleDebug` → `versionCode 80`; `pio run` → 1,573,063 B flash (82.8%), RAM 22.4%, firmware
+unchanged at `FW_VERSION` 2.0.3. Full evidence, phase by phase, in
+`Implementation plans/PHONE-LAYOUT-OPTIMIZATION-2026-11-08.md` (local-only).
 
 ### V2.0.3 — released 2026-11-07 (firmware 2.0.3, app `versionName` 2.0.3 / `versionCode` 71)
 
