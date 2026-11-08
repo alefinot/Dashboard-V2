@@ -45,7 +45,6 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
-import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
@@ -66,7 +65,6 @@ import com.alefinot.dashboardpp.ui.screens.settings.ValueKind
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
-import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
@@ -226,21 +224,12 @@ fun DashboardSettingsScreen(
     // `.main-content`: a 920 dp column with `margin: 0 auto`, which is the thing this
     // page never had - every control used to sit at the far edge of a 1920 px screen
     // from the label it belonged to.
-    val advanced: (@Composable () -> Unit)? =
-        if (schema != null && schema.advancedKey.isNotEmpty()) {
-            {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Advanced Mode", style = HudeFormLabel(), color = HudColors.Cyan)
-                    HudToggle(
-                        on = state.advanced,
-                        label = "advanced mode",
-                        onToggle = { store.setAdvanced(it) },
-                    )
-                }
-            }
-        } else {
-            null
-        }
+    //
+    // There is no Advanced Mode control here any more. The header card that carried it cost
+    // 38 dp of a 748 dp scroll viewport, and the maintainer had it removed on 2026-11-08 with
+    // the instruction to show everything: the gate below is simply open, and `ADV_MODE` stays a
+    // firmware row that a config backup still writes back (see [ConfigStore]).
+    val advanced = true
     val unitTag = store.buildVersion.ifEmpty { "—" }.let { "unit V$it" }
     val schemaTag = "schema " + (schema?.firmware?.let { "V$it" } ?: "missing")
     val (linkText, linkColor) = linkLine(linkState)
@@ -250,21 +239,15 @@ fun DashboardSettingsScreen(
         Column(
             Modifier.fillMaxWidth()
                 .padding(horizontal = HudPage.Gutter)
-                .padding(top = 10.dp, bottom = 4.dp),
+                .padding(top = 6.dp, bottom = 4.dp),
         ) {
-            HudPageHeader(title = "Dashboard++ Setup", trailing = advanced) {
-                HudBanner("$unitTag  ·  $schemaTag")
-            }
+            HudPageHeader(title = "Dashboard++ Setup")
+            Spacer(Modifier.height(4.dp))
+            // One pill, not a pill and a line. Which unit this is, which schema it speaks and
+            // whether the link is up are one statement, and on a phone they were two lines and
+            // an eighth of the viewport.
+            HudBanner("$unitTag  ·  $schemaTag", note = linkText, noteColor = linkColor)
             Spacer(Modifier.height(8.dp))
-            // `#msg`: the page's status strip, centred and in its status colour.
-            Text(
-                linkText,
-                style = HudeCfgNote(),
-                color = linkColor,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(10.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -292,7 +275,7 @@ fun DashboardSettingsScreen(
                     onClick = { store.syncIfNeeded(force = true) },
                 )
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(4.dp))
             Text(syncText, style = HudeCfgNote(), color = syncColor)
             if (state.missingKeys.isNotEmpty()) {
                 Text(
@@ -309,8 +292,9 @@ fun DashboardSettingsScreen(
             if (note.isNotEmpty()) {
                 Text(note, style = HudeCfgHelp(), color = HudColors.Cyan)
             }
-            // A refusal with no row to carry it — the advanced switch is the only one,
-            // and it lives in the header rather than in a card.
+            // A refusal with no row to carry it. This used to be the advanced switch's case and
+            // nothing else's; now that the header has no control, it is what a failed backup or
+            // restore reports.
             state.error?.let {
                 Text(it, style = HudeCfgHelp(), color = HudColors.Red)
             }
@@ -328,8 +312,8 @@ fun DashboardSettingsScreen(
         }
 
         val searching = SettingsLayout.words(query).isNotEmpty()
-        val shown = SettingsLayout.groupsShown(groups, query, state.advanced)
-        val autoOpen = SettingsLayout.openGroups(open, query, groups, state.advanced)
+        val shown = SettingsLayout.groupsShown(groups, query, advanced)
+        val autoOpen = SettingsLayout.openGroups(open, query, groups, advanced)
         fun isOpen(id: String) = if (searching) id in autoOpen && id !in closedWhileSearching
         else open == id
 
@@ -377,7 +361,7 @@ fun DashboardSettingsScreen(
             item {
                 Text(
                     if (searching) {
-                        SettingsLayout.searchSummary(groups, query, state.advanced)
+                        SettingsLayout.searchSummary(groups, query, advanced)
                     } else {
                         "${groups.size} groups · ${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} " +
                             "settings · tap a group to open it"
@@ -401,12 +385,12 @@ fun DashboardSettingsScreen(
                     // else claims. A block whose control needs the room keeps a row of its
                     // own (see SettingsLayout.pack).
                     val blocks =
-                        SettingsLayout.blocksFor(group, state, query, state.advanced)
+                        SettingsLayout.blocksFor(group, state, query, advanced)
                     HudAccordion(open = groupOpen, modifier = Modifier.padding(bottom = 14.dp)) {
                         HudAccordionHeader(
                             title = group.title,
                             badge = groupIcon(group.icon),
-                            meta = SettingsLayout.groupMeta(group, query, state.advanced),
+                            meta = SettingsLayout.groupMeta(group, query, advanced),
                             open = groupOpen,
                             onClick = {
                                 if (searching) {

@@ -116,13 +116,28 @@ class SettingsPageBenchFindingsTest {
         )
     }
 
+    /**
+     * Bench finding 3, still standing: a switch has to say what it switches, or TalkBack reads
+     * its help text as its name and a page full of switches cannot be told apart.
+     *
+     * The header switch this finding was written about is gone — the maintainer had the Advanced
+     * Mode card removed on 2026-11-08 and the settings tab draws every row the unit reports. So
+     * the rule is asserted on the switches that remain, and the header is pinned empty: a control
+     * added back up there has no label to inherit, which is exactly how this finding was found.
+     */
     @Test
     fun everySwitchOnThePageDescribesItself() {
         val page = codeOnly("DashboardSettingsScreen.kt")
+        val row = codeOnly("settings/SettingsRow.kt")
         assertTrue(
-            "the header advanced switch has no label, so TalkBack reads its help text as its " +
-                "name and cannot tell it from a row switch",
-            Regex("label\\s*=\\s*\"advanced mode\"").containsMatchIn(page),
+            "a row toggle no longer passes its setting's name, so a page of switches is " +
+                "indistinguishable to TalkBack",
+            Regex("label\\s*=\\s*item\\.label").containsMatchIn(row),
+        )
+        assertTrue(
+            "a switch is back in the header; a header control has no setting to name itself " +
+                "after, which is the bug this test was written for",
+            !Regex("HudToggle\\(").containsMatchIn(page),
         )
     }
 

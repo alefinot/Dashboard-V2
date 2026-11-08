@@ -212,22 +212,31 @@ class SettingsTabReplacesTheWebPageTest {
     }
 
     /**
-     * Advanced mode is a firmware row the schema keeps out of the cards on purpose, so
-     * asking the card list for it finds nothing — and the switch duly went missing from the
-     * header on a bench unit, leaving advanced mode at whatever the unit last happened to
-     * have, with no way to change it. The gate is the schema naming the key, not a row for
-     * it existing.
+     * This page used to hold a switch for the unit's `ADV_MODE`, and that switch kept going
+     * missing on the bench because the gate was keyed on the schema having a *row* for the key,
+     * which it deliberately never has. On 2026-11-08 the maintainer answered the other way: no
+     * switch at all, and the tab draws every row the unit reports.
+     *
+     * So this asserts the new shape, and asserts it in the negative too — the page cannot drift
+     * back to hiding 16 rows and a whole card behind a control that is no longer on the screen.
+     * The route that is left for changing `ADV_MODE` is a config backup.
      */
     @Test
-    fun theAdvancedSwitchIsOfferedWheneverTheSchemaNamesTheKey() {
+    fun theSettingsTabDrawsEveryRowIncludingTheAdvancedOnes() {
         val page = codeOf(moduleSource("DashboardSettingsScreen.kt"))
+        assertFalse(
+            "the page offers a way to hide rows again; the advanced switch was removed on " +
+                "2026-11-08 and the tab shows the whole table",
+            Regex("setAdvanced|HudToggle").containsMatchIn(page),
+        )
         assertTrue(
-            "the advanced switch is gated on something other than the schema naming its key",
-            Regex("schema\\.advancedKey\\.isNotEmpty\\(\\)").containsMatchIn(page),
+            "the page no longer holds the advanced gate open, so an advanced row and an " +
+                "advanced card are hidden behind a switch that does not exist",
+            Regex("val advanced = true").containsMatchIn(page),
         )
         assertFalse(
-            "the switch is gated on the advanced key having a card row, which it never has",
-            Regex("item\\(\\s*schema\\.advancedKey\\s*\\)\\s*!=\\s*null").containsMatchIn(page),
+            "the layout is gated on store state again, which is how a row went missing before",
+            Regex("state\\.advanced").containsMatchIn(page),
         )
     }
 

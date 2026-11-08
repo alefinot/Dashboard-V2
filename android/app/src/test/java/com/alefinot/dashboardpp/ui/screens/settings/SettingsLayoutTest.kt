@@ -76,34 +76,41 @@ class SettingsLayoutTest {
         unknown: List<SchemaItem> = emptyList(),
     ): List<RenderRow> = renderablesFor(
         group,
-        ConfigStore.SettingsState(advanced = advanced, unknown = unknown),
+        ConfigStore.SettingsState(unknown = unknown),
         query,
         advanced,
     ).filterIsInstance<RenderRow>()
 
     private fun keys(rows: List<RenderRow>) = rows.map { it.item.key }
 
+    /**
+     * The layout layer still knows what an advanced row is, and still refuses to draw one
+     * unless its caller says the gate is open. What changed on 2026-11-08 is who answers: the
+     * settings page has no switch any more and passes `true`, so today's only caller always
+     * opens it. The rule stays ruleable because the unit still has an `ADV_MODE`, and a surface
+     * that ever wants the gate back should find it here rather than reinvent it.
+     */
     @Test
-    fun advancedRowsAppearOnlyWhenTheMasterSwitchIsOn() {
+    fun advancedRowsAppearOnlyWhenTheGateIsOpen() {
         val plain = keys(drawn())
         val open = keys(drawn(advanced = true))
         assertTrue("an advanced row leaked: $plain", !plain.any { it in setOf("CALIB_OFFSET", "BOOT_TIME_MS") })
         assertTrue("advanced rows never arrived", open.containsAll(listOf("CALIB_OFFSET", "BOOT_TIME_MS")))
-        // The switch that opens the advanced rows has to stay reachable with them off,
-        // or the gate is locked from the outside.
-        assertTrue("the switch that opens advanced settings is itself hidden", plain.contains("ADV_MODE"))
+        // ADV_MODE is an ordinary row in this fixture, and an ordinary row is drawn either way:
+        // the gate is about the rows behind it, not about itself.
+        assertTrue("a plain row was hidden by the gate", plain.contains("ADV_MODE"))
     }
 
-    /** A whole advanced card is out until the switch is on, and in after. */
+    /** A whole advanced card is out with the gate shut, and in with it open. */
     @Test
     fun anAdvancedCardIsGatedAsACard() {
         val cards = renderablesFor(group, ConfigStore.SettingsState(), "", false)
             .filterIsInstance<RenderCard>()
         assertTrue(
-            "the advanced card was drawn with the switch off: ${cards.map { it.title }}",
+            "the advanced card was drawn with the gate shut: ${cards.map { it.title }}",
             cards.none { it.title == "Advanced card" },
         )
-        val open = renderablesFor(group, ConfigStore.SettingsState(advanced = true), "", true)
+        val open = renderablesFor(group, ConfigStore.SettingsState(), "", true)
             .filterIsInstance<RenderCard>()
         assertTrue(open.any { it.title == "Advanced card" })
     }
@@ -285,7 +292,7 @@ class SettingsLayoutTest {
     fun everySchemaRowIsDrawnExactlyOnceAcrossAllGroups() {
         val real = SettingsFixtures.asset
         val drawn = real.groups.flatMap {
-            renderablesFor(it, ConfigStore.SettingsState(advanced = true), "", true)
+            renderablesFor(it, ConfigStore.SettingsState(), "", true)
         }.filterIsInstance<RenderRow>()
         assertEquals("a row was drawn twice", drawn.size, drawn.map { it.item.key }.toSet().size)
         assertEquals(
@@ -301,7 +308,7 @@ class SettingsLayoutTest {
         val real = SettingsFixtures.asset
         for (group in real.groups) {
             for (key in real.hidden) {
-                val hits = renderablesFor(group, ConfigStore.SettingsState(advanced = true), key, true)
+                val hits = renderablesFor(group, ConfigStore.SettingsState(), key, true)
                     .filterIsInstance<RenderRow>()
                     .map { it.item.key }
                 assertTrue("$key appeared in ${group.title}", hits.none { it == key })

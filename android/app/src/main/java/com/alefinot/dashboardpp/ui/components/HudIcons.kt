@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.ui.components
 
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.group
@@ -234,6 +235,37 @@ object HudIcons {
             PathParser().parsePathString("M9,18 L15,12 L9,6").toNodes(),
             stroke = SolidColor(HudColors.Cyan), strokeLineWidth = 2f,
             strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /**
+     * A row's `config.reset`: a counter-clockwise arrow, the shape that means "put this back".
+     *
+     * The action used to be the word `reset` in 12 sp dim ink. The maintainer had it drawn
+     * instead on 2026-11-08, and the phone measurement shows why the word was the wrong fit:
+     * at 19.6 dp wide it was the narrowest thing on the row and still cost 48 dp of hit box,
+     * while an 18 dp glyph costs the same box and gives the setting's name ~4 dp more of the
+     * line - which on a 361 dp content box is the difference between "Sleep After Power Loss (s)"
+     * arriving on one line or two.
+     *
+     * Because the word is gone, the meaning has to come from somewhere else: every call site
+     * passes a `contentDescription` that names the setting, so TalkBack says "reset Target
+     * Refresh Rate to its default" rather than "button". Do not pass null here.
+     */
+    val Reset: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudReset", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            // The ring, open at the top-left where the arrow points.
+            PathParser().parsePathString("M3.51,15 A9,9 0 1 0 5.64,5.64 L1,10").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            // The arrowhead: a corner at the end of that stroke, drawn as two legs.
+            PathParser().parsePathString("M1,4 L1,10 L7,10").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
         ).build()
     }
 

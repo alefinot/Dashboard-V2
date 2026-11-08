@@ -276,7 +276,6 @@ class ConfigStore(
                 pending = 0,
                 unknown = unknown,
                 unitStatus = status,
-                advanced = truth(values[schema.advancedKey]),
                 imperial = truth(values["UNITS_IMPERIAL"]),
                 missingKeys = missing,
                 // `rebootPending` is deliberately not touched here. A re-read cannot say
@@ -548,40 +547,6 @@ class ConfigStore(
         }
     }
 
-    /** The tab's own master switch. It is a settings row, so it writes like one. */
-    /**
-     * The tab's own master switch. `ADV_MODE` is a firmware row like any other (it is
-     * in `CFG_TABLE`, and the unit keeps it in NVS), but the schema keeps it out of the
-     * card list because this page carries it in the header next to the search box — so
-     * there is no row to [edit] here, and the key is written on its own instead.
-     */
-    fun setAdvanced(on: Boolean) {
-        val key = schema.advancedKey
-        values[key] = on
-        _state.update { it.copy(advanced = on, error = null, pending = pendingKeys().size) }
-        scope.launch {
-            val result = try {
-                gateway.write(linkedMapOf<String, Any?>(key to on))
-            } catch (e: Exception) {
-                WriteResult(ok = false, error = e.message ?: "link error")
-            }
-            if (result.ok) {
-                confirmed[key] = on
-            } else {
-                // The switch goes back to what the unit says rather than showing an
-                // advanced mode that is not on.
-                values[key] = confirmed[key]
-                _state.update {
-                    it.copy(
-                        advanced = truth(confirmed[key]),
-                        error = "advanced mode: ${result.error}",
-                        pending = pendingKeys().size,
-                    )
-                }
-            }
-        }
-    }
-
     /**
      * The app asked the unit to restart, so the boot-only rows it changed are on their
      * way in. Nothing else clears them: `config.get` answers the same whether or not the
@@ -759,7 +724,13 @@ class ConfigStore(
          * the ESP core and build versions — with what the unit sent. Read-only.
          */
         val unitStatus: List<Pair<ConfigSchema.ExtraSpec, Any?>> = emptyList(),
-        val advanced: Boolean = false,
+        /**
+         * There is no `advanced` field here. `ADV_MODE` used to be mirrored into it because the
+         * header's switch both read and wrote the key; that switch was removed on 2026-11-08 and
+         * the settings tab draws every row the unit reports, so nothing in the app reads the
+         * value any more. It is still a firmware row, still read with the rest of the table, and
+         * still carried by a config backup — which is the route that is left for changing it.
+         */
         val imperial: Boolean = false,
         /** Reboot-required rows changed since the read they are measured against. */
         val rebootPending: Set<String> = emptySet(),

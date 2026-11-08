@@ -153,20 +153,33 @@ fun HudPageHeader(
  * radius 30, `--bg-card` fill, a 1 px hairline, 11 px `--text-muted`. The caller passes
  * the status colour, so the same pill says "linked" in green and "no link" in dim
  * without a second recipe.
+ *
+ * `note` is a second fact riding in the same pill, separated by a middot and drawn in its own
+ * colour. The settings page used to spend a line of its own on the identity pill and another on
+ * the link state; on a 393 dp phone those two lines were a sixth of the scroll viewport before
+ * the first setting appeared, and they say one thing - what this page is talking to. A pill that
+ * cannot fit them both wraps inside its own radius rather than clipping.
  */
 @Composable
 fun HudBanner(
     text: String,
     modifier: Modifier = Modifier,
     color: Color = HudColors.TextMuted,
+    note: String? = null,
+    noteColor: Color = color,
 ) {
     Row(
         modifier
             .hudGlass(shape = HudRadius.PillShape, elevation = 0.dp, highlight = 0f)
             .padding(horizontal = 12.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
     ) {
         Text(text, style = HudeFormLabel(), color = color)
+        if (note != null) {
+            Text("  ·  ", style = HudeFormLabel(), color = HudColors.TextDim)
+            Text(note, style = HudeFormLabel(), color = noteColor)
+        }
     }
 }
 

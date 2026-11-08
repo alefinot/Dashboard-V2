@@ -186,13 +186,19 @@ class ConfigStoreTest {
         assertEquals(0, store.state.value.pending)
     }
 
+    /**
+     * A control you click writes the moment you click it; only a control you type into waits out
+     * the debounce. That rule used to be proved through the header's advanced switch, which wrote
+     * on its own path; the switch is gone (2026-11-08) and the rule is the store's own, so it is
+     * proved through the ordinary row path now.
+     */
     @Test
     fun aSwitchGoesOutWithoutWaitingForTyping() = runBlocking {
         val item = bool("ADV_MODE", def = false)
         val store = store(item, debounceMs = 5_000)
         store.sync()
-        store.setAdvanced(true)
-        assertEquals(1, gateway.writes.size)
+        store.edit(item, true)
+        assertEquals("a click waited for typing", 1, gateway.writes.size)
         assertEquals(true, gateway.stored["ADV_MODE"])
     }
 
@@ -460,16 +466,21 @@ class ConfigStoreTest {
         assertEquals(setOf("DISPLAY_ROTATION"), store.state.value.rebootPending)
     }
 
-    // ---------------------------------------------------------------- advanced switch
+    // ------------------------------------------------- the key the app no longer shows
 
     /**
-     * ADV_MODE is a firmware row, but this page owns it in the header instead of in a
-     * card, so the schema has no row for it. The switch still has to reach the unit — and
-     * when the unit says no, the switch has to fall back rather than show an advanced
-     * mode that is not on.
+     * `ADV_MODE` is a firmware row that no card carries, and since 2026-11-08 no control either:
+     * the header's Advanced Mode switch was removed and the settings tab draws every row the
+     * unit reports. The app never writes the key now — a config backup, which is written from
+     * `CFG_TABLE`, is the route that still puts it back.
+     *
+     * It does still arrive with the rest of the read, and two things have to stay true when it
+     * does. It must not surface among the keys the schema does not know: an unlabelled orphan
+     * row would invite a tap the unit refuses. And a read that carries a key no card carries has
+     * to finish, not stall.
      */
     @Test
-    fun theAdvancedSwitchIsWrittenEvenThoughNoCardCarriesIt() = runBlocking {
+    fun aFirmwareKeyWithNoCardDoesNotBecomeAnOrphanRow() = runBlocking {
         val schema = SettingsFixtures.schema(
             SchemaCard("Ordinary", listOf(int("PLAIN", def = 1))),
             SchemaCard("Harder", listOf(int("HARD", def = 2, advanced = true)), advanced = true),
@@ -479,30 +490,18 @@ class ConfigStoreTest {
         val store = ConfigStore(gateway, schema, scope(), 40, 60_000, clock)
         store.sync()
         assertEquals(
-            "the master switch showed up as an unlabelled key",
+            "the advanced key showed up as an unlabelled key",
             emptySet<String>(),
             store.state.value.unknown.toSet(),
         )
-        assertFalse(store.state.value.advanced)
-
-        // Refused: the switch goes back to what the unit says rather than showing an
-        // advanced mode that is not on, and the refusal gets named.
-        gateway.writeQueue.addLast(WriteResult(ok = false, error = "nvs"))
-        store.setAdvanced(true)
-        assertFalse("the switch stayed on after the unit refused", store.state.value.advanced)
         assertTrue(
-            "no explanation of the refusal: ${store.state.value.error}",
-            (store.state.value.error ?: "").contains("nvs"),
+            "a read carrying a key no card carries did not finish: ${store.state.value.sync}",
+            store.state.value.sync is SyncPhase.Ready,
         )
-
-        store.setAdvanced(true)
-        assertTrue(store.state.value.advanced)
-        assertEquals(
-            "the key the unit was asked to change",
-            listOf(mapOf<String, Any?>("ADV_MODE" to true), mapOf<String, Any?>("ADV_MODE" to true)),
-            gateway.writes,
+        assertNull(
+            "the schema still has no row for it, so the tab must not draw one",
+            schema.item("ADV_MODE"),
         )
-        assertTrue("ADV_MODE never reached the unit", gateway.stored["ADV_MODE"] == true)
     }
 
     // ---------------------------------------------------------------- restore

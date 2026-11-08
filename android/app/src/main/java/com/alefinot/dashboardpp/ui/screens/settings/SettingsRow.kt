@@ -1,5 +1,6 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -38,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -134,18 +137,25 @@ fun SettingsRow(
                     // the firmware what the default is and gets it written the same way.
                     onReset?.let { back ->
                         Box(
-                            // A 12 sp word with 10 dp of padding is a 17 dp tall target, which
-                            // is a mouse target, and this row is used with gloves. The word
-                            // stays the page's size; the box around it is what a thumb hits.
+                            // The glyph is 18 dp, but the box around it is what a thumb hits, and
+                            // a thumb in gloves is what this row gets. The old word `reset` was
+                            // 17 dp tall and needed the same box; drawing it cost nothing and gave
+                            // the label a few dp more of the line.
                             Modifier.heightIn(min = HudTouch.Min)
                                 .padding(horizontal = 8.dp)
                                 .clickable(enabled = enabled, onClick = back),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                "reset",
-                                style = HudeCfgNote(),
-                                color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+                            Image(
+                                HudIcons.Reset,
+                                // The word is gone from the screen, so the word has to be here:
+                                // an icon with no description is a mystery button on a page of
+                                // 158 of them.
+                                contentDescription = "reset ${item.label} to its default",
+                                colorFilter = ColorFilter.tint(
+                                    if (enabled) HudColors.Cyan else HudColors.TextDim,
+                                ),
+                                modifier = Modifier.size(18.dp),
                             )
                         }
                     }

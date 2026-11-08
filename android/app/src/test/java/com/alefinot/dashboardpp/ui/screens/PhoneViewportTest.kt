@@ -111,6 +111,37 @@ class PhoneViewportTest {
     }
 
     /**
+     * The Dashboard++ Setup header cost 239 dp of a 748 dp scroll viewport before the first
+     * group appeared: title, identity pill, an Advanced Mode card of its own, a link line, the
+     * search row, and a sync line. Measured on the bench phone after the pass, that is 171 dp and
+     * all five groups plus the two extra sections are on screen without scrolling.
+     *
+     * Two structural facts are what hold that up, so those are what is pinned. The identity pill
+     * carries the link state in the same pill (`HudBanner(..., note = ...)`), because two centred
+     * status lines were a sixth of the page for one sentence. And the header carries no control:
+     * the Advanced Mode card is gone, so nothing else can reappear there and take a line back.
+     */
+    @Test
+    fun theSetupHeaderSpendsItsChromeOnTheSettingsNotOnItself() {
+        val page = code(screens, "DashboardSettingsScreen.kt")
+        assertTrue(
+            "the identity pill and the link state split back into two centred lines; that is " +
+                "37 dp of a phone's scroll viewport spent repeating one fact",
+            Regex("HudBanner\\([^)]*note\\s*=\\s*linkText").containsMatchIn(page),
+        )
+        assertFalse(
+            "a control came back into the page header; the maintainer had the Advanced Mode " +
+                "card removed on 2026-11-08 and the tab shows every row",
+            page.contains("Advanced Mode"),
+        )
+        assertTrue(
+            "the header stopped measuring its own height against a phone: the pill must sit in " +
+                "the same centred column as the title and the search row",
+            Regex("HudPageHeader\\(title = \"Dashboard\\+\\+ Setup\"\\)").containsMatchIn(page),
+        )
+    }
+
+    /**
      * The settings row is the page with the most rows in the app (158 of them) and the one the
      * desktop column was designed around. Two things were wrong on the bench phone, and both are
      * about the row's *shape*, not its wording: the SELECT control's chip strip was
