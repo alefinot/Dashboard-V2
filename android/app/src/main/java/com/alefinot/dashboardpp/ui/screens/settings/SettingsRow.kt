@@ -91,12 +91,14 @@ fun SettingsRow(
     // whole width and the control gets a line to itself; wider than that (tablet, desktop
     // preview) the page's one-line row is the better shape and stays.
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // A toggle needs 48 dp, so its label keeps ~270 dp beside it and the row stays one line
-        // tall. Breaking the row is for the controls that need a *line*: a slider, a picker's
-        // chips, a number with its steppers, a text field. Stacking a toggle row would double
-        // its height just to move a box that already fit.
+        // The value box stays on its setting's line: the maintainer asked for that on
+        // 2026-11-08, and the row was never broken by it - a label that needs two lines wraps at
+        // a word and the row grows to fit it. Only the controls that cannot survive beside a
+        // label drop below it: a slider or a picker's chips squeezed into what is left of a
+        // 322 dp row is unusable, and an X/Y pair simply falls off the edge (both measured on the
+        // bench, same day). See [NeedsItsOwnLine].
         val stacked = readOnlyHint == null && maxWidth < WideFormRow &&
-            item.control != RowControl.TOGGLE
+            item.control in NeedsItsOwnLine
 
         Column(Modifier.padding(vertical = 4.dp)) {
             @Composable
@@ -185,6 +187,27 @@ fun SettingsRow(
  * device, it is the difference between the two page shapes.
  */
 private val WideFormRow = 480.dp
+
+/**
+ * The controls that get a line of their own on a phone, and the reason each one is in the list
+ * rather than beside its label. Everything else — the value boxes, the toggles, the colour
+ * fields — stays on the label's line.
+ *
+ * - [RowControl.SELECT] draws its options as chips. Beside a label they are left the remnant of
+ *   the row and stack into a column of one chip per line, which is both unreadable and taller
+ *   than giving them the line.
+ * - [RowControl.SLIDER] is a track you aim at. The page's 250 dp is already the shortest usable
+ *   slider; the ~90 dp left beside a long label is a fidget control.
+ * - [RowControl.PAIR] is two number clusters, ~430 dp measured, against a 317 dp card. It does
+ *   not fit beside anything.
+ * - [RowControl.FUEL_TABLE] is a comma list of up to twenty ohm values plus an apply button.
+ */
+private val NeedsItsOwnLine = setOf(
+    RowControl.SELECT,
+    RowControl.SLIDER,
+    RowControl.PAIR,
+    RowControl.FUEL_TABLE,
+)
 
 /**
  * The one-line explanation a row carries: its status plus whatever the store said

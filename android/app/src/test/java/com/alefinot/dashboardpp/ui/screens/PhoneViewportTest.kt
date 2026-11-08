@@ -112,14 +112,17 @@ class PhoneViewportTest {
 
     /**
      * The settings row is the page with the most rows in the app (158 of them) and the one the
-     * desktop column was designed around. Measured on the bench phone, a number row gave its
-     * label 105 dp: "Backlight PWM Frequency (kHz)" arrived broken mid-word over two lines
-     * inside a row 42.5 dp tall, and the SELECT control's `fillMaxWidth` chip strip starved the
-     * `weight(1f)` label beside it completely. These guards keep the row honest about which
-     * shape it is drawing.
+     * desktop column was designed around. Two things were wrong on the bench phone, and both are
+     * about the row's *shape*, not its wording: the SELECT control's chip strip was
+     * `fillMaxWidth()` inside a `Row` that also held a `weight(1f)` label, which left the label
+     * no width at all, and the `*_X` / `*_Y` pair measured ~430 dp inside a 317 dp card.
+     *
+     * The row's answer is two shapes across a measured breakpoint, and the shape list is the
+     * point of this test: the value boxes stay on the setting name's line (the maintainer's
+     * call, 2026-11-08), and only the controls that cannot fit beside a label move below it.
      */
     @Test
-    fun aSettingsRowOnAPhoneGivesItsLabelTheWholeWidth() {
+    fun aSettingsRowKeepsItsValueBoxBesideItsName() {
         val row = code(File(screens, "settings"), "SettingsRow.kt")
         assertTrue(
             "SettingsRow stopped measuring the width it was given; the row cannot know whether " +
@@ -136,6 +139,24 @@ class PhoneViewportTest {
                 "number means the phone gets the desktop row again",
             Regex("val WideFormRow = (3[5-9]\\d|4\\d\\d)\\.dp").containsMatchIn(row),
         )
+        val exempt = Regex("NeedsItsOwnLine = setOf\\(([\\s\\S]*?)\\n\\)").find(row)
+        assertTrue(
+            "the stacking rule no longer consults its exemption set, so something is back on " +
+                "the label's line that cannot fit there (or a value box has been pushed below " +
+                "its name)",
+            exempt != null,
+        )
+        val body = exempt!!.groupValues[1]
+        for (needs in listOf("SELECT", "SLIDER", "PAIR", "FUEL_TABLE")) {
+            assertTrue("RowControl.$needs must get a line of its own", body.contains("RowControl.$needs"))
+        }
+        for (beside in listOf("NUMBER", "TEXT", "SECRET", "TOGGLE", "SWATCH")) {
+            assertFalse(
+                "RowControl.$beside is in the exemption set: that is a value box (or a toggle) " +
+                    "sent below its setting's name, and the maintainer asked for it on the line",
+                body.contains("RowControl.$beside"),
+            )
+        }
         assertTrue(
             "the starving pattern is back — an unweighted fillMaxWidth control in the row beside " +
                 "a weight(1f) label leaves the label zero width (that is how a picker drew its " +
@@ -146,12 +167,6 @@ class PhoneViewportTest {
         assertTrue(
             "the wide controls lost their cap, so they compete with the label for the row again",
             Regex("widthIn\\(max = if \\(wide\\) 420\\.dp").findAll(row).count() >= 3,
-        )
-        assertTrue(
-            "a toggle row is being stacked: a toggle needs 48 dp, not a line, and stacking the " +
-                "toggle rows costs ~30 dp on each of the dozens of switches in the schema for " +
-                "nothing",
-            Regex("item\\.control != RowControl\\.TOGGLE").containsMatchIn(row),
         )
     }
 
