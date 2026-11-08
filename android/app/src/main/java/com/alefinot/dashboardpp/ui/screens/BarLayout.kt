@@ -73,7 +73,7 @@ object BarLayout {
     fun icon(tab: AppTab): ImageVector = when (tab) {
         AppTab.LIVE -> HudIcons.Gauge
         AppTab.TRIPS -> HudIcons.Pin
-        AppTab.VEHICLES -> HudIcons.Car
+        AppTab.VEHICLES -> HudIcons.Wheel
         AppTab.WEB -> HudIcons.Chip
         AppTab.SETTINGS -> HudIcons.Cog
     }

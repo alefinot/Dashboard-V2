@@ -8,16 +8,25 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import java.util.Locale
 
 /**
  * The bar's icon set, drawn rather than written.
  *
  * The app is built for a windscreen, and the menu it replaces was legible because
  * the words were long enough to read at a glance ("LIVE", "ESP SETTINGS"). Shortened
- * to a bottom bar, the same names have to survive as glyphs, so they are drawn on
- * the same 24-unit grid, with the same 1.9-unit round stroke, in the page's own
- * accent colour - no third-party icon set, because nothing else in the app carries
- * one and a borrowed shape would be a new visual language on top of an existing one.
+ * to a bottom bar, the same names have to survive as glyphs, so they are drawn on the same
+ * 24-unit grid in the page's own accent colour - no third-party icon set, because nothing
+ * else in the app carries one and a borrowed shape would be a new visual language on top of
+ * an existing one.
+ *
+ * The one rule the set obeys is legibility at the bar's 22 dp (60 px on the bench phone),
+ * and it cuts both ways: a 1.9-unit stroke is ~5 px there, so a mark with interior detail
+ * has to be a filled body with the detail *cut* out of it by counter-winding - the wheel, the
+ * cog, the pin, the chip - while a mark that is only a line can be stroked at that weight -
+ * the chevron, the reset arrow, the magnifier. What does not survive is a stroked outline
+ * with something inside it: the stroke closes every interior, and both of the glyphs redrawn
+ * on 2026-11-08 died that way. See [Wheel] and [Cog].
  *
  * One icon is not *drawn* here from scratch: the live view's mark is the launcher's
  * own gauge (see [Gauge]), so the app's face is the thing the user taps to get back to
@@ -26,8 +35,8 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
  *
  * All of them are plain path data, not bitmaps, so the accent follows the theme and
  * the edge stays clean when the bar is scaled up on a 2560x1600 screen - and none of
- * them costs a decode at startup, which matters on a device that is also holding a
- * WebView.
+ * them costs a decode at startup, which matters on a phone that has already read a schema
+ * asset and opened a GATT link before it draws its first frame.
  */
 object HudIcons {
 
@@ -165,35 +174,88 @@ object HudIcons {
     /**
      * App settings: the cog.
      *
-     * Same geometry as the gear in `scripts/preview_icon.py` (variant "both"), which
-     * is what drew the settings glyph in the bar's own mock-up: a filled 10.4-unit
-     * ring with eight teeth, and a 3.4-unit bore. Filled rather than outlined
-     * because an outlined cog at 22 dp loses its teeth.
+     * The mark this replaces was a filled ring with eight round-capped strokes for teeth, and
+     * at the bar's 22 dp that fuses: a 2.4-unit tooth is as wide as the ring's own 3.3-unit
+     * wall, so eight teeth merge into the wall and the mark reads as an irregular lump. The
+     * maintainer had it redrawn on 2026-11-08.
+     *
+     * A cog survives a small size when its teeth are *teeth* - trapezoids standing clear of a
+     * root circle with daylight between them. Eight of them, each 26 degrees of a 45-degree
+     * pitch, standing 2.9 units out from a root radius of 6.9 to a tip radius of 9.8, which
+     * leaves about 2 units of gap at the root: the width of a stroke on the neighbouring
+     * glyphs, enough for the eye to count teeth instead of lumps. The 3.2-unit bore is the
+     * axis hole, wound against the body exactly as [Pin] and [Chip] wind theirs.
      */
     val Cog: ImageVector by lazy {
-        val teeth = (0 until 8).joinToString(" ") { i ->
-            val a = Math.toRadians(i * 45.0)
-            val nx = 12.0 + 8.4 * Math.cos(a)
-            val ny = 12.0 + 8.4 * Math.sin(a)
-            val bx = 12.0 + 5.4 * Math.cos(a)
-            val by = 12.0 + 5.4 * Math.sin(a)
-            "M%.2f,%.2f L%.2f,%.2f".format(bx, by, nx, ny)
-        }
         ImageVector.Builder(
             name = "HudCog", defaultWidth = VB.dp, defaultHeight = VB.dp,
             viewportWidth = VB, viewportHeight = VB,
         ).addPath(
-            // Ring: outer r 6.7 (wound clockwise), bore r 3.4 (wound the other way).
-            PathParser().parsePathString(
-                "M12,5.3 A6.7,6.7 0 1 1 12,18.7 A6.7,6.7 0 1 1 12,5.3 Z " +
-                    "M12,8.6 A3.4,3.4 0 1 0 12,15.4 A3.4,3.4 0 1 0 12,8.6 Z",
-            ).toNodes(),
+            PathParser().parsePathString(CogOutline).toNodes(),
             fill = SolidColor(HudColors.Cyan),
-        ).addPath(
-            PathParser().parsePathString(teeth).toNodes(),
-            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = 2.4f,
-            strokeLineCap = StrokeCap.Round,
         ).build()
+    }
+
+    /**
+     * The cog's geometry, kept as the string [Cog] fills so the test can count the teeth and
+     * check the bore's winding without reaching into Compose's vector internals.
+     */
+    internal val CogOutline: String = gearOutline(teeth = 8, root = 6.9f, tip = 9.8f,
+        toothHalfDeg = 13f, bore = 3.2f)
+
+    /**
+     * A gear outline as one path: per tooth, a chord across the root, a flank out, a chord
+     * across the tip, a flank back. Chords rather than arcs - a 22-degree chord at these
+     * radii falls a fifth of a unit inside the circle, well under a pixel at the bar's
+     * smallest size, and a tooth flank is straight anyway.
+     *
+     * Built by a loop for the reason the version it replaces used one: the tooth count and
+     * the two radii stay numbers somebody can change instead of eighty magic coordinates.
+     * `Locale.ROOT` is not decoration - `%.2f` follows the default locale, and on a locale
+     * that writes 1,23 the path parser would see a comma where a coordinate belongs.
+     */
+    private fun gearOutline(
+        teeth: Int,
+        root: Float,
+        tip: Float,
+        toothHalfDeg: Float,
+        bore: Float,
+    ): String {
+        val step = 360.0 / teeth
+        val outline = StringBuilder()
+        for (i in 0 until teeth) {
+            val centre = i * step
+            val corners = listOf(
+                centre - step / 2.0 + 0.4 to root.toDouble(),   // root, clear of the last flank
+                centre - toothHalfDeg to tip.toDouble(),        // leading flank
+                centre + toothHalfDeg to tip.toDouble(),        // across the tip
+                centre + step / 2.0 - 0.4 to root.toDouble(),   // trailing flank back to root
+            )
+            for ((deg, r) in corners) {
+                val a = Math.toRadians(deg)
+                outline.append(if (outline.isEmpty()) "M" else " L")
+                    .append(
+                        String.format(
+                            Locale.ROOT, "%.2f,%.2f",
+                            12.0 + r * Math.cos(a), 12.0 + r * Math.sin(a),
+                        ),
+                    )
+            }
+        }
+        // The bore, wound the other way so NonZero opens it. Same construction as the ring
+        // this replaced, which is device-verified.
+        outline.append(" Z M12,")
+            .append(String.format(Locale.ROOT, "%.2f", 12.0 - bore))
+            .append(" A")
+            .append(String.format(Locale.ROOT, "%.2f,%.2f", bore, bore))
+            .append(" 0 1 0 12,")
+            .append(String.format(Locale.ROOT, "%.2f", 12.0 + bore))
+            .append(" A")
+            .append(String.format(Locale.ROOT, "%.2f,%.2f", bore, bore))
+            .append(" 0 1 0 12,")
+            .append(String.format(Locale.ROOT, "%.2f", 12.0 - bore))
+            .append(" Z")
+        return outline.toString()
     }
 
     /**
@@ -270,40 +332,107 @@ object HudIcons {
     }
 
     /**
-     * Vehicles: a car seen from the side - sill line with its shoulders, a roofline,
-     * two wheels drawn as arcs under the sill.
+     * Vehicles: a car wheel — tyre, groove, rim, five spokes, hub.
      *
-     * This is the bar's mark for the app's home, and the same shape is the placeholder
-     * on a vehicle card that has no photo, so the glyph means "a vehicle" in two places
-     * and means it the same way. Drawn on the same 24-unit grid with the same 1.9-unit
-     * round stroke as the pin and the chip; the wheels are arcs rather than closed
-     * circles because a closed wheel at 22 dp turns into two dots and loses the body
-     * line it is supposed to sit under.
+     * The maintainer asked to swap the hot hatchback for a wheel on 2026-11-08. The hatch it
+     * replaces had earned its keep as an argument for the one rule this set obeys (see the file
+     * header): a mark with interior detail is a filled body whose detail is *cut* out by
+     * counter-winding, never a stroked outline. A wheel obeys the same rule with no exceptions —
+     * every ring here is a filled disc with the next disc wound the other way cut out of it, and
+     * every spoke gap is a wedge wound against the wheel face, so the glass sheet the bar floats
+     * on shows through the openings rather than being painted over.
+     *
+     * Sized to survive the bar's centre slot, 30 dp on the bench phone (~82 px, one unit ~3.4 px):
+     *  - the tyre is a 2.5-unit ring, the widest thing in the mark, so it is read first;
+     *  - a 1.5-unit groove separates the tyre from the rim — that one band of daylight is what
+     *    says "wheel" and not "solid disc", and it is the analogue of the arch gap the car used;
+     *  - five openings, 38° of a 72° pitch, are the negative space; the 34° of ink between them
+     *    are the spokes. Spokes are wedges, so they thicken outward and stay clear of the 2 px
+     *    mush floor even at the hub, where they are at their narrowest.
+     *
+     * Built by a loop for the same reason [gearOutline] is: the tyre/rim radii and the spoke
+     * count stay numbers somebody can change instead of forty magic coordinates. The rings are
+     * two semicircle arcs (the form the tests read with `circle`); the spokes are chords.
+     *
+     * The same mark is the placeholder on a vehicle card that has no photo (see
+     * [VehicleScreen] and [VehicleEditorScreen]), so "a vehicle" means one shape in the bar and
+     * on the card.
      */
-    val Car: ImageVector by lazy {
+    val Wheel: ImageVector by lazy {
         ImageVector.Builder(
-            name = "HudCar", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            name = "HudWheel", defaultWidth = VB.dp, defaultHeight = VB.dp,
             viewportWidth = VB, viewportHeight = VB,
         ).addPath(
-            // Sill, and the two shoulders that rise from it to the roofline's feet.
-            PathParser().parsePathString(
-                "M2.6,14.8 H21.4 M3.4,14.8 V12.6 A1.6,1.6 0 0 1 5.0,11.0 " +
-                    "H19.0 A1.6,1.6 0 0 1 20.6,12.6 V14.8",
-            ).toNodes(),
-            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
-            strokeLineCap = StrokeCap.Round,
-        ).addPath(
-            // Roofline: a cabin with raked ends, sitting on the body's top edge.
-            PathParser().parsePathString("M7.0,11.0 L9.2,7.2 H14.8 L17.0,11.0").toNodes(),
-            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
-            strokeLineCap = StrokeCap.Round,
-        ).addPath(
-            // Wheels, drawn under the sill so the body line stays the car's baseline.
-            PathParser().parsePathString(
-                "M5.6,14.8 A2.2,2.2 0 0 0 10.0,14.8 M14.0,14.8 A2.2,2.2 0 0 0 18.4,14.8",
-            ).toNodes(),
-            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
-            strokeLineCap = StrokeCap.Round,
+            // One path: tyre ring, then the face inside it, then the spoke gaps cut against the
+            // face — NonZero reads the winding of every subpath against the others.
+            PathParser().parsePathString(WheelData).toNodes(),
+            fill = SolidColor(HudColors.Cyan),
         ).build()
+    }
+
+    /**
+     * The wheel's geometry — tyre ring, wheel face, five spoke gaps — as the single string
+     * [Wheel] fills. Kept as a string for the same reason as [CogOutline]: the test can then
+     * count the rings and the openings and check that every cut winds against what it cuts,
+     * which is the whole design, without reaching into Compose's vector internals.
+     */
+    internal val WheelData: String = wheelOutline(
+        tyre = 11.0f, tyreIn = 8.5f, face = 7.0f,
+        spokes = 5, hub = 2.9f, lip = 5.8f, openingHalfDeg = 19f,
+    )
+
+    /**
+     * A wheel as one path. The tyre is a disc with a smaller disc cut out of it; the face is a
+     * disc drawn inside that cut; each spoke gap is a wedge wound the other way so NonZero
+     * opens it. Rings are two semicircle arcs (sweep 1 winds ink, sweep 0 winds a cut); gaps are
+     * four chords traced clockwise in this y-down grid so they subtract from the face.
+     *
+     * `Locale.ROOT` is load-bearing, exactly as in [gearOutline]: `%.2f` follows the default
+     * locale, and on a locale that writes `1,23` the path parser would see a comma where a
+     * coordinate belongs.
+     */
+    private fun wheelOutline(
+        tyre: Float,
+        tyreIn: Float,
+        face: Float,
+        spokes: Int,
+        hub: Float,
+        lip: Float,
+        openingHalfDeg: Float,
+    ): String {
+        val sb = StringBuilder()
+        sb.append(disc12(tyre, ink = true))     // outer tyre edge — ink
+        sb.append(disc12(tyreIn, ink = false))  // inner tyre edge — cut → the tyre is a ring
+        sb.append(disc12(face, ink = true))     // the wheel face fills back inside the groove
+        val step = 360.0 / spokes
+        for (i in 0 until spokes) {
+            val centre = i * step + step / 2.0   // a gap sits between two spokes
+            val a = centre - openingHalfDeg
+            val b = centre + openingHalfDeg
+            // inner@start, inner@end, outer@end, outer@start: clockwise here, so a cut.
+            sb.append("M").append(polar12(a, hub)).append(" L")
+                .append(polar12(b, hub)).append(" L")
+                .append(polar12(b, lip)).append(" L")
+                .append(polar12(a, lip)).append(" Z ")
+        }
+        return sb.toString()
+    }
+
+    /** A disc centred on (12,12) as two semicircle arcs: sweep 1 winds ink, sweep 0 winds a cut. */
+    private fun disc12(radius: Float, ink: Boolean): String {
+        val sweep = if (ink) 1 else 0
+        val top = String.format(Locale.ROOT, "12,%.2f", 12.0 - radius)
+        val bottom = String.format(Locale.ROOT, "12,%.2f", 12.0 + radius)
+        val r = String.format(Locale.ROOT, "%.2f,%.2f", radius, radius)
+        return "M$top A$r 0 1 $sweep $bottom A$r 0 1 $sweep $top Z "
+    }
+
+    /** A point on the (12,12) grid at `deg` degrees and `radius` units, as `x,y`. */
+    private fun polar12(deg: Double, radius: Float): String {
+        val a = Math.toRadians(deg)
+        return String.format(
+            Locale.ROOT, "%.2f,%.2f",
+            12.0 + radius * Math.cos(a), 12.0 + radius * Math.sin(a),
+        )
     }
 }

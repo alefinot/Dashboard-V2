@@ -303,7 +303,7 @@ private fun cardPhoto(connection: ConnectionViewModel, vehicleId: String): Bitma
 }
 
 /**
- * The cover panel: photo, scan ring, or car glyph - one of the three, in that order.
+ * The cover panel: photo, scan ring, or wheel glyph - one of the three, in that order.
  *
  * [ContentScale.Crop] on a landscape cover is the deliberate half-truth: a stored photo is a
  * square (the editor frames it that way), and filling the panel means showing its middle
@@ -343,7 +343,7 @@ private fun CardCover(
                 ScanRing(ringProgress, Modifier.size(28.dp))
             } else {
                 Icon(
-                    HudIcons.Car,
+                    HudIcons.Wheel,
                     contentDescription = null,
                     tint = if (selected) HudColors.CyanDim else HudColors.TextDim,
                     modifier = Modifier.size(30.dp),
@@ -361,9 +361,9 @@ private fun CardCover(
  * The selection is an edge, not a badge: the selected card takes the page's accent
  * hairline and a faint top highlight, because it is a standing fact about the app rather
  * than a status that comes and goes. The cover shows the vehicle's photo when the card has
- * one, and until then it is a placeholder panel drawn with the bar's own car glyph so the
+ * one, and until then it is a placeholder panel drawn with the bar's own wheel glyph so the
  * shape means "vehicle" in both places — and it is drawn dim on purpose. An empty frame
- * that shows the glyph is honest about being empty; one that shows a stock car is not.
+ * that shows the glyph is honest about being empty; one that shows a stock photo is not.
  * A square photo is cropped to this landscape cover rather than letterboxed, which puts the
  * middle of the picture where the vehicle is (see [CardCover]). While the app is hunting
  * for **this** card's unit the cover becomes the sweep's ring instead: that is where a

@@ -393,7 +393,7 @@ fun VehicleEditorScreen(
 
 /**
  * The photo well: the card's picture at the top of the form, and the three things that can
- * be done to it. A card with no photo shows the bar's car glyph rather than a blank frame,
+ * be done to it. A card with no photo shows the bar's wheel glyph rather than a blank frame,
  * the same honesty the garage cover keeps - an empty square that shows nothing looks broken,
  * and an empty square that shows the glyph says "vehicle, no photo yet".
  *
@@ -428,7 +428,7 @@ private fun PhotoWell(
         }
         if (preview == null) {
             Icon(
-                HudIcons.Car,
+                HudIcons.Wheel,
                 contentDescription = null,
                 tint = HudColors.TextDim,
                 modifier = Modifier.size(46.dp),
