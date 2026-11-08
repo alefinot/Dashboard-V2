@@ -66,6 +66,7 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
+import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlinx.coroutines.CoroutineScope
@@ -580,7 +581,7 @@ fun DashboardSettingsScreen(
                         else "FACTORY RESET",
                         style = HudButtonStyle.DANGER,
                         enabled = ready,
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        modifier = Modifier.fillMaxWidth().height(HudTouch.Button),
                         onClick = {
                             if (confirm != "factory.reset") {
                                 confirm = "factory.reset"
@@ -748,6 +749,11 @@ private fun ActionBar(
                 .padding(horizontal = HudPage.Gutter, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Four actions in two rows of two, each `HudTouch.Button` tall. They used to carry a
+            // hand-picked 44 dp — taller than the token, shorter than Material's 48, which is the
+            // worst of both: this bar is pinned above the tab bar, so every dp it takes is
+            // settings the owner has to scroll for. That 44 dp is also why the token alone did
+            // not shrink this page on 2026-11-08.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudButton(
                     label = when {
@@ -757,7 +763,7 @@ private fun ActionBar(
                     },
                     style = HudButtonStyle.PRIMARY,
                     enabled = ready && state.pending > 0,
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(HudTouch.Button),
                     onClick = {
                         scope.launch {
                             noteOfFlush(store.flush())?.let(onNote)
@@ -768,7 +774,7 @@ private fun ActionBar(
                     label = "RESTART",
                     style = HudButtonStyle.SECONDARY,
                     enabled = ready,
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(HudTouch.Button),
                     onClick = {
                         scope.launch {
                             val r = store.action("reboot")
@@ -786,14 +792,14 @@ private fun ActionBar(
                     label = "BACKUP",
                     style = HudButtonStyle.SECONDARY,
                     enabled = state.sync is SyncPhase.Ready,
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(HudTouch.Button),
                     onClick = onExport,
                 )
                 HudButton(
                     label = if (restoring) "RESTORING…" else "RESTORE",
                     style = HudButtonStyle.SECONDARY,
                     enabled = state.sync is SyncPhase.Ready && !restoring,
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).height(HudTouch.Button),
                     onClick = onRestore,
                 )
             }

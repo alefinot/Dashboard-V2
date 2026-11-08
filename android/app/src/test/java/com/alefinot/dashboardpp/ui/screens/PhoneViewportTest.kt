@@ -93,9 +93,17 @@ class PhoneViewportTest {
 
         val hud = code(components, "Hud.kt")
         assertTrue(
-            "HudButton lost its heightIn(min = HudTouch.Min): the page's 9 px of vertical " +
-                "padding makes a ~31 dp button, which is a thumb miss at the handlebars",
-            hud.contains("heightIn(min = HudTouch.Min)"),
+            "HudButton's floor went back to HudTouch.Min: that 48 dp of button is what the " +
+                "maintainer had taken off again on 2026-11-08 (\"the buttons are too tall\"), " +
+                "and it is what pushed the ESP setup action bar and a vehicle card's three " +
+                "actions off a phone screenful",
+            hud.contains("heightIn(min = HudTouch.Button)"),
+        )
+        assertTrue(
+            "HudTouch.Button drifted to or past Material's floor — buttons are the one control " +
+                "whose height is also their drawing, so the token has to stay near the page's " +
+                "own ~31 dp button",
+            Regex("val Button = 3[2-9]\\.dp").containsMatchIn(tokens),
         )
         assertTrue(
             "HudToggle's touch box stopped being HudTouch.Min; the 34x18 track is the page's " +
@@ -107,6 +115,46 @@ class PhoneViewportTest {
             "the toggle track grew — the page draws .adv-switch at 34x18 px and the touch " +
                 "target is supposed to come from the box around it, not the control",
             Regex("size\\(width = 44\\.dp, height = 44\\.dp\\)").containsMatchIn(hud),
+        )
+    }
+
+    /**
+     * A vehicle card had its three actions on two lines, and the label was the reason:
+     * FORGET THIS UNIT measured 168 dp, so 120 + 8 + 72 + 8 + 168 = 368 dp against a card that
+     * is 337 dp inside its padding. The maintainer asked for one line and for the short label on
+     * 2026-11-08.
+     *
+     * Pinned as a width sum rather than as a layout snapshot, because the sum is what actually
+     * breaks: a longer label, a wider minimum, or a fourth button puts the line back under the
+     * fold — and a card that wraps its own actions is a card whose FORGET nobody sees.
+     */
+    @Test
+    fun aVehicleCardOffersItsThreeActionsOnOneLine() {
+        val card = code(screens, "VehicleScreen.kt")
+        val labels = Regex("\"(DISCONNECT|CONNECT|EDIT|FORGET|FORGET THIS UNIT|FORGET UNIT)\"")
+            .findAll(card).map { it.groupValues[1] }.toSet()
+        assertTrue(
+            "the card lost one of its actions: $labels",
+            labels.containsAll(setOf("DISCONNECT", "CONNECT", "EDIT", "FORGET")),
+        )
+        assertFalse(
+            "the long label came back on the card; at 168 dp it is what forced the second row",
+            labels.any { it.startsWith("FORGET ") },
+        )
+        val widths = Regex("widthIn\\(min = (\\d+)\\.dp\\)").findAll(card)
+            .map { it.groupValues[1].toInt() }.toList()
+        assertEquals(
+            "the action buttons are the only widthIn(min =) on this page; a new one here needs " +
+                "to be counted in the line's width before it is drawn",
+            4, widths.size,
+        )
+        val widestConnect = maxOf(widths[0], widths[1])
+        val line = widestConnect + widths[2] + widths[3] + 2 * 8
+        assertTrue(
+            "the widest line the card can draw its actions at is $line dp, and the card's " +
+                "content box on the bench phone is 337 dp — past that the third button drops " +
+                "onto a row of its own",
+            line <= 337,
         )
     }
 

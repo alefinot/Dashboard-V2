@@ -97,7 +97,7 @@ import kotlinx.coroutines.delay
  * with it. Recorded trips stay, badged with the name they were driven under.
  *
  * This page is also the app's **only** place for connect actions - CONNECT, DISCONNECT,
- * SEARCH, the PAIR rows a sweep produces, and FORGET UNIT. The Live and ESP covers
+ * SEARCH, the PAIR rows a sweep produces, and FORGET. The Live and ESP covers
  * deliberately carry none of them: a device belongs to a vehicle, so reaching for one
  * starts by choosing a card, and a second copy of the same control somewhere else is what
  * makes a connection impossible to explain.
@@ -371,7 +371,7 @@ private fun CardCover(
  * question is gone.
  *
  * What a card offers depends on what the card *is*, not on what the page is doing: the
- * selected and paired card also offers FORGET UNIT, which clears the pairing and the
+ * selected and paired card also offers FORGET, which clears the pairing and the
  * identity this card holds and leaves the card, its name and its photo alone - the
  * difference between "this phone should stop reaching that dashboard" and "this vehicle
  * does not exist" (see [VehicleEditorScreen]'s DELETE THE CARD).
@@ -453,6 +453,13 @@ private fun VehicleCard(
         }
 
         Spacer(Modifier.height(10.dp))
+        // One line, three buttons - the maintainer's instruction on 2026-11-08, and the button
+        // height that made it fit is `HudTouch.Button`. It needed the label shortened too:
+        // FORGET THIS UNIT measured 168 dp, and 120+8+72+8+168 was 368 dp against a card that is
+        // 337 dp inside. `FORGET` is ~70 dp, so the three land at 278 dp and the row has room to
+        // spare. What the short label stops saying, the line under it says instead - and it says
+        // it better, because "this clears the pairing, not the vehicle" is a sentence, not a
+        // word that has to be guessed at 13 sp on a glove screen.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (connected) {
                 HudButton(
@@ -472,21 +479,20 @@ private fun VehicleCard(
                 modifier = Modifier.widthIn(min = 72.dp),
                 style = HudButtonStyle.SECONDARY,
             ) { onEdit() }
+            // Offered on the card the user is standing on, and only when that card holds a
+            // pairing - a card with nothing to forget would grow a button that does nothing, and
+            // a wall of unpair controls for four other cars is how a dashboard gets detached by
+            // accident.
+            if (selected && vehicle.hasPairing) {
+                HudButton(
+                    "FORGET",
+                    modifier = Modifier.widthIn(min = 70.dp),
+                    style = HudButtonStyle.SECONDARY,
+                ) { onForgetUnit() }
+            }
         }
 
-        // A row of its own, because the label has to be read rather than squeezed: what
-        // this button clears is the **pairing**, not the vehicle, and that distinction is
-        // the difference between it and DELETE THE CARD in the editor. Offered on the card
-        // the user is standing on, and only when that card holds a pairing - a card with
-        // nothing to forget would grow a button that does nothing, and a wall of unpair
-        // controls for four other cars is how a dashboard gets detached by accident.
         if (selected && vehicle.hasPairing) {
-            Spacer(Modifier.height(8.dp))
-            HudButton(
-                "FORGET THIS UNIT",
-                modifier = Modifier.widthIn(min = 168.dp),
-                style = HudButtonStyle.SECONDARY,
-            ) { onForgetUnit() }
             Spacer(Modifier.height(4.dp))
             Text(
                 "Unpairs this unit from this phone. The card stays.",

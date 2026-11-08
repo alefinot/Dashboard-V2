@@ -124,12 +124,12 @@ fun HudButton(
                 enabled = enabled,
                 onClick = onClick,
             )
-            // The page's 9 px of vertical padding around 13 px of text makes a button
-            // ~31 dp tall, which is a fine mouse target and a poor thumb target. The
-            // drawing is left exactly as the page draws it; the box is lifted to
-            // Android's floor, so a button is now 48 dp of button rather than 31 dp of
-            // button and 17 dp of "why did I hit the row above".
-            .heightIn(min = HudTouch.Min)
+            // The page's 9 px of vertical padding around 13 px of text makes a button ~31 dp
+            // tall. This first pass lifted it to Android's 48 dp floor; on the bench phone the
+            // maintainer had that back down again on 2026-11-08 - "the buttons are too tall" -
+            // so the box is lifted only to HudTouch.Button, which keeps the page's drawing and
+            // stops four action buttons from eating a phone screenful. See the token.
+            .heightIn(min = HudTouch.Button)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {

@@ -36,6 +36,24 @@ import androidx.compose.ui.unit.dp
 object HudTouch {
     /** Material's minimum touch target. */
     val Min = 48.dp
+
+    /**
+     * What a button is drawn at. The maintainer had the app's buttons brought down from
+     * [Min] on 2026-11-08 — *"the buttons are too tall"* — after the same instruction had
+     * already returned the settings steppers to the page's 30 dp squares.
+     *
+     * 36 dp is the page's own height with a floor under it: 9 px of vertical padding around
+     * 13 px of label is ~31 dp, so the button is drawn as `button` draws it and the box is
+     * lifted only far enough that it cannot collapse when a label wraps or a style changes.
+     * Two steps down from Material's 48, one step above the ± steppers, and the reason the
+     * ESP setup page's four action buttons and a vehicle card's three now sit inside a phone
+     * screenful instead of below it.
+     *
+     * Not every control follows it. A toggle's hit box and a settings row's `reset` stay at
+     * [Min], because those grow *silently* — their drawing is 18 dp and 18 dp, so the extra
+     * height buys reach without costing the page a line. A button's height is its drawing.
+     */
+    val Button = 36.dp
 }
 
 object HudRadius {

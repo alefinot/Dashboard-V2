@@ -42,7 +42,7 @@ class ConnectActionsOnOnePageTest {
      * permission with `BleScreen` — the bench panel that drove the raw link (scan, pair,
      * snapshot, config mirror) while the settings rebuild landed. That panel is deleted: the
      * settings page reads and writes over the same link, the vehicle page pairs, and
-     * "FORGET THIS UNIT" on a card is how a binding is dropped. The allowlist is one file now,
+     * "FORGET" on a card is how a binding is dropped. The allowlist is one file now,
      * so a second file calling a connection action is exactly the regression this guard was
      * written to catch.
      *

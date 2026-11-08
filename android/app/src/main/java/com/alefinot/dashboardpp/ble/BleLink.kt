@@ -285,7 +285,7 @@ class BleLink(context: Context) {
         false
     } catch (e: SecurityException) {
         // On Android 12+ both `getRemoteDevice` and `bondState` are gated on BLUETOOTH_CONNECT, and
-        // this answer is asked from the vehicle page's FORGET THIS UNIT, which runs uncaught in the
+        // this answer is asked from the vehicle page's FORGET, which runs uncaught in the
         // view model's scope. A card the owner is trying to forget must never be able to take the
         // process with it - and "this phone cannot say" is genuinely not bonded, for every decision
         // this feeds: there is no pairing the app may claim to hold. (Bench audit 2026-11-07, item
