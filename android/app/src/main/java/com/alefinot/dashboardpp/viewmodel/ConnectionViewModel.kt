@@ -1234,8 +1234,7 @@ class ConnectionViewModel(
             timeNote.value = if (reply.ok) {
                 null
             } else {
-                "This phone could not set the unit's clock. Trip files are stamped by the " +
-                    "phone, so they are unaffected; the dashboard's own stamps may be wrong."
+                "Unit clock not set."
             }
         }
     }

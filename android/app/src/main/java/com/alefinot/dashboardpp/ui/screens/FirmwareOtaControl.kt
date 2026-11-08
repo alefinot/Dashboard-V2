@@ -247,7 +247,7 @@ private fun needsConfirmation(view: OtaView, unitVersion: String): Boolean {
 private fun confirmReason(view: OtaView, unitVersion: String): String {
     val tag = view.image?.versionTag
     return if (tag == null) {
-        "that file carries no version marker — the app cannot tell you what it is"
+        "that file carries no version marker"
     } else {
         "that file says it is $tag and the unit is already running $tag"
     }
@@ -265,9 +265,9 @@ private fun summaryLine(view: OtaView): String {
 /** What the transfer is doing, with the numbers a person actually watches. */
 private fun progressLine(view: OtaView): String {
     val stage = when (view.stage) {
-        OtaStage.Verifying -> "the unit is checking the image it just got"
-        OtaStage.Installed -> "installed — the unit is restarting"
-        OtaStage.Paused -> "paused at the unit's last confirmed byte"
+        OtaStage.Verifying -> "verifying"
+        OtaStage.Installed -> "installed — restarting"
+        OtaStage.Paused -> "paused"
         else -> "sending"
     }
     val eta = view.etaSeconds()

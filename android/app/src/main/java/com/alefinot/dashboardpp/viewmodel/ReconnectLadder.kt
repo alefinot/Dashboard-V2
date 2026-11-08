@@ -163,8 +163,7 @@ object ReconnectLadder {
             is LinkEvent.Dropped ->
                 if (attempt < BACKOFF_MS.size) LadderStep.Retry(BACKOFF_MS[attempt])
                 else LadderStep.GiveUp(
-                    "Gave up reaching the dashboard after ${BACKOFF_MS.size} attempts over " +
-                        "Bluetooth${event.reason?.let { " ($it)" } ?: ""}.",
+                    "Gave up after ${BACKOFF_MS.size} tries${event.reason?.let { " ($it)" } ?: ""}.",
                 )
 
             LinkEvent.Linked -> LadderStep.Linked

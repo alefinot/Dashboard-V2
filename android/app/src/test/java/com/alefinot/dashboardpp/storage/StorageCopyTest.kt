@@ -143,40 +143,38 @@ class StorageCopyTest {
         // the owner can act on these sentences without leaving for a settings page.
         val notes = runtimeSentences()
         assertTrue(notes.any { it.contains("app's own folder") })
-        assertTrue(notes.any { it.contains("allow") })
+        assertTrue(notes.any { it.lowercase().contains("allow") })
     }
 
     @Test
     fun `android 11 keeps the offer it has always made`() {
         // The other direction: fixing Android 10 must not talk the useful path out of the app.
+        // Since the copy was cut to one line each, what survives the cut has to be the offer
+        // itself, not a paragraph about where to find it.
         assertTrue(
             StorageCopy.storageNote(false, GrantPath.ALL_FILES).contains("Grant storage access"),
         )
         assertTrue(
             StorageCopy.tripsNote(false, GrantPath.ALL_FILES, "Documents/Dashboard++", "trips")
-                .contains("App Settings"),
+                .contains("app-private"),
         )
         assertTrue(
             StorageCopy.tripFileNote(false, GrantPath.ALL_FILES, "Documents/Dashboard++", "trips")
-                .contains("App Settings"),
+                .contains("app's own folder"),
         )
     }
 
     @Test
     fun `the runtime path is told to allow the permission rather than hunt for a switch`() {
         val note = StorageCopy.storageNote(false, GrantPath.RUNTIME_PERMISSION)
-        assertTrue(note, note.contains("asks for storage permission"))
+        assertTrue(note, note.lowercase().contains("allow"))
         // The card's own button has to be named in the sentence under it, or the owner reads the
         // sentence, sees no control it describes, and concludes the app is broken.
         assertTrue(note, note.contains("ALLOW STORAGE"))
-        assertTrue(
-            StorageCopy.tripsNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
-                .contains("allow storage"),
-        )
-        assertTrue(
-            StorageCopy.tripFileNote(false, GrantPath.RUNTIME_PERMISSION, "Documents/Dashboard++", "trips")
-                .contains("ALLOW STORAGE"),
-        )
+        // And nowhere on that path may a sentence still point at a switch the device does not have.
+        for (text in runtimeSentences()) {
+            assertTrue(text, !text.contains("ALL_FILES"))
+        }
     }
 
     @Test

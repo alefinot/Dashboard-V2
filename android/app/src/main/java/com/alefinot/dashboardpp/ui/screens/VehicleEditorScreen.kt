@@ -144,7 +144,7 @@ fun VehicleEditorScreen(
             photoNote = null
             vm.stagePickedPhoto(uri, draft.id) { staged ->
                 if (staged == null) {
-                    photoNote = "That picture could not be read. The card keeps the photo it had."
+                    photoNote = "Unreadable picture \u2014 card keeps its photo."
                 } else {
                     cropFrom = staged
                 }
@@ -168,7 +168,7 @@ fun VehicleEditorScreen(
                 vm.cancelPhoto(draft.id)
                 photoNote = null
             }
-            else -> photoNote = "The camera left nothing usable to frame."
+            else -> photoNote = "Camera returned nothing."
         }
     }
 
@@ -180,7 +180,7 @@ fun VehicleEditorScreen(
     fun askForCamera() {
         vm.cameraCapture(draft.id) { capture ->
             if (capture == null) {
-                photoNote = "No camera is available here. Choose a photo instead."
+                photoNote = "No camera available."
             } else {
                 photoNote = null
                 pendingCapture = capture
@@ -217,18 +217,6 @@ fun VehicleEditorScreen(
                     style = HudeSectionTitle(),
                 )
                 Spacer(Modifier.height(12.dp))
-                Text(
-                    if (isNew) {
-                        "A dashboard answered that no card carries. Give it a name and the app " +
-                            "keeps a card for it — the address book, the photo and the trips " +
-                            "all hang off that card."
-                    } else {
-                        "What this card says about the vehicle, and what the app measured. " +
-                            "Only the first half is edited here."
-                    },
-                    color = HudColors.TextMuted,
-                    style = HudeCfgHelp(),
-                )
                 Spacer(Modifier.height(16.dp))
 
                 PhotoWell(
@@ -360,8 +348,7 @@ fun VehicleEditorScreen(
         // The plan's sentence, in the app's own dialog - and no card id in it. The drives are
         // found by name now; naming a row key in a warning would be a detail nobody can use.
         HudConfirmDialog(
-            message = "The card goes, its photo goes with it, and the addresses it remembered " +
-                "stop being dialled. The drives this vehicle took stay in the trip log.",
+            message = "Delete this card? Its drives stay in the trip log.",
             onConfirm = onDelete,
             onDismiss = { confirming = false },
             confirmLabel = "FORGET ${draft.name.ifBlank { "THE CARD" }}",
@@ -384,8 +371,7 @@ fun VehicleEditorScreen(
                     cropFrom = null
                     when {
                         landed == null -> photoNote =
-                            "The photo could not be cut down to a file. The card keeps " +
-                            "the picture it had."
+                            "Could not save the photo."
                         refusal != null -> {
                             hasPhoto = true
                             photoNote = refusal

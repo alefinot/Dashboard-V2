@@ -140,10 +140,9 @@ fun PhotoCropPanel(
                 Spacer(Modifier.height(10.dp))
                 Text(
                     if (unreadable) {
-                        "That picture could not be read. The card keeps the photo it had."
+                        "Unreadable picture \u2014 card keeps its photo."
                     } else {
-                        "Drag the photo to move it, spread to zoom in. The square is what the " +
-                            "card will show; the picture is cropped to it, not stretched."
+                        "Drag to move, spread to zoom."
                     },
                     color = HudColors.TextMuted,
                     style = HudeCfgHelp(),
@@ -233,11 +232,6 @@ fun PhotoCropPanel(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    "Cancelling leaves the photo the card already has.",
-                    color = HudColors.TextDim,
-                    style = HudeCfgHelp(),
-                )
             }
         }
     }

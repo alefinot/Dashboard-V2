@@ -118,15 +118,9 @@ fun NotLinkedCover(
                 Text(
                     when {
                         permissionProblem ->
-                            "Android has not let this app use Bluetooth, so it cannot see " +
-                                "a dashboard that is switched on right in front of it. The " +
-                                "vehicle page asks for the permission and pairs from there."
+                            "Bluetooth permission not granted."
                         firstRun ->
-                            "This app has never met a dashboard. There is nothing to look up " +
-                                "and no address to type: switch the dashboard on, open the " +
-                                "vehicle page and let it find this phone. The dashboard will " +
-                                "show a code, Android will ask you to confirm it, and that is " +
-                                "the whole of it."
+                            "Switch the dashboard on, then pair it from the vehicle page."
                         else -> note
                     },
                     color = HudColors.TextDim,

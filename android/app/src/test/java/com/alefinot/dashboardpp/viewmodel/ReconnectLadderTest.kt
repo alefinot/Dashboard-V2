@@ -36,7 +36,7 @@ class ReconnectLadderTest {
         // The reason is a line under the card, so it has to name the count and carry the
         // radio's own words when there are any.
         val reason = (over as LadderStep.GiveUp).reason
-        assertTrue(reason, reason.contains("3 attempts"))
+        assertTrue(reason, reason.contains("3 tries"))
         assertTrue(reason, reason.contains("gatt 133"))
     }
 

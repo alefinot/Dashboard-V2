@@ -236,10 +236,8 @@ object OtaController {
 
     private fun versionNote(probe: OtaImage): String? = when {
         probe.versionTag == null ->
-            "This file carries no version marker, so nothing here can tell you which version it " +
-                "is or warn you when it is the one already on the unit."
-        else -> "This file says it is " + probe.versionTag + ". Whether it is the right build for " +
-            "this board is still your call — a firmware file is a firmware file."
+            "No version marker in this file."
+        else -> "File says " + probe.versionTag + "."
     }
 
     /** "about a minute", from the window the unit is expected to hold an install open. */
@@ -345,15 +343,11 @@ object OtaController {
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Paused,
-                                note = "The unit has " + tracker.acked + " of " + img.size +
-                                    " bytes on flash" +
+                                note = "" + tracker.acked + " of " + img.size + " bytes on flash" +
                                     if (live) {
-                                        ". The link is still up; press RESUME and it continues from " +
-                                            "where the unit actually is."
+                                        ". Press RESUME to continue."
                                     } else {
-                                        ". The link dropped. The unit holds the install open for " +
-                                            resumeWindowWords() + ": reconnect on the link card, " +
-                                            "then press RESUME and it continues from there."
+                                        ". Reconnect and press RESUME within " + resumeWindowWords() + "."
                                     },
                             )
                         }
@@ -413,9 +407,8 @@ object OtaController {
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Paused,
-                                note = "The unit stopped answering at " + tracker.acked + " of " +
-                                    img.size + " bytes. Reconnect on the link card and press " +
-                                    "RESUME; if its window has closed, the install restarts.",
+                                note = "Stopped at " + tracker.acked + " of " + img.size +
+                                    " bytes \u2014 reconnect and press RESUME.",
                             )
                         }
                         return
@@ -458,8 +451,7 @@ object OtaController {
                         _view.update {
                             it.copy(
                                 stage = OtaStage.Installed,
-                                note = "The link dropped while the unit was finishing. Reconnect " +
-                                    "and the version on this card tells you what it is running.",
+                                note = "Link dropped while finishing \u2014 reconnect to see the version.",
                             )
                         }
                         return

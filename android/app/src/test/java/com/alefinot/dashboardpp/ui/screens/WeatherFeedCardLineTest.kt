@@ -20,11 +20,11 @@ class WeatherFeedCardLineTest {
     @Test
     fun `a feed that has never reached the unit says so instead of showing nothing`() {
         assertEquals(
-            "this app has not fed the dashboard yet",
+            "not fed yet",
             weatherStatusLine(WeatherStatus()),
         )
         assertEquals(
-            "this app has not fed the dashboard yet",
+            "not fed yet",
             weatherStatusLine(WeatherStatus(lastPushAt = WeatherSettings.NO_EPOCH), t0),
         )
     }

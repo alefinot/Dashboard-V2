@@ -298,61 +298,64 @@ object OtaErrors {
     fun needsAction(code: String): Boolean =
         code in setOf("crc", "no_space", "bad_magic", "bad_length", "offset_mismatch", "no_chunk_size")
 
-    fun explain(code: String): String = when (code) {
-        // Refusals before anything is written.
-        "already_running" -> "That is the version the unit is already running. Nothing was changed."
-        "already_active" ->
-            "The unit already has an install open. Reconnect and press RESUME to continue it, or " +
-            "CLEAR to throw it away, before starting a new one."
-        "not_connected" -> "No Bluetooth link to the unit."
-        "no_client" -> "The unit is not connected to a phone right now, so it cannot take an install."
-        "busy" -> "The unit is busy and refused. Try again in a moment."
-        "ota_in_progress" -> "Another install is running; the unit answers nothing else until it ends."
-        "too_many" -> "The unit could not take any more pieces of this file. Start again."
-        // The file itself.
-        "no_space" -> "That file is bigger than the spare flash slot on the unit. The unit is still running what it was."
-        "size_declined" -> "The unit could not make room for that size. The unit is still running what it was."
-        "bad_magic" -> "That file does not look like ESP32 firmware at all. The unit is still running what it was."
-        "bad_length" ->
-            "The file is not the size the unit expected from its header — it is probably truncated " +
-            "or was edited after it was built. The unit is still running what it was."
-        "no_chunk_size" -> "The unit could not agree a write size with the phone. Try the update again."
-        "bad_state" -> "The unit's flash updater was not in the state it expected. The unit is still running what it was."
-        "update_begin_failed" -> "The unit could not open its spare flash slot. The unit is still running what it was."
-        "write_failed" -> "The unit could not write its flash. The unit is still running what it was."
-        // Mid-transfer trouble.
-        "not_open" -> "The unit had no install open for those bytes, so it dropped them. Press RESUME or start again."
-        "no_session" -> "There is no install on the unit to control. Nothing was changed."
-        "offset_mismatch" -> "The pieces arrived out of order, so the unit stopped the install. Start it again from the file."
-        "crc" ->
-            "The bytes that arrived do not match the file you picked — something was lost in the " +
-            "air. The unit is still running the firmware it had. Press START to send the file again."
-        "link_lost" ->
-            "The Bluetooth link dropped. The unit holds the install open for two minutes for the " +
-            "phone to come back; reconnect on the link card and press RESUME inside that window."
-        "stalled" -> "The unit heard nothing for too long and gave the install back. The unit is still running what it was."
-        "aborted" -> "The install was cancelled. The unit is still running what it was."
-        // The unit's own verdict at the end.
-        "end_failed" ->
-            "The unit wrote the whole file and then its own image check refused it — the file was " +
-            "built for a different board or flash layout. The unit is still running what it was."
-        "not_implemented" ->
-            "This firmware does not carry a Bluetooth installer yet — flash it over USB until the " +
-            "unit's own build includes one."
-        // RPC-layer codes.
-        "no_permission" -> "The unit will not run that command over this connection. Unlock it first."
-        "unknown_method" -> "The unit does not know that command — it is running an older firmware."
-        "too_many_frames" -> "The unit could not reassemble the reply. Try again."
-        "parse_error" -> "The unit could not read the command. Nothing was changed."
-        // Codes this app raises about the file, before the unit sees anything.
-        "file_unreadable" -> "The file could not be read from wherever it is. Copy it onto the tablet and try again."
-        "file_empty" -> "That file is empty."
-        "too_small" -> "That file is far too small to be firmware — it is not a firmware image."
-        "too_big" -> "That file is bigger than this unit's flash — it is not firmware for this board."
-        "cancelled" -> "Cancelled. The unit is untouched."
-        "timeout" -> "The unit did not answer. It may have restarted into the new firmware; check the version on this card after reconnecting."
-        "unknown" -> "The unit refused the install for a reason it did not name."
-        else -> "The unit refused the install ('$code'). The unit is still running what it was."
+    /**
+     * Codes that can only have left the running firmware where it was: the unit refused before
+     * writing, threw the image away, or never got it. `OtaCoreTest` pins the sentence for the ones
+     * a driver most often sees, so the reassurance cannot be edited out of one of them by accident.
+     */
+    private val UNIT_UNTOUCHED = setOf(
+        "too_many", "no_space", "size_declined", "bad_magic", "bad_length", "no_chunk_size",
+        "bad_state", "update_begin_failed", "write_failed", "offset_mismatch", "crc", "stalled",
+        "aborted", "end_failed", "not_implemented", "too_many_frames", "parse_error",
+        "file_unreadable", "file_empty", "too_small", "too_big", "cancelled",
+    )
+
+    fun explain(code: String): String {
+        val said = when (code) {
+            // Refusals before anything is written.
+            "already_running" -> "Same version is already running."
+            "already_active" -> "An install is already open — RESUME or CLEAR it first."
+            "not_connected" -> "No Bluetooth link."
+            "no_client" -> "No phone connected to the unit."
+            "busy" -> "Unit busy — try again."
+            "ota_in_progress" -> "Another install is running."
+            "too_many" -> "Too many pieces — start again."
+            // The file itself.
+            "no_space" -> "Larger than the unit's spare flash slot."
+            "size_declined" -> "Unit could not make room for that size."
+            "bad_magic" -> "Not ESP32 firmware."
+            "bad_length" -> "Size does not match the header — file truncated or edited."
+            "no_chunk_size" -> "No write size agreed."
+            "bad_state" -> "Flash updater in an unexpected state."
+            "update_begin_failed" -> "Could not open the spare flash slot."
+            "write_failed" -> "Flash write failed."
+            // Mid-transfer trouble.
+            "not_open" -> "No install open — press RESUME or start again."
+            "no_session" -> "No install to control."
+            "offset_mismatch" -> "Pieces arrived out of order — start again."
+            "crc" -> "CRC mismatch — bytes lost in the air."
+            "link_lost" -> "Link dropped — press RESUME within two minutes."
+            "stalled" -> "Unit gave the install back after silence."
+            "aborted" -> "Install cancelled."
+            // The unit's own verdict at the end.
+            "end_failed" -> "Image check refused it — wrong board or flash layout."
+            "not_implemented" -> "No Bluetooth installer in this firmware — flash over USB."
+            // RPC-layer codes.
+            "no_permission" -> "Command not allowed on this connection."
+            "unknown_method" -> "This firmware does not know that command."
+            "too_many_frames" -> "Reply could not be reassembled."
+            "parse_error" -> "Command unreadable."
+            // Codes this app raises about the file, before the unit sees anything.
+            "file_unreadable" -> "File could not be read."
+            "file_empty" -> "File is empty."
+            "too_small" -> "Not a firmware image."
+            "too_big" -> "Bigger than this board's flash."
+            "cancelled" -> "Cancelled."
+            "timeout" -> "No answer — check the version after reconnecting."
+            "unknown" -> "Install refused without a reason."
+            else -> "Refused ('$code')."
+        }
+        return if (code in UNIT_UNTOUCHED) "$said Unit unchanged." else said
     }
 }
 

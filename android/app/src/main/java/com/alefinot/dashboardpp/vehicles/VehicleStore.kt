@@ -173,11 +173,9 @@ class VehicleStore(context: Context) {
         val why = garage.damage()
         val where = AppRoot.sharedRootLabel() + "/" + AppRoot.GARAGE_FILE
         return if (why == null) {
-            "$what — the garage file could not be written, and nothing on disk changed. Try again " +
-                "once the phone has room or the storage permission is back."
+            "$what \u2014 garage file could not be written. Try again."
         } else {
-            "$what — $where could not be read ($why), and the app will not write over a garage it " +
-                "cannot read. Nothing on disk changed."
+            "$what \u2014 $where unreadable ($why), not overwriting it."
         }
     }
 

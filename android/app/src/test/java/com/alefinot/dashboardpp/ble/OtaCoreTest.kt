@@ -530,7 +530,7 @@ class OtaCoreTest {
     @Test
     fun failuresSayWhatHappenedToTheUnit() {
         for (code in listOf("crc", "no_space", "bad_magic", "end_failed", "stalled", "aborted")) {
-            assertTrue("'$code' does not say the unit is safe", OtaErrors.explain(code).contains("still running"))
+            assertTrue("'$code' does not say the unit is safe", OtaErrors.explain(code).contains("Unit unchanged"))
         }
         assertTrue(OtaErrors.needsAction("crc"))
         assertTrue(OtaErrors.needsAction("bad_magic"))

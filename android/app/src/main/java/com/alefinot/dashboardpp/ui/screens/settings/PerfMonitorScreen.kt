@@ -850,10 +850,7 @@ private fun SpreadCard(trends: PerfTrends, modifier: Modifier = Modifier) {
             PerfRow(trendLabel(name), DiagFormat.trend(trends.series(name), decimals))
         }
         Text(
-            "This window holds the last ${trends.cap} readings taken while the page was open, " +
-                "so it cannot see a fault that stopped before the page was opened. The unit's " +
-                "own low-water marks — lowest free heap, the stack marks — do reach back over " +
-                "the whole boot.",
+            "Last ${trends.cap} readings while this page was open.",
             style = HudeCfgHelp(),
             color = HudColors.TextDim,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

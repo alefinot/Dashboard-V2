@@ -179,8 +179,6 @@ fun SettingsScreen(
             CardHead("Trip Recording")
             ToggleRow(
                 label = "AUTO-START ON CONNECT",
-                note = "Starts logging a drive as soon as the dashboard connects. " +
-                    "Off, a drive is logged only while this app is open on the Live page.",
                 on = recordingEnabled,
                 toggleLabel = "auto-start on connect",
             ) { on ->
@@ -207,11 +205,6 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             ToggleRow(
                 label = "MOTION",
-                note = "On, the app moves the way the dashboard does: panels arrive with " +
-                    "the page's own fade, the tab marker travels to the tab you tap, the " +
-                    "recorded trips come in one after another, and a live recording " +
-                    "breathes. Off, everything is simply in place. A device that turns its " +
-                    "own animation scale off stops the app too, without asking.",
                 on = motionOn,
                 toggleLabel = "motion",
             ) { on -> scope.launch { settings.setMotionEnabled(on) } }
@@ -224,19 +217,9 @@ fun SettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             CardHead("Weather Feed")
-            Text(
-                "The dashboard has no radio of its own, so this phone asks the weather " +
-                    "service and sends the answer over Bluetooth: on connect, once a " +
-                    "minute, and again when the car has moved 2 km. A reading older than " +
-                    "three hours tells the dashboard to show Weather Offline.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             Spacer(Modifier.height(10.dp))
             ToggleRow(
                 label = "PUSH WEATHER",
-                note = "Off stops every call this app makes for weather — no forecast, " +
-                    "no place-name lookups — and sends the dashboard nothing further.",
                 on = weatherOn,
                 toggleLabel = "push weather",
             ) { on -> scope.launch { weatherSettings.setEnabled(on) } }
@@ -287,8 +270,7 @@ fun SettingsScreen(
             // BigDataCloud's free reverse endpoint refuses a call made from a server or a
             // non-browser client, so the names here are the two that are actually called.
             Text(
-                "Weather data by Open-Meteo.com \u00b7 place names by OpenStreetMap " +
-                    "Nominatim contributors",
+                "Weather: Open-Meteo.com \u00b7 places: OpenStreetMap",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )
@@ -352,14 +334,6 @@ fun SettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             CardHead("Recorded Drives")
-            Text(
-                "One CSV per drive in ${AppRoot.sharedRootLabel()}/${AppRoot.TRIPS}/, written " +
-                    "by this app \u2014 open them in a spreadsheet, copy them off over USB, or " +
-                    "delete them here. Without the storage grant the same files stay in the " +
-                    "app's own folder, which the Storage card above says is happening.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudButton(
@@ -384,18 +358,6 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
             }
-            Spacer(Modifier.height(10.dp))
-            // Not "recording stops when the link drops" any more, which stopped being true
-            // the moment auto-start became per-vehicle and a drive you never confirmed
-            // started anyway. This is what is kept and what is gone.
-            Text(
-                "Auto-start is per vehicle: a card with recording enabled begins logging when " +
-                    "its dashboard connects, and stops when the vehicle is turned off. A drive " +
-                    "whose start you did not confirm was still recorded and kept; a drive you " +
-                    "deleted is gone.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
         }
         Spacer(Modifier.height(20.dp))
         Text(
@@ -414,8 +376,7 @@ fun SettingsScreen(
 
     if (showConfirmClear) {
         HudConfirmDialog(
-            message = "Delete every recorded trip? All CSV files the app has " +
-                "written go away. A drive that is still being recorded is kept.",
+            message = "Delete every recorded trip? A drive still being recorded is kept.",
             confirmLabel = "DELETE ALL",
             confirmStyle = HudButtonStyle.DANGER,
             onConfirm = {
@@ -615,7 +576,6 @@ private fun IdCard(label: String, value: String, modifier: Modifier = Modifier) 
 @Composable
 private fun ToggleRow(
     label: String,
-    note: String,
     on: Boolean,
     toggleLabel: String,
     onToggle: (Boolean) -> Unit,
@@ -623,8 +583,6 @@ private fun ToggleRow(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(label, color = HudColors.Cyan, style = HudeFormLabel())
-            Spacer(Modifier.height(3.dp))
-            Text(note, color = HudColors.TextDim, style = HudeCfgNote())
         }
         HudToggle(on = on, label = toggleLabel, onToggle = onToggle)
     }
@@ -663,20 +621,9 @@ private fun RecordingCard(
             Spacer(Modifier.height(6.dp))
             Text(
                 when {
-                    needsUpdate ->
-                        "This dashboard's firmware is older than V1.4.6, so it does not " +
-                            "send the frame the trip recorder reads. Speed, GNSS and trip " +
-                            "figures stay unavailable and drives cannot be logged until the " +
-                            "firmware is updated."
-                    recording ->
-                        "Following the dashboard's one-per-second stream. This Android " +
-                            "version keeps reading with the screen off or the app " +
-                            "backgrounded; battery optimization for this app is switched " +
-                            "off so the drive does not fill with gaps at every screen " +
-                            "timeout."
-                    else ->
-                        "Logging idle: connected, waiting for samples, or auto-start " +
-                            "is off."
+                    needsUpdate -> "Needs firmware V1.4.6 or newer."
+                    recording -> "Following the unit's stream."
+                    else -> "Waiting for samples."
                 },
                 color = HudColors.TextMuted,
                 style = HudeCfgHelp(),
@@ -702,14 +649,14 @@ internal suspend fun saveWeatherCity(
     val query = typed?.trim().orEmpty()
     if (query.isEmpty()) {
         settings.setCity(null, null)
-        return "Fallback city cleared. The feed will use the unit's own fix."
+        return "Fallback city cleared."
     }
     val place = feed.resolveCity(query)
     settings.setCity(query, place)
     return if (place == null) {
-        "\"$query\" brought nothing back. The text is kept; a nearby town may do."
+        "\"$query\" not found."
     } else {
-        "Weather will fall back to ${placeLabel(place)}."
+        "Fallback: ${placeLabel(place)}"
     }
 }
 
@@ -725,7 +672,7 @@ internal fun placeLabel(place: Place): String =
 internal fun weatherStatusLine(status: WeatherStatus, nowMs: Long = System.currentTimeMillis()): String {
     if (status.busy) return "asking the weather service now..."
     val pushed = status.lastPushAt
-    if (pushed == null || pushed == WeatherSettings.NO_EPOCH) return "this app has not fed the dashboard yet"
+    if (pushed == null || pushed == WeatherSettings.NO_EPOCH) return "not fed yet"
     val ageMin = ((nowMs - pushed).coerceAtLeast(0L)) / 60_000L
     val source = when (status.source) {
         PositionSource.FIX -> "unit GNSS"

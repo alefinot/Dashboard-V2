@@ -28,7 +28,7 @@ class ScanRefusalNamesTheRightSideTest {
     @Test
     fun aScanAndroidWouldNotAnswerSaysSoAndGivesTheFix() {
         val text = scanFailureText("location_off")
-        assertTrue("the refusal must name the switch: $text", text.contains("location switch", true))
+        assertTrue("the refusal must name the switch: $text", text.contains("location", true))
         assertTrue("the refusal must give the fix: $text", text.contains("turn location on", true))
         // The whole point of the sentence: it must not walk the reader over to the unit.
         for (away in listOf("powered", "out of range", "restart", "re-pair", "another phone")) {

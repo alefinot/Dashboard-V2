@@ -64,7 +64,7 @@ internal fun WidgetControl(
         "tempCalibrate" -> NoLiveReadingControl("engine temperature", "NTC_TEMP_OFFSET", enabled)
         "batteryCalibrate" -> NoLiveReadingControl("battery voltage", "BATTERY_OFFSET", enabled)
         else -> Text(
-            "this app has no control for \"$widget\" — the settings above belong to it",
+            "no control for \"$widget\"",
             style = HudeCfgNote(),
             color = HudColors.Amber,
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -94,7 +94,7 @@ private fun TripResetControl(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
     ) {
         Text(
-            "resets the trip distance, time and averages on the unit",
+            "resets trip distance, time and averages",
             style = HudeCfgHelp(),
             color = HudColors.TextDim,
             modifier = Modifier.weight(1f),
@@ -185,7 +185,7 @@ private fun AmbientCalibrationControl(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
     ) {
         Text(
-            "captures the light sensor reading the unit is reporting right now",
+            "captures the current light reading",
             style = HudeCfgHelp(),
             color = HudColors.TextDim,
             modifier = Modifier.weight(1f),
@@ -237,7 +237,7 @@ private fun NoiseBenchControl(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                "measures sensor input jitter on the unit",
+                "measures sensor jitter",
                 style = HudeCfgHelp(),
                 color = HudColors.TextDim,
                 modifier = Modifier.weight(1f),
@@ -300,11 +300,9 @@ private fun NoiseBenchControl(
 private fun NoLiveReadingControl(what: String, offsetKey: String, enabled: Boolean) {
     Text(
         if (enabled) {
-            "\"match to reference\" works from the live $what reading on the unit's own page. " +
-                "This page holds the configuration, not the live numbers, so it offers the " +
-                "$offsetKey offset row above instead — set it there and the unit applies it."
+            "\"match to reference\" works on the unit's own page — use the $offsetKey row above"
         } else {
-            "the $what calibration needs the unit linked and read"
+            "$what calibration needs a link"
         },
         style = HudeCfgNote(),
         color = HudColors.TextDim,

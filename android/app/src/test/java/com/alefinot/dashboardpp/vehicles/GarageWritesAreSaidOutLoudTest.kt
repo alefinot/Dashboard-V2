@@ -79,8 +79,8 @@ class GarageWritesAreSaidOutLoudTest {
         )
         assertTrue(
             "and says the file exists but could not be read, instead of " +
-                "\"Nothing has been met yet\"",
-            screen.contains("cannot read it") && screen.contains("HudColors.Amber"),
+                "\"No dashboards paired yet\"",
+            screen.contains("Garage file unreadable") && screen.contains("HudColors.Amber"),
         )
     }
 

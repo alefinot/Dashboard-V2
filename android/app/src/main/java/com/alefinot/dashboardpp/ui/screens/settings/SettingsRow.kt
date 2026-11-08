@@ -86,8 +86,7 @@ fun SettingsRow(
                 )
                 if (item.labelIsGuessed) {
                     Text(
-                        "the firmware has no name for ${item.key} — this one is read off " +
-                            "the key itself, so it may not be the wording you'd choose",
+                        "guessed from ${item.key}",
                         style = HudeCfgNote(),
                         color = HudColors.TextDim,
                     )

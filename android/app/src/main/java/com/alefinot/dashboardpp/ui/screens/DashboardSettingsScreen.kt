@@ -319,9 +319,7 @@ fun DashboardSettingsScreen(
         val unitEnabled = ready && state.sync is SyncPhase.Ready
         if (schema == null) {
             Text(
-                "The settings schema is missing from the app. It is generated from the " +
-                    "firmware's own tables (scripts/gen_config_schema.py); without it this " +
-                    "page has no idea what the unit's settings are, so it shows nothing.",
+                "Settings schema missing from the app.",
                 style = HudeCfgHelp(),
                 color = HudColors.Amber,
                 modifier = Modifier.padding(16.dp),
@@ -342,8 +340,7 @@ fun DashboardSettingsScreen(
         if (state.rows.isEmpty()) {
             Text(
                 if (ready) "Reading the unit…" else
-                    "Nothing to show yet. Pair the unit from the Vehicles page, and this page " +
-                    "fills in with its settings.",
+                    "Nothing read from the unit yet — pair it from the Vehicles page.",
                 style = HudeCfgHelp(),
                 color = HudColors.TextDim,
                 modifier = Modifier.padding(16.dp),
@@ -352,9 +349,7 @@ fun DashboardSettingsScreen(
         }
         if (searching && shown.isEmpty()) {
             Text(
-                "no setting matches \"$query\". The box looks at each row's label, its " +
-                    "firmware key and its unit — a word you can see on the row is a word that " +
-                    "finds it.",
+                "no setting matches \"$query\"",
                 style = HudeCfgNote(),
                 color = HudColors.Cyan,
                 modifier = Modifier.padding(16.dp),
@@ -501,9 +496,9 @@ fun DashboardSettingsScreen(
                                             enabled = false,
                                             onEdit = { _, _ -> },
                                             readOnlyHint = if (spec.live) {
-                                                "read from the unit while it runs — not a setting"
+                                                "live reading, not a setting"
                                             } else {
-                                                "compiled into the firmware — not a setting"
+                                                "fixed in firmware, not a setting"
                                             },
                                         )
                                     }
@@ -605,7 +600,7 @@ fun DashboardSettingsScreen(
                         onClick = {
                             if (confirm != "factory.reset") {
                                 confirm = "factory.reset"
-                                note = "that wipes every setting on the unit — press again to confirm"
+                                note = "press again to confirm"
                             } else {
                                 scope.launch {
                                     val r = store.action("factory.reset")
@@ -619,13 +614,6 @@ fun DashboardSettingsScreen(
                                 }
                             }
                         },
-                    )
-                    Text(
-                        "Wipes every setting on the unit and restarts it. The app asks once " +
-                            "more before it sends the command.",
-                        style = HudeCfgNote(),
-                        color = HudColors.TextDim,
-                        modifier = Modifier.padding(top = 6.dp),
                     )
                 }
             }
@@ -867,9 +855,7 @@ private fun linkLine(linkState: BleLinkState): Pair<String, Color> = when (val l
         "pairing — confirm the code shown on the dashboard" to HudColors.Cyan
     is BleLinkState.Connecting -> "connecting to ${link.name}…" to HudColors.Cyan
     is BleLinkState.Failed -> "link failed: ${link.reason}" to HudColors.Red
-    BleLinkState.Idle ->
-        "no Bluetooth link — the unit's settings live on the unit, and the Vehicles " +
-            "page is where you pair one" to HudColors.TextDim
+    BleLinkState.Idle -> "no Bluetooth link" to HudColors.TextDim
 }
 
 /** The read's own line, under the search box: which of the unit's keys the read covered. */
@@ -889,7 +875,7 @@ private fun syncLine(state: ConfigStore.SettingsState, ready: Boolean): Pair<Str
         is SyncPhase.Failed -> sync.reason to HudColors.Red
         SyncPhase.Idle ->
             if (ready) "not read yet" to HudColors.Amber
-            else "the settings are read from the unit over Bluetooth" to HudColors.TextDim
+            else "the settings are read over Bluetooth" to HudColors.TextDim
     }
 
 /**

@@ -178,15 +178,6 @@ fun VehicleScreen(
                 },
             )
             Spacer(Modifier.height(8.dp))
-            Text(
-                "A card is a vehicle, not an address. Pick one and the app reaches for " +
-                    "that dashboard; a vehicle that has never been seen by a scan " +
-                    "is still a vehicle.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
         }
         Spacer(Modifier.height(16.dp))
 
@@ -199,11 +190,9 @@ fun VehicleScreen(
             // sentence, in a different colour, because the fix is the file and not a search.
             Text(
                 garageDamage?.let {
-                    "There is a garage file on disk, but this build cannot read it ($it), so no " +
-                        "card is shown. The app will not write over a garage it cannot read: " +
-                        "repair or move that file and the cards come back."
+                    "Garage file unreadable ($it) \u2014 not overwriting it."
                 }
-                    ?: "Nothing has been met yet: this app has not paired with a dashboard yet.",
+                    ?: "No dashboards paired yet.",
                 color = if (garageDamage == null) HudColors.TextMuted else HudColors.Amber,
                 style = HudeCfgNote(),
             )
@@ -253,8 +242,7 @@ fun VehicleScreen(
             NoticeCard(
                 "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
                 "${it.name} (firmware ${it.version ?: "unknown"}, " +
-                    "MAC ${it.mac.uppercase()}) is not on this list yet. " +
-                    "Name it and it becomes a card of its own.",
+                    "MAC ${it.mac.uppercase()})",
                 HudColors.Cyan,
                 actionLabel = "NAME IT",
                 onAction = onNameUnclaimed,
@@ -501,9 +489,7 @@ private fun VehicleCard(
             ) { onForgetUnit() }
             Spacer(Modifier.height(4.dp))
             Text(
-                "Clears this card's pairing on this phone. The card, its name and its " +
-                    "photo stay - DELETE THE CARD in the editor is the one that removes " +
-                    "the vehicle.",
+                "Unpairs this unit from this phone. The card stays.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )
@@ -662,12 +648,5 @@ private fun AddVehicleCard(
                 Spacer(Modifier.height(8.dp))
             }
         }
-        Text(
-            "A dashboard that answers becomes a card. Name it, and the app remembers the " +
-                "vehicle rather than the radio address - which is why coming back to a car " +
-                "you drive every day takes a couple of seconds and a first hunt does not.",
-            color = HudColors.TextDim,
-            style = HudeCfgNote(),
-        )
     }
 }

@@ -372,12 +372,12 @@ class ConfigStore(
             ?.toDouble() ?: return null
         val lo = item.clampMin
         val hi = item.clampMax
-        if (lo != null && dev < lo) return "limited to ${bandLabel(item, lo)} — the unit's minimum"
-        if (hi != null && dev > hi) return "limited to ${bandLabel(item, hi)} — the unit's maximum"
+        if (lo != null && dev < lo) return "limited to the minimum, ${bandLabel(item, lo)}"
+        if (hi != null && dev > hi) return "limited to the maximum, ${bandLabel(item, hi)}"
         val uiLo = item.uiMin
         val uiHi = item.uiMax
         if (uiLo != null && uiHi != null && (dev < uiLo || dev > uiHi)) {
-            return "outside the range offered here, but inside the unit's"
+            return "outside the range offered here"
         }
         return null
     }

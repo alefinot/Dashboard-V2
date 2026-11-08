@@ -149,7 +149,7 @@ class SettingsPageBenchFindingsTest {
         assertTrue(
             "with no link the page draws its rows with empty boxes instead of saying there is " +
                 "nothing read from the unit yet",
-            page.contains("Nothing to show yet"),
+            page.contains("Nothing read from the unit yet"),
         )
     }
 

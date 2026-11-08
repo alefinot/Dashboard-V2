@@ -80,8 +80,7 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             Text("TRIP UNREADABLE", color = HudColors.Red, style = HudeSectionTitle())
             Spacer(Modifier.height(12.dp))
             Text(
-                "The file could not be parsed. It may have been removed or " +
-                    "corrupted; it is still on disk unless you delete it.",
+                "File unreadable. It is still on disk until you delete it.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )
@@ -153,10 +152,9 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             ) {
                 Text(
                     if (points.isEmpty()) {
-                        "No positions in this trip — the GNSS never had a fix, so " +
-                            "the route cannot be drawn."
+                        "No GNSS positions in this trip."
                     } else {
-                        "Only one position: the fix arrived once. Nothing to draw a route from."
+                        "Only one position."
                     },
                     color = HudColors.TextMuted,
                     style = HudeCfgNote(),
@@ -220,9 +218,7 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
 
       if (confirmDelete) {
         HudConfirmDialog(
-            message = "Delete this recorded trip? The CSV file goes away, and with it " +
-                "the route, the charts and the summary. Anything you have already shared " +
-                "from it is a file that app kept.",
+            message = "Delete this trip? The CSV goes away.",
             confirmLabel = "DELETE TRIP",
             confirmStyle = HudButtonStyle.DANGER,
             onConfirm = {
@@ -276,10 +272,10 @@ private fun ChartRow(title: String, unit: String, values: List<Double>, accent: 
  */
 private fun vehicleLine(row: TripRow): String = when {
     row.vehicleId == null ->
-        "No vehicle recorded on this file - it predates per-vehicle tagging."
+        "No vehicle recorded."
     else -> buildString {
         append("Vehicle: ").append(row.vehicleName ?: row.vehicleId)
-        if (!row.inGarage) append(" (that card is no longer in the garage)")
+        if (!row.inGarage) append(" (removed from garage)")
         row.eff?.let { append(" - dashboard ").append(it) }
     }
 }
@@ -349,8 +345,7 @@ private fun SummaryGrid(s: TripSummary) {
     )
     if (s.gaps > 0) {
         Text(
-            "Gaps are stretches longer than 10 s with no sample — the app was " +
-                "closed, the link dropped, or recording was switched off.",
+            "Gaps: no sample for more than 10 s.",
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )

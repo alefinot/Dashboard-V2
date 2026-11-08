@@ -166,13 +166,11 @@ object SettingsLayout {
      */
     private fun cardHint(card: SchemaCard): String? = when (card.widget) {
         // Said on the card, above the buttons, because it is the sentence that decides whether a
-        // person presses them: a refused, cancelled or half-finished install leaves the running
-        // firmware exactly where it was. The buttons and their answers belong to the control
-        // (`FirmwareUpdateControl`); this line is only about what can go wrong.
-        "firmwareUpdate" -> "The new image is written to the unit's spare flash slot and put in " +
-            "charge only after it passes the unit's own checks. Pick firmware.bin from a build " +
-            "or a release; a cancelled, interrupted or refused install leaves the unit running " +
-            "what it ran before."
+        // person presses them: the image lands in the spare slot and only takes charge if the unit
+        // accepts it, so a refused or interrupted install leaves the old firmware running. The
+        // buttons and their answers belong to the control (`FirmwareUpdateControl`).
+        "firmwareUpdate" -> "Writes to the spare flash slot. A refused or interrupted install " +
+            "leaves the old firmware running."
         else -> null
     }
 
@@ -194,9 +192,7 @@ object SettingsLayout {
         return RenderBlock(
             card = RenderCard(
                 "Keys this app's schema does not describe",
-                "they are kept, editable with a control guessed from the value, and included " +
-                    "in the export — regenerate the schema after a firmware update " +
-                    "(scripts/gen_config_schema.py) for proper labels",
+                "kept as they are, editable, included in exports",
             ),
             body = kept.map { RenderRow(it) },
         )

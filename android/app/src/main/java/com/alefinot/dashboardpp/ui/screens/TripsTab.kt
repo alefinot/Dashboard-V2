@@ -185,13 +185,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             ) {
                 if (rows.isEmpty()) {
                     Text("No trips recorded yet.", color = HudColors.TextPrimary, style = HudeBody())
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Drives are logged automatically while the app is open and the " +
-                            "dashboard is linked.",
-                        color = HudColors.TextDim,
-                        style = HudeCfgNote(),
-                    )
                 } else {
                     // Files exist; the filter is what hides them. Say which chip is on,
                     // and say where the rest went, rather than presenting an empty page.
@@ -207,8 +200,7 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded in " +
-                            "total - pick ALL to see them.",
+                        "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded \u00b7 pick ALL to see them.",
                         color = HudColors.TextDim,
                         style = HudeCfgNote(),
                     )

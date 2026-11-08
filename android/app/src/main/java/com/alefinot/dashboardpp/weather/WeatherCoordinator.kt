@@ -315,8 +315,7 @@ class WeatherCoordinator(
             nowMs = now,
         ) ?: run {
             _status.value = _status.value.copy(
-                note = "No position to ask for weather about — give the feed a city, or wait " +
-                    "for the unit's GNSS fix.",
+                note = "No position \u2014 add a city or wait for a GNSS fix.",
             )
             retryAtMs = now + NO_POSITION_BACKOFF_MS
             return
@@ -331,8 +330,7 @@ class WeatherCoordinator(
         val reading = url?.let { OpenMeteo.parse(http.get(it) ?: return@let null) }
         if (reading == null) {
             _status.value = _status.value.copy(
-                note = "Open-Meteo did not answer for $forCard. The unit keeps showing the last " +
-                    "frame it was sent.",
+                note = "Open-Meteo did not answer for $forCard.",
             )
             retryAtMs = now + WeatherPolicy.RETRY_AFTER_FAILURE_MS
             return
@@ -377,7 +375,7 @@ class WeatherCoordinator(
                 _status.value = _status.value.copy(
                     source = pos.source,
                     label = forCard,
-                    note = "The unit did not take the weather frame; it will be sent again.",
+                    note = "Weather frame not taken \u2014 retrying.",
                 )
             }
         }

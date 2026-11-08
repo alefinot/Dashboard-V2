@@ -157,15 +157,13 @@ object ConnectionCore {
     const val NEVER_PAIRING = "has never been paired — scan from ADD VEHICLE"
 
     /** The line for a pairing that was dialed and did not answer. */
-    const val NO_ANSWER = "did not answer over Bluetooth. Is it powered, paired, and in range?"
+    const val NO_ANSWER = "did not answer \u2014 check power and range"
 
     private const val UNCLAIMED = "A dashboard answered that no vehicle card knows."
     private const val AMBIGUOUS =
-        "More than one vehicle card is paired with that unit, and it did not report an " +
-            "identity, so the app cannot tell which vehicle it is."
+        "Several cards pair with that unit and it reported no identity."
     private const val NOTHING_FOUND =
-        "No dashboard answered, and the scan found none. Check that the unit is powered " +
-            "and not already linked to another phone."
+        "No dashboard answered and none was found."
 
     /**
      * [tried] is every address already linked to in this attempt (including the one
@@ -211,9 +209,7 @@ object ConnectionCore {
 
     /** The sentence the vehicle page shows when the phone still holds the bond. */
     const val STILL_BONDED =
-        "The card no longer holds a pairing, but this phone is still bonded to that unit. " +
-            "Remove it in the phone's Bluetooth settings if this phone should stop " +
-            "answering it."
+        "Phone still bonded to that unit \u2014 remove it in Bluetooth settings."
 
     fun forgetUnit(hadPairing: Boolean, adapterBonded: Boolean): ForgetDecision =
         if (hadPairing && adapterBonded) ForgetDecision(true, STILL_BONDED) else ForgetDecision(false, null)
@@ -392,8 +388,7 @@ object ConnectionCore {
         if (selectedId == null || selectedId == card.id) return null
         val pressed = others.firstOrNull { it.id == selectedId }
         val pressedName = pressed?.name?.ifEmpty { pressed.id } ?: selectedId
-        return "The dashboard that answered belongs to ${card.name.ifEmpty { card.id}}, " +
-            "not $pressedName."
+        return "Answered unit is ${card.name.ifEmpty { card.id }}, not $pressedName."
     }
 }
 

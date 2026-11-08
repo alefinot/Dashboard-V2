@@ -349,10 +349,7 @@ fun AppShell(
                                 NotLinkedCover(
                                     title = "NO DASHBOARD IN RANGE",
                                     reason = reason,
-                                    note = "Trips and App Settings work without a dashboard. " +
-                                        "Speed, GNSS and the dashboard's own configuration " +
-                                        "need one - the vehicle page is where a dashboard is " +
-                                        "paired and connected.",
+                                    note = "Trips and App Settings work without a dashboard.",
                                     vehicleName = coverVehicleName,
                                     onOpenVehicles = openGarage,
                                     permissionProblem = connection.permissionMissing.value,
@@ -379,10 +376,7 @@ fun AppShell(
                                         modifier = Modifier.padding(16.dp),
                                     )
                                     unit == null -> Text(
-                                        "The settings schema is missing from the app package. " +
-                                            "It is generated from the firmware's own tables " +
-                                            "(scripts/gen_config_schema.py); without it this " +
-                                            "page has no idea what the unit's settings are.",
+                                        "Settings schema missing from the app package.",
                                         style = HudeFormLabel(),
                                         color = HudColors.Amber,
                                         modifier = Modifier.padding(16.dp),
