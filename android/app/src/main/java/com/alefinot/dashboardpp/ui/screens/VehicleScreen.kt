@@ -130,6 +130,17 @@ fun VehicleScreen(
     val garageDamage by produceState<String?>(initialValue = null, vehicles) {
         value = connection.garageDamage()
     }
+    // A second garage file the app read and did not use. It is not damage — the cards on screen are
+    // the right ones and they save safely — but it is the mark of a storage grant that has moved,
+    // and an owner staring at a folder full of cards the app is not reading needs the name of the
+    // folder the app *is* reading before they conclude the app ate them.
+    val garageShadow by produceState<String?>(initialValue = null, vehicles) {
+        value = connection.garageShadow()
+    }
+    // The folder the cards above were read from, for the sentence that names the other one.
+    val garageFolder by produceState<String?>(initialValue = null, vehicles) {
+        value = connection.garageFolder()
+    }
     val selectedId = connection.selectedVehicleId.value
     val state = connection.uiState.value
     val notice by connection.notice
@@ -197,8 +208,14 @@ fun VehicleScreen(
                 garageDamage?.let {
                     "Garage file unreadable ($it) \u2014 not overwriting it."
                 }
+                    ?: garageShadow?.let {
+                        // The cards came back from the other folder, which is the fix working. The
+                        // owner still gets to know there are two garages on this phone, because the
+                        // folder they can open in a file manager is not the one being read.
+                        "Reading your cards from another folder \u2014 an empty file also sits in $it."
+                    }
                     ?: "No dashboards paired yet.",
-                color = if (garageDamage == null) HudColors.TextMuted else HudColors.Amber,
+                color = if (garageDamage == null && garageShadow == null) HudColors.TextMuted else HudColors.Amber,
                 style = HudeCfgNote(),
             )
             Spacer(Modifier.height(14.dp))
@@ -232,6 +249,16 @@ fun VehicleScreen(
         // belongs to a different card than the one selected. Both are published by the
         // view model and would otherwise be lost, and either one means a card on this
         // list is about to be described wrongly.
+        garageShadow?.let {
+            // Same page, same reason, quieter: a garage the app is not reading is a folder the
+            // owner may be backing up or editing by hand for nothing.
+            NoticeCard(
+                "TWO GARAGE FILES ON THIS PHONE",
+                "Reading ${garageFolder ?: "the app's own folder"}, not $it.",
+                HudColors.Amber,
+            )
+            Spacer(Modifier.height(10.dp))
+        }
         notice?.let {
             NoticeCard("THE APP AND THE CARD DISAGREE", it, HudColors.Amber)
             Spacer(Modifier.height(10.dp))

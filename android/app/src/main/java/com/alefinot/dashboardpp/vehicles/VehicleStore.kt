@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -174,6 +175,17 @@ class VehicleStore(context: Context) {
         "$why, in $where"
     }
 
+    /**
+     * A second `vehicles.json` the app saw and did not use, or null when only one folder has a
+     * garage. It names a folder the owner may be looking at while the app reads another one — the
+     * shape the storage grant leaves behind when it moves — so the vehicle page says it out loud
+     * instead of letting a "0 vehicles" screen stand unexplained.
+     */
+    suspend fun shadowGarageNote(): String? = garage.shadowGarageNote()
+
+    /** The file the cards currently on screen came from. Null before the first read. */
+    suspend fun garageNote(): String? = garage.garageNote()
+
     fun saveFailure(what: String = "Not saved"): String {
         val why = garage.damage()
         val where = garage.damageWhere() ?: AppRoot.sharedRootLabel() + "/" + AppRoot.GARAGE_FILE
@@ -259,10 +271,14 @@ class VehicleStore(context: Context) {
  * edit of the file rather than a guess by this class. [VehicleStore.saveFailure] is the sentence
  * that explains it, and [write] is the gate that makes the promise true for every caller.
  *
- * The file is resolved on every read and write ([AppRoot.garageFile]) rather than once, so a
- * grant given while the app runs moves the garage to the shared folder on the next write. Both
- * roots are read, and they are not merged: the file the app writes to wins when it reads clean,
- * and when it holds nothing the other root's cards are used and the next write moves them across
+ * The file is resolved once per session, by [ensure], and remembered: [GarageFile.readBoth] reads
+ * both roots and names the one that holds the cards, and every later write goes to that same file.
+ * The two are not resolved twice on purpose. They used to be — the write asked [AppRoot] again, so
+ * a storage grant that moved mid-session wrote the cards into a different folder from the one the
+ * next read would trust — and that split, plus a hollow `{"vehicles":[]}` left in the folder the app
+ * happened to be looking at, is the second way this owner's garage went missing on 2026-11-09.
+ * Neither root is ever merged with the other: the file with cards in it wins, an empty one loses to
+ * a file that has cards, and a file this build cannot read blocks every write and says so
  * ([GarageFile.readBoth] holds those rules). What the store will never do is decide a garage is
  * empty because it looked in one folder instead of two — that is the mistake that deleted a user's
  * only card on 2026-11-09, and [write] is what keeps it deleted-in-one-place only, ever again.
@@ -296,6 +312,21 @@ private class GarageState(private val appContext: Context) {
      * because the read had produced nothing. So the check does not live in the callers any more.
      */
     private var writable = false
+
+    /**
+     * The file the cards in memory came from, and the file every later write goes to. Set once by
+     * [ensure] from [GarageScan.Found.from]; null while nothing was read or when neither root held
+     * a garage, in which case [write] falls back to where the app is currently allowed to write.
+     */
+    private var activeGarage: File? = null
+
+    /**
+     * A second `vehicles.json` the read noticed and did not use: the other root holding cards of its
+     * own, or a hollow `{"vehicles":[]}` sitting in the root the app is looking at. Not an error —
+     * the cards are shown and written safely either way — but it is the fingerprint of a storage
+     * grant that has moved under the app, so it is kept for the screen and the log.
+     */
+    private var shadowGarage: File? = null
 
     init {
         // Start the read as soon as the first handle appears, so the file is warm by the time the
@@ -363,6 +394,24 @@ private class GarageState(private val appContext: Context) {
     fun damageWhere(): String? = damageWhere
 
     /**
+     * The file the loaded garage came from, in the words [AppRoot.garageLabel] uses. Null before the
+     * first read.
+     */
+    suspend fun garageNote(): String? = withContext(Dispatchers.IO) {
+        mutex.withLock { ensure() }
+        activeGarage?.let { AppRoot.garageLabel(it) }
+    }
+
+    /**
+     * The other `vehicles.json` the read saw and did not use, in words the owner can open; null when
+     * only one root has a garage. See [shadowGarage].
+     */
+    suspend fun shadowGarageNote(): String? = withContext(Dispatchers.IO) {
+        mutex.withLock { ensure() }
+        shadowGarage?.let { AppRoot.garageLabel(it) }
+    }
+
+    /**
      * [damage] *after* the file has actually been read.
      *
      * The plain accessor answers null before the first read, which is correct for the write path
@@ -396,12 +445,15 @@ private class GarageState(private val appContext: Context) {
             AppRoot.garageFile(appContext),
             AppRoot.privateGarageFile(appContext),
         )) {
-            // Cards found. `from` may be the private root when the shared one has nothing: the
-            // next write then moves them to where the app is now looking, which is the storage
-            // plan's migration, done by reading instead of by a one-shot copy step.
+            // Cards found. `from` is where they live and where they go back: the store does not
+            // re-pick a folder between the read and the write, so a storage grant that moves during
+            // the session cannot split the garage across two files. The migration to a newly granted
+            // shared root happens at the next start, by this same read.
             is GarageScan.Found -> {
                 garage = scan.garage
                 writable = true
+                activeGarage = scan.from
+                shadowGarage = scan.shadow
             }
             // Nothing anywhere: a new install. The empty default stands, and writing it is allowed.
             GarageScan.Nothing -> writable = true
@@ -425,8 +477,13 @@ private class GarageState(private val appContext: Context) {
      * the app and one set of failure rules. A failed write leaves the previous file in place, which
      * is the only reason the refusal in [VehicleStore.saveFailure] is truthful.
      *
-     * The target is resolved here rather than remembered, so a grant given while the app runs makes
-     * the next write land in the shared folder instead of the private one.
+     * The target is the file [ensure] read the cards from, not a fresh answer from [AppRoot]. It
+     * used to be resolved here on every write "so a grant given while the app runs moves the garage
+     * to the shared folder", and that is the other half of how a garage was lost on 2026-11-09: a
+     * reader that follows the cards and a writer that follows the storage grant can name two
+     * different files in the same breath, and then the copy in the second one is what the *next*
+     * read finds. One garage, one file, per session: the move to a newly granted shared root happens
+     * at the next start, when [ensure] reads and picks the root in one decision.
      *
      * **The first line is the store's real safety rule**, and it is here rather than in the callers
      * because a caller once forgot it: nothing reaches the file unless [ensure] actually looked at
@@ -436,6 +493,6 @@ private class GarageState(private val appContext: Context) {
      */
     private fun write(): Boolean {
         if (!writable) return false
-        return GarageFile.writeAtomically(AppRoot.garageFile(appContext), GarageFile.encode(garage))
+        return GarageFile.writeAtomically(activeGarage ?: AppRoot.garageFile(appContext), GarageFile.encode(garage))
     }
 }

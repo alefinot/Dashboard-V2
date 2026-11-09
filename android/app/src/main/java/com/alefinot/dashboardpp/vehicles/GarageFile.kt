@@ -68,32 +68,72 @@ object GarageFile {
      *
      * What each outcome means, and why:
      *
-     * - **write target reads clean** → it wins, whatever the other holds. Two garages is a state
-     *   the app does not merge; the Trips list shows both folders instead, and silently preferring
-     *   a merged mix of two garages would be worse than either.
+     * - **write target reads clean and holds cards** → it wins, whatever the other holds. Two
+     *   garages is a state the app does not merge; the Trips list shows both folders instead, and
+     *   silently preferring a merged mix of two garages would be worse than either.
      * - **write target cannot be read** → [GarageScan.Blocked], even if the fallback is perfect.
      *   Falling back there would let the next write overwrite a file the app could not read, which
      *   is the silent delete [read] exists to prevent.
-     * - **write target empty, fallback holds a garage** → [GarageScan.Found] from the fallback:
-     *   the cards come back, and the next write moves them to where the app is now looking.
+     * - **write target holds no cards, fallback holds cards** → [GarageScan.Found] from the
+     *   fallback, with [GarageScan.Found.shadow] naming the hollow file. A parseable file with
+     *   an empty `vehicles` array is a legitimate garage, so on its own it beats a fallback; that
+     *   is exactly why it is lethal here, because the hollow file is what the *previous* session
+     *   wrote while it was looking at this root, and the cards in the other one are then read as
+     *   nothing and overwritten. Bench, 2026-11-09 (second time): the owner's garage moved to
+     *   `Documents/Dashboard++/vehicles.json` as `{"vehicles":[]}` at 18:10 while the real card sat
+     *   in the app's own folder, and the app opened on `0 vehicles` an hour later. Cards outrank an
+     *   empty list: the fallback wins, and the hollow file is reported rather than trusted.
      * - **write target empty, fallback unreadable** → [GarageScan.Blocked], naming the fallback.
      *   "Nothing here yet" and "there is something here I dare not touch" must never be confused,
      *   and here the something is the only copy of the owner's cards.
-     * - **neither exists** → [GarageScan.Nothing], and writing freely is correct.
+     * - **neither exists, or both exist and neither holds a card** → [GarageScan.Nothing], and
+     *   writing freely is correct.
+     *
+     * Whichever file answers, its path comes back as [GarageScan.Found.from] and the store writes
+     * there: a garage lives in one file at a time, and a reader that picks one file while the writer
+     * re-picks a different one by asking permission again is the other half of how the garage was
+     * lost on 2026-11-09.
      *
      * The two arguments may name the same file — on a device with no shared grant, [writeTarget]
      * *is* the private root. Reading it twice is cheap and it keeps this free of a special case.
      */
-    fun readBoth(writeTarget: File, fallback: File): GarageScan =
-        when (val primary = read(writeTarget)) {
-            is GarageRead.Ok -> GarageScan.Found(primary.garage, writeTarget)
-            is GarageRead.Damaged -> GarageScan.Blocked(writeTarget, primary.why)
-            GarageRead.Absent -> when (val other = read(fallback)) {
-                is GarageRead.Ok -> GarageScan.Found(other.garage, fallback)
-                is GarageRead.Damaged -> GarageScan.Blocked(fallback, other.why)
-                GarageRead.Absent -> GarageScan.Nothing
-            }
+    fun readBoth(writeTarget: File, fallback: File): GarageScan {
+        val primary = read(writeTarget)
+        if (primary is GarageRead.Damaged) return GarageScan.Blocked(writeTarget, primary.why)
+
+        val primaryGarage = (primary as? GarageRead.Ok)?.garage
+        val primaryCards = primaryGarage?.vehicles?.size ?: 0
+        val same = runCatching { writeTarget.canonicalPath }
+            .getOrDefault(writeTarget.absolutePath) ==
+            runCatching { fallback.canonicalPath }.getOrDefault(fallback.absolutePath)
+
+        // Cards in the write target settle the question; without them the other root has to be
+        // asked, because that is where a previous session's cards were left.
+        val other = if (same) null else read(fallback)
+        val otherGarage = (other as? GarageRead.Ok)?.garage
+        val otherCards = otherGarage?.vehicles?.size ?: 0
+
+        // A file in a root the app ends up *not* using, when reading only one of the two would
+        // mislead: the fallback holding cards of its own, or the write target holding a hollow
+        // `{"vehicles":[]}` that an earlier session wrote there. Either way two roots have been in
+        // play, and that is worth saying out loud rather than letting a "0 vehicles" screen stand.
+        val shadow = when {
+            otherGarage != null && otherCards > 0 && primaryCards > 0 -> fallback
+            otherGarage != null && otherCards > primaryCards && primaryGarage != null -> writeTarget
+            other is GarageRead.Absent && primaryGarage?.vehicles?.isEmpty() == true -> writeTarget
+            else -> null
         }
+
+        return when {
+            other is GarageRead.Damaged && primaryGarage == null -> GarageScan.Blocked(fallback, other.why)
+            otherCards > primaryCards -> GarageScan.Found(otherGarage!!, fallback, shadow)
+            primaryGarage != null && primaryGarage.vehicles.isNotEmpty() ->
+                GarageScan.Found(primaryGarage, writeTarget, shadow)
+            otherGarage != null && otherGarage.vehicles.isNotEmpty() ->
+                GarageScan.Found(otherGarage, fallback, shadow)
+            else -> GarageScan.Nothing
+        }
+    }
 
     /**
      * Write [text] to [file] so that the file either holds the whole new garage or still holds the
@@ -230,8 +270,17 @@ sealed class GarageRead {
  * this one asks "is there anything here the app may overwrite, and which file would that be".
  */
 sealed class GarageScan {
-    /** A garage, and the file it came from — not necessarily the one the app writes to. */
-    data class Found(val garage: Garage, val from: File) : GarageScan()
+    /**
+     * A garage, and the file it came from — not necessarily the one the app would pick by asking
+     * the storage grant again, which is why [com.alefinot.dashboardpp.vehicles.VehicleStore]
+     * remembers it and writes there.
+     *
+     * [shadow] names a *second* file the app has now seen when it deserves a mention: the other
+     * root holding cards of its own, or the root the app is looking at holding a hollow
+     * `{"vehicles":[]}` left by an earlier session. Either way two roots have been in play, which
+     * is the bench failure of 2026-11-09 and worth a line in the log while it is being diagnosed.
+     */
+    data class Found(val garage: Garage, val from: File, val shadow: File? = null) : GarageScan()
 
     /** Neither location holds anything. A new install, and writing is free. */
     object Nothing : GarageScan()

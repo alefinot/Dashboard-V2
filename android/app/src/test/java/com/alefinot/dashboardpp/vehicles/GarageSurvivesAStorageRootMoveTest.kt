@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.vehicles
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -147,6 +148,69 @@ class GarageSurvivesAStorageRootMoveTest {
         assertEquals(only, scan.from)
     }
 
+    // ---- the hollow file ----------------------------------------------------------------
+
+    /**
+     * The second loss, from the other side. The first was a root that read as empty; this is a root
+     * that read as *an empty garage* — a file that parses, so the old rule let it win — written at
+     * 18:10 into `Documents/Dashboard++/vehicles.json` while the owner's one card sat untouched in
+     * the app's own folder. The app opened an hour later on "0 vehicles", and any save, adoption or
+     * version stamp would then have written that emptiness back where the card could still be read.
+     */
+    @Test
+    fun `a hollow file in the folder the app writes to loses to the folder that holds cards`() {
+        val shared = shared()
+        val priv = private()
+        put(shared, Garage(nextSeq = 1, selectedId = null, vehicles = emptyList()))
+        put(priv, Garage(nextSeq = 1, selectedId = "v1", vehicles = listOf(card)))
+
+        val scan = GarageFile.readBoth(shared, priv)
+        scan as GarageScan.Found
+        assertEquals("cards outrank an empty list", listOf(card), scan.garage.vehicles)
+        assertEquals("so the write goes where the cards are", priv, scan.from)
+        assertEquals("and the hollow file is reported, not trusted", shared, scan.shadow)
+    }
+
+    @Test
+    fun `a second garage in the folder not used is reported too`() {
+        val shared = shared()
+        val priv = private()
+        put(shared, Garage(nextSeq = 1, selectedId = "v1", vehicles = listOf(card)))
+        put(priv, Garage(nextSeq = 2, selectedId = "v2", vehicles = listOf(card.copy(id = "v2"))))
+
+        val scan = GarageFile.readBoth(shared, priv)
+        scan as GarageScan.Found
+        assertEquals("the write target still wins — two garages are shown, never merged", shared, scan.from)
+        assertEquals("but the owner is told a second garage exists", priv, scan.shadow)
+    }
+
+    @Test
+    fun `both roots holding no cards is still a free write, not a shadow`() {
+        val shared = shared()
+        val priv = private()
+        put(shared, Garage(nextSeq = 3, selectedId = null, vehicles = emptyList()))
+        put(priv, Garage(nextSeq = 3, selectedId = null, vehicles = emptyList()))
+
+        val scan = GarageFile.readBoth(shared, priv)
+        assertTrue(
+            "a user who deleted their last card must be able to save that",
+            scan is GarageScan.Nothing,
+        )
+    }
+
+    @Test
+    fun `cards in the write target settle the question, so a broken other file is not a blocker`() {
+        val shared = shared()
+        val priv = private()
+        put(shared, Garage(nextSeq = 1, selectedId = "v1", vehicles = listOf(card)))
+        tear(priv)
+
+        val scan = GarageFile.readBoth(shared, priv)
+        scan as GarageScan.Found
+        assertEquals(shared, scan.from)
+        assertNull("nothing was asked of the other root, so nothing was learned about it", scan.shadow)
+    }
+
     // ---- the write gate -----------------------------------------------------------------
 
     @Test
@@ -175,6 +239,29 @@ class GarageSurvivesAStorageRootMoveTest {
         assertTrue(
             "the door has to check that the read actually permitted a write",
             store.contains("if (!writable) return false"),
+        )
+    }
+
+    /**
+     * The reader follows the cards; the writer must follow the reader. When it asked the storage
+     * grant again instead, one session could read `Android/data/…/vehicles.json` and write
+     * `Documents/Dashboard++/vehicles.json`, leaving a hollow file in the folder the next read would
+     * trust — the second half of the 2026-11-09 loss.
+     */
+    @Test
+    fun `the writer goes to the file the reader read, not to a freshly re-asked root`() {
+        val store = mainSources().first { it.name == "VehicleStore.kt" }.readText()
+        val write = store.substringAfter("private fun write(): Boolean {")
+        val remembered = write.indexOf("activeGarage")
+        val reAsked = write.indexOf("AppRoot.garageFile(")
+        assertTrue(
+            "GarageState.write() must target the file the read chose",
+            remembered >= 0,
+        )
+        assertTrue(
+            "and that file must come first: AppRoot may only be asked as the fallback for a " +
+                "session that read no garage at all",
+            reAsked < 0 || remembered < reAsked,
         )
     }
 
