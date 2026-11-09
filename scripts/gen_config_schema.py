@@ -260,8 +260,11 @@ SCHEMA_VERSION = 1
 # inside General, and the one row that is not a row here.
 ADVANCE_KEY = "ADV_MODE"
 
-# Cards that work without a single config row behind them.
-LIVE_WIDGETS = {"firmwareUpdate", "noiseBench", "tripReset", "ambientCalibrate",
+# Cards that work without a single config row behind them. (The firmware push used to
+# be one of these - `"firmwareUpdate"` - until the card moved to App Settings on
+# 2026-11-09, where it fetches its own file from the GitHub releases; the settings
+# page is now only settings.)
+LIVE_WIDGETS = {"noiseBench", "tripReset", "ambientCalibrate",
                 "tempCalibrate", "batteryCalibrate", "odometerSet"}
 
 # The display factors behind the app's displayFromMetric / unitLabel.
@@ -277,7 +280,6 @@ IMPERIAL = {
 WIDGET_BY_CARD = {
     "Trip Reset": "tripReset",
     "Wifi": "wifi",
-    "Firmware Update": "firmwareUpdate",
     "Auto Brightness": "ambientCalibrate",
     "Engine Temperature": "tempCalibrate",
     "Battery Voltage": "batteryCalibrate",

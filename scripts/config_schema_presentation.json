@@ -248,21 +248,6 @@
         {
           "id": "DASHBOARD_SIGNATURE",
           "label": "Main Dashboard Watermark"
-        },
-        {
-          "type": "card_header",
-          "label": "Firmware Update",
-          "content": "\n        <div class=\"cfg-toolbar spread\" style=\"margin-bottom:2px;\">\n            <span class=\"cfg-state is-idle\" id=\"ota-state-line\">Update state: idle.</span>\n        </div>\n        <div class=\"cfg-state-hint\" id=\"ota-state-hint\" style=\"margin-bottom:8px;\"></div>\n        <div class=\"cfg-row\">\n            <label>Firmware File</label>\n            <div class=\"cfg-controls\">\n                <span class=\"cfg-live\" id=\"ota-file-name\">none chosen</span>\n                <input type=\"file\" id=\"otaFile\" accept=\".bin\" style=\"display:none\" onchange=\"otaFileChosen(this)\">\n                <button id=\"otaPickBtn\" onclick=\"otaPickFile()\" class=\"btn-secondary btn-sm\">Choose</button>\n            </div>\n        </div>\n        <div class=\"cfg-help\" id=\"ota-ver-line\" style=\"margin-bottom:6px;\"></div>\n        <div class=\"cfg-row\">\n            <label>Install</label>\n            <div class=\"cfg-controls\">\n                <input type=\"text\" id=\"otaVer\" placeholder=\"1.5.2\" oninput=\"otaVerChanged()\" style=\"display:none\">\n                <button id=\"otaBtn\" onclick=\"doOta()\" class=\"btn-secondary btn-sm\" disabled>Install</button>\n            </div>\n        </div>"
-        },
-        {
-          "type": "status",
-          "id": "build_version",
-          "label": "Firmware Build (compiled in)"
-        },
-        {
-          "type": "status",
-          "id": "core_version",
-          "label": "ESP Core FW"
         }
       ]
     },
