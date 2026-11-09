@@ -62,6 +62,12 @@ class OtaStatusPollStaysQuietTest {
      * The card draws progress from the controller's StateFlow. If it started asking the unit for
      * it, the poll would be running on the UI's clock with no idea that a chunk phase is in
      * progress — exactly the self-competition A4 is about.
+     *
+     * Since 2026-11-09 the card also has a GitHub version dropdown, and the same discipline
+     * applies to the new half: the fetch lives in `update/FirmwareReleases.kt`, not here, under
+     * that object's rate-limit rules. So the card is checked twice over — it starts no clocks,
+     * and it holds no network. An `https://` or an okhttp import in this file would mean a
+     * second fetcher no discipline governs, drawing its own progress on somebody else's clock.
      */
     @Test
     fun theFirmwareCardAsksNothing() {
@@ -73,6 +79,15 @@ class OtaStatusPollStaysQuietTest {
         assertFalse(
             "and it must not run a timer of its own against the transfer",
             Regex("\\b(while\\s*\\(|delay\\s*\\(|flowWithLatestValue)").containsMatchIn(card),
+        )
+        // And no network either: the card draws what FirmwareReleases publishes.
+        assertFalse(
+            "the firmware card names a URL; the release fetch belongs to update/FirmwareReleases.kt",
+            card.contains("https://"),
+        )
+        assertFalse(
+            "the firmware card holds an HTTP client of its own",
+            card.contains("okhttp3"),
         )
     }
 

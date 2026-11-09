@@ -159,18 +159,11 @@ object SettingsLayout {
      * One line on a card that is not a list of rows: what its action risks, said on the
      * card itself rather than promised on some other page.
      *
-     * Only the firmware card needs one, and it needs it because a firmware update is the one
-     * setting-shaped thing on this page that can end with a vehicle sitting in the drive with a
-     * dead display. What the line says is what `src/bt_ota.cpp` guarantees: the image is written
-     * to the spare flash slot, and the unit switches to it only after its own checks pass.
+     * The plumbing stays for the next widget card; the only card that needed a hint, the
+     * firmware push, moved to App Settings on 2026-11-09 and carries its own sentence
+     * there (`FirmwareUpdateControl`), so no widget asks for one today.
      */
     private fun cardHint(card: SchemaCard): String? = when (card.widget) {
-        // Said on the card, above the buttons, because it is the sentence that decides whether a
-        // person presses them: the image lands in the spare slot and only takes charge if the unit
-        // accepts it, so a refused or interrupted install leaves the old firmware running. The
-        // buttons and their answers belong to the control (`FirmwareUpdateControl`).
-        "firmwareUpdate" -> "Writes to the spare flash slot. A refused or interrupted install " +
-            "leaves the old firmware running."
         else -> null
     }
 

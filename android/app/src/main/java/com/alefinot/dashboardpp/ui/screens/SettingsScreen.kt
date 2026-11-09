@@ -102,6 +102,8 @@ fun SettingsScreen(
     vm: ConnectionViewModel,
     unit: String?,
     version: String?,
+    /** True while a Bluetooth link is up — the firmware card installs only over one. */
+    connected: Boolean,
     trips: TripsViewModel,
     tripsAvailable: Boolean,
 ) {
@@ -166,6 +168,36 @@ fun SettingsScreen(
             IdCard("UNIT", unit ?: "NOT LINKED", Modifier.weight(1f))
             IdCard("FIRMWARE", version ?: "—", Modifier.weight(1f))
             IdCard("APP", appVersion, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ── Firmware update ──────────────────────────────────────────────
+        // The card moved here from the unit's settings page on 2026-11-09: it is the one
+        // control that *changes* the unit rather than adjusting it, and it earns its keep
+        // offline — the dropdown and the download need only the phone's network. The old
+        // settings page is settings and nothing else.
+        var firmwareLine by remember { mutableStateOf("") }
+        Column(
+            Modifier.fillMaxWidth().hudCard()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            CardHead("Firmware Update")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Writes to the spare flash slot. A refused or interrupted install " +
+                    "leaves the old firmware running.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+            FirmwareUpdateControl(
+                unitVersion = version,
+                linked = connected,
+                onNote = { firmwareLine = it },
+            )
+            if (firmwareLine.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(firmwareLine, color = HudColors.TextMuted, style = HudeCfgNote())
+            }
         }
         Spacer(Modifier.height(12.dp))
 

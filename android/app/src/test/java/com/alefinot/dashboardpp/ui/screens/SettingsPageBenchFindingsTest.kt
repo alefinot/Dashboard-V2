@@ -50,11 +50,15 @@ class SettingsPageBenchFindingsTest {
      */
     @Test
     fun aCardWithNoActionAvailableSaysSoInsteadOfInventingOne() {
-        val layout = codeOnly("settings/SettingsLayout.kt")
+        // The spare-slot sentence rode with the card: the firmware push left the unit's
+        // settings page for App Settings on 2026-11-09, and this guard follows the promise,
+        // not the file it happened to sit in. It is still stated above the buttons, wherever
+        // the buttons are.
+        val card = codeOnly("SettingsScreen.kt")
         assertTrue(
             "the firmware update card stopped saying where the new image goes: it must state the " +
                 "spare-slot guarantee, because that is what makes START safe to press",
-            layout.contains("spare flash slot"),
+            card.contains("spare flash slot"),
         )
         val widgets = codeOnly("SettingsWidgets.kt")
         assertTrue(

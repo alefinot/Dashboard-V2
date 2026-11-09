@@ -396,6 +396,7 @@ fun AppShell(
                                     vm = connection,
                                     unit = conn?.name ?: address,
                                     version = conn?.version,
+                                    connected = connected,
                                     trips = trips,
                                     tripsAvailable = tripsAvailable,
                                 )

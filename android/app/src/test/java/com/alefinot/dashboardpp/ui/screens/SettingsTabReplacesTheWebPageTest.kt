@@ -86,22 +86,26 @@ class SettingsTabReplacesTheWebPageTest {
      * WebView comes back, rather than trusting that the next person will notice which of three
      * paths a number came from.
      *
-     * The app does have an outbound HTTP client again, and it is still not a way to reach a
+     * The app does have an outbound HTTP client, and it is still not a way to reach a
      * unit: a unit has no radio, so the phone fetches the forecast and the place name a panel
-     * cannot fetch by itself and hands them over with `weather.set`. So the rule moved from "no
-     * HTTP client anywhere" to "exactly one named file may hold one" — the dependency in
-     * `build.gradle.kts` and the import in `weather/WeatherHttp.kt` are pinned to each other
-     * here, and every other HTTP stack stays banned outright, because a second client would not
-     * need to import the first one in order to become a second way to a unit.
+     * cannot fetch by itself and hands them over with `weather.set`, and — since 2026-11-09, at
+     * the maintainer's request — it fetches the released `firmware.bin` files from this project's
+     * GitHub releases and hands *those* to the Bluetooth installer, which is a GATT write, not a
+     * socket. So the rule moved from "no HTTP client anywhere" to "exactly two named files may
+     * hold one, and neither may point at a unit" — the dependency in `build.gradle.kts` and the
+     * imports in `weather/WeatherHttp.kt` and `update/FirmwareReleases.kt` are pinned to each
+     * other here, and every other HTTP stack stays banned outright, because a second client would
+     * not need to import the first one in order to become a second way to a unit.
      *
      * The `http` strings that are allowed to stay are not roads to a unit: one is the XML
      * namespace on the root element of a written GPX file, one is the contact URL in the user
      * agent the trip map sends with its OSM tile requests, one is the contact URL inside the
      * weather client's own user agent — Nominatim's usage policy demands an identifying one
      * ("stock User-Agents as set by http libraries will not do"), so the seam carries the
-     * repository there — and one is the forecast endpoint the weather client is pointed at,
-     * `api.open-meteo.com`, which is a keyless public forecast for the car's coordinates and not
-     * an address anything in this repo controls. They are named file by file so the ban itself
+     * repository there — the forecast endpoint the weather client is pointed at,
+     * `api.open-meteo.com`, a keyless public forecast for the car's coordinates, and the GitHub
+     * releases API the firmware card lists its versions from — a host that only ever answers the
+     * phone and never receives a word about a unit. They are named file by file so the ban itself
      * stays absolute.
      */
     @Test
@@ -130,9 +134,10 @@ class SettingsTabReplacesTheWebPageTest {
         val httpClientFiles = sources.filter { codeOnly(it.readText()).contains("okhttp3") }
             .map { it.relativeTo(root).path.replace('\\', '/') }.sorted()
         assertEquals(
-            "the HTTP client has one file - the weather seam - and a second file importing it " +
-                "is how a transport grows back without anyone deleting it twice",
-            listOf("weather/WeatherHttp.kt"),
+            "the HTTP client has two files - the weather seam and the release fetcher - and a " +
+                "third file importing it is how a transport grows back without anyone deleting " +
+                "it twice",
+            listOf("update/FirmwareReleases.kt", "weather/WeatherHttp.kt"),
             httpClientFiles,
         )
         // URLs are checked in the raw text, not the comment-stripped text: `codeOnly` removes
@@ -151,6 +156,7 @@ class SettingsTabReplacesTheWebPageTest {
                 "user agent, a provider endpoint), add it here and say what it is", listOf(
                 "trips/GpxWriter.kt",
                 "ui/map/RouteMap.kt",
+                "update/FirmwareReleases.kt",
                 "weather/OpenMeteo.kt",
                 "weather/PlaceNames.kt",
                 "weather/WeatherHttp.kt",

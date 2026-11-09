@@ -167,6 +167,19 @@ object OtaController {
         }
     }
 
+    /**
+     * The same read for a file this app fetched itself — right now, the release
+     * `.bin` the card downloads from GitHub (`update/FirmwareReleases.kt`).
+     *
+     * There is deliberately no second pipeline behind it: the fetch side hands a cache
+     * file here and the card cannot tell the two sources apart, which is the point —
+     * every check that protects an install (size band, CRC-32, the `DPPVER=` marker,
+     * the unit's own gate) runs identically on a downloaded file and a picked one.
+     * `contentResolver` reads `file://` URIs, so even the read path is shared.
+     */
+    fun pickFile(context: Context, file: java.io.File, name: String) =
+        pick(context, Uri.fromFile(file), name)
+
     /** Starts (or resumes) the transfer. Ignored unless a file has been read. */
     fun start(context: Context) {
         if (job?.isActive == true) return

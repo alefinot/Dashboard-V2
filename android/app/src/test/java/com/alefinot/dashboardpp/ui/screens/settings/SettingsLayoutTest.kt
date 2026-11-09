@@ -343,36 +343,38 @@ class SettingsLayoutTest {
     }
 
     /**
-     * Only the firmware card carries a line of its own, and it says where an update
-     * actually happens. A widget's action is drawn inside its card, so no card points at
-     * another page — there is no Tools page left to point at.
+     * No widget card claims anything about itself. The one card that ever needed a line of
+     * warning — the firmware installer — moved to App Settings on 2026-11-09 and carries its
+     * sentence there, so `cardHint` is plumbing with nothing plumbed into it: kept for the next
+     * widget card, empty today, and asserted empty so the page cannot grow a warning somewhere
+     * a person will not look for one. A widget's action is still drawn inside its card — there
+     * is no Tools page left to point at.
      */
     @Test
-    fun onlyTheFirmwareCardSaysSomethingAboutItself() {
+    fun noWidgetCardClaimsALineOfItsOwn() {
         val g = SchemaGroup(
             "g4",
             "Group",
             listOf(
                 SchemaCard("Plain", listOf(row("PLAIN_ROW"))),
                 SchemaCard("Trip", listOf(row("TRIP_AUTO_RESET")), widget = "tripReset"),
-                SchemaCard("Firmware", emptyList(), widget = "firmwareUpdate"),
+                SchemaCard("Bench", emptyList(), widget = "noiseBench"),
             ),
         )
         val blocks = blocksFor(g, ConfigStore.SettingsState(), "", false)
         assertEquals(3, blocks.size)
         assertNull("an ordinary card claims there is something elsewhere", blocks[0].card.hint)
         assertNull("a widget card points somewhere else", blocks[1].card.hint)
-        assertTrue(
-            "the firmware card does not say what an install risks: the image goes to the spare " +
-                "flash slot and only takes charge after the unit's own checks pass, and the card " +
-                "has to say that before anybody presses START",
-            (blocks[2].card.hint ?: "").contains("spare flash slot"),
+        assertNull(
+            "a widget card grew a hint; the firmware card's warning moved to App Settings on " +
+                "2026-11-09, and the next one that needs a sentence says it inside its own control",
+            blocks[2].card.hint,
         )
         // A card that is only an action shows on its own title - it has no other text.
         assertEquals(
-            "searching for the firmware card lost it",
-            listOf("Firmware"),
-            blocksFor(g, ConfigStore.SettingsState(), "firmware", false).map { it.card.title },
+            "searching for the action card lost it",
+            listOf("Bench"),
+            blocksFor(g, ConfigStore.SettingsState(), "bench", false).map { it.card.title },
         )
         assertEquals(
             "a rowless action card survived a query that names neither it nor a row",
@@ -382,10 +384,9 @@ class SettingsLayoutTest {
     }
 
     /**
-     * The counts say what the box found. A card with no rows of its own (the firmware
-     * installer) is not a setting and is not counted as one, but a group whose only hit is
-     * that card must not read "0 of 18" above it either - the card the query named is open
-     * right there.
+     * The counts say what the box found. A card with no rows of its own (a widget card) is not
+     * a setting and is not counted as one, but a group whose only hit is that card must not
+     * read "0 of 18" above it either - the card the query named is open right there.
      */
     @Test
     fun theCountsSayWhatTheQueryFound() {
@@ -393,7 +394,7 @@ class SettingsLayoutTest {
             "sys", "System & General",
             listOf(
                 SchemaCard("General", listOf(row("ADV_MODE"))),
-                SchemaCard("Firmware", emptyList(), widget = "firmwareUpdate"),
+                SchemaCard("Bench", emptyList(), widget = "noiseBench"),
             ),
         )
         assertEquals(
@@ -405,12 +406,12 @@ class SettingsLayoutTest {
         assertEquals(
             "a title-only card was counted as zero settings",
             "1 card",
-            SettingsLayout.groupMeta(g, "firmware", true),
+            SettingsLayout.groupMeta(g, "bench", true),
         )
         assertEquals(
             "the summary counted a rowless card as a row, or counted a whole group instead of its hits",
-            "1 card matches \"firmware\"",
-            SettingsLayout.searchSummary(listOf(g), "firmware", true),
+            "1 card matches \"bench\"",
+            SettingsLayout.searchSummary(listOf(g), "bench", true),
         )
         assertEquals(
             "1 of 1 settings match \"adv\"",
