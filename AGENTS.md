@@ -39,16 +39,23 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
   1. USB serial (PlatformIO `--upload-port <other COM port>`) — works on every unit
   2. WiFi OTA via PlatformIO: `pio run -t upload --upload-port <ESP_IP>` (device must be on the `Dashboard_Config` SoftAP or a known LAN IP) — Wi-Fi firmwares only (≤ 1.4.x)
   3. Web Portal OTA upload (browser → `http://192.168.4.1` → System Actions → upload `firmware.bin`) — Wi-Fi firmwares only (≤ 1.4.x)
-  4. **The Android app is the update path, and only over BLE — never over HTTP.** A
-     phone has no way to reach a unit that has no IP, and the HTTP updater was deleted
-     with the server that served it: `UpdateFetcher`, `UpdateRepository` and
-     `UpdateScreens` are gone, and a grep of `android/app/src` finds no GitHub client,
-     no firmware download and no SHA-256 check. The app **picks** a `.bin` the phone
-     already has (Storage Access Framework), reads its size / CRC-32 / `DPPVER` marker and
-     pushes it over the OTA characteristic; the card is
-     `ui/screens/FirmwareOtaControl.kt`, the unit's side is `src/bt_ota.cpp`
-     (`ota.begin` / `ota.end` / `ota.status` / `ota.abort`). Do not describe the app as
-     shipping a *downloader*, and never add an HTTP updater. The contract (phase **2b** of
+  4. **The Android app is the update path, and the unit is reached only over BLE — never over
+     HTTP.** A phone has no way to reach a unit that has no IP, the HTTP updater was deleted with
+     the server that served it (`UpdateFetcher`, `UpdateRepository`, `UpdateScreens` are gone), and
+     **nothing in the app talks to a unit over a socket**. What the app *does* do since 2026-11-09,
+     at the maintainer's explicit request, is fetch the image itself: the firmware card carries a
+     version dropdown backed by this project's GitHub releases
+     (`update/FirmwareReleases.kt` → `api.github.com`), downloads the chosen release's
+     `firmware.bin` into the app's cache, and hands it to the same `OtaController.pickFile()` door
+     a hand-picked file comes through. That widened "the app ships no downloader" and nothing else:
+     there is still no HTTP server or updater **on the unit**, no HTTP client pointed at a unit
+     anywhere in the app, and no `.sig` / SHA-256 verification (rule 3). The local file picker
+     (Storage Access Framework, `CHOOSE FILE`) stays as the second source. Both doors read size /
+     CRC-32 / `DPPVER` and push over the OTA characteristic; the card is
+     `ui/screens/FirmwareOtaControl.kt` (it lives on **App Settings**, not the unit's settings
+     page, since 2026-11-09), the unit's side is `src/bt_ota.cpp`
+     (`ota.begin` / `ota.end` / `ota.status` / `ota.abort`). Never add an HTTP updater to the unit,
+     and never point a phone-side fetcher at a unit address. The contract (phase **2b** of
      `Implementation plans/BLE-ONLY-ARCHITECTURE-PLAN.md`, §4.7 — now code on both ends):
      JSON `begin {size, crc32}` → `begin_ok` with the offset and the MTU-capped chunk size,
      `offset (4 B LE) + payload` writes, `ack` every 4 KiB (one flash sector: an ACK is a claim
@@ -153,9 +160,13 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
   Nothing needs grafting or squashing — do not invent a history-rewrite step.
 - **At switch time**, confirm with the maintainer and then: duplicate the `V2.0.x` releases into the
   old repo with both artifacts (rules 27/28; 2.0.2's `firmware.bin` and APK are the ones this tree
-  builds, earlier ones re-download from V2 or rebuild from their tags), re-point the two repo-name
-  strings — the clone block in `README.md` and the tile **User-Agent** policy string in
-  `android/.../ui/map/RouteMap.kt` (an app change: APK rebuild + `versionCode` bump, rules 8/24) —
+  builds, earlier ones re-download from V2 or rebuild from their tags), re-point the three repo-name
+  strings — the clone block in `README.md`, the tile **User-Agent** policy string in
+  `android/.../ui/map/RouteMap.kt`, and the releases URL + User-Agent in
+  `android/.../update/FirmwareReleases.kt` (the app's firmware-version dropdown reads
+  `api.github.com/repos/alefinot/Dashboard-V2/releases`; after the switch a phone would otherwise
+  keep listing the archived repository's images) — all three app changes mean an APK rebuild +
+  `versionCode` bump (rules 8/24);
   then `git remote rename origin v2 && git remote rename old origin` so this rule keeps pointing at
   the real home, and archive the V2 repository.
 

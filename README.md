@@ -1601,37 +1601,51 @@ are **the Android app over Bluetooth** and **a USB cable with PlatformIO**:
 2. **The Web UI file picker** (Settings -> *Firmware Update*) — on a **≤ 1.4.x**
    unit only: same endpoint, same gates, for whoever is on that unit's network
    with a PC (or the phone's browser).
-3. **The Android app is no longer a path, and that is a consequence of its own**
-   **move to Bluetooth** (see the V2.0.0 app entries in the Changelog). It reached this
-   endpoint through the WebView of the unit's own page, which a person used to pick a
-   file in; that WebView is gone, and so is every HTTP client in the app — and a
-   current-build unit has no HTTP endpoint for them to aim at anyway. The fuller
-   flow this section used to describe — read the release list from GitHub on the phone,
-   show every published build with its version, date and notes, let a person pick one,
-   download its `firmware.bin` to app cache, check it against what the release claims
-   (size, and the `DPPVER=x.y.z` marker the firmware stamps inside its own image), print
-   the SHA-256, push it with `multipart/form-data` (`target_version`, `total_bytes`,
-   `firmware`), watch `GET /api/ota/check` until the unit reboots, then re-read the
-   identity so the screen says what is running — is what the app now does, over Bluetooth
-   instead of HTTP, and the file is picked rather than downloaded: Android's file picker gives
-   the app a `firmware.bin` (from Files, Downloads, or wherever it landed), the app reads its
-   size, CRC-32 and `DPPVER` marker, pushes it with the frames under *Firmware over the link*,
-   shows the unit's ACKs as progress, and re-reads the identity when the unit comes back — so the
-   version row says what the unit is actually running, not what the card was told to expect.
-   What this path still does **not** do: it never lists the published builds to choose from and
-   never prints a SHA-256 (the app has no GitHub client), and the only integrity check on the
-   wire is the CRC-32 the unit re-computes at the end — **no signing, anywhere** (`AGENTS.md`
-   rule 3). A phone carrying only this app **can** update a dashboard today.
+3. **The Android app over Bluetooth** is the wireless path. It reached the old endpoint
+   through the WebView of the unit's own page; that WebView and the unit's HTTP server are
+   both gone, and nothing in the app aims a socket at a unit — the transport is the OTA
+   characteristic and the frames under *Firmware over the link*. The card (App Settings →
+   **Firmware Update**, since 2026-11-09) takes its file from either of two doors and runs
+   one pipeline from there:
 
-That one path faces the same guards, which live in the unit and cannot be talked around
-from the client: `target_version` present and version-shaped; the identical-version
-refusal (`force=1` to reflash the build that is already running); an image claiming an
-**older** version is accepted without argument, because the warning belongs in the
-client that can show both versions side by side; declared
-size against the real OTA partition; the ESP magic byte and a plausible segment
-count; the accepted byte count matching what was claimed; one writer on the slot at
-a time; and the image SHA-256'd while it streams, the digest logged so it can be
-compared against `sha256sum firmware.bin`.
+   - **The version dropdown** reads this project's GitHub releases on the phone
+     (`update/FirmwareReleases.kt` → `api.github.com`), offers the releases that actually
+     carry an uploaded `firmware.bin` newest-first (drafts and assetless releases are never
+     offered), marks the one the unit is already running, and downloads that asset into the
+     app's cache — reused without a second fetch when its length matches what GitHub
+     advertises. This is the one place the app fetches a firmware file; it runs
+     **phone → GitHub**, and it was added at the maintainer's explicit request on 2026-11-09
+     (`AGENTS.md` rule 5).
+   - **CHOOSE FILE** reads a `.bin` the phone already holds, through Android's Storage
+     Access Framework.
+
+   Either door ends in the same hand: the app reads the file's size, CRC-32 and `DPPVER=`
+   marker, cross-checks the marker against the release it was fetched as and against what
+   the unit reports, asks before reinstalling a version the unit already runs, pushes with
+   the frames under *Firmware over the link*, shows the unit's ACKs as progress, and
+   re-reads the identity when the unit comes back — so the version row says what the unit is
+   actually running, not what the card was told to expect. The only integrity check on the
+   wire is the CRC-32 the unit re-computes at the end: **no signing, anywhere**
+   (`AGENTS.md` rule 3), and the card's `DPPVER=` cross-check is what a person gets in place
+   of a signature.
+
+Those guards live in the unit (`src/bt_ota.cpp`) and cannot be talked around from the
+client: one writer on the spare slot at a time (`already_active`); a declared size between
+4 KiB and the app partition (`too_small` / `no_space`, and the reason the build gate is
+1.80 MB); a CRC-32 self-check before a single byte is accepted; every data frame matched
+against the open session (`no_session`) and the byte count matched against the declared
+length at `ota.end` (`bad_length`); the image re-CRC-32'd from flash (`crc`) and then handed
+to `esp_ota_end()`, whose own magic/segment gate names an image built for another chip
+(`end_failed`); and a 120 s silence window after which the unit closes the slot, parks the
+dashboard and stops advertising so a wire flash can go in cleanly. The ACK every 4 KiB is
+the resume token, and `ota.begin` re-stated with the same size and CRC is the resume
+handshake: the unit answers with the offset it has actually written to flash, never one that
+only reached RAM.
+
+What the unit does **not** do is gate on version — `ota.begin` installs what it is handed,
+because the client is the half that can show both versions side by side. That is why the app
+carries the version cross-check described above, and why the identical-version refusal a
+Wi-Fi client sent as `force=1` is today a confirmation press on the card.
 
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
@@ -1644,9 +1658,10 @@ deleted the literal, which is why every image built for a while carried no tag a
 and a Wi-Fi firmware also reports it at `GET /api/ota/check` as `image_tag`. A pushing
 client is expected to check the file it is about to send for it — because the release tag
 and the file contents can disagree, and that disagreement is exactly the class of mistake
-that gets a unit reflashed to something nobody meant. No shipped client does that check
-yet: the app ships no updater at all, so today the marker and the build-time print are
-what make a human able to tell one `.bin` from another.
+that gets a unit reflashed to something nobody meant. Since 2026-11-09 the app is that
+client: the card reads the marker out of the file it is about to push and prints it beside
+the version the chosen release claims and the version the unit reports, so a disagreement
+between a release tag and its asset is visible **before** 1.5 MB crosses the air.
 
 Deleting the pull path also closes **#71** and **#70** by construction rather than by
 fix: the TLS failures that made it unreliable (the CDN chain the compiled-in CA
@@ -1700,6 +1715,69 @@ In Demo Mode:
 ---
 
 ## Changelog
+
+### App 2.0.3/90 — the firmware card leaves the unit's settings page and starts fetching its own image (`versionCode` 89 → 90, not released)
+
+The card that installs firmware sat on the *unit's* settings page — a form of 158 rows it did not
+belong to — and it could only ever push a `.bin` the phone already happened to hold. Both changed,
+and the transport did not: **BLE is still the only road to a unit, the unit still serves no HTTP,
+and there is still no signing anywhere** (`AGENTS.md` rules 3 and 5).
+
+- **The card now lives on App Settings**, under the identity row, because it is the one control
+  that *changes* the unit rather than adjusting it — and because it now earns its keep offline: the
+  dropdown and the download need only the phone's network. It kept the sentence that makes START
+  safe to press ("Writes to the spare flash slot…") and gained a link-state line, so the same card
+  explains what it cannot do while no dashboard is linked. `SettingsScreen` took a `connected`
+  parameter to feed it.
+- **The version dropdown** (`update/FirmwareReleases.kt`, the app's second and last HTTP client)
+  reads `api.github.com/repos/alefinot/Dashboard-V2/releases`, offers only releases that carry an
+  uploaded `firmware.bin` in state `uploaded` (drafts, assetless releases and a rate-limit notice
+  are never offered as versions), sorts by the numbers in the version rather than its characters —
+  so `2.0.10` outranks `2.0.3` — and marks the entry that matches `build_version` as
+  `· on the unit`. Downloaded assets land in the app's cache as `dpp-<version>.bin` and are reused
+  without a second fetch when the length matches what GitHub advertises. Parsing runs on the
+  existing `BleJson`, so nothing new joined `build.gradle.kts`.
+- **Two doors, one pipeline**: the cached file enters through `OtaController.pickFile()`, the
+  hand-picked one through `pickFile()`'s SAF sibling, and from there the install is what it was —
+  size / CRC-32 / `DPPVER=` read, `ota.begin` … `ota.end` over the OTA characteristic, the
+  controller's `StateFlow` as the only progress source. The card still starts no timer, and now
+  provably holds no network either: `OtaStatusPollStaysQuietTest` fails on an `https://` or an
+  `okhttp3` import inside it.
+- **The card is guarded against its own file**. The fetch lives in `FirmwareReleases`, not in the
+  composable, because a card that fetches is a card that refetches on every recomposition;
+  `FirmwareReleasesTest` (6 cases) holds the selection and ordering rules — the ones that decide
+  which 1.5 MB image a rider ends up pushing — against canned GitHub payloads, with no network and
+  no `Context`.
+- **The settings schema shed the card with it**: `scripts/gen_config_schema.py` no longer maps
+  `Firmware Update` to a live widget, `config_schema_presentation.json` lost the card header and
+  the two decorative `status` rows (`build_version`, `core_version`), and `SettingsWidgets.kt`
+  lost the `firmwareUpdate` branch. Those two values did not disappear — the generator skips the
+  `status` type, and the unit-reported accordion still lists them, measured on the bench as
+  *Values the unit reports · 3*.
+- **Guards re-aimed rather than deleted**: `SettingsTabReplacesTheWebPageTest` went from "exactly
+  one file may hold an HTTP client" to "exactly two named files, and neither may point at a unit",
+  with `api.github.com` added to the named-URL allowlist; `SettingsLayoutTest`'s firmware-card
+  assertions became `noWidgetCardClaimsALineOfItsOwn` (`cardHint` kept as plumbing, empty, asserted
+  empty); and the spare-slot promise guard in `SettingsPageBenchFindingsTest` follows the sentence
+  to `SettingsScreen.kt` instead of asserting it in a file that no longer holds it.
+
+Bench, Mi 9 Lite (wireless adb) against the unit on the same table, MTU 517: the dropdown opened on
+`V2.0.3 / V2.0.2 · on the unit / V2.0.1 / V2.0.0`; DOWNLOAD fetched in ~3 s and probed the file as
+`1595248 bytes · CRC-32 2ECAFCF4 · says it is 2.0.3`, which is GitHub's own V2.0.3 asset byte for
+byte; pressing START against a unit already running that version armed `CONFIRM FLASH` and said so
+("that file says it is 2.0.3 and the unit is already running 2.0.3") instead of transferring; the
+confirmed install ran **1.52 MB in 43.3 s, 3217 writes, 36.9 KB/s, 100%**, the unit flipped slots,
+rebooted and the link came back on its own reporting `V2.0.3`. Re-downloading the same release
+handed off instantly (cache hit, no second fetch). Leaving the page mid-transfer — the card on
+Trips, screen lit — did not disturb it: it finished at 100% while off-screen. Dashboard settings,
+searched for `firmware`, now answers `no setting matches "firmware"` and `0 of 158 settings`, which
+is the move, verified from the unit's own page. No FATAL, ANR or restart in logcat.
+
+Built from this commit: `gradlew testDebugUnitTest` → 653 tests, 0 failures, 2 skipped;
+`assembleDebug` → `versionCode 90`; `python scripts/gen_config_schema.py --check` → green;
+`pio run` → 1,573,063 B flash (82.8%), RAM 22.4%. **No firmware change and no version bump**: the
+unit's side of the contract is untouched, and `FW_VERSION` stays 2.0.3 (`AGENTS.md` rule 3 bumps on
+request, not on proximity).
 
 ### App 2.0.3/80 — the phone layout pass (`versionCode` 71 → 80, not released)
 
