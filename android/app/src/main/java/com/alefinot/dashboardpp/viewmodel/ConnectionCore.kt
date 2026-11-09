@@ -215,6 +215,54 @@ object ConnectionCore {
         if (hadPairing && adapterBonded) ForgetDecision(true, STILL_BONDED) else ForgetDecision(false, null)
 
     /**
+     * Whether a press that reaches for a vehicle may start an attempt.
+     *
+     * Since the vehicle card became the connect control, the whole card is the button — which
+     * means a person can put five, ten, twenty clicks on it in a second without meaning to, and
+     * each of those clicks used to cancel the running attempt and tear the link down with it
+     * (`BleLink.connect()` opens with `disconnectInternal("replaced by a new connect")`, because
+     * the unit serves one peer at a time and the app must not sit on a link it is not using). The
+     * bench showed what that costs, 2026-11-09: the unit logs `phone connected`, `auth ok`,
+     * `MTU now 517`, an RPC exchange — and then `phone disconnected (reason 0x13)` ~10 s later,
+     * because the *next* click arrived while that link was still being built. A link that dies
+     * every ten seconds never reaches the subscription, and the screen keeps saying it cannot find
+     * the dashboard. Worse, that churn leaves Android's own client for the address half-reaped, and
+     * after a few dozen of those even a clean dial stops being answered at all.
+     *
+     * So a reach is an idempotent request, not a reset. Reaching for what is already connected
+     * ends the session (that is what the card means by *tap again to drop it*); reaching for what
+     * is already being reached for does nothing, because the radio is already doing exactly what
+     * was asked.
+     */
+    sealed interface ReachDecision {
+        /** Start the attempt. */
+        data object Proceed : ReachDecision
+
+        /** Do nothing, and log [why] — the reason is the point: an unlogged swallow reads as a dead button. */
+        data class Ignore(val why: String) : ReachDecision
+    }
+
+    /**
+     * The rule above, as data.
+     *
+     * [connectedSameVehicle] means a link is up on this very card, [attemptRunning] means an
+     * attempt is in flight (whatever it is pointed at — while the ladder is sweeping the radio a
+     * second attempt is not a second opinion, it is a second radio), and [sameVehicleRunning]
+     * narrows that to the card the user pressed, so a press on a *different* card is never
+     * swallowed: wanting to reach another vehicle is a new instruction, not a repeat.
+     */
+    fun onReach(
+        connectedSameVehicle: Boolean,
+        attemptRunning: Boolean,
+        sameVehicleRunning: Boolean,
+    ): ReachDecision = when {
+        connectedSameVehicle -> ReachDecision.Ignore("a link to this vehicle is already up")
+        attemptRunning && sameVehicleRunning -> ReachDecision.Ignore("already reaching for this vehicle")
+        attemptRunning -> ReachDecision.Ignore("an attempt is already running")
+        else -> ReachDecision.Proceed
+    }
+
+    /**
      * True when this card's pairing has already been dialed in this attempt. The card,
      * not the address, is the unit of retry: a card holds exactly one pairing, so
      * "tried" means "we already reached for that unit once".

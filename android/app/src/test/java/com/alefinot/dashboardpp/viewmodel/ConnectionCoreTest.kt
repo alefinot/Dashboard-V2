@@ -506,4 +506,56 @@ class ConnectionCoreTest {
         assertTrue(ConnectionCore.forgetUnit(true, true).note!!.contains("Bluetooth settings"))
     }
 
+    // ------------------------------------------------------------------- reaching for a card
+
+    /**
+     * Reaching for a vehicle is a request, not a reset.
+     *
+     * Since the vehicle card *is* the connect control, one pressed card can produce a dozen
+     * presses while its first dial is still in the air, and every one of those presses used to
+     * call `BleLink.connect()` again — which opens by tearing the previous link down. On the
+     * bench 2026-11-09 that showed up as the unit cycling `phone connected` -> `auth ok` ->
+     * `MTU now 517` -> `phone disconnected (reason 0x13)` about every ten seconds, forever: the
+     * phone was taking its own links off the air before the subscription could be written.
+     *
+     * So the rule is: press again on what is already connected -> nothing (the card's own
+     * disconnect handler owns that gesture); press again while the same card is being reached
+     * for -> nothing; press on *another* card while one is dialing -> the new instruction wins,
+     * because the user changed their mind and a swallowed press reads as a dead button.
+     */
+    @Test
+    fun `a second press on a card that is already being reached for does not restart the dial`() {
+        val idle = ConnectionCore.onReach(
+            connectedSameVehicle = false, attemptRunning = false, sameVehicleRunning = false,
+        )
+        assertEquals("a cold press must dial", ConnectionCore.ReachDecision.Proceed, idle)
+
+        assertTrue(
+            "a press on a connected card is not a new dial",
+            ConnectionCore.onReach(connectedSameVehicle = true, attemptRunning = false, sameVehicleRunning = false)
+                is ConnectionCore.ReachDecision.Ignore,
+        )
+        assertTrue(
+            "a second press on the card already dialing must not cancel the first",
+            ConnectionCore.onReach(connectedSameVehicle = false, attemptRunning = true, sameVehicleRunning = true)
+                is ConnectionCore.ReachDecision.Ignore,
+        )
+        assertTrue(
+            "nor does a press while the ladder is sweeping the radio",
+            ConnectionCore.onReach(connectedSameVehicle = false, attemptRunning = true, sameVehicleRunning = false)
+                is ConnectionCore.ReachDecision.Ignore,
+        )
+
+        // Every swallow says why, in a sentence that belongs in the log: a silent swallow is
+        // indistinguishable from a broken button, and the bench session started exactly there.
+        for (args in listOf(
+            Triple(true, false, false),
+            Triple(false, true, true),
+            Triple(false, true, false),
+        )) {
+            val d = ConnectionCore.onReach(args.first, args.second, args.third)
+            assertTrue("why is missing for $args", (d as ConnectionCore.ReachDecision.Ignore).why.isNotBlank())
+        }
+    }
+
 }

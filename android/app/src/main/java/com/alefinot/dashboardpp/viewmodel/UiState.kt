@@ -21,6 +21,7 @@ sealed interface ConnectionUiState {
     data class Connecting(
         val mode: ConnectMode,
         val stage: AttemptStage = AttemptStage.DIAL,
+        val vehicleId: String? = null,
     ) : ConnectionUiState
 
     /**

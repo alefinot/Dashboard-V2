@@ -136,6 +136,13 @@ class ConnectionViewModel(
      */
     private var gaveUp = false
 
+    /**
+     * The card the running attempt was started for. Set by [startAttempt] and read by the guards
+     * that decide whether a press on a card is a new instruction or the same instruction twice —
+     * see [ConnectionCore.onReach].
+     */
+    private var attemptVehicleId: String? = null
+
     val uiState = mutableStateOf<ConnectionUiState>(ConnectionUiState.Idle(null))
 
     /** True while a radio sweep is running. */
@@ -234,6 +241,17 @@ class ConnectionViewModel(
      * apologise about — not that it has not looked yet.
      */
     suspend fun garageDamage(): String? = vehicles.damageNote()
+
+    /**
+     * A second `vehicles.json` the app saw and did not use, or null (see
+     * [VehicleStore.shadowGarageNote]). It names a folder the owner may be opening while the app
+     * reads another one, which is what a moved storage grant leaves behind; the vehicle page says it
+     * so a "0 vehicles" screen never stands unexplained.
+     */
+    suspend fun garageShadow(): String? = vehicles.shadowGarageNote()
+
+    /** The file the cards on screen were read from (see [VehicleStore.garageNote]). */
+    suspend fun garageFolder(): String? = vehicles.garageNote()
 
     /**
      * What the trip recorder has to write as the owner of the files it creates: the
@@ -385,6 +403,17 @@ class ConnectionViewModel(
      * follows the state, so it seals and stops on its own.
      */
     fun connectVehicle(vehicleId: String, mode: ConnectMode = ConnectMode.SEARCH) {
+        val decision = ConnectionCore.onReach(
+            connectedSameVehicle = (uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId,
+            attemptRunning = uiState.value is ConnectionUiState.Connecting || ladder?.isActive == true,
+            sameVehicleRunning =
+                (uiState.value as? ConnectionUiState.Connecting)?.vehicleId == vehicleId ||
+                    (ladder?.isActive == true && attemptVehicleId == vehicleId),
+        )
+        if (decision is ConnectionCore.ReachDecision.Ignore) {
+            Log.d(DPP_CONN_LOG_TAG, "connect ignored vehicle=$vehicleId: ${decision.why}")
+            return
+        }
         attempts = 0
         gaveUp = false
         ladder?.cancel()
@@ -408,6 +437,17 @@ class ConnectionViewModel(
      * twenty seconds later that explains nothing.
      */
     fun huntNow(mode: ConnectMode = ConnectMode.PROBE) {
+        if (ConnectionCore.onReach(
+                connectedSameVehicle = uiState.value is ConnectionUiState.Connected,
+                attemptRunning = uiState.value is ConnectionUiState.Connecting || ladder?.isActive == true,
+                sameVehicleRunning = uiState.value is ConnectionUiState.Connecting || ladder?.isActive == true,
+            ) is ConnectionCore.ReachDecision.Ignore
+        ) {
+            // The shell's CONNECT button deserves the same swallow as the card's: both are one
+            // press away from tearing down the link the previous press was still building.
+            Log.d(DPP_CONN_LOG_TAG, "hunt ignored: an attempt is already running")
+            return
+        }
         attempts = 0
         gaveUp = false
         rearm?.cancel()
@@ -763,6 +803,7 @@ class ConnectionViewModel(
         preScanned: List<Found>? = null,
     ) {
         Log.d(DPP_CONN_LOG_TAG, "attempt start mode=$mode pinned=${pinned?.address ?: "-"} attempts=$attempts")
+        attemptVehicleId = selectedVehicleId.value
         ladder?.cancel()
         ladder = scope.launch { runAttempt(mode, pinned, preScanned) }
     }
@@ -842,7 +883,7 @@ class ConnectionViewModel(
                     return
                 }
                 is NextAction.Scan -> {
-                    uiState.value = ConnectionUiState.Connecting(mode, AttemptStage.SCAN)
+                    uiState.value = ConnectionUiState.Connecting(mode, AttemptStage.SCAN, attemptVehicleId)
                     scanDone = true
                     found = sweep()
                     outcome = null
@@ -870,7 +911,7 @@ class ConnectionViewModel(
      * what the ambiguity rules in [ConnectionCore] exist to catch.
      */
     private suspend fun dial(step: NextAction.Pair, mode: ConnectMode): LinkOutcome {
-        uiState.value = ConnectionUiState.Connecting(mode, AttemptStage.DIAL)
+        uiState.value = ConnectionUiState.Connecting(mode, AttemptStage.DIAL, step.vehicleId)
         val mirror = scope.launch {
             link.state.collect { s ->
                 val stage = when (s) {
@@ -879,7 +920,7 @@ class ConnectionViewModel(
                     else -> null
                 }
                 if (stage != null) {
-                    uiState.value = ConnectionUiState.Connecting(mode, stage)
+                    uiState.value = ConnectionUiState.Connecting(mode, stage, step.vehicleId)
                 }
             }
         }
