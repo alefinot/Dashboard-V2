@@ -348,10 +348,11 @@ fun VehicleEditorScreen(
         // The plan's sentence, in the app's own dialog - and no card id in it. The drives are
         // found by name now; naming a row key in a warning would be a detail nobody can use.
         HudConfirmDialog(
-            message = "Delete this card? Its drives stay in the trip log.",
+            message = "Delete this vehicle? Its pairing is dropped as well; its drives stay in " +
+                "the trip log.",
             onConfirm = onDelete,
             onDismiss = { confirming = false },
-            confirmLabel = "FORGET ${draft.name.ifBlank { "THE CARD" }}",
+            confirmLabel = "DELETE ${draft.name.ifBlank { "THE CARD" }}",
             cancelLabel = "KEEP IT",
             confirmStyle = HudButtonStyle.DANGER,
         )

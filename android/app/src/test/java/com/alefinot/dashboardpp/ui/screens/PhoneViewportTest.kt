@@ -119,42 +119,69 @@ class PhoneViewportTest {
     }
 
     /**
-     * A vehicle card had its three actions on two lines, and the label was the reason:
-     * FORGET THIS UNIT measured 168 dp, so 120 + 8 + 72 + 8 + 168 = 368 dp against a card that
-     * is 337 dp inside its padding. The maintainer asked for one line and for the short label on
-     * 2026-11-08.
+     * The vehicle card is the connect control now, not a row of buttons. The maintainer asked for
+     * it on 2026-11-08: tapping the card connects it or drops its session, EDIT moved to a corner
+     * glyph, and a small link mark in the other corner shows the state — so the whole rectangle is
+     * one decision ("get in this car") instead of three words to read.
      *
-     * Pinned as a width sum rather than as a layout snapshot, because the sum is what actually
-     * breaks: a longer label, a wider minimum, or a fourth button puts the line back under the
-     * fold — and a card that wraps its own actions is a card whose FORGET nobody sees.
+     * Pinned as source rather than a layout snapshot, for the same reason every guard here is: the
+     * module has no Compose harness. What is checked is that the interaction is where the user looks
+     * for it — the card body carries the tap, the outline says "connected" in colour, and the two
+     * secondary affordances are icons in the corners, not words back in a row that would push the
+     * card's own text off a phone.
      */
     @Test
-    fun aVehicleCardOffersItsThreeActionsOnOneLine() {
-        val card = code(screens, "VehicleScreen.kt")
-        val labels = Regex("\"(DISCONNECT|CONNECT|EDIT|FORGET|FORGET THIS UNIT|FORGET UNIT)\"")
-            .findAll(card).map { it.groupValues[1] }.toSet()
+    fun theVehicleCardIsTheConnectControl() {
+        val card = code(screens, "VehicleCardLines.kt")
+        val screen = code(screens, "VehicleScreen.kt")
+
+        // The connected card is decided by which card owns the session — the flag that both the
+        // tap and the green outline read.
         assertTrue(
-            "the card lost one of its actions: $labels",
-            labels.containsAll(setOf("DISCONNECT", "CONNECT", "EDIT", "FORGET")),
+            "connectedCard must key off the session's vehicle id; that is what lets a card that is " +
+                "not the selected one still end its own link",
+            card.contains("state is ConnectionUiState.Connected && state.vehicleId == v.id"),
+        )
+
+        // A tap on the card body toggles connect/disconnect, not select.
+        assertTrue(
+            "the card's own clickable no longer decides connect vs disconnect from `connected`",
+            Regex("if \\(connected\\) onDisconnect\\(\\) else onConnect\\(\\)").containsMatchIn(screen),
         )
         assertFalse(
-            "the long label came back on the card; at 168 dp it is what forced the second row",
-            labels.any { it.startsWith("FORGET ") },
+            "the card went back to a select-only tap; the body has to be the connect control",
+            Regex("onClickLabel = \"Select ").containsMatchIn(screen),
         )
-        val widths = Regex("widthIn\\(min = (\\d+)\\.dp\\)").findAll(card)
-            .map { it.groupValues[1].toInt() }.toList()
-        assertEquals(
-            "the action buttons are the only widthIn(min =) on this page; a new one here needs " +
-                "to be counted in the line's width before it is drawn",
-            4, widths.size,
-        )
-        val widestConnect = maxOf(widths[0], widths[1])
-        val line = widestConnect + widths[2] + widths[3] + 2 * 8
+
+        // The outline is green on the connected card, and the name follows it.
         assertTrue(
-            "the widest line the card can draw its actions at is $line dp, and the card's " +
-                "content box on the bench phone is 337 dp — past that the third button drops " +
-                "onto a row of its own",
-            line <= 337,
+            "the card outline no longer turns green for the vehicle the phone is connected to",
+            Regex("connected -> HudColors\\.Green").containsMatchIn(screen),
+        )
+
+        // EDIT and the status mark are corner icons, not word-buttons in a row.
+        assertTrue(
+            "EDIT is no longer a corner glyph",
+            Regex("HudIcons\\.Edit").containsMatchIn(screen) &&
+                Regex("Alignment\\.TopEnd").containsMatchIn(screen),
+        )
+        assertTrue(
+            "the connected/disconnected mark is no longer in the lower corner",
+            Regex("HudIcons\\.LinkOn else HudIcons\\.LinkOff").containsMatchIn(screen) &&
+                Regex("Alignment\\.BottomEnd").containsMatchIn(screen),
+        )
+
+        // No word-buttons left over on the card: the whole point was to fold them into the tap.
+        for (word in listOf("CONNECT", "DISCONNECT", "FORGET")) {
+            assertFalse(
+                "the card grew a \"$word\" button back; the card body itself is the $word control",
+                Regex("HudButton\\(\\s*\"$word\"").containsMatchIn(screen),
+            )
+        }
+        assertFalse(
+            "the action-button row's widthIn(min =) came back on this page — the card has no button " +
+                "row to fit on one line any more",
+            Regex("widthIn\\(min =").containsMatchIn(screen),
         )
     }
 

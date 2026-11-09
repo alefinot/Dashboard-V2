@@ -20,8 +20,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -82,8 +83,10 @@ import kotlinx.coroutines.delay
  * What this page owns:
  *  - the list, one card per paired vehicle — the selected one first, then the ones that
  *    have connected most recently ([com.alefinot.dashboardpp.vehicles.VehicleStore.sorted]);
- *  - the selection: tapping a card makes that vehicle the one the app reaches for, and a
- *    vehicle that has never been seen on a network is still selectable;
+ *  - the card tap itself: tapping a card reaches for that vehicle (making it the one the app
+ *    connects to and dials it), or ends the session if that card is the connected one. A
+ *    vehicle that has never been seen on a network is still tappable; the ladder is what says
+ *    why it cannot be reached;
  *  - the honest state of each card: connected, saved, being reached for, or never seen.
  *
  * A card with nothing to show says so with a placeholder instead of a stock picture. When
@@ -93,14 +96,16 @@ import kotlinx.coroutines.delay
  * "searching" about a network that already answered.
  *
  * Forgetting a vehicle lives in the editor it opens from, not on the card: DELETE asks for
- * the name that is written on the card before it goes, photo, record and saved sessions
- * with it. Recorded trips stay, badged with the name they were driven under.
+ * the name that is written on the card before it goes — photo, record, saved sessions, and the
+ * pairing it held go with it (the phone's own Bluetooth bond is the one half only the phone's
+ * settings can clear, so the page says so). Recorded trips stay, badged with the name they were
+ * driven under.
  *
- * This page is also the app's **only** place for connect actions - CONNECT, DISCONNECT,
- * SEARCH, the PAIR rows a sweep produces, and FORGET. The Live and ESP covers
- * deliberately carry none of them: a device belongs to a vehicle, so reaching for one
- * starts by choosing a card, and a second copy of the same control somewhere else is what
- * makes a connection impossible to explain.
+ * This page is also the app's **only** place for connect actions — reaching for a vehicle and
+ * dropping its session (both now a tap on the card itself), SEARCH and the PAIR rows a sweep
+ * produces. The Live and ESP covers deliberately carry none of them: a device belongs to a
+ * vehicle, so reaching for one starts on a card, and a second copy of the same control somewhere
+ * else is what makes a connection impossible to explain.
  *
  * The sweep list sits here too, on the ADD VEHICLE card rather than on a page of its own.
  * It used to be a hunt that ended wherever it ended; now it is a question this page asks
@@ -214,10 +219,8 @@ fun VehicleScreen(
                     // pair/search split, which has no ring at all).
                     ringProgress = 0f,
                     photo = cardPhoto(connection, v.id),
-                    onClick = { connection.selectVehicle(v.id) },
                     onConnect = { connection.connectVehicle(v.id, ConnectMode.SEARCH) },
                     onDisconnect = { connection.disconnect() },
-                    onForgetUnit = { connection.forgetUnit(v.id) },
                     onEdit = { onEdit(v.id) },
                 )
                 Spacer(Modifier.height(10.dp))
@@ -251,8 +254,8 @@ fun VehicleScreen(
         }
 
         bondNote?.let {
-            // The half this app could not do. `removeBond` is not a public API, so the
-            // honest sentence is "the card forgot it, this phone has not" plus the way
+            // The half this app could not do. `removeBond` is not a public API, so the honest
+            // sentence is "the delete dropped the card's side, this phone has not" plus the way
             // to the screen where it can be finished.
             NoticeCard(
                 "THIS PHONE IS STILL BONDED TO THAT UNIT",
@@ -370,18 +373,33 @@ private fun CardCover(
  * user is looking when they press SEARCH, and the full-screen ring that used to answer the
  * question is gone.
  *
- * What a card offers depends on what the card *is*, not on what the page is doing: the
- * selected and paired card also offers FORGET, which clears the pairing and the
- * identity this card holds and leaves the card, its name and its photo alone - the
- * difference between "this phone should stop reaching that dashboard" and "this vehicle
- * does not exist" (see [VehicleEditorScreen]'s DELETE THE CARD).
+ * What a card *is* decides how it behaves, and the card is now itself the connect control: tapping
+ * its body reaches that vehicle, or ends the session it owns if it has one (the connected card can
+ * be disconnected even after the selection has moved on, because it is the card with a session to
+ * end). The two things that could not live inside that one tap are corner glyphs — an EDIT pencil
+ * upper-right, and a link mark lower-right that reads joined-green when the card holds the live
+ * session and broken-dim otherwise. A card is a record about a vehicle, so every card can be
+ * edited and tapped, whether or not it is the one being reached for; there is no longer a wall of
+ * connection buttons to press on each card.
  *
- * The connected card always offers DISCONNECT (even if the selection has moved on, because
- * that is the card with a session to end), and any other selected card offers CONNECT.
- * Every card offers EDIT, including a card nobody is standing on: a card is a record about
- * a vehicle, and records are edited whether or not they are the one being reached for. A
- * card that is neither selected nor connected offers *only* that, because a wall of
- * connection buttons for cars nobody is looking at is not a garage.
+ * The outline carries the same fact at a glance: green on the card that holds the link, cyan on the
+ * one the app is reaching for, a plain hairline on the rest. The selection is still an edge and a
+ * faint top highlight — a standing fact about the app rather than a status that comes and goes —
+ * but on the connected card green wins, because a live link outranks which card is picked.
+ *
+ * The cover shows the vehicle's photo when the card has one, and until then it is a placeholder
+ * panel drawn with the bar's own wheel glyph so the shape means "vehicle" in both places — drawn dim
+ * on purpose: an empty frame that shows the glyph is honest about being empty, one that shows a
+ * stock photo is not. A square photo is cropped to this landscape cover rather than letterboxed,
+ * putting the middle of the picture where the vehicle is (see [CardCover]). While the app is hunting
+ * for **this** card's unit the cover becomes the sweep's ring instead: that is where a user is
+ * looking when they reach for a vehicle, and the full-screen ring that used to answer the question
+ * is gone.
+ *
+ * Deleting a vehicle is not on the card - it is the editor's DELETE THE CARD - and it now does the
+ * whole job: it removes the card *and* drops the pairing and identity it held, so there is no longer
+ * a separate FORGET to clear a pairing while the card stays. "This phone should stop reaching that
+ * dashboard" and "this vehicle does not exist" are one action now.
  */
 @Composable
 private fun VehicleCard(
@@ -392,114 +410,126 @@ private fun VehicleCard(
     nowMs: Long,
     ringProgress: Float,
     photo: Bitmap?,
-    onClick: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onForgetUnit: () -> Unit,
     onEdit: () -> Unit,
 ) {
     val status = cardStatusLine(vehicle, state, nowMs)
-    Column(
+    // The card *is* the connect control now: tapping its body reaches this vehicle, or ends the
+    // session it owns. It used to be a row of buttons under the cover (CONNECT / DISCONNECT /
+    // EDIT), and the maintainer folded that decision into the card itself on 2026-11-08 - a card is
+    // one act, "get in this car", not three. What could not live inside that single tap went to the
+    // corners: an EDIT pencil upper-right, and a link mark lower-right that says whether this is
+    // the card with a live session. The outline is green on the card that holds the link, cyan on
+    // the one the app is reaching for, a plain hairline otherwise.
+    Box(
         Modifier
             .fillMaxWidth()
             .hudCard(
-                borderColor = if (selected) HudColors.Cyan else HudColors.CardHairline,
+                borderColor = when {
+                    connected -> HudColors.Green
+                    selected -> HudColors.Cyan
+                    else -> HudColors.CardHairline
+                },
                 highlight = if (selected) 0.05f else 0f,
             )
-            .clickable(onClickLabel = "Select ${vehicle.name}") { onClick() }
+            .clickable(
+                onClickLabel = (if (connected) "Disconnect " else "Connect ") +
+                    vehicle.name.ifBlank { "vehicle" },
+            ) { if (connected) onDisconnect() else onConnect() }
             .padding(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CardCover(photo, selected, showScanRing(state), ringProgress)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.fillMaxWidth()) {
-                Text(
-                    vehicle.name.ifBlank { "UNNAMED VEHICLE" },
-                    color = if (selected) HudColors.Cyan else HudColors.TextPrimary,
-                    style = HudeHeading().copy(fontSize = 17.sp),
-                )
-                // What the user called this vehicle, in their own words: the plate is the
-                // thing they look for in a car park, and the spec line is the difference
-                // between two cards with similar names. A blank field draws no line at all
-                // (see [plateLine]) - a card with empty gaps reads like a form.
-                plateLine(vehicle)?.let {
-                    Spacer(Modifier.height(4.dp))
-                    Text(it, color = HudColors.TextDim, style = HudePerfLabel())
-                }
-                specLine(vehicle).takeIf { it.isNotEmpty() }?.let {
-                    Spacer(Modifier.height(4.dp))
-                    Text(it, color = HudColors.TextMuted, style = HudeCfgNote())
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    status.text,
-                    color = statusColor(status.tone),
-                    style = HudePerfLabel(),
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                // The unit's identity is reference, not headline: it is what the app knows it
-                // reached, and it is the string to check the card against at the bench. A card
-                // that leads with a radio handle is a card that is still thinking of itself as a
-                // bookmark - the MAC is shown because it is burnt into the dashboard, and the
-                // pairing is only ever a label next to it.
-                if (!connected) {
-                    vehicle.identityLabel().takeIf { it.isNotEmpty() }?.let {
+        // The body is inset 30 dp from the right so its text never runs under either corner glyph;
+        // the cover and every line still read edge to edge across the rest of the card.
+        Column(Modifier.padding(end = 30.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CardCover(photo, selected, showScanRing(state), ringProgress)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        vehicle.name.ifBlank { "UNNAMED VEHICLE" },
+                        color = when {
+                            connected -> HudColors.Green
+                            selected -> HudColors.Cyan
+                            else -> HudColors.TextPrimary
+                        },
+                        style = HudeHeading().copy(fontSize = 17.sp),
+                    )
+                    // What the user called this vehicle, in their own words: the plate is the
+                    // thing they look for in a car park, and the spec line is the difference
+                    // between two cards with similar names. A blank field draws no line at all
+                    // (see [plateLine]) - a card with empty gaps reads like a form.
+                    plateLine(vehicle)?.let {
                         Spacer(Modifier.height(4.dp))
-                        Text(it, color = HudColors.TextDim, style = HudePerfValue())
+                        Text(it, color = HudColors.TextDim, style = HudePerfLabel())
+                    }
+                    specLine(vehicle).takeIf { it.isNotEmpty() }?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(it, color = HudColors.TextMuted, style = HudeCfgNote())
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        status.text,
+                        color = statusColor(status.tone),
+                        style = HudePerfLabel(),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    // The unit's identity is reference, not headline: it is what the app knows it
+                    // reached, and it is the string to check the card against at the bench. A card
+                    // that leads with a radio handle is a card that is still thinking of itself as a
+                    // bookmark - the MAC is shown because it is burnt into the dashboard, and the
+                    // pairing is only ever a label next to it.
+                    if (!connected) {
+                        vehicle.identityLabel().takeIf { it.isNotEmpty() }?.let {
+                            Spacer(Modifier.height(4.dp))
+                            Text(it, color = HudColors.TextDim, style = HudePerfValue())
+                        }
                     }
                 }
             }
-        }
-
-        Spacer(Modifier.height(10.dp))
-        // One line, three buttons - the maintainer's instruction on 2026-11-08, and the button
-        // height that made it fit is `HudTouch.Button`. It needed the label shortened too:
-        // FORGET THIS UNIT measured 168 dp, and 120+8+72+8+168 was 368 dp against a card that is
-        // 337 dp inside. `FORGET` is ~70 dp, so the three land at 278 dp and the row has room to
-        // spare. What the short label stops saying, the line under it says instead - and it says
-        // it better, because "this clears the pairing, not the vehicle" is a sentence, not a
-        // word that has to be guessed at 13 sp on a glove screen.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (connected) {
-                HudButton(
-                    "DISCONNECT",
-                    modifier = Modifier.widthIn(min = 120.dp),
-                    style = HudButtonStyle.SECONDARY,
-                ) { onDisconnect() }
-            } else if (selected) {
-                HudButton(
-                    "CONNECT",
-                    modifier = Modifier.widthIn(min = 108.dp),
-                    style = HudButtonStyle.PRIMARY,
-                ) { onConnect() }
-            }
-            HudButton(
-                "EDIT",
-                modifier = Modifier.widthIn(min = 72.dp),
-                style = HudButtonStyle.SECONDARY,
-            ) { onEdit() }
-            // Offered on the card the user is standing on, and only when that card holds a
-            // pairing - a card with nothing to forget would grow a button that does nothing, and
-            // a wall of unpair controls for four other cars is how a dashboard gets detached by
-            // accident.
-            if (selected && vehicle.hasPairing) {
-                HudButton(
-                    "FORGET",
-                    modifier = Modifier.widthIn(min = 70.dp),
-                    style = HudButtonStyle.SECONDARY,
-                ) { onForgetUnit() }
-            }
-        }
-
-        if (selected && vehicle.hasPairing) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(8.dp))
+            // A line that says what tapping does, because the buttons that used to spell it out are
+            // gone: the card is the control now, and a control whose meaning lives only in the code
+            // is a control nobody learns.
             Text(
-                "Unpairs this unit from this phone. The card stays.",
-                color = HudColors.TextDim,
+                if (connected) "TAP TO DISCONNECT" else "TAP TO CONNECT",
+                color = if (connected) HudColors.Green else HudColors.Cyan,
                 style = HudeCfgNote(),
             )
         }
+
+        // Upper-right EDIT, a corner icon rather than the last button in a row that no longer
+        // exists. It sits inside the card's Box and after its clickable, so it owns its own corner:
+        // reaching for the pencil opens the editor and does not also reach for the radio. 30 dp of
+        // hit box around an 18 dp mark - the smallest box that stays a target on a windscreen.
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .size(30.dp)
+                .clip(CircleShape)
+                .clickable(role = Role.Button, onClickLabel = "Edit ${vehicle.name}") { onEdit() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                HudIcons.Edit,
+                contentDescription = null,
+                tint = HudColors.TextDim,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+
+        // Lower-right, the link state: two joined rings, green on the card that holds the session,
+        // a broken join dim on every other. It is smaller than the pencil and takes no tap - the
+        // tap is the whole card - because it reports the state, it does not change it.
+        Icon(
+            imageVector = if (connected) HudIcons.LinkOn else HudIcons.LinkOff,
+            contentDescription = if (connected) "Connected" else "Disconnected",
+            tint = if (connected) HudColors.Green else HudColors.TextDim,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size(16.dp),
+        )
     }
 }
 

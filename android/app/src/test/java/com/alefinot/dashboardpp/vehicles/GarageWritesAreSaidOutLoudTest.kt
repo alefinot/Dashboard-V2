@@ -61,7 +61,7 @@ class GarageWritesAreSaidOutLoudTest {
 
         assertTrue(
             "expected at least the six known garage writes to check their answer, found $checked: " +
-                "save, photo attach, photo remove, unbind, delete, and the two identity persists",
+                "save, photo attach, photo remove, delete, and the two identity persists",
             checked >= 6,
         )
     }

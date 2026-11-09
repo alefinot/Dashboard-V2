@@ -193,11 +193,11 @@ private fun fallback(v: Vehicle, nowMs: Long): CardStatusLine = when {
  * Whether a live session belongs to this card.
  *
  * The session says which card it is on ([ConnectionUiState.Connected.vehicleId]), so this
- * is a lookup and not a guess. It matters for the actions: the card that has a session is
- * the one that must keep offering DISCONNECT even after the user taps a different card, and
- * no other card may offer it — a second disconnect button would end a session that another
- * card owns, which is exactly the kind of thing an app does when cards are really
- * bookmarks.
+ * is a lookup and not a guess. It is what the card now asks before deciding what a tap does:
+ * the card that has a session ends it on tap, and keeps doing so even after the user reaches
+ * for a different card, while no other card may end it — ending a session another card owns
+ * is exactly the kind of thing an app does when cards are really bookmarks. It is also the
+ * flag that turns the card's outline and its corner link glyph green.
  */
 fun connectedCard(v: Vehicle, state: ConnectionUiState?): Boolean =
     state is ConnectionUiState.Connected && state.vehicleId == v.id

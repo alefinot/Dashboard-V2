@@ -272,10 +272,10 @@ class BleLink(context: Context) {
      * Whether this phone still holds a **bond** for [address].
      *
      * Distinct from a link: a bond survives a disconnect, an app uninstall and even the
-     * card being forgotten, and it is what makes the next pairing silent. The app clears
-     * its own memory of a pairing but cannot clear Android's (`removeBond` is not a
-     * public API on the versions this app runs on), so the vehicle page needs this to say
-     * honestly which half of a forget it could actually do.
+     * card being deleted, and it is what makes the next pairing silent. The app clears its
+     * own memory of a pairing but cannot clear Android's (`removeBond` is not a public API on
+     * the versions this app runs on), so the vehicle page needs this to say honestly which
+     * half of the forget a delete could actually do.
      */
     fun isBonded(address: String): Boolean = try {
         adapter?.getRemoteDevice(address)?.bondState == BluetoothDevice.BOND_BONDED
@@ -285,8 +285,8 @@ class BleLink(context: Context) {
         false
     } catch (e: SecurityException) {
         // On Android 12+ both `getRemoteDevice` and `bondState` are gated on BLUETOOTH_CONNECT, and
-        // this answer is asked from the vehicle page's FORGET, which runs uncaught in the
-        // view model's scope. A card the owner is trying to forget must never be able to take the
+        // this answer is asked from the vehicle page's delete, which runs uncaught in the
+        // view model's scope. A vehicle the owner is trying to delete must never be able to take the
         // process with it - and "this phone cannot say" is genuinely not bonded, for every decision
         // this feeds: there is no pairing the app may claim to hold. (Bench audit 2026-11-07, item
         // found by the whole-tree call-site inventory; the API 31+ path is otherwise untested here.)

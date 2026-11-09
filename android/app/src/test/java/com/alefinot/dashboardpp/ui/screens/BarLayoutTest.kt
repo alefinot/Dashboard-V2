@@ -198,6 +198,63 @@ class BarLayoutTest {
             bore.sign * body < 0.0,
         )
     }
+
+    /**
+     * The link mark a vehicle card carries in its lower corner (see [HudIcons.LinkOn]): two
+     * interlocked rings say "this phone holds a session", one ring and a broken join say otherwise.
+     * Like every glyph here a hole is a contour wound against the body, never a lighter fill painted
+     * over it, so the card shows through the ring's eye.
+     */
+    @Test
+    fun `the link glyph is rings that wind to open`() {
+        val linked = subpaths(HudIcons.LinkOnData)
+        assertEquals("two rings, each an outer disc and a hole", 4, linked.size)
+        val on = linked.map(::circle)
+        // Order is outer, hole, outer, hole.
+        for (i in listOf(0, 2)) {
+            assertEquals("ring $i off-centre in y", 12f, on[i].centre.y, 0.01f)
+            assertTrue("ring $i outer does not wind as ink", on[i].sign > 0.0)
+            assertTrue(
+                "the hole in ring $i winds with its outer, so the link fills solid",
+                on[i].sign * on[i + 1].sign < 0.0,
+            )
+            assertTrue(
+                "a ${on[i].radius - on[i + 1].radius}-unit link wall closes up at the corner's 16 dp",
+                on[i].radius - on[i + 1].radius >= 2f,
+            )
+        }
+        // They must overlap to read as one chain, yet stay two rings rather than one blob.
+        val gap = on[2].centre.x - on[0].centre.x
+        assertTrue("the rings sit $gap apart and never touch — two discs, not a link", gap < 2f * on[0].radius)
+        assertTrue("one ring reaches past the other's centre; it is a blob, not two links", gap > on[0].radius)
+
+        val unlinked = subpaths(HudIcons.LinkOffData)
+        assertEquals("one ring: an outer disc and its hole", 2, unlinked.size)
+        val off = unlinked.map(::circle)
+        assertTrue("the unlinked ring winds with its hole, so it is solid", off[0].sign * off[1].sign < 0.0)
+        // The break stands where the far link used to be: two short strokes.
+        assertEquals("the broken join is two marks", 2, Regex("M").findAll(HudIcons.LinkOffBreak).count())
+    }
+
+    /**
+     * The EDIT pencil (see [HudIcons.Edit]) is a solid silhouette. It carries no interior hole on
+     * purpose — at the card corner's ~18 dp a ferrule band and a lead dot are the mush the glyph set
+     * exists to avoid — so what is pinned is that it is one closed body, on the shared 24 grid,
+     * pointing to the lower-left.
+     */
+    @Test
+    fun `the edit glyph is one solid pencil on the shared grid`() {
+        assertEquals(24f, HudIcons.Edit.viewportWidth, 0f)
+        assertEquals(24f, HudIcons.Edit.viewportHeight, 0f)
+        val body = subpaths(HudIcons.EditData)
+        assertEquals("a pencil is one closed silhouette", 1, body.size)
+        val pts = vertices(body.first())
+        assertEquals("flat eraser end, two barrel sides, a pointed tip", 5, pts.size)
+        assertTrue("the mark runs off the 24-unit grid", pts.all { it.x in 0f..24f && it.y in 0f..24f })
+        // The tip is the leftmost vertex, and it sits low: the pencil points to the lower-left.
+        val tip = pts.minByOrNull { it.x }!!
+        assertTrue("the pencil does not point to the lower-left ($tip)", tip.x < 6f && tip.y > 18f)
+    }
 }
 
 // --- reading path data ---------------------------------------------------------------

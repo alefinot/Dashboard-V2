@@ -179,7 +179,8 @@ class CallbacksBelongToTheirClientTest {
 
     /**
      * Asking "does this phone still hold the bond for that address?" is part of reconnecting: it
-     * decides what FORGET THIS UNIT can honestly claim, and whether a card is dialable at all. On
+     * decides what a delete can honestly claim about a pairing, and whether a card is dialable
+     * at all. On
      * Android 12+ `getRemoteDevice` and `bondState` are gated on `BLUETOOTH_CONNECT`, so the answer
      * can arrive as a `SecurityException` - and the one caller that asks it unguarded runs
      * uncaught in the view model's scope, which is a crash while pressing a button.

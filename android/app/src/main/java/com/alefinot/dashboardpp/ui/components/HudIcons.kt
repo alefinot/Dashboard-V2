@@ -418,6 +418,93 @@ object HudIcons {
         return sb.toString()
     }
 
+    /**
+     * EDIT: a pencil.
+     *
+     * The vehicle card's EDIT was a word on a button in a row under the cover, and the maintainer
+     * moved it to a corner icon on 2026-11-08 so the card itself could become the connect control.
+     * A pencil is the one mark that means "edit" without a word, and it survives at a card corner's
+     * ~18 dp because it is one solid body — never a stroked outline, the rule the header states. It
+     * is drawn diagonally with the point to the lower-left, the way every other edit affordance in
+     * this app's language shows a pencil. Tinted by the caller.
+     */
+    val Edit: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudEdit", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(EditData).toNodes(),
+            fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    /**
+     * The pencil's silhouette as one closed pentagon — flat eraser end (top-right), two barrel
+     * sides, and a triangular point at the lower-left. Solid fill: the tip reads from the shape's
+     * own taper, and interior detail (ferrule band, lead) is left out on purpose because at a card
+     * corner's size it is the mush the file header warns against.
+     */
+    internal val EditData: String =
+        "M17.19,3.25 L20.75,6.81 L9.19,18.37 L3.83,20.17 L5.63,14.81 Z"
+
+    /**
+     * A link mark for a card's corner — the connected / disconnected state, drawn twice and
+     * recoloured by the caller.
+     *
+     * Chain links, kept the [Chip]/[Pin] way — a filled ring with daylight cut out of the middle —
+     * because at a card corner's ~16 dp a thin stroked link with a hole inside closes up and reads
+     * as a dot. Two rings interlock when there is a session; when there is none the far link is gone
+     * and a break is struck where the join used to be.
+     *
+     *  - [LinkOn]: two overlapping rings — "this phone is joined to that vehicle".
+     *  - [LinkOff]: one ring and a broken stub — "no link". The caller tints it dim.
+     */
+    val LinkOn: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudLinkOn", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(LinkOnData).toNodes(),
+            fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    /** The linked mark: two interlocked rings, each a disc with a hole cut out of it. */
+    internal val LinkOnData: String =
+        ring(8.6f, 12f, 5.0f, 2.4f) + " " + ring(15.4f, 12f, 5.0f, 2.4f)
+
+    val LinkOff: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudLinkOff", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(LinkOffData).toNodes(),
+            fill = SolidColor(HudColors.Cyan),
+        ).addPath(
+            PathParser().parsePathString(LinkOffBreak).toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /** The unlinked mark's ring: one full ring, no join. */
+    internal val LinkOffData: String = ring(7.5f, 12f, 4.6f, 2.2f)
+
+    /** The two short strokes that stand where the far link would be, read as a broken join. */
+    internal val LinkOffBreak: String = "M18.0,9.3 L18.0,14.7 M21.2,10.6 L21.2,13.4"
+
+    /** A ring centred on (cx,cy): outer disc wound ink, inner hole wound the other way to open it. */
+    private fun ring(cx: Float, cy: Float, outer: Float, inner: Float): String {
+        val o = String.format(Locale.ROOT, "%.2f,%.2f", outer, outer)
+        val i = String.format(Locale.ROOT, "%.2f,%.2f", inner, inner)
+        val oTop = String.format(Locale.ROOT, "%.2f,%.2f", cx, cy - outer)
+        val oBot = String.format(Locale.ROOT, "%.2f,%.2f", cx, cy + outer)
+        val iTop = String.format(Locale.ROOT, "%.2f,%.2f", cx, cy - inner)
+        val iBot = String.format(Locale.ROOT, "%.2f,%.2f", cx, cy + inner)
+        return "M$oTop A$o 0 1 1 $oBot A$o 0 1 1 $oTop Z " +
+            "M$iTop A$i 0 1 0 $iBot A$i 0 1 0 $iTop Z"
+    }
+
     /** A disc centred on (12,12) as two semicircle arcs: sweep 1 winds ink, sweep 0 winds a cut. */
     private fun disc12(radius: Float, ink: Boolean): String {
         val sweep = if (ink) 1 else 0

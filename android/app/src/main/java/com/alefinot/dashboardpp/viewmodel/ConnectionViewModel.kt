@@ -348,52 +348,6 @@ class ConnectionViewModel(
     }
 
     /**
-     * Clear this card's pairing and identity, leaving the card, its name and its photo.
-     *
-     * The difference from DELETE THE CARD is the whole point of having both: a card is a
-     * vehicle, and a pairing is one phone's way of reaching it. Moving a dashboard to
-     * another car, or un-pairing a bench unit without losing the trips and the name, is
-     * this action; deleting the vehicle from the app's world is the editor's.
-     *
-     * It also drops the link when that card owns it — forgetting a unit you are standing
-     * on would otherwise leave a live session attributed to a card that just said it does
-     * not know the unit. Android's bond is out of reach (see [bondNote]), so the page is
-     * told when that half is left undone.
-     */
-    fun forgetUnit(vehicleId: String) {
-        scope.launch {
-            val card = vehicles.get(vehicleId) ?: return@launch
-            val bonded = card.bleAddress?.let { link.isBonded(it) } == true
-            val decision = ConnectionCore.forgetUnit(card.bleAddress != null, bonded)
-            if (card.bleAddress == null && card.mac == null) {
-                // Nothing to forget. Saying so is better than a note that looks like it
-                // did something.
-                bondNote.value = "That card holds no pairing on this phone."
-                return@launch
-            }
-            if (!vehicles.put(card.copy(bleAddress = null, mac = null))) {
-                // The pairing is still in the file, so the card is still paired once the app
-                // restarts. `bondNote` is the line this page already uses to say a forget came
-                // out half-done (the Android bond is out of reach), so a third half is said there
-                // rather than in a new place the user has to learn.
-                bondNote.value = vehicles.saveFailure("Pairing not forgotten") +
-                    " The card may look unpaired until the app is restarted."
-                return@launch
-            }
-            if ((uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId) {
-                disconnect()
-            } else {
-                uiState.value = ConnectionUiState.Idle(
-                    "Select a vehicle to connect to it over Bluetooth.",
-                )
-            }
-            bondNote.value = decision.note
-            unclaimed.value = null
-            notice.value = null
-        }
-    }
-
-    /**
      * The radio stopped being forbidden.
      *
      * The launch attempt failed for a reason the phone controlled, so the answer is to
@@ -599,24 +553,33 @@ class ConnectionViewModel(
     }
 
     /**
-     * Forget a vehicle: its card, its JPEG, and the recorder's session row for the unit it
-     * was. The drives it took stay exactly where they are - a trip's file name
-     * carries this card's id, and the log outlives the card on purpose.
+     * Delete a vehicle and everything that existed only to reach it.
      *
-     * The session row goes *before* the card is removed, because a row is a claim about a
-     * unit; if the card disappears first, a crash in between leaves the claim pointing at
-     * nothing. Removing the row first leaves the worst case as a card that still exists
-     * with a clean identity, which the next connect refills.
+     * The card, its JPEG, the recorder's session row, the weather cache row and the in-memory
+     * frame all go - each is a claim about *this* unit, and a row left behind for a vehicle
+     * nobody owns is a coordinate the next connect will dial again. The typed city stays: it is
+     * the owner's, not the unit's. The drives it took stay exactly where they are - a trip's
+     * file name carries this card's id, and the log is meant to outlive the card, badged with
+     * the name it was driven under.
      *
-     * The weather cache row and the in-memory frame go with it for the same reason: the
-     * position the feed asks about belongs to this vehicle, and a row left behind for a
-     * unit nobody owns is a coordinate that will be dialed again by whoever inherits the
-     * link. The typed city stays - it is the owner's, not the unit's.
+     * Deleting is also how a vehicle is **forgotten** now: the card used to carry a separate
+     * FORGET for that half, and it has folded back in here. The app can only clear its own side
+     * - removing the card drops the pairing and the identity it held - so [ConnectionCore.forgetUnit]
+     * is asked the question a forget asked: did this card hold a pairing, and does Android still
+     * hold the **bond**? If it does, [bondNote] says so and hands over the way to the phone's
+     * Bluetooth settings, because the bond is the phone's to drop. A card that owns the live
+     * link drops it first, so a session is never left running for a vehicle that just stopped
+     * existing.
+     *
+     * The session and cache rows go *before* the card is removed, because a row is a claim about
+     * a unit; if the card disappears first, a crash in between leaves the claim pointing at
+     * nothing. Removing the rows first leaves the worst case as a card that still exists with a
+     * clean identity, which the next connect refills.
      *
      * [onDone] reports the outcome the way [saveVehicle] does: `null` when the file agrees the
-     * card is gone, the refusal sentence when it does not. A refused delete is the worst of
-     * the garage writes to leave quiet — the editor closed, the card vanished from the screen,
-     * and the next start the card is back because the file never took the removal.
+     * card is gone, the refusal sentence when it does not. A refused delete is the worst of the
+     * garage writes to leave quiet — the editor closed, the card vanished from the screen, and
+     * the next start the card is back because the file never took the removal.
      */
     fun deleteVehicle(vehicleId: String, onDone: (refusal: String?) -> Unit = {}) {
         scope.launch {
@@ -627,7 +590,17 @@ class ConnectionViewModel(
                 return@launch
             }
             val ownsSession = (uiState.value as? ConnectionUiState.Connected)?.vehicleId == vehicleId
-            if (ownsSession) ladder?.cancel()
+            // Deleting a vehicle is also how it is forgotten now (the card used to carry a
+            // separate FORGET for this half). Ask what clearing this card's pairing costs the
+            // phone *before* the card is gone, because `link.isBonded` needs the address the
+            // card still carries.
+            val decision = ConnectionCore.forgetUnit(
+                v.hasPairing,
+                v.bleAddress?.let { link.isBonded(it) } == true,
+            )
+            // Deleting the card you are standing on ends the session it owns, exactly as a
+            // forget did: the ladder, the retries and the re-arm all go with it.
+            if (ownsSession) disconnect()
             val key = UnitIdentity.key(v.mac, v.bleAddress)
             tripSettings.clearSessions(listOf(key))
             WeatherSettings(appContext).clearCaches(listOf(key))
@@ -653,10 +626,13 @@ class ConnectionViewModel(
                 }
             }
             if (ownsSession) {
-                uiState.value = ConnectionUiState.Idle(null)
                 notice.value = null
                 unclaimed.value = null
             }
+            // The half this app could not do. Removing the card cleared the app's side of the
+            // pairing; only Android can drop the bond, so the page is told when that half is
+            // left undone - the same note a FORGET used to raise, now raised by the delete.
+            bondNote.value = decision.note
             onDone(null)
         }
     }
