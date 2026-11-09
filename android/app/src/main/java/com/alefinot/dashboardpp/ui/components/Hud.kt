@@ -77,8 +77,11 @@ fun HudButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        if (pressed) 0.98f else 1f,
-        tween(HudMotion.SHORT_MS, easing = HudMotion.Standard),
+        if (pressed) 0.97f else 1f,
+        tween(
+            if (pressed) HudMotion.PRESS_MS else HudMotion.SHORT_MS,
+            easing = HudMotion.Standard,
+        ),
         label = "buttonScale",
     )
     // `button` and `button:hover` are the two gradient states; a touch screen has

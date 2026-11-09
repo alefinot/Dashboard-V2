@@ -111,9 +111,12 @@ object HudSpace {
 /**
  * The Web UI's motion vocabulary: one easing curve everywhere
  * (`cubic-bezier(.16, 1, .3, 1)` - a strong ease-out that arrives fast and settles
- * slowly), a 0.5 s page entrance, 0.25-0.3 s for controls, 0.8 s for a bar that
- * changes width. Compose honours the system "animator duration scale", so turning
- * animations off in Developer Options turns all of this off with no code here.
+ * slowly), and durations chosen for a phone rather than a desktop page: a 0.28 s
+ * arrival, 0.16-0.22 s for controls, 0.5 s for a bar that changes width. The page's
+ * original 0.5 s entrance and 0.8 s bar were written for a page being loaded once;
+ * on a device that changes tabs every few seconds they read as hesitation.
+ * Compose honours the system "animator duration scale", so turning animations off in
+ * Developer Options turns all of this off with no code here.
  */
 object HudMotion {
     /** `cubic-bezier(0.16, 1, 0.3, 1)` - used by every transition in the page. */
@@ -122,17 +125,24 @@ object HudMotion {
     /** CSS `ease`, which is what the page uses for its plain property transitions. */
     val Ease = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
 
-    /** `animation: pageFadeIn 0.5s` (body, `.panel`, `#sel-panel`). */
-    const val ENTRANCE_MS = 500
+    /** `animation: pageFadeIn`, retimed from 0.5 s to a phone's 0.28 s. */
+    const val ENTRANCE_MS = 280
 
-    /** `.confirm-dialog`, `button:hover/active`: 0.25 s. */
-    const val SHORT_MS = 250
+    /** `.confirm-dialog`, `button:hover/active`: 0.25 s on the page, 0.2 s here. */
+    const val SHORT_MS = 200
 
-    /** border/colour transitions on inputs, selects, `.form-row button`: 0.2-0.3 s. */
-    const val CONTROL_MS = 300
+    /** border/colour transitions on inputs, selects, `.form-row button`. */
+    const val CONTROL_MS = 220
 
-    /** `.adv-switch` and `.reset-btn`: 0.2 s. */
-    const val SWITCH_MS = 200
+    /** `.adv-switch` and `.reset-btn`: 0.2 s on the page, 0.16 s here. */
+    const val SWITCH_MS = 160
+
+    /**
+     * A button's press-in. The page's `:active` transition is 0.25 s, which on glass
+     * reads as the control hesitating under the finger; the press has to be on the
+     * next frame and the release can take its time.
+     */
+    const val PRESS_MS = 90
 
     /**
      * The app's own motion switch, mirrored here from the app's preferences (see
@@ -158,17 +168,17 @@ object HudMotion {
     }
 
     /**
-     * The tab pill travelling between labels. The page has no tab bar to animate, so
-     * this is the page's own 0.25 s button curve (`button:hover`/`:active`) applied
-     * to the one control the app has and the page does not.
+     * The tab pill travelling between labels, and the pager travelling with it.
+     * Short enough that a tap lands before the eye expects the page to have moved;
+     * long enough that the two pages are legible on the way.
      */
-    const val TAB_MS = 250
+    const val TAB_MS = 240
 
     /** `pageFadeIn`: the 8px rise that comes with every entrance on the page. */
     const val RISE_DP = 8
 
-    /** `.perf-bar-fill`: `transition: width 0.8s ease`. */
-    const val BAR_MS = 800
+    /** `.perf-bar-fill`: `transition: width 0.8s ease`, shortened to 0.5 s. */
+    const val BAR_MS = 500
 
     /** `#sel-panel`: `animation: selFadeIn 0.15s ease-out`. */
     const val REVEAL_MS = 150
@@ -178,7 +188,7 @@ object HudMotion {
      * staggered list (its panels appear whole), so this is the app's own number,
      * chosen small enough that a nine-row wall settles inside one page entrance.
      */
-    const val STAGGER_MS = 30
+    const val STAGGER_MS = 18
 
     /**
      * How long a gauge figure takes to travel to a new value. The page has no
@@ -187,7 +197,7 @@ object HudMotion {
      * value arriving once a second never snaps and is never still moving when the
      * next sample lands. Nothing here loops: the arc is idle between samples.
      */
-    const val GAUGE_MS = 400
+    const val GAUGE_MS = 300
 }
 
 /**

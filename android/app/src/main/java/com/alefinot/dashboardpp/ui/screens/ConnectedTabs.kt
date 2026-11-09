@@ -81,6 +81,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * The app's only screen once it is up: the five-slot bar and the pages it swipes
@@ -196,18 +197,33 @@ fun AppShell(
     // this one value.
     val page = BarLayout.pages.getOrElse(pager.currentPage) { BarLayout.home }
 
-    // A cover's one action: go to the page that can do something about it. It moves the
-    // pager exactly the way a bar tap does - animated while motion is on, a snap when it
-    // is off - because the cover is not a screen to leave, it is this screen with a
-    // different page in front of you.
-    val openGarage: () -> Unit = {
-        val index = BarLayout.pageOf(AppTab.VEHICLES)
+    // A bottom-bar tap is a decision about where to be, not a request to watch the
+    // pages in between go by. One page away the pager slides, so the bar and the
+    // content tell the same story; anything further is a cut, and the page's own
+    // entrance carries the change. Two reasons for the cut: the framework's
+    // `animateScrollToPage` pre-jumps to within three pages of the target before it
+    // animates (so a five-slot bar used to flash a page nobody asked for and then
+    // slide three at once), and three screenfuls in 240 ms is a blur, not motion.
+    // A swipe is untouched - that is direct manipulation and follows the finger.
+    val goToPage: (Int) -> Unit = { index ->
         if (index >= 0) {
             scope.launch {
-                if (HudMotion.enabled) pager.animateScrollToPage(index) else pager.scrollToPage(index)
+                if (HudMotion.enabled && abs(index - pager.currentPage) <= 1) {
+                    pager.animateScrollToPage(
+                        index,
+                        animationSpec = tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
+                    )
+                } else {
+                    pager.scrollToPage(index)
+                }
             }
         }
     }
+
+    // A cover's one action: go to the page that can do something about it. It moves
+    // the pager exactly the way a bar tap does, because the cover is not a screen to
+    // leave, it is this screen with a different page in front of you.
+    val openGarage: () -> Unit = { goToPage(BarLayout.pageOf(AppTab.VEHICLES)) }
     // Which vehicle a cover is waiting for. The garage's list is collected here too, not
     // only on the vehicle page, because a cover has to name the vehicle it cannot reach -
     // and the store is DataStore-backed, so there is no synchronous read to borrow. The
@@ -272,11 +288,13 @@ fun AppShell(
                 // slot is a page now, so there is no surface to keep warm, no gesture
                 // stream to mirror onto a View under the pager, and no opaque page to
                 // hide a second copy of the same settings.
-                // Pages beyond the visible one are composed as well, so arriving is a
-                // paint and not a build: a cold page used to be composed while the
-                // pager was already moving, and the Trips page costs ~650 ms of UI
-                // thread on this tablet (measured - see the plan's baseline). That is
-                // the one long frame in a swipe.
+                // Pages beyond the visible one are composed as well - in fact all of
+                // them, so no tab is ever built under the user's finger: that cold
+                // build was the 100 ms-plus stall at the start of a tab change, and
+                // it landed exactly when the pager was already moving. Composing the
+                // four off-screen pages in one frame made the first paint of the
+                // shell 1.3 s slower, so they are still built one per frame after
+                // the shell has drawn and animated in.
                 //
                 // It is only affordable because everything a page *does* is keyed to
                 // the viewport flag computed below rather than to its composition: the
@@ -292,7 +310,7 @@ fun AppShell(
                 var extraPages by remember { mutableStateOf(0) }
                 LaunchedEffect(Unit) {
                     delay(600)
-                    while (extraPages < BarLayout.pages.size - 2) {
+                    while (extraPages < BarLayout.pages.size - 1) {
                         withFrameNanos { }
                         extraPages++
                     }
@@ -418,14 +436,7 @@ fun AppShell(
                 onBounds = { slot, r -> bounds[slot] = r },
                 onSelect = { slot ->
                     val index = BarLayout.pageOf(slot)
-                    if (index >= 0) {
-                        scope.launch {
-                            // The bar animates the same move a swipe would make, so a
-                            // tap and a drag look the same and the sheet has one source
-                            // of motion. With motion off it is a snap.
-                            if (HudMotion.enabled) pager.animateScrollToPage(index) else pager.scrollToPage(index)
-                        }
-                    }
+                    if (index >= 0) goToPage(index)
                 },
             )
         }
