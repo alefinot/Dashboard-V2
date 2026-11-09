@@ -52,6 +52,14 @@ static volatile bool s_advertising = false;
 // hand-over, short enough that the next phone just waits for the card to appear.
 static constexpr uint32_t BT_PAIR_DELAY_MS = 10000;
 static volatile uint32_t s_advResumeAt = 0;
+// Raised by the security callback when an authentication failure said the stored
+// keys were wrong and this peer's bond was deleted with it. The link that is left
+// behind can never encrypt, but the callback must not block the stack (see the
+// note on resuming pairing in btTask), so the pump is what actually closes it.
+// That goes through the disconnect event, which arms BT_PAIR_DELAY_MS the normal
+// way - so the next dial meets a unit in pairing mode instead of a phone sitting
+// out the app's 180 s bond poll on a link that cannot answer it.
+static volatile bool s_closeAfterBondDrop = false;
 
 // The peer gets the first move in pairing, and this is how long the unit waits
 // for it before making its own request. It is not a courtesy: an Android phone
@@ -324,20 +332,50 @@ static void btLogBondCount(const char *when) {
 // `BOND_BONDED` on Android, skipped pairing, timed out again, and every lap
 // deleted one more bond. A failure reported after the peer already disconnected
 // gets the same verdict: nothing on this link can prove anything any more.
+//
+// The numbers in the list below were wrong until 2026-11-09 and were checked
+// against `esp_gap_ble_api.h` in the installed core, which starts this enum at
+// `ESP_AUTH_SMP_PASSKEY_FAIL = 78`. That is not cosmetics: the line that read
+// `ESP_AUTH_SMP_DHKEY_CHK_FAIL // 85` made reason 85 look already covered, when
+// 85 is `ESP_AUTH_SMP_UNKNOWN_ERR` - the reason the bench actually got, twice,
+// while the unit held four bonds and the phone held none. The unit answered that
+// failure with `BT: bond kept - reason 85 says the link died, not the keys` and
+// the pair stayed broken until it was cleared by hand.
+//
+// So the two "unspecified" codes are in the list now, and the reason is the
+// asymmetry rather than a theory: a procedure that Bluedroid could not name is
+// not proof of a bad key, but every input to it is a pairing this unit cannot
+// verify, the link is still up so nothing else explains it, and the damage of
+// guessing wrong is typing a code once - against being locked out of a unit that
+// remembers a key its partner has thrown away.
 // (by value, not by const reference: esp_ble_remove_bond_device takes the
 // address as a plain uint8_t[6], so a const view of the event will not pass it)
 static void btDropFailedBond(esp_ble_auth_cmpl_t cmpl) {
   // Failures that are about the keys, and so do mean a stale or wrong pairing:
   const bool keysRejected =
-      cmpl.fail_reason == ESP_AUTH_SMP_PASSKEY_FAIL ||       // 78: wrong digits
-      cmpl.fail_reason == ESP_AUTH_SMP_PAIR_AUTH_FAIL ||     // 81: reqs cannot be met
-      cmpl.fail_reason == ESP_AUTH_SMP_CONFIRM_VALUE_FAIL || // 82: confirm mismatch
-      cmpl.fail_reason == ESP_AUTH_SMP_ENC_KEY_SIZE ||       // 83: key too short
-      cmpl.fail_reason == ESP_AUTH_SMP_REPEATED_ATTEMPT ||   // 88: disallowed repeat
-      cmpl.fail_reason == ESP_AUTH_SMP_DHKEY_CHK_FAIL;       // 85: SC DHKey check
+      cmpl.fail_reason == ESP_AUTH_SMP_PASSKEY_FAIL ||        // 78: wrong digits
+      cmpl.fail_reason == ESP_AUTH_SMP_PAIR_AUTH_FAIL ||      // 80: reqs cannot be met
+      cmpl.fail_reason == ESP_AUTH_SMP_CONFIRM_VALUE_FAIL ||  // 81: confirm mismatch
+      cmpl.fail_reason == ESP_AUTH_SMP_ENC_KEY_SIZE ||        // 83: key too short
+      cmpl.fail_reason == ESP_AUTH_SMP_UNKNOWN_ERR ||         // 85: unclassified (bench, 2026-11-09)
+      cmpl.fail_reason == ESP_AUTH_SMP_REPEATED_ATTEMPT ||    // 86: disallowed repeat
+      cmpl.fail_reason == ESP_AUTH_SMP_DHKEY_CHK_FAIL ||      // 88: SC DHKey check
+      cmpl.fail_reason == ESP_AUTH_SMP_NUM_COMP_FAIL ||       // 89: numeric comparison mismatch
+      cmpl.fail_reason == ESP_AUTH_SMP_CONFIRM_FAIL ||        // 95: confirm value (host-side)
+      cmpl.fail_reason == ESP_AUTH_SMP_ENC_FAIL ||            // 97: the controller could not start
+                                                                // encryption - a key this unit holds
+                                                                // and the peer cannot answer with
+      cmpl.fail_reason == ESP_AUTH_SMP_UNSPEC_ERR;            // 101: unclassified (host-side twin)
+  // Deliberately not here, because none of them says anything about a key:
+  // 99 RSP_TIMEOUT and 102 CONN_TOUT (the link, not the pairing), 96 BUSY and
+  // 98 STARTED (a procedure still running), 92 INTERNAL_ERR and 94 INIT_FAIL
+  // (this stack's own fault, which a peer's bond did not cause), 82
+  // PAIR_NOT_SUPPORT (a stranger's device that never pairs), 79 OOB (not used
+  // here), 84/87 invalid command/parameters, 90/91 BR/EDR, 93 unknown IO,
+  // 100 encrypted-diversifier (legacy pairing this unit does not speak).
   if (!keysRejected || !s_connected) {
-    // The link, not the keys: keep the bond and let the next attempt prove it.
-    logPrintf("BT: bond kept - reason %d says the link died, not the keys\n",
+    // Not evidence about the keys: keep the bond and let the next attempt prove it.
+    logPrintf("BT: bond kept - reason %d is not evidence about the keys\n",
               (int)cmpl.fail_reason);
     return;
   }
@@ -346,6 +384,10 @@ static void btDropFailedBond(esp_ble_auth_cmpl_t cmpl) {
               "the next attempt pairs from scratch\n",
               cmpl.bd_addr[0], cmpl.bd_addr[1], cmpl.bd_addr[2],
               cmpl.bd_addr[3], cmpl.bd_addr[4], cmpl.bd_addr[5]);
+    // The pairing this link was trying to finish is now impossible, and the phone
+    // does not know it yet: it can sit on its own bond request for minutes. End the
+    // link so pairing resumes on the normal delay - from the pump, never from here.
+    s_closeAfterBondDrop = true;
   } else {
     logPrintf("BT: no stored bond to drop for that peer\n");
   }
@@ -472,6 +514,7 @@ static void btCloseLink(void) {
   s_pairing = false;
   s_passkey = 0;
   s_secAskAt = 0;  // the link it belonged to is gone
+  s_closeAfterBondDrop = false;  // and so is the link that verdict was about
   s_ntfTry = 0;    // the refusals were about that link, not the next one
   memset(s_peerAddr, 0, sizeof(s_peerAddr));
   // Anything half-received belongs to the link that just died.
@@ -664,6 +707,19 @@ static void btTask(void *pvParameters) {
         logPrintf("BT: no SMP from the peer in %u ms - asking for the secured link\n",
                   (unsigned)BT_PAIR_GRACE_MS);
         esp_ble_set_encryption(s_peerAddr, ESP_BLE_SEC_ENCRYPT_MITM);
+      }
+    }
+
+    // A bond this unit just deleted because the authentication said the keys were
+    // wrong (see btDropFailedBond). Nothing on this link can encrypt any more, and
+    // the phone has not been told: it waits out its own bond request believing a
+    // pair is still in reach. Closing the link is what tells it, and the disconnect
+    // event arms the usual delay, so the next dial meets a unit offering pairing.
+    if (s_closeAfterBondDrop) {
+      s_closeAfterBondDrop = false;
+      if (s_connected) {
+        logPrintf("BT: closing the link a dropped bond made pointless\n");
+        esp_ble_gap_disconnect(s_peerAddr);
       }
     }
 
