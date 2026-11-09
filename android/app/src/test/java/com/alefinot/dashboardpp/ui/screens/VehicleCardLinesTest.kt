@@ -120,6 +120,19 @@ class VehicleCardLinesTest {
         assertEquals("B 1234 CD", plateLine(Vehicle(id = "v1", plate = " b 1234 CD ")))
     }
 
+    // ── the notes line ───────────────────────────────────────────────────────
+    @Test
+    fun `a note that is not there is no line at all, and a note that is shows as written`() {
+        assertNull(notesLine(Vehicle(id = "v1")))
+        assertNull(notesLine(Vehicle(id = "v1", notes = "  \n  ")))
+        // Verbatim, not in the app's voice: the editor gives the note no format to enforce,
+        // so the card has none either - only the whitespace around it goes.
+        assertEquals(
+            "Chain oiled Apr '26, tyre pressure 2.2 bar",
+            notesLine(Vehicle(id = "v1", notes = "  Chain oiled Apr '26, tyre pressure 2.2 bar ")),
+        )
+    }
+
     // ── how long ago the app last reached this vehicle ───────────────────────
     @Test
     fun `a vehicle the app has never connected to says so and does not invent a time`() {

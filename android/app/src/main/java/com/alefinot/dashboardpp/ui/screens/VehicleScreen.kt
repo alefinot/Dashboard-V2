@@ -383,9 +383,9 @@ private fun CardCover(
  * looking when they reach for a vehicle, and the full-screen ring that used to answer the question
  * is gone.
  *
- * Every line of text — the name, the spec, the status and the TAP TO hint — lives in the one text
- * column beside the cover, so they share a left edge; a hint that started under the cover would
- * read as the card's caption, not as the next line of the vehicle.
+ * Every line of text — the name, the spec, the note, the status and the TAP TO hint — lives
+ * in the one text column beside the cover, so they share a left edge; a hint that started
+ * under the cover would read as the card's caption, not as the next line of the vehicle.
  *
  * Deleting a vehicle is not on the card - it is the editor's DELETE THE CARD - and it now does the
  * whole job: it removes the card *and* drops the pairing and identity it held, so there is no longer
@@ -457,6 +457,20 @@ private fun VehicleCard(
                     specLine(vehicle).takeIf { it.isNotEmpty() }?.let {
                         Spacer(Modifier.height(4.dp))
                         Text(it, color = HudColors.TextMuted, style = HudeCfgNote())
+                    }
+                    // The note is what the editor's NOTES field is for - "anything the card
+                    // should remember" - so it is shown as written, in the faintest ink, and
+                    // capped at three lines: a long note ellipses on the card and keeps its
+                    // full text in the editor rather than pushing the status line away.
+                    notesLine(vehicle)?.let {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            it,
+                            color = HudColors.TextDim,
+                            style = HudeCfgNote(),
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(

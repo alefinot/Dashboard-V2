@@ -11,10 +11,12 @@ import kotlin.math.roundToInt
  * The words on a garage card, built away from the screen so the boundary cases can be
  * tested (see `VehicleCardLinesTest`).
  *
- * A card carries three lines, and they are not the same kind of statement:
+ * A card carries four lines, and they are not the same kind of statement:
  *
- * - the **spec** line and the **plate** line are the user's own description of the
- *   vehicle, half-filled on purpose most of the time;
+ * - the **spec** line, the **plate** line and the **notes** line are the user's own
+ *   description of the vehicle, half-filled on purpose most of the time; the notes line is
+ *   the only unbounded one of them, so the card caps what it shows rather than letting a
+ *   paragraph push the rest of the card away;
  * - the **status** line is the app's evidence about a physical unit, and it is the only
  *   line on the card that can be wrong. So it never paraphrases: while a ladder is
  *   running or has just failed, the status line is the connection code's own sentence,
@@ -93,8 +95,19 @@ fun specLine(v: Vehicle): String {
     return what.joinToString(" · ")
 }
 
-/** The plate, cleaned, or `null` when there is none — the caller draws no line at all. */
+/** The plate, cleaned, or `null` when there is none - the caller draws no line at all. */
 fun plateLine(v: Vehicle): String? = fieldOf(v.plate)?.uppercase()
+
+/**
+ * The owner's own note about this vehicle, trimmed, or `null` when there is none - the
+ * caller draws no line at all.
+ *
+ * Unlike [plateLine] and [specLine] this is shown as written: the editor gives the note no
+ * format to own, so the card has none either, and uppercasing it would restate someone's
+ * sentence in the app's voice. It is the one unbounded line on the card, so the caller caps
+ * it there rather than in here - the whole note stays in the record either way.
+ */
+fun notesLine(v: Vehicle): String? = fieldOf(v.notes)
 
 /**
  * "How long ago did this vehicle last answer?" in the units a person reads.
