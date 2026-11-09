@@ -584,6 +584,39 @@ reports `security_stalled`: *the dashboard answered, but pairing did not
 complete*. The recovery is `bond.clear` plus forgetting the pairing on the phone —
 one fresh passkey, and pair-once resumes.
 
+**A link the stack never reported losing** (self-healed 2026-11-09, after two hours of it on
+the bench). `s_connected` used to be cleared by the disconnect event and nothing else. When a
+pairing died mid-handshake and took that event with it, the unit kept a phone that had gone
+home: `peers 1` in the log forever, **advertising never resumed** (the phone's own scan found no
+dashboard at all, so the app said *"No dashboard answered and none was found"*), and the 1 Hz
+pump pushed a snapshot a second into a link the controller had dropped — at MTU 23 that is ~40
+fragments a second, every one refused, so the serial port filled with
+`notify(): rc=-1 Unknown ESP_ERR error` at ~47 lines/s until someone pulled the power.
+
+Nothing could see it, because `BLECharacteristic::notify()` returns `void`; the only place a
+refusal surfaces is `BLECharacteristicCallbacks::onStatus(…, ERROR_GATT, rc)`. The RPC
+characteristic had such a callback, capped at four log lines per link — it *recorded* the
+evidence and acted on none of it. The telemetry characteristic, which is the unit's loudest
+sender, had **no callbacks at all**. So:
+
+- `BtTelemCallbacks` now watches the dashboard stream, and `btNoteNotify()` counts refusals
+  across both characteristics (`ERROR_GATT` counts, `SUCCESS_NOTIFY` resets). Time, not a count,
+  is the verdict: one snapshot is ~40 fragments at MTU 23 and two at 517, but a healthy link
+  always accepts *something* within a second of being asked.
+- After `BT_PUMP_PAUSE_AFTER` (8) refusals the dashboard stream stands down — that is the flood
+  gate, not the verdict — and resumes the instant a send is accepted again.
+- After `BT_LINK_DEAD_MS` (15 s) with nothing accepted, `btTask` closes the link it was never
+  told about: `esp_ble_gap_disconnect()` for the ACL the controller may still believe in, then
+  `BLEServer::disconnect(connId)` (= `esp_ble_gatts_close`) so the library's peer table stops
+  naming a phone that is not there, then `btCloseLink()` — the same teardown a real disconnect
+  runs, so advertising comes back by itself. The install session is deliberately untouched: a
+  link lost mid-install is the resume path, and `src/bt_ota.cpp` owns that clock.
+- The heartbeat gained **`ntf=`** — notifications the stack has refused since boot
+  (`btNotifyFailures()`). A clean install leaves it where it started; a link that hiccuped
+  mid-install shows it even when nobody had a serial port open. `BT: link Ns up` also prints
+  **link age** now, not uptime: it used to read "a phone has been connected for two hours" on a
+  unit that had been up two hours and had not had a phone for one of them.
+
 ### Firmware over the link — how an install runs in this build
 
 A unit built from this tree **can be updated over Bluetooth**, by the Android app or by

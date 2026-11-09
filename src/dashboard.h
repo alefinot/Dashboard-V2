@@ -891,6 +891,10 @@ void btInit();
 // 0 = radio idle, 1 = advertising, 2 = a phone is connected.
 int btLinkState();
 int btLinkRssi();
+// Notifications the stack has refused since boot (the heartbeat's `ntf=`). A
+// healthy install leaves it untouched; movement during an install is the link
+// dropping sends, which is what the 2026-11-09 stuck-link finding looked like.
+uint32_t btNotifyFailures();
 // Non-zero while the stack is asking the user to type this passkey on the
 // phone. Cleared by btClearPairingPasskey() once the overlay has timed out.
 bool btPairingActive();

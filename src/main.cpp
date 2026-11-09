@@ -860,14 +860,15 @@ void loop() {
   static unsigned long lastDiagHeartbeat = 0;
   if (now - lastDiagHeartbeat >= 10000) {
     lastDiagHeartbeat = now;
-    logPrintf("HB: up=%lus fps=%.1f freq=%uMHz tgtFps=%d heap=%lu min=%lu maxAlloc=%lu sp=%d fallback=%d otaReq=%d memAct=%d bt=%d pair=%06lu temp=%.1f maxFrame=%lums over24=%lu sMaxGap=%lums\n",
+    logPrintf("HB: up=%lus fps=%.1f freq=%uMHz tgtFps=%d heap=%lu min=%lu maxAlloc=%lu sp=%d fallback=%d otaReq=%d memAct=%d bt=%d ntf=%lu pair=%06lu temp=%.1f maxFrame=%lums over24=%lu sMaxGap=%lums\n",
               millis() / 1000UL, (double)currentMeasuredFps,
               (unsigned)getCpuFrequencyMhz(), TARGET_FPS,
               (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
               (unsigned long)ESP.getMaxAllocHeap(), (int)speedSpriteValid(),
               (int)isSpeedFallback(),
               (int)otaMemReleaseRequested, (int)memSaverActive,
-              btLinkState(), (unsigned long)btPairingPasskey(), (double)temperatureRead(),
+              btLinkState(), (unsigned long)btNotifyFailures(),
+              (unsigned long)btPairingPasskey(), (double)temperatureRead(),
               (unsigned long)g_diagMaxFrameMs, (unsigned long)g_diagOver24Ms,
               (unsigned long)g_diagMaxSensorGapMs);
     g_diagMaxFrameMs = 0;

@@ -39,6 +39,10 @@ static BLECharacteristic *s_rpc = nullptr;
 static BLECharacteristic *s_ota = nullptr;
 
 static volatile bool s_connected = false;
+// When the current link came up. The `BT: link Ns up` status line once printed
+// uptime here, which read as "a phone has been connected for two hours" on a unit
+// that had been up two hours and had not had a phone for one of them.
+static volatile uint32_t s_linkUpMs = 0;
 static volatile bool s_advertising = false;
 // A link that drops goes quiet for this long before pairing is offered again. The
 // peer that just fell off often reconnects inside a second and takes the only peer
@@ -90,6 +94,30 @@ static volatile size_t s_rxLen = 0;
 static volatile uint16_t s_rxSeq = 0;
 static volatile bool s_rxBadLogged = false;  // one complaint per connection about junk
 static int s_rpcNotifyLogged = 0;          // RPC notify attempts logged this link
+
+// Every notification the unit asks for is reported back through the
+// characteristic callbacks - BLECharacteristic.cpp calls esp_ble_gatts_send_indicate
+// and hands the result to onStatus(), which is the only way this file can learn
+// that a send never left, because BLECharacteristic::notify() returns void.
+//
+// `s_ntfTry` counts attempts since the last accepted one; `s_ntfOkMs` is when one
+// was last accepted. Time rather than a plain count is the verdict because the
+// same snapshot is ~40 fragments at MTU 23 and two at 517 - what does not change
+// is that a healthy link accepts a notification within a second of being asked.
+// `s_ntfTotal` is the lifetime count, on the heartbeat as `ntf=`, so an install
+// run leaves its link refusals behind without a serial capture.
+static volatile uint32_t s_ntfTry = 0;
+static volatile uint32_t s_ntfTotal = 0;
+static volatile uint32_t s_ntfOkMs = 0;
+
+// Eight refused frames in a row holds the dashboard stream off. That is not the
+// verdict - it is what stops a dead link from printing forty `notify(): rc=-1`
+// lines a second while the verdict waits out BT_LINK_DEAD_MS, and a two-frame
+// hiccup on a live link costs nothing because the next accepted send clears it.
+static constexpr uint32_t BT_PUMP_PAUSE_AFTER = 8;
+// ...and fifteen seconds of asking without anything being accepted is a link the
+// stack has stopped talking about. See the verdict in btTask.
+static constexpr uint32_t BT_LINK_DEAD_MS = 15000;
 
 // Largest single fragment this link can carry (MTU - ATT header - frame header).
 // What the current link actually negotiated. Starts at the ATT default of 23 B
@@ -365,6 +393,35 @@ class BtSecurityCallbacks : public BLESecurityCallbacks {
   }
 };
 
+// One notification attempt, as the library reported it. Success resets the
+// streak; only a genuine refused send (`ERROR_GATT` - the stack said no) counts
+// against the link. `ERROR_NOTIFY_DISABLED` means the peer unsubscribed, which is
+// normal housekeeping and never a dead link, and the library does not even ask
+// the stack in that case.
+static void btNoteNotify(BLECharacteristicCallbacks::Status s) {
+  if (s == BLECharacteristicCallbacks::Status::SUCCESS_NOTIFY ||
+      s == BLECharacteristicCallbacks::Status::SUCCESS_INDICATE) {
+    s_ntfTry = 0;
+    s_ntfOkMs = (uint32_t)millis();
+    return;
+  }
+  if (s != BLECharacteristicCallbacks::Status::ERROR_GATT) return;
+  s_ntfTry++;
+  s_ntfTotal++;
+}
+
+// The dashboard stream: notify-only, and until now the one characteristic on this
+// server with no callbacks at all - which meant the traffic that is 100% of its
+// existence was invisible to the unit. The `notify(): rc=-1` flood on a stuck link
+// came from a path with nothing listening on this side of it. Deliberately silent:
+// a wedged link at MTU 23 refuses ~40 fragments a second, and the counter is the
+// whole point.
+class BtTelemCallbacks : public BLECharacteristicCallbacks {
+  void onStatus(BLECharacteristic *, BLECharacteristicCallbacks::Status s, uint32_t) override {
+    btNoteNotify(s);
+  }
+};
+
 // RPC characteristic writes: framing only, the JSON is handled by btTask.
 class BtRpcCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *, esp_ble_gatts_cb_param_t *param) override {
@@ -377,6 +434,7 @@ class BtRpcCallbacks : public BLECharacteristicCallbacks {
   // so the log says whether an answer left the unit at all and what the stack
   // thought of it. The library is otherwise silent about a refused send.
   void onStatus(BLECharacteristic *c, BLECharacteristicCallbacks::Status s, uint32_t code) override {
+    btNoteNotify(s);  // counts against the link whether or not anything is logged
     if (s_rpcNotifyLogged >= 4) return;
     if (s == BLECharacteristicCallbacks::Status::SUCCESS_NOTIFY ||
         s == BLECharacteristicCallbacks::Status::SUCCESS_INDICATE) {
@@ -404,11 +462,41 @@ class BtOtaCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
+// The link is over - however we learned it. The stack's disconnect event is the
+// usual way; the other caller is btTask's own verdict, for a link the stack never
+// reported losing (see the verdict there). None of this state may outlive the link
+// it belongs to: `s_connected` in particular is the difference between advertising
+// again and sitting for hours holding a phone that went home.
+static void btCloseLink(void) {
+  s_connected = false;
+  s_pairing = false;
+  s_passkey = 0;
+  s_secAskAt = 0;  // the link it belonged to is gone
+  s_ntfTry = 0;    // the refusals were about that link, not the next one
+  memset(s_peerAddr, 0, sizeof(s_peerAddr));
+  // Anything half-received belongs to the link that just died.
+  s_rxOpen = false;
+  s_rxReady = false;
+  s_rxBadLogged = false;
+  s_rxLen = 0;
+  // Not "advertising again": pairing is held back for BT_PAIR_DELAY_MS, then
+  // btTask brings it up. See the constant.
+  BLEDevice::getAdvertising()->stop();
+  s_advertising = false;
+  s_advResumeAt = millis() + BT_PAIR_DELAY_MS;
+}
+
 class BtServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
     s_connected = true;
     s_advertising = false;
     s_rpcNotifyLogged = 0;
+    s_linkUpMs = (uint32_t)millis();
+    // A fresh link gets a fresh opinion. Without the timestamp reset the very
+    // first refused send on a new link would sit fifteen seconds from an old
+    // link's last success, and the verdict below could fire on the second try.
+    s_ntfTry = 0;
+    s_ntfOkMs = (uint32_t)millis();
     s_mtu = 23;  // reset: the negotiated value belongs to the link that just ended
     logPrintf("BT: phone connected (conn %u)\n", (unsigned)param->connect.conn_id);
     // Don't demand anything yet - see BT_PAIR_GRACE_MS. Demanding an encrypted
@@ -432,21 +520,7 @@ class BtServerCallbacks : public BLEServerCallbacks {
   }
 
   void onDisconnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
-    s_connected = false;
-    s_pairing = false;
-    s_passkey = 0;
-    s_secAskAt = 0;  // the link it belonged to is gone
-    memset(s_peerAddr, 0, sizeof(s_peerAddr));
-    // Anything half-received belongs to the link that just died.
-    s_rxOpen = false;
-    s_rxReady = false;
-    s_rxBadLogged = false;
-    s_rxLen = 0;
-    // Not "advertising again": pairing is held back for BT_PAIR_DELAY_MS, then
-    // btTask brings it up. See the constant.
-    BLEDevice::getAdvertising()->stop();
-    s_advertising = false;
-    s_advResumeAt = millis() + BT_PAIR_DELAY_MS;
+    btCloseLink();
     // The HCI reason is the clue when a client connects and vanishes: 0x3 is an
     // supervision timeout, 0x16 the client's own disconnect, 0x3F the local host.
     logPrintf("BT: phone disconnected (reason 0x%02x), pairing in %u ms\n",
@@ -605,6 +679,42 @@ static void btTask(void *pvParameters) {
       s_rxLen = 0;
     }
 
+    // A link the stack never reported losing. `s_connected` used to be cleared by
+    // the disconnect event and nothing else, so when a pairing died mid-handshake
+    // and took that event with it, the unit kept a phone that had gone home: it
+    // never advertised again (the phone's own scan found no dashboard at all), it
+    // pushed a snapshot a second into a link the controller had dropped - ~40
+    // refused notifications a second at MTU 23, straight to the serial port,
+    // forever - and only a power cycle ended it. Bench, 2026-11-09: two hours of
+    // that, with `peers 1` in the log the whole way.
+    //
+    // The unit's own sends are the only probe available - `notify()` returns void,
+    // so the callbacks are the only place a refusal surfaces - and they are asked
+    // about every second, so a link that has stopped answering is known about
+    // within BT_LINK_DEAD_MS of it. Deliberately does not touch the install
+    // session: a link lost mid-install is the resume path, and src/bt_ota.cpp owns
+    // that clock, not this one.
+    if (s_connected && s_ntfTry >= BT_PUMP_PAUSE_AFTER &&
+        (long)(now - s_ntfOkMs) > (long)BT_LINK_DEAD_MS && s_server != nullptr) {
+      logPrintf("BT: link dead, not disconnected - %lu sends refused in %lus, closing it "
+                "(peers %d, lifetime %lu)\n",
+                (unsigned long)s_ntfTry, (unsigned long)(BT_LINK_DEAD_MS / 1000UL),
+                (int)s_server->getConnectedCount(), (unsigned long)s_ntfTotal);
+      // Two hammers, both allowed to fail on a link this dead - the teardown below
+      // does not depend on either. esp_ble_gap_disconnect drops the physical ACL by
+      // peer address, which is the thing the controller may still believe in;
+      // BLEServer::disconnect(connId) is esp_ble_gatts_close, which drops this
+      // app's GATT record and so the library's peer table - the `peers 1` in the
+      // log. The map copy is fine here: this path runs once per wedged link, not
+      // per frame.
+      esp_ble_gap_disconnect(s_peerAddr);
+      for (auto &peer : s_server->getPeerDevices(false)) {
+        logPrintf("BT:   conn %u: closing the GATT record\n", (unsigned)peer.first);
+        s_server->disconnect(peer.first);
+      }
+      btCloseLink();
+    }
+
     if (now - lastTelem >= 1000) {
       lastTelem = now;
       // The quiet window stops the dashboard stream: on this link the image and
@@ -612,7 +722,12 @@ static void btTask(void *pvParameters) {
       // only traffic the phone needs is the install's own (ACK events and the
       // occasional status question). The snapshot values are parked too, so a
       // stream here would be a stream of frozen numbers.
-      if (s_connected && s_telem != nullptr && !otaQuietActive) {
+      //
+      // `s_ntfTry < BT_PUMP_PAUSE_AFTER` is the flood gate: after a handful of
+      // refusals the dashboard stream stands down instead of hammering a link that
+      // is not taking anything, and resumes the instant a send is accepted again.
+      if (s_connected && s_telem != nullptr && !otaQuietActive &&
+          s_ntfTry < BT_PUMP_PAUSE_AFTER) {
         size_t n = btBuildSnapshotJson(telemBuf, sizeof(telemBuf));
         if (n > 0) btSendMessage(BT_F_TELEM, (uint16_t)(now / 1000), telemBuf, n);
       }
@@ -656,9 +771,11 @@ static void btTask(void *pvParameters) {
     // never built" and "the answer left and was ignored".
     if (s_connected && now - lastLinkLog >= 10000) {
       lastLinkLog = now;
-      logPrintf("BT: link %lus up, peers %d, cccd telem=%d rpc=%d, mtu %u\n",
-                (unsigned long)(now / 1000), s_server ? (int)s_server->getConnectedCount() : -1,
-                cccdFlag(s_telem), cccdFlag(s_rpc), (unsigned)s_mtu);
+      logPrintf("BT: link %lus up, peers %d, cccd telem=%d rpc=%d, mtu %u, refused %lu\n",
+                (unsigned long)((now - s_linkUpMs) / 1000),
+                s_server ? (int)s_server->getConnectedCount() : -1,
+                cccdFlag(s_telem), cccdFlag(s_rpc), (unsigned)s_mtu,
+                (unsigned long)s_ntfTry);
     }
 
     // Stack headroom: the RPC path runs ArduinoJson and printf on this task, so
@@ -689,6 +806,11 @@ int btLinkState() {
   if (s_connected) return 2;
   return s_advertising ? 1 : 0;
 }
+
+// Notifications the stack has refused since boot. On the heartbeat as `ntf=`: a
+// clean install leaves this exactly where it started, and a link that hiccuped
+// mid-install shows it here even when nobody had a serial port open.
+uint32_t btNotifyFailures() { return s_ntfTotal; }
 
 bool btPairingActive() { return s_pairing; }
 
@@ -755,6 +877,10 @@ void btInit() {
   s_telem = svc->createCharacteristic(TELEM_UUID, BLECharacteristic::PROPERTY_NOTIFY);
   s_telem->addDescriptor(new BLE2902());
   s_telem->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+  // Not a luxury: this characteristic is the unit's loudest sender and had no
+  // callbacks, so nothing on the unit could tell a delivered snapshot from forty
+  // refused ones. See BtTelemCallbacks.
+  s_telem->setCallbacks(new BtTelemCallbacks());
 
   s_rpc = svc->createCharacteristic(
       RPC_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR |
