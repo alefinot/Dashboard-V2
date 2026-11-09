@@ -942,6 +942,26 @@ void btRpcHandle(const char *msg, size_t len, uint16_t seq) {
     pendingSleep = true;
     return;
   }
+  if (!strcmp(m, "bond.clear")) {
+    // Forget every pairing on the unit - the symmetric answer to the phone
+    // forgetting the device. It exists because the unit deletes bonds on a
+    // rejection it cannot tell from a dead link (fixed 2026-11-09), and one
+    // half of a pairing is exactly the state neither side can repair alone:
+    // Android believes a bond this unit has never heard of, and skips pairing
+    // forever after. Deliberately separate from `factory.reset`, which would
+    // also erase every setting the owner dialed in.
+    //
+    // The phone's half cannot be dropped from here (`removeBond` is not a
+    // public API), so the caller's own side of the pairing must be cleared and
+    // a fresh passkey typed once - but this makes that recovery a tap instead
+    // of a hunt through the phone's Bluetooth settings.
+    const int removed = btClearBonds();
+    char body[48];
+    snprintf(body, sizeof(body), "{\"cleared\":%d}", removed);
+    rpcSend(seq, id, body);
+    logPrintf("RPC: bond.clear, %d bond(s)\n", removed);
+    return;
+  }
   if (!strcmp(m, "factory.reset")) {
     rpcSend(seq, id, "{\"status\":\"ok\"}");
     factoryResetConfig();

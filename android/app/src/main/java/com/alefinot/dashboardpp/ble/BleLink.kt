@@ -517,15 +517,27 @@ class BleLink(context: Context) {
             if (!up) throw IOException("connect_timeout")
             Log.d(DPP_CONN_LOG_TAG, "dial up address=$address")
 
+            // Pairing before the MTU wait, on purpose. SMP does not care about MTU, and
+            // the unit only gives the peer BT_PAIR_GRACE_MS (3 s) to start the exchange
+            // before it sends its own security request - after which, measured twice on
+            // the bench on 2026-11-09, a phone pairing request that lands late is simply
+            // never answered: Android sits in BOND_BONDING for 30 s and gives up
+            // (`BONDING => NONE (status 1)`) while the panel never shows a code. The MTU
+            // exchange is refused often enough on this link that waiting for it (or its
+            // 5 s timeout) first reliably pushes createBond() past that window - the
+            // fresh pairings that used to put six digits on the panel stopped doing so.
+            // `src/bt.cpp` documents the same contract in words: "createBond() about a
+            // second after the link is up". This restores it.
+            _state.value = BleLinkState.Pairing(name)
+            bond(device)
+
+            _state.value = BleLinkState.Connecting(name)
+
             // A larger MTU is what keeps a config chunk to a handful of fragments.
             mtu = requestMtu(client, BleProto.TARGET_MTU)
             if (mtu < 23) mtu = 23
             Log.d(DPP_CONN_LOG_TAG, "mtu negotiated=$mtu address=$address")
 
-            _state.value = BleLinkState.Pairing(name)
-            bond(device)
-
-            _state.value = BleLinkState.Connecting(name)
             discover(client)
 
             val service = client.getService(SERVICE_UUID)
@@ -537,8 +549,21 @@ class BleLink(context: Context) {
             // Optional on purpose, see the field comment.
             otaChar = service.getCharacteristic(OTA_UUID)
 
-            if (!subscribe(client, telem)) throw IOException("telem_subscribe_failed")
-            if (!subscribe(client, rpc)) throw IOException("rpc_subscribe_failed")
+            // Both characteristics sit behind the unit's encrypted-link permission. On
+            // a secured link the write goes through; on one that Android *believes* is
+            // secured but the unit will not encrypt, every attribute here goes on
+            // timing out, and the attempt used to die as `did not answer — check power
+            // and range` about a unit that answered the moment the phone asked. Ask the
+            // Security Manager first (cheap when already encrypted, see the helper),
+            // retry once, and only then blame the pairing honestly.
+            if (!subscribe(client, telem)) {
+                kickSecurity(device)
+                if (!subscribe(client, telem)) throw IOException("security_stalled")
+            }
+            if (!subscribe(client, rpc)) {
+                kickSecurity(device)
+                if (!subscribe(client, rpc)) throw IOException("security_stalled")
+            }
 
             telemChar = telem
             rpcChar = rpc
@@ -871,6 +896,33 @@ class BleLink(context: Context) {
             bondDone = null
             runCatching { appContext.unregisterReceiver(receiver) }
         }
+    }
+
+    /**
+     * Asks Android's Security Manager to settle a link that is up but not encrypted.
+     *
+     * `bondState == BOND_BONDED` only means Android kept a key; it says nothing about
+     * the unit keeping *its* half. When the two disagree, the stack's usual answer is
+     * silence - GATT status 5 never arrives, protected writes simply time out - and
+     * `createBond()` is the one public call that gets the stack moving again: with the
+     * keys still agreeing it runs the encryption straight through (Android initiates
+     * the LL_ENC_REQ; no dialog, no code - measured on the bench), and with the unit
+     * holding no key it falls through to a fresh pairing, which puts a code on the
+     * panel exactly when re-typing one is the honest answer. On a link that is already
+     * encrypted it is a no-op the stack refuses outright, so calling it ahead of the
+     * first protected write costs one log line.
+     */
+    @SuppressLint("MissingPermission")
+    private fun kickSecurity(device: BluetoothDevice) {
+        val started = try {
+            device.createBond()
+        } catch (e: SecurityException) {
+            false
+        }
+        Log.d(
+            DPP_CONN_LOG_TAG,
+            "security kick address=${device.address} started=$started bondState=${device.bondState}",
+        )
     }
 
     @SuppressLint("MissingPermission")

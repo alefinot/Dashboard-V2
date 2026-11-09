@@ -107,10 +107,11 @@ unsigned long btOtaDrainGapMaxMs();
 bool btOtaActive();         // an install is open, resume window included
 bool btOtaImageAccepted();  // verified and activated; the reboot is pending
 
-// Forgets every stored pairing. Called by the factory reset: the GATT
-// permissions require an encrypted link, so a bond left behind by the previous
-// owner would lock the new one out of the unit for good.
-void btClearBonds();
+// Forgets every pairing (factory reset, `bond.clear`). The GATT permissions
+// require an encrypted link, so a bond left behind by the previous owner would
+// lock the new one out of the unit for good. Returns the number of bonds
+// removed, or -1 when the bond list could not be read.
+int btClearBonds();
 
 // True while the panel is showing a pairing passkey.
 bool btPairingActive();

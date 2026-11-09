@@ -76,6 +76,15 @@ class BleApi(private val link: BleLink) {
 
     suspend fun factoryReset(): BleReply = link.request("factory.reset", timeoutMs = 10_000)
 
+    /**
+     * Forgets every pairing the unit holds. The recovery for a one-sided bond:
+     * when the phone still believes it is paired and the unit no longer agrees,
+     * neither side can repair that alone — this drops the unit's half so the
+     * next attempt pairs once, from scratch, with a code. The phone's half is
+     * cleared by forgetting the card here and in the system Bluetooth settings.
+     */
+    suspend fun bondClear(): BleReply = link.request("bond.clear", timeoutMs = 5_000)
+
     /** The bounded tail of the unit's log, pulled on demand. */
     suspend fun log(): String? {
         val reply = link.request("log.get")

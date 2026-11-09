@@ -283,17 +283,39 @@ static void btLogBondCount(const char *when) {
 // `BT: phone connected`, as `BT: auth FAILED (reason 99)` =
 // ESP_AUTH_SMP_RSP_TIMEOUT, with no passkey ever shown on the panel. The phone
 // side is fixable by the user (forget the device, start over); the unit's half
-// is out of reach, so the unit deletes it here: the next attempt runs a clean
-// exchange and puts the six digits on the screen. Reasons that only say a
-// pairing is still in progress (BUSY 96, STARTED 98) leave the bond alone.
+// is out of reach, so the unit deletes it here - but only on the failures that
+// are actually about the keys.
+//
+// Deleting is irreversible, so the bar is "this failure could only happen if a
+// key were wrong (or a human typed a wrong passkey)". Reasons that only say the
+// *link* died are never evidence about keys, and dropping the bond for one is
+// how a healthy pairing gets destroyed from one side only - the 2026-11-09 bench
+// run showed the app's own 20 s connect timeout producing `reason 102`
+// (ESP_AUTH_SMP_CONN_TOUT, "pairing failed due to a connection timeout") and the
+// unit answering a dead link by forgetting a good phone: the next reconnect saw
+// `BOND_BONDED` on Android, skipped pairing, timed out again, and every lap
+// deleted one more bond. A failure reported after the peer already disconnected
+// gets the same verdict: nothing on this link can prove anything any more.
 // (by value, not by const reference: esp_ble_remove_bond_device takes the
 // address as a plain uint8_t[6], so a const view of the event will not pass it)
 static void btDropFailedBond(esp_ble_auth_cmpl_t cmpl) {
-  if (cmpl.fail_reason == ESP_AUTH_SMP_BUSY || cmpl.fail_reason == ESP_AUTH_SMP_STARTED) {
+  // Failures that are about the keys, and so do mean a stale or wrong pairing:
+  const bool keysRejected =
+      cmpl.fail_reason == ESP_AUTH_SMP_PASSKEY_FAIL ||       // 78: wrong digits
+      cmpl.fail_reason == ESP_AUTH_SMP_PAIR_AUTH_FAIL ||     // 81: reqs cannot be met
+      cmpl.fail_reason == ESP_AUTH_SMP_CONFIRM_VALUE_FAIL || // 82: confirm mismatch
+      cmpl.fail_reason == ESP_AUTH_SMP_ENC_KEY_SIZE ||       // 83: key too short
+      cmpl.fail_reason == ESP_AUTH_SMP_REPEATED_ATTEMPT ||   // 88: disallowed repeat
+      cmpl.fail_reason == ESP_AUTH_SMP_DHKEY_CHK_FAIL;       // 85: SC DHKey check
+  if (!keysRejected || !s_connected) {
+    // The link, not the keys: keep the bond and let the next attempt prove it.
+    logPrintf("BT: bond kept - reason %d says the link died, not the keys\n",
+              (int)cmpl.fail_reason);
     return;
   }
   if (esp_ble_remove_bond_device(cmpl.bd_addr) == ESP_OK) {
-    logPrintf("BT: bond with %02x:%02x:%02x:%02x:%02x:%02x dropped - the next attempt pairs from scratch\n",
+    logPrintf("BT: bond with %02x:%02x:%02x:%02x:%02x:%02x dropped - the keys were rejected, "
+              "the next attempt pairs from scratch\n",
               cmpl.bd_addr[0], cmpl.bd_addr[1], cmpl.bd_addr[2],
               cmpl.bd_addr[3], cmpl.bd_addr[4], cmpl.bd_addr[5]);
   } else {
@@ -684,19 +706,22 @@ void *btTaskHandleForDiag() { return (void *)s_btTask; }
 
 // Forgets every pairing. A factory reset has to do this or the unit comes back
 // owned by whoever paired it last: the GATT permissions demand an encrypted
-// link, and only a bonded phone can build one.
-void btClearBonds() {
+// link, and only a bonded phone can build one. Returns how many bonds actually
+// went away, so the `bond.clear` RPC can answer with a number instead of a
+// promise.
+int btClearBonds() {
   esp_ble_bond_dev_t list[16];  // above Bluedroid's ~15-key ceiling: a short list
                                 // silently leaves the oldest peers bonded
   int n = (int)(sizeof(list) / sizeof(list[0]));
   if (esp_ble_get_bond_device_list(&n, list) != ESP_OK) {
     logPrintf("BT: bond list unavailable - pairings not cleared\n");
-    return;
+    return -1;
   }
   int removed = 0;
   for (int i = 0; i < n; i++)
     if (esp_ble_remove_bond_device(list[i].bd_addr) == ESP_OK) removed++;
   logPrintf("BT: cleared %d of %d bond(s)\n", removed, n);
+  return removed;
 }
 
 uint32_t btPairingPasskey() { return s_passkey; }

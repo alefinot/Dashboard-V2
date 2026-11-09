@@ -46,6 +46,8 @@ fun linkFailureText(reason: String): String = when (reason) {
         "The dashboard did not answer. Move closer and retry."
     "pairing_failed" ->
         "Pairing did not complete — type the 6-digit code the unit shows."
+    "security_stalled" ->
+        "The dashboard answered, but pairing did not complete — clear the pairing and pair again."
     "telem_subscribe_failed", "rpc_subscribe_failed" ->
         "Notification subscription refused — clear the pairing and pair again."
     "service_missing", "telem_missing", "rpc_missing" ->

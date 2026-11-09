@@ -542,6 +542,7 @@ The complete set as implemented in `src/bt_rpc.cpp`:
 | `config.get` | full NVS export, streamed as `BT_F_CHUNK` frames | `GET /api/config` (backup download) |
 | `config.set` | apply a config object; a save whose NVS writes partly failed answers with `nvsErrors`, `nvsFailedKeys`, `nvsAvailable` | `POST /api/config` (restore upload) |
 | `config.reset`, `factory.reset` | reset the settings / clear settings **and** bonds | `POST /api/reset` |
+| `bond.clear` | clear **only** the pairing bonds, settings untouched — the recovery for a one-sided bond: the phone believes it is paired, the unit no longer agrees, and neither side can repair that alone | nothing — the phone cannot drop its own bond either (`removeBond` is not public) |
 | `odo.get`, `odo.set`, `trip.reset` | odometer read/write, trip zero (same reset as the GPIO25 button) | `/api/odo`, `/api/trip/reset` |
 | `reboot`, `sleep` | graceful restart, immediate deep sleep | `/api/reboot`, `/api/sleep` |
 | `cal.ambient` (`dark`/`bright`) | ambient-light calibration points | `/api/ambient/cal-dark`, `-bright` |
@@ -550,6 +551,38 @@ The complete set as implemented in `src/bt_rpc.cpp`:
 | `weather.set`, `time.set` | the unit has no radio of its own: the phone supplies the weather widget and the clock | nothing — the unit used to fetch weather itself and sync NTP; both fetchers are deleted |
 | `ping` | keepalive | — |
 | `ota.begin`, `ota.end`, `ota.status`, `ota.abort` | firmware install control — **implemented in this build** (`src/bt_ota.cpp`; the wire shape is spelled out in *Firmware over the link* below) | `POST /api/ota` (≤ 1.4.x only) |
+
+**Pairing and bonds** (as fixed 2026-11-09, after a bench loop where every reconnect
+demanded the passkey again). The unit is configured to pair once: LE Secure
+Connections, MITM, bonding, identity keys exchanged both ways, and every
+characteristic gated on an encrypted link. A bond is meant to last until a person
+forgets the device. Two failures used to break that promise, and both are now
+guarded:
+
+- The unit deleted its bond on **any** auth failure but two. A phone that simply
+  hangs up mid-handshake — which its own 20 s connect timeout does routinely —
+  produces `reason 102` (`ESP_AUTH_SMP_CONN_TOUT`, *connection* timeout), which says
+  nothing about the keys, and the unit answered a dead link by forgetting a good
+  phone. `btDropFailedBond` now deletes only the failures that are about the keys
+  (wrong passkey 78, auth requirements 81, confirm mismatch 82, key size 83,
+  DHKey check 85, repeated attempt 88) and only while the link is still up;
+  anything connection-level logs `bond kept` and leaves the pairing alone.
+- The app called `createBond()` only **after** the MTU exchange, and the MTU
+  exchange is refused often enough on the bench link that the pairing request
+  landed after the unit's 3 s grace window — where Bluedroid never answers it.
+  The panel sat on `PAIRING — TYPE THE CODE` with no code ever shown, for 30 s,
+  forever. `BleLink.connect` now dials pairing first (SMP does not care about
+  MTU); `src/bt.cpp`'s "createBond() about a second after the link is up" is the
+  contract, enforced by `PairingStartsBeforeTheRadioWaitsTest`.
+
+A one-sided bond is still possible (a phone factory-reset, a half-deleted pairing),
+and it is not guessable from either side alone. When the app's protected writes go
+on timing out on a link it believes is secured, it asks Android's Security Manager
+to settle the link once (`kickSecurity` — which either encrypts with the stored
+keys, silently, or falls through to a fresh pairing with a code), and only then
+reports `security_stalled`: *the dashboard answered, but pairing did not
+complete*. The recovery is `bond.clear` plus forgetting the pairing on the phone —
+one fresh passkey, and pair-once resumes.
 
 ### Firmware over the link — how an install runs in this build
 
