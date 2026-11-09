@@ -171,6 +171,32 @@ class PhoneViewportTest {
                 Regex("Alignment\\.BottomEnd").containsMatchIn(screen),
         )
 
+        // The cover is square: the editor frames the photo 1:1, and the old 76x54 panel showed
+        // only a cropped band of it.
+        assertFalse(
+            "the cover went back to the 76x54 landscape box; the photo it shows is square",
+            Regex("size\\(width = 76\\.dp, height = 54\\.dp\\)").containsMatchIn(screen),
+        )
+        assertTrue(
+            "CardCover no longer draws a 76.dp square panel",
+            Regex("CardCover\\([\\s\\S]{0,400}?\\.size\\(76\\.dp\\)").containsMatchIn(screen),
+        )
+
+        // The TAP TO line lives inside the text column, not under the cover: it is written after
+        // the identity line and before that column closes, so it shares the name's left edge.
+        // (code() strips comments, so the anchor is brace structure, not the corner-glyph text.)
+        val identity = screen.indexOf("vehicle.identityLabel()")
+        val tapLine = screen.indexOf("\"TAP TO DISCONNECT\"")
+        assertTrue(
+            "the TAP TO line must come after the identity line - it is the text column's last line",
+            identity in 1 until tapLine,
+        )
+        assertFalse(
+            "the TAP TO line left the text column: the identity block, the column and the row " +
+                "all close before it now, so it sits under the cover instead of aligned with the name",
+            Regex("}\\s*}\\s*}").containsMatchIn(screen.substring(identity, tapLine)),
+        )
+
         // No word-buttons left over on the card: the whole point was to fold them into the tap.
         for (word in listOf("CONNECT", "DISCONNECT", "FORGET")) {
             assertFalse(

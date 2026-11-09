@@ -282,7 +282,7 @@ fun VehicleScreen(
  * A card's photo, decoded at the size the cover is drawn and no larger, and recomposed when
  * [ConnectionViewModel.photoVersion] says the picture on disk changed under us.
  *
- * Twice the cover's long edge rather than once: the cover is 76 dp, which is 113 px on this
+ * Twice the cover's edge rather than once: the cover is a 76 dp square, which is 113 px on this
  * tablet's density but 228 px on a modern phone, and a bitmap decoded at the smaller number
  * goes soft the moment the app runs on hardware denser than the one the layout was sketched
  * on. [VehiclePhotoStore.read] takes the request as a ceiling, not a promise - it never
@@ -308,10 +308,9 @@ private fun cardPhoto(connection: ConnectionViewModel, vehicleId: String): Bitma
 /**
  * The cover panel: photo, scan ring, or wheel glyph - one of the three, in that order.
  *
- * [ContentScale.Crop] on a landscape cover is the deliberate half-truth: a stored photo is a
- * square (the editor frames it that way), and filling the panel means showing its middle
- * band. That is the band the user framed with their fingers, and the alternative -
- * letterboxing a square into 76x54 - would make the garage look like a wall of stamps.
+ * The panel is square because the picture is: the editor frames a stored photo 1:1, so a
+ * square cover shows the whole framed square edge to edge instead of a cropped band of it.
+ * [ContentScale.Crop] stays only as the guard for a bitmap that is not exactly square.
  *
  * The photo wins over the scan ring, which is a change from the placeholder-only cover: a
  * card being hunted for still says so in its status line and in the footer's phase line, and
@@ -327,7 +326,7 @@ private fun CardCover(
 ) {
     Box(
         Modifier
-            .size(width = 76.dp, height = 54.dp)
+            .size(76.dp)
             .clip(HudRadius.CardShape)
             .background(HudColors.Panel)
             .border(1.dp, HudColors.Hairline, HudRadius.CardShape),
@@ -338,7 +337,7 @@ private fun CardCover(
                 bitmap = it.asImageBitmap(),
                 contentDescription = "photo of this vehicle",
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(width = 76.dp, height = 54.dp),
+                modifier = Modifier.size(76.dp),
             )
         }
         if (photo == null) {
@@ -361,18 +360,6 @@ private fun CardCover(
  * same hairline, same corners, so a list of vehicles and a list of drives read as the
  * same kind of thing on the same page.
  *
- * The selection is an edge, not a badge: the selected card takes the page's accent
- * hairline and a faint top highlight, because it is a standing fact about the app rather
- * than a status that comes and goes. The cover shows the vehicle's photo when the card has
- * one, and until then it is a placeholder panel drawn with the bar's own wheel glyph so the
- * shape means "vehicle" in both places — and it is drawn dim on purpose. An empty frame
- * that shows the glyph is honest about being empty; one that shows a stock photo is not.
- * A square photo is cropped to this landscape cover rather than letterboxed, which puts the
- * middle of the picture where the vehicle is (see [CardCover]). While the app is hunting
- * for **this** card's unit the cover becomes the sweep's ring instead: that is where a
- * user is looking when they press SEARCH, and the full-screen ring that used to answer the
- * question is gone.
- *
  * What a card *is* decides how it behaves, and the card is now itself the connect control: tapping
  * its body reaches that vehicle, or ends the session it owns if it has one (the connected card can
  * be disconnected even after the selection has moved on, because it is the card with a session to
@@ -390,11 +377,15 @@ private fun CardCover(
  * The cover shows the vehicle's photo when the card has one, and until then it is a placeholder
  * panel drawn with the bar's own wheel glyph so the shape means "vehicle" in both places — drawn dim
  * on purpose: an empty frame that shows the glyph is honest about being empty, one that shows a
- * stock photo is not. A square photo is cropped to this landscape cover rather than letterboxed,
- * putting the middle of the picture where the vehicle is (see [CardCover]). While the app is hunting
- * for **this** card's unit the cover becomes the sweep's ring instead: that is where a user is
+ * stock photo is not. The cover is square, so the whole 1:1 picture the editor framed shows with
+ * nothing cropped away (see [CardCover]). While the app is hunting for **this** card's unit the
+ * cover becomes the sweep's ring instead: that is where a user is
  * looking when they reach for a vehicle, and the full-screen ring that used to answer the question
  * is gone.
+ *
+ * Every line of text — the name, the spec, the status and the TAP TO hint — lives in the one text
+ * column beside the cover, so they share a left edge; a hint that started under the cover would
+ * read as the card's caption, not as the next line of the vehicle.
  *
  * Deleting a vehicle is not on the card - it is the editor's DELETE THE CARD - and it now does the
  * whole job: it removes the card *and* drops the pairing and identity it held, so there is no longer
@@ -486,17 +477,18 @@ private fun VehicleCard(
                             Text(it, color = HudColors.TextDim, style = HudePerfValue())
                         }
                     }
+                    // A line that says what tapping does, because the buttons that used to spell
+                    // it out are gone: the card is the control now, and a control whose meaning
+                    // lives only in the code is a control nobody learns. It lives in the text
+                    // column rather than under the cover, so it starts on the name's left edge.
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (connected) "TAP TO DISCONNECT" else "TAP TO CONNECT",
+                        color = if (connected) HudColors.Green else HudColors.Cyan,
+                        style = HudeCfgNote(),
+                    )
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            // A line that says what tapping does, because the buttons that used to spell it out are
-            // gone: the card is the control now, and a control whose meaning lives only in the code
-            // is a control nobody learns.
-            Text(
-                if (connected) "TAP TO DISCONNECT" else "TAP TO CONNECT",
-                color = if (connected) HudColors.Green else HudColors.Cyan,
-                style = HudeCfgNote(),
-            )
         }
 
         // Upper-right EDIT, a corner icon rather than the last button in a row that no longer
