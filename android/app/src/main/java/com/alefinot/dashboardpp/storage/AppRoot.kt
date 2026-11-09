@@ -113,6 +113,22 @@ object AppRoot {
      */
     fun sharedRootLabel(): String = Environment.DIRECTORY_DOCUMENTS + "/" + FOLDER
 
+    /**
+     * How to call a garage file in a sentence the owner can act on: the shared one by the name the
+     * UI and a file manager use (`Documents/Dashboard++/vehicles.json`), any other by its full
+     * path, because the app-private folder is somewhere they only reach with a cable — and a
+     * refusal that tells them to fix a file they cannot find fixes nothing.
+     */
+    fun garageLabel(file: File): String {
+        val shared = runCatching {
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                .canonicalFile
+        }.getOrNull()?.let { File(it, FOLDER).canonicalPath }
+        val parent = runCatching { file.canonicalFile.parent }.getOrNull()
+        return if (shared != null && parent == shared) sharedRootLabel() + "/" + GARAGE_FILE
+        else file.absolutePath
+    }
+
     // ---- the Android layer --------------------------------------------------
 
     /**
@@ -228,6 +244,20 @@ object AppRoot {
 
     /** The garage file's location. Not created: reading a missing one means an empty garage. */
     fun garageFile(context: Context): File = garageFileIn(base(context))
+
+    /**
+     * The `vehicles.json` under the **private** root, whatever the grant says — the garage answer
+     * to [privateTripsDir], and for exactly the reason that member exists.
+     *
+     * Which root [garageFile] resolves to is not a once-at-install decision: it follows the storage
+     * grant, and a volume that is briefly unmounted moves it on its own. So a garage recorded while
+     * the app was looking at one folder is a garage the next process launch cannot see, and a
+     * reader that only asks the current location gets "nothing here yet" — which the store is
+     * entitled to write over. That is how an owner lost their only card on 2026-11-09.
+     * [com.alefinot.dashboardpp.vehicles.VehicleStore] reads both; nothing writes this one unless
+     * it also happens to be the write target.
+     */
+    fun privateGarageFile(context: Context): File = garageFileIn(privateRoot(context))
 
     /**
      * The shared root [FOLDER] inside this device's Documents volume, or `null`

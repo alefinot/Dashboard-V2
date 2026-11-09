@@ -56,6 +56,46 @@ object GarageFile {
     }
 
     /**
+     * The garage, wherever it actually is: [writeTarget] — the file the app would overwrite — and
+     * [fallback], the copy under the app's own folder. The rule behind the order is that only the
+     * first of the two is ever at risk from a write, so only the first of the two can be a hole.
+     *
+     * Both roots have held this file: the storage grant moves it (shared storage plan §3), and a
+     * volume unmounting briefly moves it by itself. A reader that asks only where the app is
+     * *currently* allowed to write answers "no garage here" exactly where the owner left their
+     * cards — and an empty answer is the one answer this class lets the store write over. Bench,
+     * 2026-11-09: that is how a garage of one card became an empty file.
+     *
+     * What each outcome means, and why:
+     *
+     * - **write target reads clean** → it wins, whatever the other holds. Two garages is a state
+     *   the app does not merge; the Trips list shows both folders instead, and silently preferring
+     *   a merged mix of two garages would be worse than either.
+     * - **write target cannot be read** → [GarageScan.Blocked], even if the fallback is perfect.
+     *   Falling back there would let the next write overwrite a file the app could not read, which
+     *   is the silent delete [read] exists to prevent.
+     * - **write target empty, fallback holds a garage** → [GarageScan.Found] from the fallback:
+     *   the cards come back, and the next write moves them to where the app is now looking.
+     * - **write target empty, fallback unreadable** → [GarageScan.Blocked], naming the fallback.
+     *   "Nothing here yet" and "there is something here I dare not touch" must never be confused,
+     *   and here the something is the only copy of the owner's cards.
+     * - **neither exists** → [GarageScan.Nothing], and writing freely is correct.
+     *
+     * The two arguments may name the same file — on a device with no shared grant, [writeTarget]
+     * *is* the private root. Reading it twice is cheap and it keeps this free of a special case.
+     */
+    fun readBoth(writeTarget: File, fallback: File): GarageScan =
+        when (val primary = read(writeTarget)) {
+            is GarageRead.Ok -> GarageScan.Found(primary.garage, writeTarget)
+            is GarageRead.Damaged -> GarageScan.Blocked(writeTarget, primary.why)
+            GarageRead.Absent -> when (val other = read(fallback)) {
+                is GarageRead.Ok -> GarageScan.Found(other.garage, fallback)
+                is GarageRead.Damaged -> GarageScan.Blocked(fallback, other.why)
+                GarageRead.Absent -> GarageScan.Nothing
+            }
+        }
+
+    /**
      * Write [text] to [file] so that the file either holds the whole new garage or still holds the
      * old one: encode into `<name>.tmp` in the same directory, then rename over the target — the
      * [VehiclePhotoStore] commit discipline, applied to a JSON file. `false` means the bytes did
@@ -181,4 +221,25 @@ sealed class GarageRead {
 
     /** Something is there and it is not safe to overwrite it. */
     data class Damaged(val why: String) : GarageRead()
+}
+
+/**
+ * What [GarageFile.readBoth] answered when it looked in both places the garage can live.
+ *
+ * Separate from [GarageRead] because the questions differ: that one asks "what is in this file",
+ * this one asks "is there anything here the app may overwrite, and which file would that be".
+ */
+sealed class GarageScan {
+    /** A garage, and the file it came from — not necessarily the one the app writes to. */
+    data class Found(val garage: Garage, val from: File) : GarageScan()
+
+    /** Neither location holds anything. A new install, and writing is free. */
+    object Nothing : GarageScan()
+
+    /**
+     * A file the app will not write over. [where] is that file, [why] is why it cannot be read:
+     * together they are the sentence the vehicle page shows, because the owner has to open that
+     * particular file to get their cards back.
+     */
+    data class Blocked(val where: File, val why: String) : GarageScan()
 }

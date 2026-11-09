@@ -167,11 +167,16 @@ class VehicleStore(context: Context) {
      * `vehicles.json` got a brace deleted in a file manager sees "Nothing has been met yet" — the
      * sentence for a garage that never existed, over their cards still being on disk.
      */
-    suspend fun damageNote(): String? = garage.damageNote()
+    suspend fun damageNote(): String? = garage.damageNote()?.let { why ->
+        // Which file matters now that the app looks in two: the shared folder and the app's own are
+        // different places to open, and the owner has to open the right one to get their cards.
+        val where = garage.damageWhere() ?: return@let why
+        "$why, in $where"
+    }
 
     fun saveFailure(what: String = "Not saved"): String {
         val why = garage.damage()
-        val where = AppRoot.sharedRootLabel() + "/" + AppRoot.GARAGE_FILE
+        val where = garage.damageWhere() ?: AppRoot.sharedRootLabel() + "/" + AppRoot.GARAGE_FILE
         return if (why == null) {
             "$what \u2014 garage file could not be written. Try again."
         } else {
@@ -248,16 +253,19 @@ class VehicleStore(context: Context) {
  * written by nothing else in this process, and anything outside it (a file manager on the same
  * folder) is a race this app has never claimed to win.
  *
- * **A file it cannot parse is never written to.** The first read that answers
- * [GarageRead.Damaged] sets [damage] and every later mutation refuses; the UI shows an empty
+ * **A file it cannot read is never written to.** The first read that answers
+ * [GarageScan.Blocked] sets [damage] and every later mutation refuses; the UI shows an empty
  * garage (there is no safe way to show a file the app does not understand), and recovery is a hand
  * edit of the file rather than a guess by this class. [VehicleStore.saveFailure] is the sentence
- * that explains it.
+ * that explains it, and [write] is the gate that makes the promise true for every caller.
  *
  * The file is resolved on every read and write ([AppRoot.garageFile]) rather than once, so a
- * grant given while the app runs moves the garage to the shared folder on the next write. It does
- * not merge the two locations: the copy the app is not looking at stops being the garage, which is
- * the same no-migration stance the whole storage change takes.
+ * grant given while the app runs moves the garage to the shared folder on the next write. Both
+ * roots are read, and they are not merged: the file the app writes to wins when it reads clean,
+ * and when it holds nothing the other root's cards are used and the next write moves them across
+ * ([GarageFile.readBoth] holds those rules). What the store will never do is decide a garage is
+ * empty because it looked in one folder instead of two — that is the mistake that deleted a user's
+ * only card on 2026-11-09, and [write] is what keeps it deleted-in-one-place only, ever again.
  */
 private class GarageState(private val appContext: Context) {
 
@@ -273,6 +281,21 @@ private class GarageState(private val appContext: Context) {
     private var garage = Garage()
     private var loaded = false
     private var damage: String? = null
+
+    /** The file [damage] is about, in words the owner can open. Null while nothing blocks a write. */
+    private var damageWhere: String? = null
+
+    /**
+     * Whether a write is allowed at all: true only once [ensure] has looked at both places the
+     * garage can live and found nothing it must not touch.
+     *
+     * This is the invariant the whole store rests on, and it used to be enforced by convention —
+     * every mutation was *supposed* to route through [mutate], which checks [damage]. One mutation
+     * did not, and the convention is what a garage died behind on 2026-11-09: `nextId` wrote the
+     * in-memory garage straight to the file, and the in-memory garage was the untouched default
+     * because the read had produced nothing. So the check does not live in the callers any more.
+     */
+    private var writable = false
 
     init {
         // Start the read as soon as the first handle appears, so the file is warm by the time the
@@ -321,6 +344,11 @@ private class GarageState(private val appContext: Context) {
             // The counter is bumped in memory and then written: its whole job is to stop a later
             // process re-handing the name. A failed write leaves the reservation in memory only,
             // and the card that came with it fails to save too, which is what the caller reports.
+            //
+            // This is the mutation that does not go through [mutate], which is why [write] rather
+            // than the caller decides whether a write may happen at all: on 2026-11-09 this line
+            // wrote an empty garage over a user's cards, because the read behind it had produced
+            // nothing and nothing here asked whether that was safe.
             garage = garage.copy(nextSeq = name.substring(1).toIntOrNull() ?: garage.nextSeq)
             write()
             publish()
@@ -330,6 +358,9 @@ private class GarageState(private val appContext: Context) {
 
     /** Why writes are refused, or null while the app believes it can write. */
     fun damage(): String? = damage
+
+    /** The file [damage] is about, in words the owner can open. Null while nothing blocks a write. */
+    fun damageWhere(): String? = damageWhere
 
     /**
      * [damage] *after* the file has actually been read.
@@ -357,16 +388,30 @@ private class GarageState(private val appContext: Context) {
         }
     }
 
-    /** Read the file once. Called under [mutex]. */
+    /** Read the garage once, in both places it can live. Called under [mutex]. */
     private fun ensure() {
         if (loaded) return
         loaded = true
-        when (val read = GarageFile.read(AppRoot.garageFile(appContext))) {
-            // A new install, or a grant that moved the garage to an empty shared folder: the empty
-            // default stands, and writing it is allowed.
-            GarageRead.Absent -> Unit
-            is GarageRead.Ok -> garage = read.garage
-            is GarageRead.Damaged -> damage = read.why
+        when (val scan = GarageFile.readBoth(
+            AppRoot.garageFile(appContext),
+            AppRoot.privateGarageFile(appContext),
+        )) {
+            // Cards found. `from` may be the private root when the shared one has nothing: the
+            // next write then moves them to where the app is now looking, which is the storage
+            // plan's migration, done by reading instead of by a one-shot copy step.
+            is GarageScan.Found -> {
+                garage = scan.garage
+                writable = true
+            }
+            // Nothing anywhere: a new install. The empty default stands, and writing it is allowed.
+            GarageScan.Nothing -> writable = true
+            // A file this build cannot read, in either root. No write is allowed until it is
+            // repaired: the cards may be inside it, and "empty garage" is the one answer that
+            // would delete them without a word.
+            is GarageScan.Blocked -> {
+                damage = scan.why
+                damageWhere = AppRoot.garageLabel(scan.where)
+            }
         }
         publish()
     }
@@ -382,7 +427,15 @@ private class GarageState(private val appContext: Context) {
      *
      * The target is resolved here rather than remembered, so a grant given while the app runs makes
      * the next write land in the shared folder instead of the private one.
+     *
+     * **The first line is the store's real safety rule**, and it is here rather than in the callers
+     * because a caller once forgot it: nothing reaches the file unless [ensure] actually looked at
+     * both roots and permitted writing. A garage the read never produced — a file that will not
+     * parse, a folder the app only started looking at while the cards are in the other one — is an
+     * empty garage as far as [GarageFile.encode] is concerned, and encoding it is a delete.
      */
-    private fun write(): Boolean =
-        GarageFile.writeAtomically(AppRoot.garageFile(appContext), GarageFile.encode(garage))
+    private fun write(): Boolean {
+        if (!writable) return false
+        return GarageFile.writeAtomically(AppRoot.garageFile(appContext), GarageFile.encode(garage))
+    }
 }

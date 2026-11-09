@@ -1798,6 +1798,60 @@ In Demo Mode:
 
 ## Changelog
 
+### Unit 2.0.3 (bench build, not released) — a link the stack never reported losing now closes itself
+
+`FW_VERSION` stays **2.0.3** (no release called). Bench, 2026-11-09: a pairing died mid-handshake
+about five seconds after boot, the disconnect event died with it, and for the next **two hours** the
+unit sat at `peers 1` — advertising never resumed, so no phone could find it, and the 1 Hz snapshot
+pump pushed ~40 refused notifications a second into a link the controller had dropped, printing
+`notify(): rc=-1 Unknown ESP_ERR error` at ~47 lines/s forever. Only a power cycle ended it. See
+*A link the stack never reported losing* under **Pairing and bonds** for the cause and the four
+changes: `BtTelemCallbacks` (the telemetry characteristic had no callbacks at all), `btNoteNotify()`
+counting refusals on both characteristics, `BT_PUMP_PAUSE_AFTER`/`BT_LINK_DEAD_MS` closing the dead
+link through `btCloseLink()` so advertising comes back, and the heartbeat's new **`ntf=`** field so
+an install run leaves its link refusals behind without a serial capture.
+
+### App 2.0.3/92 — the garage is read from both roots, and no write may carry a garage the read never produced (`versionCode` 91 → 92, not released)
+
+The vehicle page went from **`1 vehicle · Motosbu`** to **`0 vehicles / No dashboards paired yet`**
+between two screen reads three minutes apart, with no crash, no `pm clear`, no `FORGET`, and the same
+`userId` and `firstInstallTime`. One card — and every field its owner had typed into it — had been
+**overwritten by the app itself**, in one atomic write, at 15:06:18.804 local.
+
+- **What wrote it.** The adoption form (`adoptDraft`, opened by tapping `PAIR` on a discovered
+  dashboard) reserves its card id up front, and `VehicleStore.nextId()` is the only mutation that
+  does **not** route through `mutate()` — the one that checks whether the last read forbade writing.
+  It encoded whatever the store was holding and renamed it over `vehicles.json`. What it was holding
+  was the untouched default: `{"nextSeq":1,"selectedId":null,"vehicles":[]}` is a garage no read ever
+  produced, and that byte pattern is what the post-mortem read out of the file.
+- **Why the store was holding a default.** The garage follows `AppRoot.base()`, which follows the
+  storage grant and a volume that unmounts — but only the *trips* had a dual-root read
+  (`privateTripsDir`) so a root change never read as lost data. The garage asked one folder where
+  the garage was, got "nothing here", and `Absent` is precisely the answer the store is entitled to
+  write over. Two roots, no rescue: a card deleted by looking in the wrong folder.
+- **The fix is a rule, not a patch on one caller.** `GarageFile.readBoth(writeTarget, fallback)`
+  holds the new decision (write target wins when it reads clean; the other root rescues it when the
+  target is empty; an unreadable target *blocks* rather than falling back, because falling back
+  would let the next write overwrite a file that could not be read). `GarageState.write()` is now the
+  only door to the file and its first line refuses unless the read actually permitted a write — so
+  the next mutation that forgets to check is covered too. `AppRoot.privateGarageFile()` is the second
+  path, `AppRoot.garageLabel()` puts the right one in the refusal sentence.
+- **The card came back.** The trips (`#vehicle=v1|…|Motosbu`, 34 CSVs + `trip_index`) and a
+  15:03 screen dump carried every field; `v1` was rebuilt with them and `v7` — a stale pre-storage-move
+  duplicate from the private root, which is what a naive restore would have resurrected — was dropped.
+  `GarageSurvivesAStorageRootMoveTest` (8 tests) pins both halves: six on the two-root decision, two
+  textual guards so a second write door or a single-folder question fails the build.
+
+### App 2.0.3/91 — pairing is dialled before the radio negotiates, and the unit keeps bonds it has no reason to distrust (`versionCode` 90 → 91, not released)
+
+The passkey loop: every reconnect asked for the six digits again. Two causes, both measured on the
+bench — the app called `createBond()` only after the MTU exchange (past the unit's 3 s grace window,
+where Bluedroid never answers), and the unit deleted its bond on *any* auth failure, including
+`reason 102`, a dead link that says nothing about the keys. Plus a new `bond.clear` RPC for the
+one-sided bond neither side can repair alone, and `kickSecurity()` so the app settles a link before
+crying `security_stalled`. The full account — with the verification runs, including a reconnect after
+power-cycling the phone's radio — is the **Pairing and bonds** section above.
+
 ### App 2.0.3/90 — the firmware card leaves the unit's settings page and starts fetching its own image (`versionCode` 89 → 90, not released)
 
 The card that installs firmware sat on the *unit's* settings page — a form of 158 rows it did not
