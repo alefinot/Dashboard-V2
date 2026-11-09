@@ -423,52 +423,6 @@ class ConnectionViewModel(
     }
 
     /**
-     * Highlight [vehicleId] without reaching for it.
-     *
-     * A connected session always belongs to the card it connected through, so selecting
-     * a different card while one is connected ends that connection - otherwise the next
-     * drive would be tagged to a vehicle that is not the one being driven. The recorder
-     * stops because the state is no longer `Connected`, which is the same path a
-     * DISCONNECT takes. The link itself is left alone: the next attempt dials its own
-     * peer, and tearing the radio down here would drop a link the settings page may be
-     * using.
-     *
-     * Selecting the card that is already connected ends nothing, and that is the whole
-     * point of [CardSelection]: pressing a card is how a card is selected, so doing it to
-     * the connected one is the common case, not an edge — and because the radio is left
-     * alone by design, an `Idle` session over a live link is a state nothing can notice or
-     * repair. The rule and the bench capture that proved it needed stating are in
-     * [CardSelection]'s comment.
-     */
-    fun selectVehicle(vehicleId: String) {
-        attempts = 0
-        gaveUp = false
-        ladder?.cancel()
-        retry?.cancel()
-        rearm?.cancel()
-        scope.launch {
-            vehicles.select(vehicleId)
-            selectedVehicleId.value = vehicleId
-            notice.value = null
-            unclaimed.value = null
-            val live = uiState.value
-            val ends = CardSelection.endsLiveSession(
-                sessionVehicleId = (live as? ConnectionUiState.Connected)?.vehicleId,
-                selectedVehicleId = vehicleId,
-            )
-            if (ends) {
-                Log.d(
-                    DPP_CONN_LOG_TAG,
-                    "session ended cause=selected another card vehicle=${
-                        (live as ConnectionUiState.Connected).vehicleId
-                    } -> $vehicleId",
-                )
-                uiState.value = ConnectionUiState.Idle(null)
-            }
-        }
-    }
-
-    /**
      * The editor's starting point for a card that already exists: the stored record, so the
      * form opens prefilled with what the app already knows instead of with blanks.
      *

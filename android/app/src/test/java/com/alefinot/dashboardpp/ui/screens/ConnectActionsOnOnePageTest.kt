@@ -35,7 +35,7 @@ class ConnectActionsOnOnePageTest {
 
     /** Everything the view model offers that starts, stops or chooses a connection. */
     private val actionCall =
-        Regex("\\b(rescan|connectVehicle|disconnect|selectVehicle)\\s*\\(")
+        Regex("\\b(rescan|connectVehicle|disconnect)\\s*\\(")
 
     /**
      * The vehicle page owns every connection action the app offers. It used to share that

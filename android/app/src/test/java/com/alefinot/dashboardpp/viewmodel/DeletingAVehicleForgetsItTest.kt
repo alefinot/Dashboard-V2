@@ -14,10 +14,10 @@ import org.junit.Test
  * the identity it held, tears down the live session when the card owns it, and raises the
  * bond note when only Android can finish the job.
  *
- * This is a wiring guard rather than a unit test for the same reason
- * [TappingTheConnectedCardKeepsTheLinkTest] is: the decision itself is the pure
- * [ConnectionCore.forgetUnit], already unit-tested; what regressed once already is a call site
- * that clears the file and nothing else. So it reads the view model's source.
+ * This is a wiring guard rather than a unit test for the same reason the other source guards in
+ * this package are: the decision itself is the pure [ConnectionCore.forgetUnit], already
+ * unit-tested in [ConnectionCoreTest]; what regressed once already is a call site that clears the
+ * file and nothing else. So it reads the view model's source.
  */
 class DeletingAVehicleForgetsItTest {
 

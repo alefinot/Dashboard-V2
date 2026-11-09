@@ -391,34 +391,3 @@ object ConnectionCore {
         return "Answered unit is ${card.name.ifEmpty { card.id }}, not $pressedName."
     }
 }
-
-/**
- * Whether pointing the app at a card ends the session that is currently live.
- *
- * The rule the vehicle page is written against is "a connected session belongs to the card it was
- * reached through, so selecting **another** card ends it" — the next drive must be tagged to the
- * vehicle actually being driven. The trap is the same card: pressing the card that is already
- * connected (or tapping it because that is how a card is selected in the first place) used to take
- * the session down with it.
- *
- * That is not a cosmetic bug, and it is not self-healing, which is why it is a rule here rather
- * than an `if` at the call site: the session and the radio are deliberately separate. Tapping the
- * connected card set the session to `Idle` while the GATT client stayed open and connected, and
- * nothing downstream could notice — the reconnect guards read a live link as "no need to dial", and
- * the code that turns a live link into a session only runs when the link's state *changes*, so an
- * unchanged `Ready` never re-adopts. Bench, SM-T590, 2026-11-07: after five fast CONNECT taps, a
- * tap that landed on the connected card's body left the app showing `NO DASHBOARD IN RANGE` on a
- * link that was still up — the stack's own record still had the client registered
- * (`clientIf=7`, no `clientDisconnect` ever logged), and a second phone dialling the same unit
- * timed out after 20 s because the tablet was still holding it. It stayed that way until the link
- * dropped by itself.
- */
-object CardSelection {
-
-    /**
-     * [sessionVehicleId] is the card the live session was reached through, or null when nothing is
-     * connected. Pressing that same card keeps the session; pressing any other card ends it.
-     */
-    fun endsLiveSession(sessionVehicleId: String?, selectedVehicleId: String): Boolean =
-        sessionVehicleId != null && sessionVehicleId != selectedVehicleId
-}
