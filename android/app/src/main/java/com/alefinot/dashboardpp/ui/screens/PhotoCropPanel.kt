@@ -66,8 +66,12 @@ import java.io.File
  * **What is shown while framing is a preview, and only a preview.** It is decoded once at up
  * to [PREVIEW_EDGE] on the longest edge - about 3.7 MB of pixels, which is the biggest
  * transient this screen is allowed - and it is drawn at the aspect the full file has, so what
- * the user frames matches what they get while the pixels under a finger stay cheap. The crop
- * itself is decoded a second time, from the untouched capture file, at the size actually
+ * the user frames matches what they get while the pixels under a finger stay cheap. The one
+ * promise the draw makes is that the displayed pixels sit at exactly the geometry
+ * [PhotoCrop.rectFor] assumes — same cover fit, same zoom, same pan — because a preview that
+ * disagrees with the maths shows the user one photo and saves another. The crop itself is
+ * decoded a second time, from the untouched source file — a scratch capture, or the card's own
+ * stored JPEG when the framing of an existing photo is being corrected — at the size actually
  * kept. Anyone tempted to reuse the preview bitmap for the crop should not: it is already
  * sub-sampled once, so the card would come out soft at exactly the moment the user made the
  * picture sharp.
@@ -179,19 +183,32 @@ fun PhotoCropPanel(
                             preview?.let { bmp ->
                                 val img = full ?: return@let
                                 val density = LocalDensity.current
-                                // Cover fit at zoom 1, then the user's zoom. The displayed box
-                                // keeps the file's aspect by construction, which is what makes
-                                // FillBounds safe here instead of a distortion machine.
+                                // Cover fit at zoom 1, then the user's zoom. Everything the
+                                // gesture maths speak in — the [frame] from onSizeChanged, the
+                                // pan deltas, the translation below — is **screen pixels**, so
+                                // the box is built in pixels too and only then divided through
+                                // the density into dp. An earlier build handed that pixel count
+                                // to Compose as dp straight: on a density-3 phone the preview
+                                // drew three times larger than the crop maths think it is, so a
+                                // fresh photo looked hopelessly stretched, the pan clamp (which
+                                // the model computes for the true size) refused almost every
+                                // drag, and what USE THIS PHOTO produced did not match what the
+                                // eye had framed. The displayed box keeps the file's aspect by
+                                // construction, which is what makes FillBounds safe here
+                                // instead of a distortion machine.
                                 val cover = frame.width.toFloat() / minOf(img.first, img.second)
-                                val w = (img.first * cover * zoom).toInt().coerceAtLeast(1)
-                                val h = (img.second * cover * zoom).toInt().coerceAtLeast(1)
+                                val wPx = (img.first * cover * zoom).coerceAtLeast(1f)
+                                val hPx = (img.second * cover * zoom).coerceAtLeast(1f)
                                 with(density) {
                                     Image(
                                         bitmap = bmp.asImageBitmap(),
                                         contentDescription = "the photo being framed for this card",
                                         contentScale = ContentScale.FillBounds,
                                         modifier = Modifier
-                                            .size(w.toDp(), h.toDp())
+                                            .size(
+                                                (wPx / density.density).toDp(),
+                                                (hPx / density.density).toDp(),
+                                            )
                                             .graphicsLayer {
                                                 translationX = offX
                                                 translationY = offY

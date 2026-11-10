@@ -744,6 +744,26 @@ class ConnectionViewModel(
     }
 
     /**
+     * The photo file a card already has — resolved through the store's own name guard and
+     * checked to exist — or `null` when the card has no photo or its file is gone. Answered
+     * on the **main** thread, like [stagePickedPhoto]: the caller turns it straight into
+     * opening the crop step.
+     *
+     * This is RE-FRAME PHOTO's door: the crop panel works on any file, and
+     * [VehiclePhotoStore.cropFrom] already knows that the card's own photo is a source it
+     * must not delete when the crop lands ([VehiclePhotoStore.commit]'s same-file check).
+     * Cancelling a re-frame writes nothing either — it never reaches [applyPhotoCrop], and
+     * there is no scratch capture to clear for it.
+     */
+    fun storedPhotoFile(vehicleId: String, onFile: (File?) -> Unit) {
+        scope.launch {
+            val card = vehicles.get(vehicleId)
+            val f = vehicles.photos.fileFor(card?.photoFile)?.takeIf { it.isFile }
+            withContext(Dispatchers.Main) { onFile(f) }
+        }
+    }
+
+    /**
      * Take a card's photo off: the JPEG first, then the record's pointer.
      *
      * That order is the one a crash can survive. A record whose `photoFile` names a file that

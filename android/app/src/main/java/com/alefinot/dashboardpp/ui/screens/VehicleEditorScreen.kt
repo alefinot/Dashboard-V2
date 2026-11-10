@@ -92,6 +92,13 @@ import java.io.File
  * handlebars off another. Nothing lands on disk until USE THIS PHOTO: a gallery pick and a
  * camera shot both sit in a scratch capture the editor throws away when the user backs out of
  * the crop, so closing the editor mid-way cannot leave half a photo on a card.
+ *
+ * RE-FRAME PHOTO walks a card's **stored** picture through that same crop step, because the
+ * framing a user chose last month may be the thing they dislike about it today — and making
+ * them re-find the original photograph to nudge a crop is a cruelty. The distinction the
+ * editor keeps straight is what a cancel costs: backing out of a pick discards the scratch
+ * capture, backing out of a re-frame touches nothing, since the stored file is both the
+ * source and, until USE THIS PHOTO, the card's photo.
  */
 @Composable
 fun VehicleEditorScreen(
@@ -118,12 +125,16 @@ fun VehicleEditorScreen(
     var notes by remember(draft.id) { mutableStateOf(draft.notes) }
 
     // Photo state, all of it keyed to this card. [cropFrom] is a staged scratch capture the
-    // user is framing; [pendingCapture] is the file handed to the camera, kept between the
-    // intent and its result because the result callback gets a boolean, not the file.
+    // user is framing; [reframeFrom] is the card's *stored* photo opened through the same
+    // crop step — the difference between them is only what a cancel costs, so the panel and
+    // its USE THIS PHOTO path are shared. [pendingCapture] is the file handed to the camera,
+    // kept between the intent and its result because the result callback gets a boolean, not
+    // the file.
     // [hasPhoto] and [well] describe what the card already has - the well shows the *stored*
     // picture, and follows the VM's photo version, so a crop that lands repaints it without
     // this screen holding onto the bitmap.
     var cropFrom by remember(draft.id) { mutableStateOf<File?>(null) }
+    var reframeFrom by remember(draft.id) { mutableStateOf<File?>(null) }
     var pendingCapture by remember(draft.id) { mutableStateOf<VehiclePhotoStore.Capture?>(null) }
     var hasPhoto by remember(draft.id) { mutableStateOf(draft.photoFile != null) }
     var well by remember(draft.id) { mutableStateOf<Bitmap?>(null) }
@@ -209,7 +220,6 @@ fun VehicleEditorScreen(
                     color = HudColors.Cyan,
                     style = HudeSectionTitle(),
                 )
-                Spacer(Modifier.height(12.dp))
                 Spacer(Modifier.height(16.dp))
 
                 PhotoWell(
@@ -223,6 +233,19 @@ fun VehicleEditorScreen(
                         )
                     },
                     onCamera = { askForCamera() },
+                    onReframe = {
+                        // The stored file itself, resolved and existence-checked by the VM;
+                        // the crop step writes nothing until USE THIS PHOTO, and a cancel of
+                        // a re-frame deletes nothing (there is no scratch capture behind it).
+                        photoNote = null
+                        vm.storedPhotoFile(draft.id) { f ->
+                            if (f == null) {
+                                photoNote = "This card's photo file could not be opened."
+                            } else {
+                                reframeFrom = f
+                            }
+                        }
+                    },
                     onRemove = {
                         hasPhoto = false
                         well = null
@@ -230,7 +253,14 @@ fun VehicleEditorScreen(
                         vm.removePhoto(draft.id) { refusal -> photoNote = refusal }
                     },
                 )
-                Spacer(Modifier.height(16.dp))
+                // A photo problem is said under the photo, not at the foot of a scrolling
+                // form: the note was produced by this block's buttons, and a fix — pick
+                // again — is one glance and one reach away.
+                photoNote?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, color = HudColors.Amber, style = HudeCfgHelp())
+                }
+                Spacer(Modifier.height(20.dp))
 
                 // The evidence half, read-only. A blank identity is stated rather than left
                 // out: it is the reason this card cannot be recognised when it answers, and
@@ -243,17 +273,17 @@ fun VehicleEditorScreen(
                     "IDENTITY (FROM THE DASHBOARD)",
                     draft.mac ?: "not reported by this dashboard",
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Field(
                     "PAIRED BY THIS PHONE",
                     draft.bleAddress ?: "no pairing yet — search for it from the vehicle page",
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Field(
                     "FIRMWARE LAST SEEN",
                     draft.firmwareVersion ?: "unknown",
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(20.dp))
 
                 Field(
                     "NAME",
@@ -278,7 +308,7 @@ fun VehicleEditorScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
 
                 Field("PLATE", plate, onValueChange = { plate = it }, placeholder = "plate, if the vehicle has one")
                 Spacer(Modifier.height(12.dp))
@@ -295,16 +325,14 @@ fun VehicleEditorScreen(
                 Spacer(Modifier.height(12.dp))
                 Field("NOTES", notes, onValueChange = { notes = it }, placeholder = "anything the card should remember")
 
+                // A save refusal stays here, right above the SAVE that caused it; the
+                // photo notes live under the photo well, where they were earned.
                 if (refusal != null) {
                     Spacer(Modifier.height(14.dp))
                     Text(refusal, color = HudColors.Red, style = HudeCfgHelp())
                 }
-                photoNote?.let {
-                    Spacer(Modifier.height(10.dp))
-                    Text(it, color = HudColors.Amber, style = HudeCfgHelp())
-                }
 
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.weight(1f).heightIn(min = 48.dp)) {
                         HudButton("SAVE", style = HudButtonStyle.PRIMARY) {
@@ -322,12 +350,17 @@ fun VehicleEditorScreen(
                 }
 
                 if (!isNew) {
+                    // The hairline is the sentence: what sits under it is not part of the
+                    // form. Deleting is the one button here the user should never brush past
+                    // on the way to SAVE.
+                    Spacer(Modifier.height(22.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
                     Spacer(Modifier.height(14.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-                            HudButton("DELETE VEHICLE", style = HudButtonStyle.DANGER) { confirming = true }
-                        }
-                    }
+                    HudButton(
+                        "DELETE VEHICLE",
+                        modifier = Modifier.fillMaxWidth(),
+                        style = HudButtonStyle.DANGER,
+                    ) { confirming = true }
                 }
             }
         }
@@ -351,7 +384,12 @@ fun VehicleEditorScreen(
         )
     }
 
-    cropFrom?.let { staged ->
+    // One crop step for both doors: a staged scratch capture ([cropFrom]) or the card's own
+    // stored photo being re-framed ([reframeFrom]). The USE THIS PHOTO handler is identical —
+    // the store knows a re-frame's source is the target and keeps it — and only a cancel
+    // differs: a scratch capture goes, a re-frame leaves no trace.
+    val cropSource = cropFrom ?: reframeFrom
+    cropSource?.let { staged ->
         PhotoCropPanel(
             source = staged,
             onUse = { rect ->
@@ -363,6 +401,7 @@ fun VehicleEditorScreen(
                     // not reach the disk, so it walks off at the next start. Saying so now beats
                     // a photo the owner cannot find in their own folder.
                     cropFrom = null
+                    reframeFrom = null
                     when {
                         landed == null -> photoNote =
                             "Could not save the photo."
@@ -378,21 +417,26 @@ fun VehicleEditorScreen(
                 }
             },
             onCancel = {
+                val wasScratch = cropFrom != null
                 cropFrom = null
-                vm.cancelPhoto(draft.id)
+                reframeFrom = null
+                if (wasScratch) vm.cancelPhoto(draft.id)
             },
         )
     }
 }
 
 /**
- * The photo well: the card's picture at the top of the form, and the three things that can
+ * The photo well: the card's picture at the top of the form, and the four things that can
  * be done to it. A card with no photo shows the bar's wheel glyph rather than a blank frame,
  * the same honesty the garage cover keeps - an empty square that shows nothing looks broken,
  * and an empty square that shows the glyph says "vehicle, no photo yet".
  *
- * REMOVE only appears when the record claims a photo, because "remove" for a card that has
- * none is a button that does nothing.
+ * The two buttons that only mean something for a card that already has a picture — re-frame
+ * and remove — appear on their own second row, so a card without a photo reads as two choices
+ * and a card with one reads as four. Re-frame comes before remove because it is the answer to
+ * "I don't like how this is framed", which is the kinder failure; remove is the one a slip of
+ * the finger must not reach first.
  */
 @Composable
 private fun PhotoWell(
@@ -400,6 +444,7 @@ private fun PhotoWell(
     preview: Bitmap?,
     onGallery: () -> Unit,
     onCamera: () -> Unit,
+    onReframe: () -> Unit,
     onRemove: () -> Unit,
 ) {
     Text("PHOTO", color = HudColors.TextMuted, style = HudeFormLabel())
@@ -442,14 +487,17 @@ private fun PhotoWell(
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.weight(1f).heightIn(min = 40.dp)) {
+                HudButton("RE-FRAME PHOTO", style = HudButtonStyle.SECONDARY, onClick = onReframe)
+            }
+            Box(Modifier.weight(1f).heightIn(min = 40.dp)) {
                 HudButton("REMOVE PHOTO", style = HudButtonStyle.DANGER, onClick = onRemove)
             }
         }
     }
 }
 
-/** Edge of the editor's photo well, in dp. Twice the card cover, and still one hand's width. */
-private const val WELL_EDGE = 164
+/** Edge of the editor's photo well, in dp — exactly twice the card cover's 76 dp. */
+private const val WELL_EDGE = 152
 
 /**
  * A label over a value. With [onValueChange] it is an editable field; without it the value
