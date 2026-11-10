@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -38,6 +39,7 @@ import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudAccordion
+import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudIcons
@@ -45,6 +47,7 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
+import com.alefinot.dashboardpp.ui.components.PageFade
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
@@ -169,12 +172,16 @@ fun DashboardSettingsScreen(
     // the moment the user is back.
     var showPerf by remember { mutableStateOf(false) }
     if (showPerf) {
-        PerfMonitorScreen(
-            store = store,
-            link = link,
-            timeNote = timeNote,
-            onBack = { showPerf = false },
-        )
+        // The monitor is the page's second route; it fades in like any arrival
+        // rather than swapping the settings list out in one frame.
+        PageFade(Modifier.fillMaxSize()) {
+            PerfMonitorScreen(
+                store = store,
+                link = link,
+                timeNote = timeNote,
+                onBack = { showPerf = false },
+            )
+        }
         return
     }
 
@@ -403,7 +410,7 @@ fun DashboardSettingsScreen(
                                 }
                             },
                         )
-                        if (groupOpen) {
+                        HudAccordionBody(open = groupOpen) {
                             Column(
                                 Modifier.fillMaxWidth().padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -452,7 +459,7 @@ fun DashboardSettingsScreen(
                             open = extrasOpen,
                             onClick = { extrasOpen = !extrasOpen },
                         )
-                        if (extrasOpen) {
+                        HudAccordionBody(open = extrasOpen) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                                 Column(
                                     Modifier.fillMaxWidth().hudCard()
@@ -523,7 +530,7 @@ fun DashboardSettingsScreen(
                             open = unplacedOpen,
                             onClick = { unplacedOpen = !unplacedOpen },
                         )
-                        if (unplacedOpen) {
+                        HudAccordionBody(open = unplacedOpen) {
                             Column(Modifier.fillMaxWidth().padding(12.dp)) {
                                 Column(
                                     Modifier.fillMaxWidth().hudCard()

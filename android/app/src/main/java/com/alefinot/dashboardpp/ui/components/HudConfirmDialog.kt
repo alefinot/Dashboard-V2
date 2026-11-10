@@ -1,8 +1,6 @@
 package com.alefinot.dashboardpp.ui.components
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,15 +56,7 @@ fun HudConfirmDialog(
 ) {
     // Escape cancels, per `confirmDialog()`'s keydown handler.
     BackHandler { onDismiss() }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(HudColors.Scrim)
-            // No dismiss on tap-outside; the tap is consumed so a control behind
-            // the scrim cannot be hit by accident.
-            .clickable(onClick = {}),
-        contentAlignment = Alignment.Center,
-    ) {
+    HudOverlayScrim {
         HudEnter(
             modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp).padding(horizontal = 24.dp),
             durationMs = HudMotion.SHORT_MS,

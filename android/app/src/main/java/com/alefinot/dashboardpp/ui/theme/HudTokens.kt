@@ -174,6 +174,14 @@ object HudMotion {
      */
     const val TAB_MS = 240
 
+    /**
+     * A distant tab tap fades the page area out before the pager cuts to the target,
+     * then lets the arriving page's own entrance bring the content back while the
+     * bar's sheet finishes travelling. This is only the leaving half: a cut is never
+     * a flash, and the two halves still read as one move because this is short.
+     */
+    const val FADE_OUT_MS = 100
+
     /** `pageFadeIn`: the 8px rise that comes with every entrance on the page. */
     const val RISE_DP = 8
 

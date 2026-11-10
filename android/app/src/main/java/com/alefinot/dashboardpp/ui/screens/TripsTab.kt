@@ -1,10 +1,10 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +44,7 @@ import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.hudBytes
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
@@ -228,19 +229,37 @@ private fun TripFilterChips(options: List<TripFilterOption>, current: String, on
     ) {
         options.forEach { opt ->
             val on = opt.value == current
+            // A filter's selected state moves: the chip the user picked fills and
+            // brightens on the page's control clock, so the row tells the story of the
+            // tap instead of swapping two palettes.
+            val fill by animateColorAsState(
+                if (on) HudColors.Cyan.copy(alpha = 0.12f) else HudColors.CardFill,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "tripChipFill",
+            )
+            val edge by animateColorAsState(
+                if (on) HudColors.CyanDim else HudColors.CardHairline,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "tripChipEdge",
+            )
+            val ink by animateColorAsState(
+                if (on) HudColors.Cyan else HudColors.TextMuted,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "tripChipInk",
+            )
             Box(
                 Modifier
+                    .hudPressable { onSelect(opt.value) }
                     .hudCard(
                         shape = HudRadius.FieldShape,
-                        fill = if (on) HudColors.Cyan.copy(alpha = 0.12f) else HudColors.CardFill,
-                        borderColor = if (on) HudColors.CyanDim else HudColors.CardHairline,
+                        fill = fill,
+                        borderColor = edge,
                     )
-                    .clickable { onSelect(opt.value) }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
                 Text(
                     opt.label,
-                    color = if (on) HudColors.Cyan else HudColors.TextMuted,
+                    color = ink,
                     style = HudeSectionCaps(),
                 )
             }
@@ -367,8 +386,8 @@ private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f
             // lifts by exactly that much.
             .alpha(reveal)
             .offset { IntOffset(0, ((1f - reveal) * 8f).dp.roundToPx()) }
+            .hudPressable { onOpen(row) }
             .hudCard()
-            .clickable { onOpen(row) }
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Column {

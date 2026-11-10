@@ -4,10 +4,11 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
 import android.provider.Settings
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,8 +56,10 @@ import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.ScanRing
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeHeading
@@ -433,6 +436,18 @@ private fun VehicleCard(
     onEdit: () -> Unit,
 ) {
     val status = cardStatusLine(vehicle, state, nowMs)
+    // The outline says which card holds the link, and it changes when the link does:
+    // animate it, so a card settling from "reaching" cyan to "connected" green is a
+    // colour move rather than a swap. The page gives a state change 0.22 s.
+    val edge by animateColorAsState(
+        when {
+            connected -> HudColors.Green
+            selected -> HudColors.Cyan
+            else -> HudColors.CardHairline
+        },
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "vehicleEdge",
+    )
     // The card *is* the connect control now: tapping its body reaches this vehicle, or ends the
     // session it owns. It used to be a row of buttons under the cover (CONNECT / DISCONNECT /
     // EDIT), and the maintainer folded that decision into the card itself on 2026-11-08 - a card is
@@ -443,18 +458,14 @@ private fun VehicleCard(
     Box(
         Modifier
             .fillMaxWidth()
-            .hudCard(
-                borderColor = when {
-                    connected -> HudColors.Green
-                    selected -> HudColors.Cyan
-                    else -> HudColors.CardHairline
-                },
-                highlight = if (selected) 0.05f else 0f,
-            )
-            .clickable(
+            .hudPressable(
                 onClickLabel = (if (connected) "Disconnect " else "Connect ") +
                     vehicle.name.ifBlank { "vehicle" },
             ) { if (connected) onDisconnect() else onConnect() }
+            .hudCard(
+                borderColor = edge,
+                highlight = if (selected) 0.05f else 0f,
+            )
             .padding(12.dp),
     ) {
         // The body is inset 30 dp from the right so its text never runs under either corner glyph;
@@ -541,7 +552,7 @@ private fun VehicleCard(
                 .align(Alignment.TopEnd)
                 .size(30.dp)
                 .clip(CircleShape)
-                .clickable(role = Role.Button, onClickLabel = "Edit ${vehicle.name}") { onEdit() },
+                .hudPressable(role = Role.Button, onClickLabel = "Edit ${vehicle.name}") { onEdit() },
             contentAlignment = Alignment.Center,
         ) {
             Icon(

@@ -4,9 +4,10 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +44,9 @@ import com.alefinot.dashboardpp.update.fileError
 import com.alefinot.dashboardpp.update.listError
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
@@ -389,14 +392,26 @@ private fun VersionMenu(
     onPick: (FirmwareRelease) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    // The picker is a field: the same focus colours a text box gets while it is being
+    // edited, on the same 0.22 s, so opening it reads as the control becoming active.
+    val fill by animateColorAsState(
+        if (open) HudColors.FieldFocus else HudColors.Field,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "menuFill",
+    )
+    val edge by animateColorAsState(
+        if (open) HudColors.Cyan else HudColors.Hairline,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "menuEdge",
+    )
     Box(modifier) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(44.dp)
-                .background(HudColors.Field, HudRadius.FieldShape)
-                .border(1.dp, HudColors.Hairline, HudRadius.FieldShape)
-                .clickable(enabled = releases.isNotEmpty()) { open = true }
+                .hudPressable(enabled = releases.isNotEmpty()) { open = true }
+                .background(fill, HudRadius.FieldShape)
+                .border(1.dp, edge, HudRadius.FieldShape)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -534,9 +549,15 @@ private fun progressLine(view: OtaView): String {
 private fun mb(bytes: Long): String =
     String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
 
-/** The transfer bar. The card's own fill, the accent's own colour, nothing animated. */
+/** The transfer bar. The bar itself is real progress and never lags it; the colour it
+ * lands on when the install completes is a state change, so that part eases. */
 @Composable
 private fun OtaBar(fraction: Float, fill: Color) {
+    val ink by animateColorAsState(
+        fill,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "otaBarInk",
+    )
     Box(
         Modifier
             .fillMaxWidth()
@@ -547,7 +568,7 @@ private fun OtaBar(fraction: Float, fill: Color) {
             Modifier
                 .fillMaxWidth(fraction.coerceIn(0f, 1f))
                 .height(10.dp)
-                .background(fill),
+                .background(ink),
         )
     }
 }

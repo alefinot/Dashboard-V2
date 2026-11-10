@@ -8,7 +8,6 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +46,7 @@ import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
+import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
@@ -191,14 +191,7 @@ fun VehicleEditorScreen(
 
     val identityTail = draft.mac?.takeLast(6)?.uppercase() ?: draft.id.uppercase()
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(HudColors.Scrim)
-            // Consumes the tap so nothing behind the scrim can be hit by accident.
-            .clickable(onClick = {}),
-        contentAlignment = Alignment.Center,
-    ) {
+    HudOverlayScrim {
         HudEnter(
             Modifier.fillMaxWidth().widthIn(max = 520.dp).padding(horizontal = 24.dp),
             durationMs = HudMotion.SHORT_MS,

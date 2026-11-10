@@ -1,11 +1,15 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,7 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -43,6 +46,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -61,6 +65,7 @@ import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.PageFade
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.screens.settings.BleConfigGateway
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
@@ -78,6 +83,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -192,33 +198,117 @@ fun AppShell(
     LaunchedEffect(motionEnabled) { HudMotion.setPrefEnabled(motionEnabled) }
 
     val pager = rememberPagerState(initialPage = BarLayout.homePage, pageCount = { BarLayout.pages.size })
-    val scope = rememberCoroutineScope()
     // The settled page. The bar's selection and which screen is `active` both follow
     // this one value.
     val page = BarLayout.pages.getOrElse(pager.currentPage) { BarLayout.home }
 
-    // A bottom-bar tap is a decision about where to be, not a request to watch the
-    // pages in between go by. One page away the pager slides, so the bar and the
-    // content tell the same story; anything further is a cut, and the page's own
-    // entrance carries the change. Two reasons for the cut: the framework's
-    // `animateScrollToPage` pre-jumps to within three pages of the target before it
-    // animates (so a five-slot bar used to flash a page nobody asked for and then
-    // slide three at once), and three screenfuls in 240 ms is a blur, not motion.
-    // A swipe is untouched - that is direct manipulation and follows the finger.
-    val goToPage: (Int) -> Unit = { index ->
-        if (index >= 0) {
-            scope.launch {
-                if (HudMotion.enabled && abs(index - pager.currentPage) <= 1) {
-                    pager.animateScrollToPage(
-                        index,
-                        animationSpec = tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
-                    )
-                } else {
-                    pager.scrollToPage(index)
-                }
+    // The page area's alpha, and the bar sheet's position when the pager itself is not
+    // the thing moving. Both are Animatables: the first is read inside a graphics
+    // layer and the second inside PillSheet, so neither recomposes the shell while it
+    // moves.
+    val pageFade = remember { Animatable(1f) }
+    val cutPill = remember { Animatable(0f) }
+    var cutPillActive by remember { mutableStateOf(false) }
+
+    // Where the user asked to be. A tap writes the target, and one effect carries it
+    // out; keying that effect on the target means a second tap interrupts the first at
+    // whatever point it had reached instead of queueing behind it.
+    //
+    // One page away is the same slide a swipe makes. Anything further fades through:
+    // the page area leaves first, because the pager's own `animateScrollToPage`
+    // pre-jumps to within three pages of the target before it animates (so a five-slot
+    // bar used to flash a page nobody asked for and then slide three at once), and
+    // three screenfuls in 240 ms is a blur, not motion. With nothing painting, the cut
+    // itself is invisible; the arriving page's entrance is armed by the viewport flag
+    // on that same state change, and carries the content back. The bar's sheet cannot
+    // follow the pager through a cut, so it travels on its own clock at the same time,
+    // starting on the tap's first frame rather than after the page arrives.
+    var destination by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(destination) {
+        val target = destination ?: return@LaunchedEffect
+        val from = pager.currentPage
+        if (target == from) {
+            // A tap on the page already on screen ends a transition that was
+            // interrupted between leaving and coming back.
+            if (cutPillActive) {
+                cutPill.animateTo(
+                    target.toFloat(),
+                    tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
+                )
+                cutPillActive = false
             }
+            if (pageFade.value < 1f) {
+                pageFade.animateTo(1f, tween(HudMotion.SHORT_MS, easing = HudMotion.Standard))
+            }
+            destination = null
+            return@LaunchedEffect
         }
+        if (!HudMotion.enabled) {
+            // The switch means no transition at all, not a shorter one.
+            pager.scrollToPage(target)
+            pageFade.snapTo(1f)
+            cutPillActive = false
+            destination = null
+            return@LaunchedEffect
+        }
+        if (abs(target - from) <= 1) {
+            coroutineScope {
+                // An interrupted cut may have left the page area part-way out; bring
+                // it back while the slide runs instead of jumping to full brightness.
+                if (pageFade.value < 1f) {
+                    launch {
+                        pageFade.animateTo(
+                            1f,
+                            tween(HudMotion.SHORT_MS, easing = HudMotion.Standard),
+                        )
+                    }
+                }
+                // A sheet still travelling from an interrupted cut reaches the same
+                // target on the same clock; otherwise it follows the pager as always.
+                if (cutPillActive) {
+                    launch {
+                        cutPill.animateTo(
+                            target.toFloat(),
+                            tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
+                        )
+                    }
+                }
+                pager.animateScrollToPage(
+                    target,
+                    animationSpec = tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
+                )
+            }
+            if (cutPillActive) cutPillActive = false
+            destination = null
+            return@LaunchedEffect
+        }
+        // A cut too far for the pager to show the way.
+        if (!cutPillActive) {
+            cutPill.snapTo(
+                (pager.currentPage + pager.currentPageOffsetFraction)
+                    .coerceIn(0f, (BarLayout.pages.size - 1).toFloat()),
+            )
+            cutPillActive = true
+        }
+        coroutineScope {
+            launch {
+                cutPill.animateTo(
+                    target.toFloat(),
+                    tween(HudMotion.TAB_MS, easing = HudMotion.Standard),
+                )
+            }
+            pageFade.animateTo(0f, tween(HudMotion.FADE_OUT_MS, easing = HudMotion.Ease))
+            // Nothing is painting right now. The arriving page re-arms its entrance
+            // on the same state change, so restoring the layer shows its first frame
+            // at zero alpha, not a settled page flashing in.
+            pager.scrollToPage(target)
+            pageFade.snapTo(1f)
+        }
+        cutPillActive = false
+        destination = null
     }
+
+    val goToPage: (Int) -> Unit = { index -> if (index >= 0) destination = index }
 
     // A cover's one action: go to the page that can do something about it. It moves
     // the pager exactly the way a bar tap does, because the cover is not a screen to
@@ -280,7 +370,14 @@ fun AppShell(
 
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    // The leaving half of a distant tab change; see `destination`
+                    // above. Read in the layer so the fade invalidates drawing only.
+                    .graphicsLayer { alpha = pageFade.value },
+            ) {
                 // Nothing is retained underneath the pages any more. The ESP slot used
                 // to be a hole in them: a WebView kept composed behind the pager and
                 // uncovered by a swipe, because letting Compose remove that View cost
@@ -431,6 +528,8 @@ fun AppShell(
                 selected = page,
                 pager = pager,
                 bounds = bounds,
+                cutPill = cutPill,
+                cutPillActive = cutPillActive,
                 tripsAvailable = tripsAvailable,
                 connected = connected,
                 onBounds = { slot, r -> bounds[slot] = r },
@@ -476,8 +575,17 @@ fun AppShell(
         }
     }
 
-    openTrip?.let { row ->
-        Box(Modifier.fillMaxSize()) {
+    // The trip detail is the app's one pushed route. It is kept composed through its
+    // exit, so CLOSE and DELETE both leave on a fade instead of a snap; the content's
+    // own `remember` holds the row while `openTrip` is already null, because a route
+    // that is leaving still has to draw what it was showing.
+    AnimatedVisibility(
+        visible = openTrip != null,
+        enter = fadeIn(tween(HudMotion.ENTRANCE_MS, easing = HudMotion.Standard)),
+        exit = fadeOut(tween(HudMotion.SHORT_MS, easing = HudMotion.Standard)),
+    ) {
+        val row = remember { openTrip }
+        if (row != null) {
             TripDetailScreen(row = row, vm = trips, onDismiss = { openTrip = null })
         }
     }
@@ -521,14 +629,27 @@ private fun NativePage(active: Boolean, content: @Composable () -> Unit) {
  * enough to drop most of the frames it was drawing. Read here, it recomposes a Box.
  */
 @Composable
-private fun PillSheet(pager: PagerState, bounds: Map<AppTab, Rect>, barOrigin: Offset) {
+private fun PillSheet(
+    pager: PagerState,
+    bounds: Map<AppTab, Rect>,
+    barOrigin: Offset,
+    cutPill: Animatable<Float, AnimationVector1D>,
+    cutPillActive: Boolean,
+) {
     val density = LocalDensity.current
     val settled = pager.currentPage.coerceIn(0, BarLayout.pages.size - 1)
     val rest = bounds[BarLayout.pages[settled]]
     // A fraction of the way between two pages: integer at rest, and sweeping from
-    // one integer to the next while the user drags or the bar animates a tap.
-    val frac = (pager.currentPage + pager.currentPageOffsetFraction)
-        .coerceIn(0f, (BarLayout.pages.size - 1).toFloat())
+    // one integer to the next while the user drags or the bar animates a tap. While
+    // a distant tap fades through, the pager cuts instead of travelling, so the
+    // sheet follows the value the shell is animating for it instead - one sheet,
+    // still moving, while the page behind it is out.
+    val raw = if (cutPillActive) {
+        cutPill.value
+    } else {
+        pager.currentPage + pager.currentPageOffsetFraction
+    }
+    val frac = raw.coerceIn(0f, (BarLayout.pages.size - 1).toFloat())
     val from = BarLayout.pages[frac.toInt()]
     val to = BarLayout.pages[(frac.toInt() + 1).coerceAtMost(BarLayout.pages.size - 1)]
     val f = frac - frac.toInt()
@@ -580,6 +701,8 @@ private fun BottomBar(
     selected: AppTab,
     pager: PagerState,
     bounds: Map<AppTab, Rect>,
+    cutPill: Animatable<Float, AnimationVector1D>,
+    cutPillActive: Boolean,
     tripsAvailable: Boolean,
     connected: Boolean,
     onBounds: (AppTab, Rect) -> Unit,
@@ -601,7 +724,7 @@ private fun BottomBar(
             // wherever the device draws three buttons.
             ,
     ) {
-        PillSheet(pager, bounds, barOrigin)
+        PillSheet(pager, bounds, barOrigin, cutPill, cutPillActive)
         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp)) {
             for (tab in BarLayout.pages) {
                 val spec = BarLayout.glyph(tab)
@@ -674,7 +797,7 @@ private fun BarGlyph(
             // Measured as the icon's own box, so the sheet that slides under it is
             // that box and not the slot's whole weight.
             .onGloballyPositioned { c -> onBounds(c.boundsInRoot()) }
-            .clickable(enabled = enabled) { onClick() },
+            .hudPressable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (colored) {

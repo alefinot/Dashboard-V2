@@ -322,11 +322,14 @@ class PhoneViewportTest {
         assertFalse(
             "the ± steppers grew into a 48 dp box again — the maintainer asked for the small " +
                 "buttons, and this is the assertion that notices them being re-grown",
-            Regex("size\\(HudTouch\\.Min\\)\\.clickable").containsMatchIn(row),
+            Regex("size\\(HudTouch\\.Min\\)[\\s\\S]{0,80}(clickable|hudPressable)\\(").containsMatchIn(row),
         )
         assertTrue(
             "the stepper stopped being the page's 30 dp square",
-            Regex("size\\(30\\.dp\\)\\.clip\\(shape\\)[\\s\\S]{0,160}clickable\\(enabled = enabled, onClick = onClick\\)")
+            // The press is the shared `hudPressable` (the whole app's 0.97 scale, applied
+            // before the fill it has to take down with it), and it has to sit on the 30 dp
+            // box itself, not on a wrapper that grew around it.
+            Regex("size\\(30\\.dp\\)[\\s\\S]{0,120}hudPressable\\(enabled = enabled, onClick = onClick\\)")
                 .containsMatchIn(row),
         )
     }

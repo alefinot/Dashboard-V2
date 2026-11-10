@@ -1,13 +1,20 @@
 package com.alefinot.dashboardpp.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -28,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -220,6 +228,44 @@ fun HudAccordion(
 }
 
 /**
+ * The expanding half of a `details` panel.
+ *
+ * The browser opens a `details` element by laying its body out; the app used to do
+ * the Compose equivalent of that - an `if (open)` and a new frame - and the group
+ * popped into place while its chevron, title and border all turned over 220 ms. That
+ * read as the header animating and the content not. This grows and fades the body on
+ * the header's own clock, so opening a group is one move.
+ *
+ * The body is only composed while it is open or on its way out: a 78-row group still
+ * costs nothing until the group it belongs to is the one the user opened.
+ */
+@Composable
+fun HudAccordionBody(
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (!HudMotion.enabled) {
+        if (open) Column(modifier, content = content)
+        return
+    }
+    AnimatedVisibility(
+        visible = open,
+        enter = expandVertically(
+            animationSpec = tween(HudMotion.CONTROL_MS, easing = HudMotion.Standard),
+            expandFrom = Alignment.Top,
+        ) + fadeIn(tween(HudMotion.SHORT_MS, easing = HudMotion.Ease)),
+        exit = shrinkVertically(
+            animationSpec = tween(HudMotion.CONTROL_MS, easing = HudMotion.Standard),
+            shrinkTowards = Alignment.Top,
+        ) + fadeOut(tween(HudMotion.SHORT_MS, easing = HudMotion.Ease)),
+        modifier = modifier,
+    ) {
+        Column(content = content)
+    }
+}
+
+/**
  * `summary`: the 32 px cyan icon badge, the 14 px/700 title, the count, and the circular
  * chevron - the four things the page's group rows are made of.
  *
@@ -262,12 +308,22 @@ fun HudAccordionHeader(
         tween(ms, easing = HudMotion.Ease),
         label = "summaryChipInk",
     )
+    // A header is a row, not a button: scaling it would pull the band away from the
+    // sheet it belongs to, so the press is the page's `.card:hover` brightening
+    // instead - the same state a touch uses for hover, under the thumb.
+    val press = remember { MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val band by animateColorAsState(
+        if (pressed) HudColors.CardHover else HudColors.PanelHead,
+        tween(if (pressed) HudMotion.PRESS_MS else ms, easing = HudMotion.Ease),
+        label = "summaryBand",
+    )
     val badgeShape = RoundedCornerShape(8.dp)
     Row(
         modifier
             .fillMaxWidth()
-            .background(HudColors.PanelHead)
-            .clickable(onClick = onClick)
+            .background(band)
+            .clickable(interactionSource = press, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

@@ -1,9 +1,10 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,7 +44,9 @@ import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudToggle
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
@@ -143,7 +146,7 @@ fun SettingsRow(
                             // the label a few dp more of the line.
                             Modifier.heightIn(min = HudTouch.Min)
                                 .padding(horizontal = 8.dp)
-                                .clickable(enabled = enabled, onClick = back),
+                                .hudPressable(enabled = enabled, onClick = back),
                             contentAlignment = Alignment.Center,
                         ) {
                             Image(
@@ -346,10 +349,11 @@ private fun numberWidth(item: SchemaItem): Dp = when {
 private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     Box(
-        Modifier.size(30.dp).clip(shape)
+        Modifier.size(30.dp)
+            .hudPressable(enabled = enabled, onClick = onClick)
+            .clip(shape)
             .background(if (enabled) HudColors.Field else HudColors.Panel)
-            .border(1.dp, HudColors.Hairline, shape)
-            .clickable(enabled = enabled, onClick = onClick),
+            .border(1.dp, HudColors.Hairline, shape),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -392,17 +396,35 @@ private fun SelectControl(
                 is Number -> current == v.toDouble()
                 else -> box?.toString() == v.toString()
             }
+            // A picker's choice moves rather than swaps: the chip the user taps fills
+            // and lights on the page's control clock, the one it replaces fades back.
+            val fill by animateColorAsState(
+                if (selected) HudColors.CyanDim else HudColors.Field,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "selectFill",
+            )
+            val edge by animateColorAsState(
+                if (selected) HudColors.Cyan else HudColors.Hairline,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "selectEdge",
+            )
+            val ink by animateColorAsState(
+                if (selected) HudColors.TextPrimary else HudColors.TextDim,
+                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+                label = "selectInk",
+            )
             val shape = RoundedCornerShape(4.dp)
             Box(
-                Modifier.clip(shape)
-                    .background(if (selected) HudColors.CyanDim else HudColors.Field)
-                    .border(1.dp, if (selected) HudColors.Cyan else HudColors.Hairline, shape)
-                    .clickable(enabled = enabled) { onPick(option.value) }
+                Modifier
+                    .hudPressable(enabled = enabled) { onPick(option.value) }
+                    .clip(shape)
+                    .background(fill)
+                    .border(1.dp, edge, shape)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
                 Text(
                     option.label,
-                    color = if (selected) HudColors.TextPrimary else HudColors.TextDim,
+                    color = ink,
                     fontSize = 12.sp,
                 )
             }
@@ -491,13 +513,14 @@ private fun ColorControl(
         )
         for (preset in COLOR_PRESETS) {
             Box(
-                Modifier.size(18.dp).padding(start = 4.dp).clip(RoundedCornerShape(3.dp))
-                    .background(parseHex(preset) ?: Color.Transparent)
-                    .border(1.dp, HudColors.Hairline, RoundedCornerShape(3.dp))
-                    .clickable(enabled = enabled) {
+                Modifier.size(18.dp).padding(start = 4.dp)
+                    .hudPressable(enabled = enabled) {
                         hex = preset
                         onCommit(preset)
-                    },
+                    }
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(parseHex(preset) ?: Color.Transparent)
+                    .border(1.dp, HudColors.Hairline, RoundedCornerShape(3.dp)),
             )
         }
     }

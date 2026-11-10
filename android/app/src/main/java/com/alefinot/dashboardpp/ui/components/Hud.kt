@@ -1,6 +1,7 @@
 package com.alefinot.dashboardpp.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -11,6 +12,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.BasicTextField
@@ -23,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -211,6 +215,91 @@ fun HudToggle(
 }
 
 /**
+ * The page's `:active` press - the 0.97 scale `button:active` draws - for the
+ * controls that are not [HudButton]: a vehicle card, a choice chip, a stepper, a
+ * bar glyph. The press lands on the next frame ([HudMotion.PRESS_MS]) and the
+ * release takes the page's [HudMotion.SHORT_MS], so every tappable thing in the
+ * app answers a finger the same way instead of only the buttons doing it.
+ *
+ * No ripple, for the same reason [HudButton] has none: the page never makes that
+ * gesture, and copying it would put a Material motion into a copied page.
+ *
+ * Apply it *before* the modifiers that draw the control - `.hudCard(...)`,
+ * `.background(...)`, `.border(...)`. A modifier's draw runs outside the layers of
+ * the modifiers that come after it, so a scale placed at the end only moves the
+ * text inside a card whose fill and outline stay at full size; placed first, it
+ * takes the whole control down, which is what `button:active` does.
+ */
+@Composable
+fun Modifier.hudPressable(
+    enabled: Boolean = true,
+    role: Role? = null,
+    onClickLabel: String? = null,
+    onClick: () -> Unit,
+): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && HudMotion.enabled) 0.97f else 1f,
+        animationSpec = tween(
+            if (pressed) HudMotion.PRESS_MS else HudMotion.SHORT_MS,
+            easing = HudMotion.Standard,
+        ),
+        label = "pressScale",
+    )
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .clickable(
+            interactionSource = interaction,
+            indication = null,
+            enabled = enabled,
+            role = role,
+            onClickLabel = onClickLabel,
+            onClick = onClick,
+        )
+}
+
+/**
+ * `#confirm-overlay`'s scrim, as an entrance: the sheet behind a modal fades in on
+ * the page's [HudMotion.SHORT_MS] while the card over it scales and rises. The
+ * overlay used to appear at full strength in the same frame as the card, so the
+ * card animated and the dimming did not - one half of the modal arriving, the
+ * other half already there.
+ *
+ * It still consumes every tap, exactly as the plain `.clickable {}` scrim did: a
+ * modal that lets a control behind it be pressed is not modal.
+ */
+@Composable
+fun HudOverlayScrim(
+    modifier: Modifier = Modifier,
+    contentAlignment: Alignment = Alignment.Center,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val fade = remember { Animatable(if (HudMotion.enabled) 0f else 1f) }
+    LaunchedEffect(fade) {
+        if (HudMotion.enabled) {
+            fade.animateTo(1f, tween(HudMotion.SHORT_MS, easing = HudMotion.Ease))
+        }
+    }
+    Box(
+        modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = fade.value }
+            .background(HudColors.Scrim)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+        contentAlignment = contentAlignment,
+        content = content,
+    )
+}
+
+/**
  * The page's two field recipes, copied. `#searchBar`: 10px radius, glass fill,
  * 8x16 padding, 13px text, `transition: all .25s ease`, and on focus a cyan
  * border, `rgba(20,28,45,.9)` behind it and `0 0 16px rgba(0,229,255,.2)` around
@@ -255,6 +344,18 @@ fun HudInput(
         label = "inputEdge",
     )
     val shape = if (search) HudRadius.RowShape else HudRadius.FieldShape
+    // The focus glow is part of the same transition as the fill and the border: the
+    // shadow and its cyan lift used to swap in one frame while the other two eased.
+    val lift by animateDpAsState(
+        if (focused && search) 4.dp else if (search) 8.dp else 0.dp,
+        tween(if (search) HudMotion.SHORT_MS else HudMotion.SWITCH_MS, easing = HudMotion.Ease),
+        label = "inputLift",
+    )
+    val glow by animateColorAsState(
+        if (focused && search) HudColors.CyanDim else HudColors.Shadow,
+        tween(if (search) HudMotion.SHORT_MS else HudMotion.SWITCH_MS, easing = HudMotion.Ease),
+        label = "inputGlow",
+    )
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -272,11 +373,11 @@ fun HudInput(
             Box(
                 Modifier.fillMaxWidth()
                     .shadow(
-                        if (focused && search) 4.dp else if (search) 8.dp else 0.dp,
+                        lift,
                         shape,
                         clip = false,
-                        ambientColor = if (focused && search) HudColors.CyanDim else HudColors.Shadow,
-                        spotColor = if (focused && search) HudColors.CyanDim else HudColors.Shadow,
+                        ambientColor = glow,
+                        spotColor = glow,
                     )
                     .clip(shape)
                     .background(fill)
