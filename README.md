@@ -17,7 +17,7 @@ Featuring a 4.0-inch ILI9488 TFT display (480×320 resolution) driven over a 60 
 Two generations are described in these pages, and they are not the same product:
 
 - **A current-build unit** — anything built from this tree, i.e. **V2.0.0** and the Changelog
-  entries it collects on top of V1.5.1, the current build being **V2.0.3** — is **BLE-only, with no
+  entries it collects on top of V1.5.1, the current build being **V2.0.4** — is **BLE-only, with no
   Wi-Fi stack at all**. `src/web.cpp` (the SoftAP and station join, every REST handler, the Web Portal,
   the LAN install route **and the weather-fetch task**), `src/webui.html` and
   `scripts/gzip_webui.py` were **deleted on 2026-11-02**, and there is no build flag that
@@ -1164,6 +1164,14 @@ The grant is a different thing per Android version, and both halves are declared
 
 Sharing does not copy a drive. `trips/TripExport.kt` hands `FileProvider` the trip file where it already is and grants read access to it, so the owner gets `trip-20261108-175512-001.csv` under its real name instead of the `document-1.csv` a bare `ACTION_SEND` produces; the name is carried in the intent's `EXTRA_STREAM` label because some receivers show it and others show the last path segment. Only the generated **GPX** is built, into `cacheDir/exports/`, and `prune()` keeps that folder bounded (five files, one day) the same way `VehiclePhotoStore` bounds `captures/`. A drive still being written is shareable: the grant is read-only, and the recorder holds its own open `RandomAccessFile`, which Android's permission model does not disturb. The two roots that make this work - `Documents/Dashboard++/trips/` and, for the degraded case, `trips/` - are declared in `files_path.xml` and cross-checked against `AppRoot`'s constants by `AppXmlWiringTest`.
 
+### Updating the app itself
+
+App Settings carries an **App Update** card under **Firmware Update**, and it is the firmware card's sibling down to the wire: the phone fetches its own `app-debug.apk` from this repository's GitHub releases (`update/FirmwareReleases.kt`, the app's only HTTP lane) and hands it to the system package installer. `update/AppUpdate.kt` owns the state: a silent check at startup plus an explicit REFRESH, **newest release only**, and only when its tag is newer than the running `versionName` under the same dotted-number comparator the firmware dropdown uses — a downgrade is never offered, because the installer would refuse it anyway. DOWNLOAD fetches into `cacheDir/apk/` (size-capped, length-checked against the advertised asset, reused without a second fetch, one APK kept); INSTALL publishes that file through FileProvider — the `apk/` cache root in `files_path.xml`, pinned to `AppUpdate.APK_DIR` by `AppXmlWiringTest` — and starts the installer's own confirmation.
+
+Two things the card cannot promise and says so. **`REQUEST_INSTALL_PACKAGES` is a special access**: no dialog can request it, so until the owner grants it on the system page the primary button is **ALLOW INSTALLS**, the same jump shape as the Storage card's grant, re-checked when the app resumes. And the released APKs are debug-signed: an update installs in place, data kept, only when it carries the same signing key as the running app — an APK from another machine needs an uninstall first, and the installer, not this card, is the verifier (`AGENTS.md` rule 3: no signing, anywhere). What an update never is: silent. Android shows its own screens — on MIUI the grant carries a scary-confirm pass and the install a Play Protect scan — and the app process is expected to die in the install hand and come back replaced.
+
+The bar marks the Settings slot with an amber dot while an offer is unread; the dot belongs to the process-wide updater's own flow and goes out when the Settings page settles into view — "the page was composed" proves nothing, "the page settled there" does.
+
 ### Building and testing the app
 
 ```
@@ -1732,8 +1740,8 @@ Wi-Fi client sent as `force=1` is today a confirmation press on the card.
 The image a release carries **describes itself**: `src/config.cpp` embeds the
 literal `DPPVER=` followed by `FW_VERSION`, so a `.bin` file on disk or in a release
 says which version it is. `scripts/fix_upload_layout.py` prints what it finds after
-every build (`[image tag] firmware.bin declares itself 2.0.3 (marker at 0x24488)`), the
-unit prints it on the console at every boot (`FW 2.0.3, image marker DPPVER=2.0.3` — that
+every build (`[image tag] firmware.bin declares itself 2.0.4 (marker at 0x24608)`), the
+unit prints it on the console at every boot (`FW 2.0.4, image marker DPPVER=2.0.4` — that
 log line exists because the marker had stopped surviving the link: its only reader lived
 in `web.cpp`, and once `web.cpp` left the build the linker's section garbage-collection
 deleted the literal, which is why every image built for a while carried no tag at all),
@@ -1798,9 +1806,49 @@ In Demo Mode:
 
 ## Changelog
 
-### Unit 2.0.3 (bench build, not released) — a link the stack never reported losing now closes itself
+### App 2.0.4/101 — the app updates itself, photo edits wait for SAVE, and a second card press cannot hang up the first (`versionCode` 92 → 101, released)
 
-`FW_VERSION` stays **2.0.3** (no release called). Bench, 2026-11-09: a pairing died mid-handshake
+- **App Update card** (App Settings, under Firmware Update) — the phone updating the phone.
+  `update/AppUpdate.kt` reads the **same** GitHub release list the firmware card reads
+  (`FirmwareReleases.parseReleases(body, APK_ASSET_NAME)` — one endpoint, one client, one
+  repository string for the repo switch, `AGENTS.md` rule 23), keeps only the **newest** release,
+  and only when it is newer than the running `versionName` by the same `versionKey` comparator —
+  so no downgrades, and a tag the comparator does not understand is never offered. The check runs
+  silently at startup (`DashboardRoot`) and the card's own first composition is free with it:
+  the freshness gate makes the two one GitHub call. DOWNLOAD streams `app-debug.apk` into
+  `cacheDir/apk/` — capped at 64 MB, length-checked against the size GitHub advertised, cache
+  reused when the file already matches, exactly one APK kept. INSTALL hands a FileProvider URI
+  to the system package installer; `REQUEST_INSTALL_PACKAGES` is a special access no dialog can
+  request, so the card shows **ALLOW INSTALLS** (jump to the system page) until the owner has
+  granted it, re-checked on resume. Nothing installs by itself: Android does not let an app
+  replace itself without the installer's own confirmation, and the debug-signing rule is said
+  on the card — an APK built on another machine installs only after an uninstall. A separate
+  `StateFlow` drives an amber dot on the Settings bar slot, cleared when that page settles into
+  view. `AppUpdateGateTest` holds the gate; `AppXmlWiringTest` pins `AppUpdate.APK_DIR` to the
+  `apk/` root in `files_path.xml` and the permission in the manifest, and the okhttp3 lane guard
+  needed no change because the HTTP stays inside `FirmwareReleases.kt`.
+- **The first self-update measured the release asset against the bench** (2026-11-10, Mi 9 Lite).
+  With a temporary 2.0.1 build installed, the card offered real V2.0.3, fetched its 11.5 MB asset,
+  the ALLOW INSTALLS jump reached the system grant page (MIUI's scary-dialog included), INSTALL
+  opened the system installer, and the app came back **2.0.3 in place** through the Play Protect
+  scan. The one refusal was correct and instructive: the V2.0.3 release asset is `versionCode 71`,
+  so installing it over a bench build (vc 98–100) died as `Downgrade detected: Update version code
+  71 is older than current 98`. Android vetoed what the card had honestly offered — which is why
+  this release's APK is **`versionCode 101`**, above every shared build: a release asset under the
+  installed version is an offer the installer will refuse.
+- **Vehicle photo edits wait for SAVE** (`versionCode` 96–99): pick, crop and RE-FRAME PHOTO stage
+  in the editor and only reach the store on SAVE — walking away leaves the old photo; the original
+  JPEG is kept so re-framing starts from the uncropped frame; and the crop preview now draws in
+  the crop window's own pixel frame, at the geometry the crop maths actually assume.
+- **Re-tapping a connecting card cannot hang up the dial** (`versionCode` 93): a card press is a
+  reach in `ConnectionCore`, idempotent while the dial is in flight, so the second press that used
+  to toggle off a connection still being made now does nothing instead.
+- **Tab changes land at once** (`versionCode` 94–95): pages stopped being rebuilt to animate them,
+  distant tab changes fade through, and every tappable control takes the page's own press.
+
+### Unit 2.0.4 — a link the stack never reported losing now closes itself
+
+Bench, 2026-11-09: a pairing died mid-handshake
 about five seconds after boot, the disconnect event died with it, and for the next **two hours** the
 unit sat at `peers 1` — advertising never resumed, so no phone could find it, and the 1 Hz snapshot
 pump pushed ~40 refused notifications a second into a link the controller had dropped, printing
@@ -1810,6 +1858,16 @@ changes: `BtTelemCallbacks` (the telemetry characteristic had no callbacks at al
 counting refusals on both characteristics, `BT_PUMP_PAUSE_AFTER`/`BT_LINK_DEAD_MS` closing the dead
 link through `btCloseLink()` so advertising comes back, and the heartbeat's new **`ntf=`** field so
 an install run leaves its link refusals behind without a serial capture.
+
+The same bench pass corrected the bond-forget whitelist: `reason 85` (`ESP_AUTH_SMP_UNKNOWN_ERR` —
+where an abandoned or mistyped pairing code lands) was *kept* because the list's own comment had
+numbered it as `DHKEY_CHK_FAIL`, so the unit held four bonds against a phone holding none and the
+pair stayed broken until cleared by hand. The whitelist now drops the auth errors that name keys
+(the two previously unclassified codes plus `ENC_FAIL`, `NUM_COMP_FAIL`, `CONFIRM_FAIL`), keeps dead
+links (`99`, `102`) out of evidence about keys, and a bond drop now also closes the link it was
+needed for — from the pump, never from the Bluedroid callback — so pairing is open again at
+`BT_PAIR_DELAY_MS` instead of the phone waiting out its own 180 s bond request on a link that can
+never encrypt (`FailedAuthDropsTheBondItBlames`).
 
 ### App 2.0.3/92 — the garage is read from both roots, and no write may carry a garage the read never produced (`versionCode` 91 → 92, not released)
 
