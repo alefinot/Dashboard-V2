@@ -204,13 +204,33 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
 - Read the DRC report (it names the exact pad/edge and coordinates), fix that, re-run. Iterate
   on KiCad's output, not on a local model of it.
 
+## 31. Android App — Verify on a Real Device via ADB
+- The APK build (rule 8) is **necessary but not sufficient**: whenever an agent works in `android/`,
+  the work is not done until the app has been **installed, launched and verified directly on a real
+  Android device** connected to the PC over ADB — wired USB or wireless, either is acceptable.
+- Device priority:
+  1. **Xiaomi Mi 9 Lite** (codename `pyxis`, same hardware as the Mi CC9) — the preferred bench phone.
+     Identify it with `adb devices -l` or `adb shell getprop ro.product.marketname` (reports
+     `Mi 9 Lite` / `CC9`).
+  2. If the Mi 9 Lite is not connected, **scan for other devices** (`adb devices`) and use one of them;
+     if several are connected and the choice is unclear, ask the user (rule 1).
+  3. If **no device** is online in `adb devices`, **stop and ask the user to connect one** (rule 1) —
+     never silently skip on-device verification or report it as done.
+- The verification loop: `adb install -r app/build/outputs/apk/debug/app-debug.apk` (from `android/`) →
+  `adb shell am start -n com.alefinot.dashboardpp/.MainActivity` → exercise the screens/behaviour the change
+  touched → check `adb logcat` for crashes, ANRs and BLE/link errors. Demo mode (rule 20) makes this
+  possible without a vehicle or ESP unit attached.
+- Wireless ADB is a valid fallback for the cable: Developer options → Wireless debugging, then
+  `adb pair <ip>:<pairing-port>` + `adb connect <ip>:<port>`; or, after one USB connection,
+  `adb tcpip 5555` followed by `adb connect <phone-ip>:5555`.
+
 ## Project Quick Reference
 - **Firmware:** ESP32 WROOM-32, PlatformIO project in repo root (`platformio.ini`, env `esp32dev`), Arduino framework, LovyanGFX 4.0" ILI9488 480×320 display.
 - **Build:** `pio run` (the pre-script compiles the VLW fonts into headers; the post-script repairs the upload layout and reports the image tag — run `pio run`, not a plain compile).
 - **Version:** `FW_VERSION` in `src/config.cpp` (see rule 3).
 - **Docs:** `README.md` is the full technical reference (architecture, pinout, BLE RPC reference, historical REST table for ≤ 1.4.x units, NVS params, changelog).
 - **Plans:** `Implementation plans/` — local-only (never committed/pushed; see rule 6).
-- **Android app:** `android/` — companion app (Kotlin/Compose, Gradle). Always finish with a debug APK build (rule 8).
+- **Android app:** `android/` — companion app (Kotlin/Compose, Gradle). Always finish with a debug APK build (rule 8) **and** on-device verification over ADB, Mi 9 Lite first (rule 31).
 - **Transport:** BLE GATT service `d9a1f000-6c1e-4b8a-9f2d-3e7c1a5b9d40`, characteristics `…f001` telemetry (notify), `…f002` RPC (write + notify), `…f003` OTA (write-nr); framed by `src/bt.cpp` with the wire format in `src/bt_proto.h`, methods served by `src/bt_rpc.cpp`.
 - **Settings schema:** `android/app/src/main/assets/config_schema.json` — generated from `CFG_TABLE` + `scripts/config_schema_presentation.json` (rules 9, 15, 18).
 - **Config backups:** NVS backup/restore through the Android app; a backup file is written from `CFG_TABLE`, there is no hand-kept template.
