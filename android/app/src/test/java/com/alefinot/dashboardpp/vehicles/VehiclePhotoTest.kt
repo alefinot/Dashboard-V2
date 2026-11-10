@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.vehicles
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -188,5 +189,107 @@ class VehiclePhotoTest {
         // writeFrom, so refusing it costs nothing and closes the argument.
         assertNull(VehiclePhotoStore.photoFileIn(dir, "v1.jpg\u0000.png"))
         assertNull(VehiclePhotoStore.photoFileIn(dir, "v1.jpg\n../../x"))
+    }
+
+    // ---- the stored original: what RE-FRAME opens, and what a commit may delete ----
+    //
+    // Since 2026-11-10 a cropped card keeps its negative: `<id>.src.jpg`, the whole
+    // source downscaled to MAX_SOURCE_EDGE, beside the square `<id>.jpg`. These are the
+    // three pure decisions around it - which name the original has, which file re-frame
+    // opens, and which sources a commit is allowed to delete - and all three run on
+    // plain java.io.File, so the JVM can pin them. The pixel half (writeOriginalCopy,
+    // previewCrop) is BitmapFactory and is bench-verified, exactly as the header's
+    // assembleDebug gate has always covered the rest of the class.
+
+    private fun tempVehiclesDir(label: String): File {
+        val d = File(System.getProperty("java.io.tmpdir"), "dpp-photo-test-$label-${System.nanoTime()}")
+        assertTrue("cannot create temp dir ${d.path}", d.mkdirs())
+        return d
+    }
+
+    @Test
+    fun `the stored original is named id-dot-src-jpg beside the crop`() {
+        // Both names in one assertion because the pairing is the point: RE-FRAME, delete
+        // and the commit guard all speak through these two functions, and a card's two
+        // files drifting apart in name is a negative nothing can find again.
+        assertEquals("v7.jpg", VehiclePhotoStore.nameOf("v7"))
+        assertEquals("v7.src.jpg", VehiclePhotoStore.srcNameOf("v7"))
+        assertEquals(
+            VehiclePhotoStore.nameOf("v7").removeSuffix(".jpg") + ".src.jpg",
+            VehiclePhotoStore.srcNameOf("v7"),
+        )
+    }
+
+    @Test
+    fun `the original's name passes the same guard as a stored photo`() {
+        val f = VehiclePhotoStore.srcFileIn(dir, "v1")
+        assertEquals(File(dir, "v1.src.jpg"), f)
+        assertNull(VehiclePhotoStore.srcFileIn(dir, "../evil"))
+        assertNull(VehiclePhotoStore.srcFileIn(dir, "a/b"))
+        // `""` is deliberately NOT rejected: the guard validates the *shape* of a
+        // file name, and ".src.jpg" is a well-shaped name. No id ever reaches it —
+        // ids come from UnitIdentity or UUIDs and are themselves hex-validated.
+        assertEquals(".src.jpg", VehiclePhotoStore.srcFileIn(dir, "")!!.name)
+    }
+
+    @Test
+    fun `re-frame opens the original when both files exist`() {
+        // The whole reason the negative exists: opening the crop square again could only
+        // ever zoom inside the old cut. Original first, or the feature is a lie.
+        val d = tempVehiclesDir("src-first")
+        File(d, "v2.jpg").createNewFile()
+        File(d, "v2.src.jpg").createNewFile()
+        assertEquals("v2.src.jpg", VehiclePhotoStore.pickReframeSource(d, "v2")?.name)
+    }
+
+    @Test
+    fun `a card from before original retention re-frames the square it has`() {
+        // Legacy path: no `<id>.src.jpg` was ever written for these, so the crop itself
+        // is the best canvas available - refuse nothing, degrade quietly.
+        val d = tempVehiclesDir("legacy")
+        File(d, "v3.jpg").createNewFile()
+        assertEquals("v3.jpg", VehiclePhotoStore.pickReframeSource(d, "v3")?.name)
+    }
+
+    @Test
+    fun `nothing on disk gives re-frame nothing`() {
+        val d = tempVehiclesDir("empty")
+        assertNull(VehiclePhotoStore.pickReframeSource(d, "v4"))
+        // A name that cannot be a file stays a name that cannot be a file here too.
+        assertNull(VehiclePhotoStore.pickReframeSource(d, "../v4"))
+    }
+
+    @Test
+    fun `a delete clears both the crop and the original, and only inside the dir`() {
+        // VehiclePhotoStore.delete() walks this list. A card's picture leaving one file
+        // behind means RE-FRAME can still open a photo the garage says is gone.
+        val d = tempVehiclesDir("delete")
+        val files = VehiclePhotoStore.photoFilesOf(d, "v5")
+        assertEquals(listOf("v5.jpg", "v5.src.jpg"), files.map { it.name })
+        for (f in files) assertEquals(d, f.parentFile)
+        // The guard still guards: an id-shaped escape names no files to delete.
+        assertTrue(VehiclePhotoStore.photoFilesOf(d, "../v5").isEmpty())
+    }
+
+    @Test
+    fun `a commit deletes a scratch capture once its crop has landed`() {
+        // cacheDir/captures/<id>.jpg is outside the vehicles dir by construction, and it
+        // is worthless the moment its square is committed.
+        val d = tempVehiclesDir("commit-capture")
+        val capture = File(File(System.getProperty("java.io.tmpdir"), "dpp-captures"), "v6.jpg")
+        assertTrue(VehiclePhotoStore.commitDeletesSource(capture, File(d, "v6.jpg"), d))
+    }
+
+    @Test
+    fun `a commit never deletes the card's own crop or original`() {
+        // The rule that replaced the old same-file check: a re-frame opens `<id>.src.jpg`
+        // and crops it into `<id>.jpg`; the negative is the card's field of view and the
+        // next re-frame depends on it. Anything inside the vehicles dir is untouchable.
+        val d = tempVehiclesDir("commit-stored")
+        val crop = File(d, "v7.jpg")
+        val original = File(d, "v7.src.jpg")
+        assertFalse(VehiclePhotoStore.commitDeletesSource(original, crop, d))
+        assertFalse(VehiclePhotoStore.commitDeletesSource(crop, crop, d))
+        assertFalse(VehiclePhotoStore.commitDeletesSource(File(d, "anything"), crop, d))
     }
 }

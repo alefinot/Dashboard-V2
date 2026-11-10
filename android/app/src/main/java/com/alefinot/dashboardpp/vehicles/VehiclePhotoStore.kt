@@ -40,6 +40,11 @@ import kotlin.math.roundToInt
  *    first and dropped when a photo is rewritten or deleted. Like [com.alefinot.dashboardpp.trips.TripIndex],
  *    a cache entry is keyed by the file's mtime, so replacing a photo cannot leave a
  *    card showing the old one.
+ * 4. **A cropped photo keeps its negative.** When a fresh source is cropped into
+ *    `<id>.jpg`, the whole source is downscaled to [MAX_SOURCE_EDGE] and kept beside it
+ *    as `<id>.src.jpg`, so RE-FRAME can widen the crop and recover what was cut off
+ *    instead of zooming inside the square it already made. A re-frame of a stored source
+ *    never rewrites that negative.
  *
  * **Every public method blocks on I/O.** They are synchronous by contract, not by
  * accident: the caller owns the threading (task 5 calls them from
@@ -121,13 +126,46 @@ class VehiclePhotoStore(context: Context) {
      * given a screenshot on every device this app ships to, instead of the app refusing
      * half the pictures a user can choose.
      *
-     * [source] goes once the crop has landed, as in [writeFrom]: the capture is scratch,
-     * and the crop screen has no further use for it.
+     * **A fresh source keeps its field of view.** When [source] is a scratch capture (or
+     * any file that is not one of this card's own), the *whole* source is downscaled to
+     * [MAX_SOURCE_EDGE] and landed as `<id>.src.jpg` before the crop is committed - that
+     * copy is what makes RE-FRAME a true re-frame: it opens the negative, so a framing
+     * chosen last month can be widened and the pixels cut off then are still there. A
+     * source that is already stored (`<id>.jpg` or `<id>.src.jpg`) is re-framed from and
+     * never rewritten: the negative of an original does not get re-encoded one JPEG
+     * generation at a time.
+     *
+     * A scratch [source] goes once the crop has landed, as in [writeFrom]: the capture is
+     * scratch, and the crop screen has no further use for it once its square is kept.
+     * A stored source never goes - see [commitDeletesSource], which is the whole rule.
      */
     fun cropFrom(source: File, vehicleId: String, rect: CropRect): File? {
         val pixels = cropByRegion(source, rect, MAX_STORED_EDGE)
             ?: cropByWholeFile(source, rect, MAX_STORED_EDGE)
-        return commit(pixels, vehicleId, source)
+        val target = fileForId(vehicleId)
+        val freshSource = target != null && commitDeletesSource(source, target, dir())
+        // The negative first, while a scratch source is still alive: [commit] deletes it.
+        var keptOriginal = false
+        if (pixels != null && freshSource) {
+            keptOriginal = writeOriginalCopy(source, srcFileFor(vehicleId))
+        }
+        val landed = commit(pixels, vehicleId, source)
+        if (landed == null && keptOriginal) srcFileFor(vehicleId)?.delete()
+        return landed
+    }
+
+    /**
+     * The framing preview: [rect] of [source] decoded as a square bitmap at or below
+     * [maxEdgePx], for *display only*. Nothing is written and nothing is deleted — the
+     * editor asks for this when the user presses USE THIS PHOTO, and the crop itself
+     * happens from the untouched source at SAVE, never from these pixels.
+     *
+     * The same two decoders [cropFrom] uses, at the well's size instead of the stored
+     * size; `null` for a file that is not there or a rectangle that describes nothing.
+     */
+    fun previewCrop(source: File, rect: CropRect, maxEdgePx: Int): Bitmap? {
+        if (!source.isFile || rect.size <= 0 || maxEdgePx <= 0) return null
+        return cropByRegion(source, rect, maxEdgePx) ?: cropByWholeFile(source, rect, maxEdgePx)
     }
 
     /**
@@ -140,8 +178,9 @@ class VehiclePhotoStore(context: Context) {
      *    reads;
      * 3. drop this card's cache entries, so the card that asked for a new photo does not
      *    keep drawing the old one;
-     * 4. delete [source] - removed only once the copy has landed, which is why a failed
-     *    write costs the user their photo not at all.
+     * 4. delete [source] - but only when it is scratch, per [commitDeletesSource]: a
+     *    capture the crop screen has no further use for goes, and a file the vehicles dir
+     *    owns (`<id>.jpg` itself, or the `<id>.src.jpg` negative being re-framed) stays.
      *
      * A null [pixels] (nothing decoded), a failed encode, or a failed rename - full disk,
      * read-only volume, revoked storage permission - deletes the `.tmp` and answers `null`:
@@ -149,16 +188,12 @@ class VehiclePhotoStore(context: Context) {
      * that cannot allocate answers null from BitmapFactory itself; an [OutOfMemoryError]
      * from a scale step is an Error and is not swallowed here, because at that point the
      * app is already out of memory.
-     *
-     * [source] may be the card's own current photo - re-cropping what is already stored -
-     * in which case it is not deleted, because it *is* the answer. Without that check the
-     * last step would remove the file the second step just committed.
      */
     private fun commit(pixels: Bitmap?, vehicleId: String, source: File): File? {
         val target = fileForId(vehicleId) ?: return null
         if (pixels == null) return null
         val tmp = File(target.parentFile, target.name + TMP_SUFFIX)
-        val sameFile = source.absolutePath == target.absolutePath
+        val deleteSource = commitDeletesSource(source, target, dir())
         var landed = false
         try {
             if (!writeJpeg(pixels, tmp)) return null
@@ -172,8 +207,33 @@ class VehiclePhotoStore(context: Context) {
         }
         if (!landed) return null
         evict(vehicleId)
-        if (!sameFile) source.delete()
+        if (deleteSource) source.delete()
         return target
+    }
+
+    /**
+     * The negative: the whole [source] downscaled to [MAX_SOURCE_EDGE] and landed at
+     * [target] (`<id>.src.jpg`), same tmp-then-rename bargain as [commit].
+     *
+     * Best-effort by contract: `false` means the card still gets its crop, it just cannot
+     * be widened past this framing later. A stored original is re-encoded into an
+     * existing negative only through a fresh capture, so generations do not stack.
+     */
+    private fun writeOriginalCopy(source: File, target: File?): Boolean {
+        if (target == null) return false
+        val pixels = decodeScaled(source, MAX_SOURCE_EDGE) ?: return false
+        val tmp = File(target.parentFile, target.name + TMP_SUFFIX)
+        var landed = false
+        try {
+            if (!writeJpeg(pixels, tmp)) return false
+            landed = tmp.renameTo(target)
+        } catch (e: Exception) {
+            // Same family of failures as [commit]'s; losing the negative loses detail,
+            // never a photo.
+        } finally {
+            if (!landed) tmp.delete()
+        }
+        return landed
     }
 
     /**
@@ -364,33 +424,47 @@ class VehiclePhotoStore(context: Context) {
     /**
      * Remove a card's decoded photos from the cache without touching the file - for
      * a caller that changed what a photo means (a crop, a replace) and must not keep
-     * serving the old bytes.
+     * serving the old bytes. Both of the card's files' entries go: the crop and, should
+     * anything ever decode it, the stored original.
      */
     fun evict(vehicleId: String) {
-        val prefix = nameOf(vehicleId) + ":"
-        for (key in cache.snapshot().keys) {
-            if (key.startsWith(prefix)) cache.remove(key)
+        for (name in listOf(nameOf(vehicleId), srcNameOf(vehicleId))) {
+            val prefix = name + ":"
+            for (key in cache.snapshot().keys) {
+                if (key.startsWith(prefix)) cache.remove(key)
+            }
         }
     }
 
     /**
-     * Delete a card's photo: the file and every cache entry for it. Idempotent - a
-     * card with no photo is not an error, and a card whose row is being deleted
-     * ([VehicleStore.delete]) may not have one at all.
+     * Delete a card's photo: the crop **and its stored original**, and every cache entry
+     * for either. Idempotent - a card with no photo is not an error, and a card whose row
+     * is being deleted ([VehicleStore.delete]) may not have one at all.
      *
      * The record's `photoFile` is left alone on purpose: the pointer is a name, not
      * a claim that the bytes exist, and [read] answering `null` is what makes the
      * card draw its placeholder. An action that removes a photo *and keeps the card*
-     * (task 5) persists `photoFile = null` in the record as well, so the editor does
-     * not offer to open a photo that is gone.
+     * ([PhotoEdit.Remove] through the view model's save) persists `photoFile = null` in
+     * the record as well, so the editor does not offer to open a photo that is gone.
      */
     fun delete(vehicleId: String) {
-        fileForId(vehicleId)?.delete()
+        for (f in photoFilesOf(dir(), vehicleId)) f.delete()
         evict(vehicleId)
     }
 
+    /**
+     * The file RE-FRAME PHOTO should open for this card: the stored original
+     * (`<id>.src.jpg`) when it exists, else the crop the card currently shows
+     * (`<id>.jpg`, the only file a card from before originals were kept has), else
+     * `null`. Checks existence, resolves both through the name guard.
+     */
+    fun reframeSourceFor(vehicleId: String): File? = pickReframeSource(dir(), vehicleId)
+
     /** `<id>.jpg` resolved through the same guard as a stored `photoFile`. */
     private fun fileForId(vehicleId: String): File? = photoFileIn(dir(), nameOf(vehicleId))
+
+    /** `<id>.src.jpg`, the stored original, through the same guard. */
+    private fun srcFileFor(vehicleId: String): File? = srcFileIn(dir(), vehicleId)
 
     /**
      * Bounds-only pass, then the real decode at the factor [sampleSizeFor] picks -
@@ -439,17 +513,34 @@ class VehiclePhotoStore(context: Context) {
         return true
     }
 
-    private fun nameOf(vehicleId: String) = "$vehicleId$PHOTO_SUFFIX"
-
     companion object {
         /** Longest edge kept on disk - plan §3 (a card's preview, not a print). */
         const val MAX_STORED_EDGE = 1280
+
+        /**
+         * Longest edge kept for a photo's **stored original** (`<id>.src.jpg`): the full
+         * field of view at bounded disk, so RE-FRAME can widen a crop. Downscale-only
+         * like [MAX_STORED_EDGE] - a smaller pick is kept as it is, never inflated - and
+         * big enough that re-cropping from it at [MAX_STORED_EDGE] still lands sharp.
+         */
+        const val MAX_SOURCE_EDGE = 2048
 
         /** JPEG quality of the stored copy: 85 is visually indistinguishable here. */
         const val JPEG_QUALITY = 85
 
         private const val PHOTO_SUFFIX = ".jpg"
+        private const val SRC_SUFFIX = ".src.jpg"
         private const val TMP_SUFFIX = ".tmp"
+
+        /**
+         * `<id>.jpg` - the file a card's `photoFile` names and [read] decodes. `internal`
+         * rather than instance-private so the file-name agreements below (and their
+         * tests) speak one naming rule instead of two.
+         */
+        internal fun nameOf(vehicleId: String) = "$vehicleId$PHOTO_SUFFIX"
+
+        /** `<id>.src.jpg` - the stored original kept beside a card's crop. */
+        fun srcNameOf(vehicleId: String) = "$vehicleId$SRC_SUFFIX"
 
         /** Scratch for camera captures and picked images, under the app's cache dir. */
         private const val CAPTURE_DIR = "captures"
@@ -545,6 +636,43 @@ class VehiclePhotoStore(context: Context) {
             if (!isPhotoName(name)) return null
             return File(dir, name)
         }
+
+        /** `<id>.src.jpg` inside [dir], through the same guard as a stored `photoFile`. */
+        internal fun srcFileIn(dir: File, vehicleId: String): File? =
+            photoFileIn(dir, srcNameOf(vehicleId))
+
+        /**
+         * The two files a card's photo can consist of - the crop and its stored
+         * original - each through the name guard, so [VehiclePhotoStore.delete] can
+         * never be pointed outside the vehicles dir by a card id either.
+         */
+        internal fun photoFilesOf(dir: File, vehicleId: String): List<File> =
+            listOfNotNull(photoFileIn(dir, nameOf(vehicleId)), srcFileIn(dir, vehicleId))
+
+        /**
+         * The file RE-FRAME PHOTO opens for [vehicleId]: the stored original when this
+         * card has one, else the crop it shows (a card from before originals were kept),
+         * else nothing. Original first, existence-checked - the whole point of keeping
+         * the negative is that the wider framing is the one offered.
+         */
+        internal fun pickReframeSource(dir: File, vehicleId: String): File? =
+            srcFileIn(dir, vehicleId)?.takeIf { it.isFile }
+                ?: photoFileIn(dir, nameOf(vehicleId))?.takeIf { it.isFile }
+
+        /**
+         * Whether [commit] may delete the crop's [source] once the photo has landed.
+         *
+         * The rule it enforces: **scratch goes, stored stays.** A camera capture or a
+         * picked copy lives outside the vehicles dir (under `cacheDir/captures/`) and is
+         * worthless the moment its square is committed; `<id>.jpg` and `<id>.src.jpg`
+         * live inside it and are the card's answer, its negative, or a photo another
+         * framing still needs. Deleting a file inside the vehicles dir from here would
+         * take back a picture the user did not ask to lose, so the directory itself is
+         * the line and everything in it is untouchable to [commit].
+         */
+        internal fun commitDeletesSource(source: File, target: File, dir: File): Boolean =
+            source.absolutePath != target.absolutePath &&
+                source.parentFile?.absolutePath != dir.absolutePath
 
         private fun isPhotoName(name: String): Boolean =
             name.isNotEmpty() &&

@@ -1,9 +1,8 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,9 +27,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
@@ -43,7 +47,6 @@ import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
-import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudGlass
@@ -81,11 +84,21 @@ import java.io.File
  * wide tablet and broken on a phone: a 1:1 box as wide as a 620 dp panel is 620 dp tall,
  * which on a 640 dp-tall phone leaves the panel's own title off the top of the screen. So the
  * words and the buttons take what they need, the middle gets the rest (`weight(1f)`), and the
- * square is the shorter side of what is left.
+ * window is the shorter side of what is left.
+ *
+ * **The whole leftover box is the viewport; the centred square is the crop window.** Since
+ * 2026-11-10 the photo is drawn across the viewport, not clipped to the window: a crop tool
+ * shows what it is cutting away. The window - dimmed outside, bracketed at its corners,
+ * ruled in thirds - is the square the card keeps, and it sits at exactly the centre and the
+ * side the preview geometry and [PhotoCrop.rectFor] have always assumed, so the guarantee
+ * from the earlier bench pass stands: what the eye frames is what the maths asks the file
+ * for, to the pixel. Pinch and drag work anywhere on the photo, and the ZOOM −/+ and RESET
+ * buttons put the same two numbers under a thumb for anyone whose fingers will not pinch.
  *
  * A tap on the scrim does nothing, and Back cancels: the plan is explicit that CANCEL keeps
- * the previous photo, and the previous photo is whatever is already on disk. This panel writes
- * nothing until USE THIS PHOTO is pressed.
+ * the previous photo, and the previous photo is whatever is already on disk. This panel
+ * writes nothing - not on USE THIS PHOTO either, which since 2026-11-10 hands the framing
+ * to the editor as a draft; disk belongs to SAVE.
  */
 @Composable
 fun PhotoCropPanel(
@@ -93,7 +106,7 @@ fun PhotoCropPanel(
     onUse: (CropRect) -> Unit,
     onCancel: () -> Unit,
 ) {
-    // The measured side of the framed square, in pixels. Every number [PhotoCrop] works with
+    // The measured side of the crop window, in pixels. Every number [PhotoCrop] works with
     // comes from here or from the file's header, which is why nothing on this screen guesses
     // at a size.
     var frame by remember { mutableStateOf(IntSize.Zero) }
@@ -105,6 +118,21 @@ fun PhotoCropPanel(
     var offY by remember(source) { mutableFloatStateOf(0f) }
 
     BackHandler(enabled = true) { onCancel() }
+
+    // The ZOOM buttons speak through the same two numbers a pinch writes: the new zoom,
+    // then the offsets re-clamped through the very function the drag clamps itself with.
+    // A button that skipped the clamp would park the photo where the next drag has to
+    // fight the clamp from - a jump under the finger, invented by the button.
+    fun nudgeZoom(direction: Int) {
+        val img = full ?: return
+        if (frame.width <= 0) return
+        val step = if (direction > 0) ZOOM_STEP else 1f / ZOOM_STEP
+        val next = (zoom * step).coerceIn(1f, MAX_ZOOM)
+        zoom = next
+        val (maxX, maxY) = PhotoCrop.maxOffsetPx(img.first, img.second, frame.width, next)
+        offX = offX.coerceIn(-maxX, maxX)
+        offY = offY.coerceIn(-maxY, maxY)
+    }
 
     // Dimensions first, on their own: they come from the file's header without allocating a
     // single pixel, so the panel can say "this picture cannot be read" - and size the preview
@@ -140,14 +168,26 @@ fun PhotoCropPanel(
                     if (unreadable) {
                         "Unreadable picture \u2014 card keeps its photo."
                     } else {
-                        "Drag to move, spread to zoom."
+                        "The brackets are the square this card keeps. Drag the photo " +
+                            "inside them; pinch, tap ZOOM, or RESET to start over."
                     },
                     color = HudColors.TextMuted,
                     style = HudeCfgHelp(),
                 )
                 Spacer(Modifier.height(14.dp))
 
-                // The leftover height, and the square inside it.
+                // The leftover height, and the crop window centred inside it.
+                //
+                // The whole box is the viewport and the photo is drawn across it, so the
+                // user sees what a crop cuts away - the rest is the window (dim beyond,
+                // bracketed, ruled in thirds). Gestures live on the viewport so the whole
+                // visible photo answers a finger, while [frame] keeps measuring the
+                // window: the invisible square is where the crop maths' geometry lives,
+                // and the photo's centre and the window's centre are the same point (both
+                // centred in this box), so the cover fit, the zoom and the pan mean
+                // exactly what they meant when the photo lived inside the square. The
+                // clip is now the viewport's - the photo may leave the window, but never
+                // this box and certainly never over the buttons below it.
                 Box(
                     Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center,
@@ -156,11 +196,8 @@ fun PhotoCropPanel(
                         val side = minOf(maxWidth, maxHeight)
                         Box(
                             Modifier
-                                .size(side)
-                                .clip(HudRadius.CardShape)
-                                .background(HudColors.Panel)
-                                .border(1.dp, HudColors.Hairline, HudRadius.CardShape)
-                                .onSizeChanged { frame = it }
+                                .fillMaxSize()
+                                .clipToBounds()
                                 .pointerInput(source, full, frame.width) {
                                     if (frame.width <= 0) return@pointerInput
                                     detectTransformGestures { _, pan, zoomFactor, _ ->
@@ -178,8 +215,16 @@ fun PhotoCropPanel(
                                         offY = (offY + pan.y).coerceIn(-maxY, maxY)
                                     }
                                 },
-                            contentAlignment = Alignment.Center,
                         ) {
+                            // The crop window: measured, invisible, and the only square
+                            // the crop maths know. Its side is `side`, its centre is this
+                            // box's centre - which is also where the photo below is centred.
+                            Box(
+                                Modifier
+                                    .size(side)
+                                    .align(Alignment.Center)
+                                    .onSizeChanged { frame = it },
+                            )
                             preview?.let { bmp ->
                                 val img = full ?: return@let
                                 val density = LocalDensity.current
@@ -205,6 +250,7 @@ fun PhotoCropPanel(
                                         contentDescription = "the photo being framed for this card",
                                         contentScale = ContentScale.FillBounds,
                                         modifier = Modifier
+                                            .align(Alignment.Center)
                                             .size(
                                                 (wPx / density.density).toDp(),
                                                 (hPx / density.density).toDp(),
@@ -217,9 +263,35 @@ fun PhotoCropPanel(
                                 }
                             }
                             if (preview == null && !unreadable) {
-                                Text("reading the photo…", color = HudColors.TextDim, style = HudeCfgHelp())
+                                Text(
+                                    "reading the photo…",
+                                    color = HudColors.TextDim,
+                                    style = HudeCfgHelp(),
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
                             }
+                            // Dim outside, brackets and thirds inside: the crop metaphor,
+                            // drawn from the same box so it agrees with the window by
+                            // construction rather than by a second measurement.
+                            CropChrome(Modifier.fillMaxSize().align(Alignment.Center))
                         }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
+                        HudButton("ZOOM -", style = HudButtonStyle.SECONDARY) { nudgeZoom(-1) }
+                    }
+                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
+                        HudButton("RESET", style = HudButtonStyle.SECONDARY) {
+                            zoom = 1f
+                            offX = 0f
+                            offY = 0f
+                        }
+                    }
+                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
+                        HudButton("ZOOM +", style = HudButtonStyle.SECONDARY) { nudgeZoom(1) }
                     }
                 }
 
@@ -244,6 +316,70 @@ fun PhotoCropPanel(
                 }
                 Spacer(Modifier.height(10.dp))
             }
+        }
+    }
+}
+
+/**
+ * The crop metaphor, drawn over the viewport: everything outside the centred square is
+ * dimmed (that part of the photo is what the card will *not* keep), the square carries a
+ * rule-of-thirds grid and corner brackets, and its outline is the window's own.
+ *
+ * It draws from [DrawScope]'s own box, so its square agrees with the invisible window
+ * measured for the crop maths by construction: same centring rule (`(size − min edge)/2`)
+ * in both places means they cannot drift apart and disagree with [PhotoCrop.rectFor] -
+ * and a crop chrome that disagreed with the maths would be a picture frame over one photo
+ * and a crop out of another.
+ */
+@Composable
+private fun CropChrome(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val edge = minOf(size.width, size.height)
+        if (edge <= 0f) return@Canvas
+        val left = (size.width - edge) / 2f
+        val top = (size.height - edge) / 2f
+        // Dimmed outside: the answer to "which part is the photo now?" without a guess.
+        val dim = Color(0x8C000000)
+        drawRect(dim, Offset.Zero, Size(size.width, top))
+        drawRect(dim, Offset(0f, top + edge), Size(size.width, size.height - top - edge))
+        drawRect(dim, Offset.Zero, Size(left, edge))
+        drawRect(dim, Offset(left + edge, top), Size(size.width - left - edge, edge))
+        // The window's edge, so the square still reads when the photo does not reach it.
+        drawRect(
+            color = HudColors.Hairline,
+            topLeft = Offset(left, top),
+            size = Size(edge, edge),
+            style = Stroke(width = 1.dp.toPx()),
+        )
+        // Rule of thirds: where the plate wants to sit is a thing a crop tool says.
+        val grid = Color(0x40FFFFFF)
+        for (f in 1..2) {
+            drawLine(
+                grid,
+                Offset(left + edge * f / 3f, top),
+                Offset(left + edge * f / 3f, top + edge),
+                1.dp.toPx(),
+            )
+            drawLine(
+                grid,
+                Offset(left, top + edge * f / 3f),
+                Offset(left + edge, top + edge * f / 3f),
+                1.dp.toPx(),
+            )
+        }
+        // Corner brackets: a viewfinder says "frame it", a plain box says "there, done".
+        val bracket = HudColors.Cyan.copy(alpha = 0.9f)
+        val len = edge * 0.12f
+        val w = 3.dp.toPx()
+        val corners = listOf(
+            Offset(left, top) to Offset(1f, 1f),
+            Offset(left + edge, top) to Offset(-1f, 1f),
+            Offset(left, top + edge) to Offset(1f, -1f),
+            Offset(left + edge, top + edge) to Offset(-1f, -1f),
+        )
+        for ((corner, dir) in corners) {
+            drawLine(bracket, corner, Offset(corner.x + dir.x * len, corner.y), w, StrokeCap.Round)
+            drawLine(bracket, corner, Offset(corner.x, corner.y + dir.y * len), w, StrokeCap.Round)
         }
     }
 }
@@ -287,3 +423,6 @@ private const val PREVIEW_EDGE = 1280
 
 /** Pinch ceiling. Past this the preview is a blur and no crop is worth having. */
 private const val MAX_ZOOM = 8f
+
+/** Per-press factor of the ZOOM buttons - one deliberate thumb-tap of zoom, not a crawl. */
+private const val ZOOM_STEP = 1.4f

@@ -546,12 +546,14 @@ fun AppShell(
                 draft = draft,
                 isNew = editorIsNew,
                 refusal = editorRefusal,
-                onSave = { typed ->
-                    connection.saveVehicle(typed) { refusal ->
+                onSave = { typed, photoEdit ->
+                    // The card and its staged photo decision land in one write, which is
+                    // what makes CANCEL revert the picture too (vehicle editor fixes,
+                    // 2026-11-10). A refusal keeps the form open with the reason in it;
+                    // the edits and the framing are still on screen because the card
+                    // they were fixing is the one thing the user must not lose.
+                    connection.saveVehicleWithPhoto(typed, photoEdit) { refusal ->
                         editorRefusal = refusal
-                        // A refused write leaves the form open with the reason in it; the
-                        // user's edits are still on screen, because the card they were
-                        // trying to fix is the one thing they must not lose.
                         if (refusal == null) {
                             editing = null
                             editorRefusal = null

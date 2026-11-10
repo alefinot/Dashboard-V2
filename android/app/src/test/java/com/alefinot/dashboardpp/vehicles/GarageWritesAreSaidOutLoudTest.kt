@@ -60,9 +60,10 @@ class GarageWritesAreSaidOutLoudTest {
         }
 
         assertTrue(
-            "expected at least the six known garage writes to check their answer, found $checked: " +
-                "save, photo attach, photo remove, delete, and the two identity persists",
-            checked >= 6,
+            "expected at least the five known garage writes to check their answer, found $checked: " +
+                "the two saves, delete, and the two identity persists — the photo attach/remove " +
+                "writes joined the save on 2026-11-10, so the save writes cover them",
+            checked >= 5,
         )
     }
 

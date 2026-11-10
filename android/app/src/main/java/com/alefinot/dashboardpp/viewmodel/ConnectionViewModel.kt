@@ -29,6 +29,7 @@ import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.weather.WeatherSettings
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.CropRect
+import com.alefinot.dashboardpp.vehicles.PhotoEdit
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import com.alefinot.dashboardpp.vehicles.VehicleStore
 import com.alefinot.dashboardpp.vehicles.displayName
@@ -504,6 +505,45 @@ class ConnectionViewModel(
     }
 
     /**
+     * The shared half of both save paths: read the garage, merge the user's fields onto
+     * the stored record, fill a blank name, and refuse a card carrying another card's
+     * MAC. Extracted 2026-11-10 when [saveVehicleWithPhoto] grew the same rules — two
+     * copies of the identity rules is two chances to fix one and forget the other.
+     *
+     * `Allowed` means the write may happen; `Refused` carries the sentence the form shows
+     * while staying open.
+     */
+    private sealed interface CheckedSave {
+        /** Validated and merged; [stored] is null when the card does not exist on disk yet. */
+        data class Allowed(val finished: Vehicle, val stored: Vehicle?) : CheckedSave
+        data class Refused(val reason: String) : CheckedSave
+    }
+
+    private suspend fun checkSave(typed: Vehicle): CheckedSave {
+        val all = vehicles.all().first()
+        val stored = all.firstOrNull { it.id == typed.id }
+        val merged = stored?.let { mergeTypedFields(it, typed) } ?: typed
+        val taken = all.filter { it.id != merged.id }.map { it.name }.toSet()
+        val finished = merged.copy(name = displayName(merged.name, merged, taken))
+        macConflict(finished, all)?.let { clash ->
+            return CheckedSave.Refused(refusalMessage(clash))
+        }
+        return CheckedSave.Allowed(finished, stored)
+    }
+
+    /**
+     * A card that did not exist before becomes the selected one: the user made it from
+     * a unit that is in front of them, and the next thing they do is connect.
+     */
+    private suspend fun adoptSelection(stored: Vehicle?, finished: Vehicle) {
+        if (stored == null) {
+            vehicles.select(finished.id)
+            selectedVehicleId.value = finished.id
+            unclaimed.value = null
+        }
+    }
+
+    /**
      * Write the user's half of a card, or refuse the write. [onDone] gets null when the
      * card is stored and the refusal's wording when it is not, so the form can stay open
      * with the reason in it instead of closing on a write that never happened.
@@ -517,31 +557,88 @@ class ConnectionViewModel(
      * Everything the app measured (`mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion`,
      * `createdAtMs`, the photo) is kept by [mergeTypedFields]; a save that rebuilt the
      * record from the form would drop the evidence that binds the card to the unit.
+     *
+     * A save that may also land a staged picture goes through [saveVehicleWithPhoto],
+     * which runs this same validation before it touches a file.
      */
     fun saveVehicle(typed: Vehicle, onDone: (refusal: String?) -> Unit = {}) {
         scope.launch {
-            val all = vehicles.all().first()
-            val stored = all.firstOrNull { it.id == typed.id }
-            val merged = stored?.let { mergeTypedFields(it, typed) } ?: typed
-            val taken = all.filter { it.id != merged.id }.map { it.name }.toSet()
-            val finished = merged.copy(name = displayName(merged.name, merged, taken))
-            macConflict(finished, all)?.let { clash ->
-                onDone(refusalMessage(clash))
+            val check = checkSave(typed)
+            if (check is CheckedSave.Refused) {
+                onDone(check.reason)
                 return@launch
             }
-            if (!vehicles.put(finished)) {
+            check as CheckedSave.Allowed
+            if (!vehicles.put(check.finished)) {
                 // The card stayed on disk as it was. Closing the form here would tell the user the
                 // edit happened; the refusal keeps it open with the reason in it.
                 onDone(vehicles.saveFailure())
                 return@launch
             }
-            // A card that did not exist before becomes the selected one: the user made it
-            // from a unit that is in front of them, and the next thing they do is connect.
-            if (stored == null) {
-                vehicles.select(finished.id)
-                selectedVehicleId.value = finished.id
-                unclaimed.value = null
+            adoptSelection(check.stored, check.finished)
+            onDone(null)
+        }
+    }
+
+    /**
+     * Save the card **and the photo decision the editor staged** ([PhotoEdit]) as one
+     * action, so CANCEL or Back can undo both or neither — which is the whole point of
+     * draft-scoped photo edits (2026-11-10): the picture behaves like every text field
+     * on that form, and a brand-new card can be born with a photo because its record and
+     * its JPEGs land in the same save.
+     *
+     * The order is the method. First [checkSave]'s rules — a refusal there writes nothing
+     * at all, not a file and not a record. Then the photo, *before* the single
+     * [VehicleStore.put], so the record never points at a JPEG that failed to arrive:
+     *
+     *  - [PhotoEdit.Keep] touches nothing, and the record keeps its `photoFile` exactly
+     *    as [mergeTypedFields] carried it.
+     *  - [PhotoEdit.Remove] deletes `<id>.jpg` **and** `<id>.src.jpg` first, then lands
+     *    the record with `photoFile = null` — the "file first, then pointer" order the
+     *    old `removePhoto` kept, because a record naming a gone file reads back as "no
+     *    photo", while the reverse is the editor offering a photo that cannot be shown.
+     *  - [PhotoEdit.Crop] crops [PhotoEdit.Crop.source] into `<id>.jpg` (keeping the
+     *    original as `<id>.src.jpg` when the source is a fresh capture). A crop that
+     *    cannot land answers a refusal and **writes no record**: the card keeps the photo
+     *    it had, the form stays open, and the user frames the picture again.
+     *
+     * [photoVersion] is bumped only when a photo actually changed — Keep must not churn
+     * every well and card cover in the app on an ordinary rename.
+     */
+    fun saveVehicleWithPhoto(typed: Vehicle, edit: PhotoEdit, onDone: (refusal: String?) -> Unit = {}) {
+        scope.launch {
+            val check = checkSave(typed)
+            if (check is CheckedSave.Refused) {
+                onDone(check.reason)
+                return@launch
             }
+            check as CheckedSave.Allowed
+            var record = check.finished
+            var photoChanged = false
+            when (edit) {
+                PhotoEdit.Keep -> Unit
+                PhotoEdit.Remove -> {
+                    vehicles.photos.delete(check.finished.id)
+                    record = record.copy(photoFile = null)
+                    photoChanged = true
+                }
+                is PhotoEdit.Crop -> {
+                    val landed = vehicles.photos.cropFrom(edit.source, check.finished.id, edit.rect)
+                        ?: run {
+                            // The framing did not become a file — nothing else moves.
+                            onDone("Could not save the photo")
+                            return@launch
+                        }
+                    record = record.copy(photoFile = landed.name)
+                    photoChanged = true
+                }
+            }
+            if (!vehicles.put(record)) {
+                onDone(vehicles.saveFailure())
+                return@launch
+            }
+            adoptSelection(check.stored, record)
+            if (photoChanged) photoVersion.intValue++
             onDone(null)
         }
     }
@@ -684,108 +781,59 @@ class ConnectionViewModel(
     }
 
     /**
-     * Cut the square the user framed into the card's photo, then point the record at it.
+     * The square the user just framed, decoded small and answered on the **main**
+     * thread — for the editor's photo well to draw while the decision is still a draft.
      *
-     * Two writes, and the order carries the reasoning. The JPEG has to exist before a record
-     * claims it, otherwise a saved card can name a file that never arrived - the card would
-     * draw a placeholder and the editor would offer to open nothing. So the store lands the
-     * picture first, and only then does [VehicleStore.put] store the name. A crash between
-     * the two costs a JPEG on disk that no record names yet: invisible, and the next crop
-     * overwrites it.
-     *
-     * The record is read *before* the crop is attempted, which also closes a window: a card
-     * deleted while the crop screen was open has no photo to receive, and writing one would
-     * leave a picture named after a card that no longer exists.
-     *
-     * [onDone] runs on [scope] with the file the photo landed at, or `null` when the crop
-     * failed - in which case the card keeps the photo it had and the editor says so rather
-     * than closing. A user who cancels the crop screen never reaches this method:
-     * [cancelPhoto] removes the scratch capture and the previous photo stays, which is the
-     * plan's "CANCEL keeps the previous photo".
-     *
-     * The second argument of [onDone] is the refusal when the JPEG landed but the record
-     * naming it did not — a picture on disk that no card points at, which the card shows for
-     * now and loses on the next start. It is the one case where a closed crop step is right
-     * (the crop worked, the framing cannot be recovered) and a quiet one would not be.
+     * This decodes; it does not write. The crop the card actually gets is produced by
+     * [saveVehicleWithPhoto] from the untouched source file, never from these pixels,
+     * so what the well shows and what lands agree by geometry rather than by luck
+     * (see [PhotoEdit.Crop]).
      */
-    fun applyPhotoCrop(
+    fun previewPhotoCrop(
         source: File,
-        vehicleId: String,
         rect: CropRect,
-        onDone: (landed: File?, refusal: String?) -> Unit,
+        maxEdgePx: Int,
+        onReady: (Bitmap?) -> Unit,
     ) {
         scope.launch {
-            val card = vehicles.get(vehicleId) ?: run {
-                vehicles.photos.clearCapture(vehicleId)
-                onDone(null, null)
-                return@launch
-            }
-            val landed = vehicles.photos.cropFrom(source, vehicleId, rect)
-            if (landed == null) {
-                onDone(null, null)
-                return@launch
-            }
-            if (!vehicles.put(card.copy(photoFile = landed.name))) {
-                // The JPEG is in `vehicles/` and the card on screen wears it; the file on disk
-                // still names the old picture. Saying nothing would leave the owner hunting for
-                // a photo that is not in their folder.
-                photoVersion.intValue++
-                onDone(landed, vehicles.saveFailure("Photo not attached"))
-                return@launch
-            }
-            photoVersion.intValue++
-            onDone(landed, null)
+            val preview = vehicles.photos.previewCrop(source, rect, maxEdgePx)
+            withContext(Dispatchers.Main) { onReady(preview) }
         }
     }
 
-    /** The user decided against the picture they framed: the scratch capture goes. */
+    /**
+     * Drop a card's scratch capture: the staged pick or camera shot in
+     * `cacheDir/captures/`, never anything the vehicles dir owns. The editor calls this
+     * when a crop step is cancelled and once more when the editor itself closes, so a
+     * picture the user decided against does not sit in the cache until Android clears
+     * it — and a draft crop's source, which SAVE still needs while the form is open,
+     * goes exactly when the form stops existing.
+     */
     fun cancelPhoto(vehicleId: String) {
         scope.launch { vehicles.photos.clearCapture(vehicleId) }
     }
 
     /**
-     * The photo file a card already has — resolved through the store's own name guard and
-     * checked to exist — or `null` when the card has no photo or its file is gone. Answered
-     * on the **main** thread, like [stagePickedPhoto]: the caller turns it straight into
-     * opening the crop step.
+     * The file RE-FRAME PHOTO opens for a card that has a photo: the **stored original**
+     * (`<id>.src.jpg`) when the card has one, else the crop it currently shows
+     * (`<id>.jpg` — every card predating original retention). `null` when the card has
+     * no photo file at all. Answered on the **main** thread, like [stagePickedPhoto]:
+     * the caller turns it straight into opening the crop step.
      *
-     * This is RE-FRAME PHOTO's door: the crop panel works on any file, and
-     * [VehiclePhotoStore.cropFrom] already knows that the card's own photo is a source it
-     * must not delete when the crop lands ([VehiclePhotoStore.commit]'s same-file check).
-     * Cancelling a re-frame writes nothing either — it never reaches [applyPhotoCrop], and
-     * there is no scratch capture to clear for it.
+     * Opening the negative is the whole point (2026-11-10): `<id>.jpg` is the square
+     * somebody cut last time, and re-framing *it* could only ever zoom inside that old
+     * cut. The original keeps the field of view, so a crop can be widened and what was
+     * cut off comes back. [VehiclePhotoStore.cropFrom] then treats a stored source as
+     * something it must never delete or re-encode as a negative — see
+     * [VehiclePhotoStore.commitDeletesSource].
+     *
+     * A draft crop re-frames from its own pending source instead, which the editor
+     * already holds — this door is for what is on disk.
      */
     fun storedPhotoFile(vehicleId: String, onFile: (File?) -> Unit) {
         scope.launch {
-            val card = vehicles.get(vehicleId)
-            val f = vehicles.photos.fileFor(card?.photoFile)?.takeIf { it.isFile }
+            val f = vehicles.photos.reframeSourceFor(vehicleId)
             withContext(Dispatchers.Main) { onFile(f) }
-        }
-    }
-
-    /**
-     * Take a card's photo off: the JPEG first, then the record's pointer.
-     *
-     * That order is the one a crash can survive. A record whose `photoFile` names a file that
-     * is gone reads back as "no photo" ([VehiclePhotoStore.read] answers null and the card
-     * draws its glyph), which is a cosmetic lie for one boot. The reverse - a file deleted
-     * after the record still names it, or a record pointing at a file that was never written
-     * - is the case where the editor offers a photo the app cannot show.
-     *
-     * When the record would not take the removal, [onRefused] says so: the JPEG is gone from
-     * the folder, so a card that still points at it will draw nothing after the next start,
-     * and "the photo is still attached" is worth knowing while the user is looking at a
-     * picture that is already deleted.
-     */
-    fun removePhoto(vehicleId: String, onRefused: (String) -> Unit = {}) {
-        scope.launch {
-            vehicles.photos.delete(vehicleId)
-            vehicles.get(vehicleId)?.let { card ->
-                if (card.photoFile != null && !vehicles.put(card.copy(photoFile = null))) {
-                    onRefused(vehicles.saveFailure("Photo not removed"))
-                }
-            }
-            photoVersion.intValue++
         }
     }
 

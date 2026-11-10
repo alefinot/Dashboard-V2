@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +59,7 @@ import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudGlass
 import com.alefinot.dashboardpp.vehicles.Vehicle
+import com.alefinot.dashboardpp.vehicles.PhotoEdit
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import com.alefinot.dashboardpp.vehicles.VehicleType
 import java.io.File
@@ -89,16 +92,23 @@ import java.io.File
  * garage and before anything else a new card is worth. Both routes end in the same crop step
  * ([PhotoCropPanel]) rather than writing the picture straight in, because the card's cover is
  * a square and a photograph is not, and an automatic crop cuts the plate off one car and the
- * handlebars off another. Nothing lands on disk until USE THIS PHOTO: a gallery pick and a
- * camera shot both sit in a scratch capture the editor throws away when the user backs out of
- * the crop, so closing the editor mid-way cannot leave half a photo on a card.
+ * handlebars off another.
  *
- * RE-FRAME PHOTO walks a card's **stored** picture through that same crop step, because the
- * framing a user chose last month may be the thing they dislike about it today — and making
- * them re-find the original photograph to nudge a crop is a cruelty. The distinction the
- * editor keeps straight is what a cancel costs: backing out of a pick discards the scratch
- * capture, backing out of a re-frame touches nothing, since the stored file is both the
- * source and, until USE THIS PHOTO, the card's photo.
+ * **Nothing about the photo reaches disk until SAVE** (2026-11-10, the fix for "I pressed
+ * CANCEL and the picture changed anyway"). The editor stages a [PhotoEdit] - a pick, a
+ * re-frame, or a removal - exactly the way it stages the typed fields, and CANCEL or Back
+ * drops it together with them. USE THIS PHOTO only decodes a small preview for the well;
+ * [ConnectionViewModel.saveVehicleWithPhoto] crops the real picture from the still-untouched
+ * source at SAVE, in the same write that lands the record - which is also why a brand-new
+ * card can finally get a photo: there is a record by the time the JPEG needs one. The gallery
+ * pick and the camera shot both sit in a scratch capture the editor throws away when it
+ * closes, so closing mid-way cannot leave half a photo on a card either.
+ *
+ * RE-FRAME PHOTO walks a picture through that same crop step - the pending draft's own
+ * source if there is one, else the card's **stored original** (`<id>.src.jpg`, kept since
+ * 2026-11-10 so an old crop can be widened again instead of zooming inside itself; cards
+ * from before then re-frame the square they have). Because everything is draft-scoped, a
+ * cancel of any of it - pick, re-frame, or remove - costs nothing but the scratch file.
  */
 @Composable
 fun VehicleEditorScreen(
@@ -106,7 +116,7 @@ fun VehicleEditorScreen(
     draft: Vehicle,
     isNew: Boolean,
     refusal: String?,
-    onSave: (Vehicle) -> Unit,
+    onSave: (Vehicle, PhotoEdit) -> Unit,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -124,19 +134,21 @@ fun VehicleEditorScreen(
     var year by remember(draft.id) { mutableStateOf(draft.year) }
     var notes by remember(draft.id) { mutableStateOf(draft.notes) }
 
-    // Photo state, all of it keyed to this card. [cropFrom] is a staged scratch capture the
-    // user is framing; [reframeFrom] is the card's *stored* photo opened through the same
-    // crop step — the difference between them is only what a cancel costs, so the panel and
-    // its USE THIS PHOTO path are shared. [pendingCapture] is the file handed to the camera,
-    // kept between the intent and its result because the result callback gets a boolean, not
-    // the file.
-    // [hasPhoto] and [well] describe what the card already has - the well shows the *stored*
-    // picture, and follows the VM's photo version, so a crop that lands repaints it without
-    // this screen holding onto the bitmap.
+    // Photo state, all of it keyed to this card and all of it **draft-scoped** until
+    // SAVE. [photoEdit] is the staged decision - Keep / Remove / Crop - the same kind of
+    // thing the text fields above are, and the only thing SAVE forwards to the view
+    // model. [cropFrom] is a staged scratch capture the user is framing in the panel;
+    // [reframeFrom] is an already-existing file (the card's stored original, or a draft
+    // crop's own source) opened through the same crop step. [pendingCapture] is the file
+    // handed to the camera, kept between the intent and its result because the result
+    // callback gets a boolean, not the file.
+    // [well] is the *stored* picture, refreshed by the VM's photo version; the well
+    // shows the draft crop's preview over it while a decision is pending, so nothing
+    // this screen draws can claim a photo that has not been saved.
     var cropFrom by remember(draft.id) { mutableStateOf<File?>(null) }
     var reframeFrom by remember(draft.id) { mutableStateOf<File?>(null) }
     var pendingCapture by remember(draft.id) { mutableStateOf<VehiclePhotoStore.Capture?>(null) }
-    var hasPhoto by remember(draft.id) { mutableStateOf(draft.photoFile != null) }
+    var photoEdit by remember(draft.id) { mutableStateOf<PhotoEdit>(PhotoEdit.Keep) }
     var well by remember(draft.id) { mutableStateOf<Bitmap?>(null) }
     var photoNote by remember(draft.id) { mutableStateOf<String?>(null) }
 
@@ -148,11 +160,33 @@ fun VehicleEditorScreen(
         vm.photo(draft.id, wellEdgePx * 2) { well = it }
     }
 
+    // Whatever scratch this card still has goes when the editor closes: a saved crop's
+    // copy is already deleted by the store's commit, a landed picture never lives here,
+    // and a picture the user walked away from has no business sitting in the cache.
+    // clearCapture only names `cacheDir/captures/<id>.jpg`, so this can never touch a
+    // stored photo, not even one this editor staged and then dropped.
+    DisposableEffect(draft.id) {
+        onDispose { vm.cancelPhoto(draft.id) }
+    }
+
+    /**
+     * A fresh pick replaces a pending draft framing outright. The reason is the one
+     * scratch file per card: [VehiclePhotoStore.stageFrom] and the camera both write
+     * `captures/<id>.jpg`, which is exactly where an un-saved draft crop's source lives,
+     * so the new picture would be cropped with the old framing's rectangle - the kind of
+     * wrong photo nobody can explain afterwards. Dropping the draft when staging starts
+     * makes the well show the old photo honestly, until the new framing lands.
+     */
+    fun dropPendingDraft() {
+        if (photoEdit is PhotoEdit.Crop) photoEdit = PhotoEdit.Keep
+    }
+
     val pickFromGallery = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
         if (uri != null) {
             photoNote = null
+            dropPendingDraft()
             vm.stagePickedPhoto(uri, draft.id) { staged ->
                 if (staged == null) {
                     photoNote = "Unreadable picture \u2014 card keeps its photo."
@@ -194,6 +228,8 @@ fun VehicleEditorScreen(
                 photoNote = "No camera available."
             } else {
                 photoNote = null
+                // The camera is about to write the same scratch file a draft crop reads.
+                dropPendingDraft()
                 pendingCapture = capture
                 shootPhoto.launch(capture.uri)
             }
@@ -201,6 +237,21 @@ fun VehicleEditorScreen(
     }
 
     val identityTail = draft.mac?.takeLast(6)?.uppercase() ?: draft.id.uppercase()
+
+    // What the well and its buttons describe: the staged decision first, the stored
+    // photo only while nothing is pending. This is why CANCEL can be true - the screen
+    // never draws a photo the disk does not have, and never forgets one it does.
+    val edit = photoEdit
+    val hasPhoto = when (edit) {
+        PhotoEdit.Remove -> false
+        is PhotoEdit.Crop -> true
+        PhotoEdit.Keep -> draft.photoFile != null
+    }
+    val wellPreview = when (edit) {
+        is PhotoEdit.Crop -> edit.preview ?: well // a failed preview decode costs a redraw, not the crop
+        PhotoEdit.Remove -> null
+        PhotoEdit.Keep -> well
+    }
 
     HudOverlayScrim {
         HudEnter(
@@ -212,6 +263,17 @@ fun VehicleEditorScreen(
             Column(
                 Modifier
                     .hudGlass()
+                    // The keyboard is an inset this screen must consume itself (Issue 1,
+                    // 2026-11-10): with targetSdk 35 edge-to-edge is forced, the window is
+                    // not resized for the soft keyboard, and the only inset the app takes
+                    // anywhere is DashboardRoot's system bars - so without this the scroll
+                    // viewport ran to the physical bottom and SAVE / CANCEL / DELETE sat
+                    // under the keys with no scroll that could reach them. imePadding
+                    // first, then the scroll: the glass panel and its viewport clamp to
+                    // (scrim - keyboard) and the buttons scroll into view. The root's
+                    // statusBars/navigationBars padding stays where it is - the IME is a
+                    // distinct inset, so nothing is counted twice (PhoneViewportTest).
+                    .imePadding()
                     .verticalScroll(rememberScrollState())
                     .padding(22.dp),
             ) {
@@ -224,7 +286,7 @@ fun VehicleEditorScreen(
 
                 PhotoWell(
                     hasPhoto = hasPhoto,
-                    preview = well,
+                    preview = wellPreview,
                     onGallery = {
                         pickFromGallery.launch(
                             PickVisualMediaRequest(
@@ -234,23 +296,30 @@ fun VehicleEditorScreen(
                     },
                     onCamera = { askForCamera() },
                     onReframe = {
-                        // The stored file itself, resolved and existence-checked by the VM;
-                        // the crop step writes nothing until USE THIS PHOTO, and a cancel of
-                        // a re-frame deletes nothing (there is no scratch capture behind it).
+                        // A pending draft crop re-frames its own source, so the user can
+                        // adjust the framing before SAVE; anything else opens what is on
+                        // disk, and `storedPhotoFile` answers the card's stored *original*
+                        // when it has one. Neither door writes: the panel only frames, and
+                        // USE THIS PHOTO only stages.
                         photoNote = null
-                        vm.storedPhotoFile(draft.id) { f ->
-                            if (f == null) {
-                                photoNote = "This card's photo file could not be opened."
-                            } else {
-                                reframeFrom = f
+                        val pending = photoEdit as? PhotoEdit.Crop
+                        if (pending != null) {
+                            reframeFrom = pending.source
+                        } else {
+                            vm.storedPhotoFile(draft.id) { f ->
+                                if (f == null) {
+                                    photoNote = "This card's photo file could not be opened."
+                                } else {
+                                    reframeFrom = f
+                                }
                             }
                         }
                     },
                     onRemove = {
-                        hasPhoto = false
-                        well = null
+                        // Draft-scoped since 2026-11-10: the well shows the wheel glyph and
+                        // the files stay exactly where they are until SAVE says otherwise.
+                        photoEdit = PhotoEdit.Remove
                         photoNote = null
-                        vm.removePhoto(draft.id) { refusal -> photoNote = refusal }
                     },
                 )
                 // A photo problem is said under the photo, not at the foot of a scrolling
@@ -336,11 +405,14 @@ fun VehicleEditorScreen(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.weight(1f).heightIn(min = 48.dp)) {
                         HudButton("SAVE", style = HudButtonStyle.PRIMARY) {
+                            // The typed fields and the staged photo decision leave this
+                            // screen together, and land together - one SAVE, or none.
                             onSave(
                                 draft.copy(
                                     name = name, type = type, plate = plate, maker = maker,
                                     model = model, year = year, notes = notes,
                                 ),
+                                photoEdit,
                             )
                         }
                     }
@@ -384,36 +456,24 @@ fun VehicleEditorScreen(
         )
     }
 
-    // One crop step for both doors: a staged scratch capture ([cropFrom]) or the card's own
-    // stored photo being re-framed ([reframeFrom]). The USE THIS PHOTO handler is identical —
-    // the store knows a re-frame's source is the target and keeps it — and only a cancel
-    // differs: a scratch capture goes, a re-frame leaves no trace.
+    // One crop step for both doors: a staged scratch capture ([cropFrom]) or an
+    // already-existing file being re-framed ([reframeFrom] - the card's stored original,
+    // or a pending draft crop's own source). The USE THIS PHOTO handler is identical and
+    // **touches no disk**: it decodes a preview for the well and stages a
+    // [PhotoEdit.Crop] the panel closes over. Cancel closes over nothing - a scratch
+    // capture the pick brought goes, a re-frame of an existing file leaves the file
+    // exactly as it was, and in both cases a pending draft decision survives, because
+    // its source file survives (scratch captures are cleaned once at editor close).
     val cropSource = cropFrom ?: reframeFrom
     cropSource?.let { staged ->
         PhotoCropPanel(
             source = staged,
             onUse = { rect ->
-                vm.applyPhotoCrop(staged, draft.id, rect) { landed, refusal ->
-                    // Both answers close the crop step; only a failure leaves a note. A null
-                    // landed means the picture never became a file, so the card still has the
-                    // photo it had. A landed file with a refusal is the other half: the JPEG is
-                    // in the folder and the card on screen wears it, but the record naming it did
-                    // not reach the disk, so it walks off at the next start. Saying so now beats
-                    // a photo the owner cannot find in their own folder.
+                vm.previewPhotoCrop(staged, rect, wellEdgePx * 2) { preview ->
                     cropFrom = null
                     reframeFrom = null
-                    when {
-                        landed == null -> photoNote =
-                            "Could not save the photo."
-                        refusal != null -> {
-                            hasPhoto = true
-                            photoNote = refusal
-                        }
-                        else -> {
-                            hasPhoto = true
-                            photoNote = null
-                        }
-                    }
+                    photoNote = null
+                    photoEdit = PhotoEdit.Crop(staged, rect, preview)
                 }
             },
             onCancel = {
