@@ -33,12 +33,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudButton
@@ -53,6 +53,7 @@ import com.alefinot.dashboardpp.ui.theme.hudGlass
 import com.alefinot.dashboardpp.vehicles.CropRect
 import com.alefinot.dashboardpp.vehicles.PhotoCrop
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
+import kotlin.math.roundToInt
 import java.io.File
 
 /**
@@ -86,14 +87,16 @@ import java.io.File
  * words and the buttons take what they need, the middle gets the rest (`weight(1f)`), and the
  * window is the shorter side of what is left.
  *
- * **The whole leftover box is the viewport; the centred square is the crop window.** Since
- * 2026-11-10 the photo is drawn across the viewport, not clipped to the window: a crop tool
- * shows what it is cutting away. The window - dimmed outside, bracketed at its corners,
- * ruled in thirds - is the square the card keeps, and it sits at exactly the centre and the
- * side the preview geometry and [PhotoCrop.rectFor] have always assumed, so the guarantee
- * from the earlier bench pass stands: what the eye frames is what the maths asks the file
- * for, to the pixel. Pinch and drag work anywhere on the photo, and the ZOOM −/+ and RESET
- * buttons put the same two numbers under a thumb for anyone whose fingers will not pinch.
+ * **The whole leftover box is the viewport; the centred square is the crop window.** The
+ * photo is drawn in the crop window's own box, so it covers the brackets exactly and the
+ * viewport outside the square stays dim - what the card keeps is what the eye holds. The
+ * window - dimmed outside, bracketed at its corners, ruled in thirds - is the square the
+ * card keeps, and it sits at exactly the centre and the side the preview geometry and
+ * [PhotoCrop.rectFor] have always assumed: photo, chrome and maths share one measurement,
+ * the box that `onSizeChanged` reports into [frame], so the guarantee from the earlier
+ * bench pass stands: what the eye frames is what the maths asks the file for, to the pixel.
+ * Pinch and drag work anywhere on the photo, and the ZOOM −/+ and RESET buttons put the
+ * same two numbers under a thumb for anyone whose fingers will not pinch.
  *
  * A tap on the scrim does nothing, and Back cancels: the plan is explicit that CANCEL keeps
  * the previous photo, and the previous photo is whatever is already on disk. This panel
@@ -142,13 +145,22 @@ fun PhotoCropPanel(
         if (bounds == null) unreadable = true else full = bounds
     }
 
-    // The preview follows the frame, because the frame is what says how many pixels are worth
-    // decoding for it. It is measured once per open, so this decodes at most twice: once with
-    // nothing known, once with the real box (rule 14 - no decode is asked for blind).
-    LaunchedEffect(source, frame.width) {
+    // The preview waits for BOTH facts it sizes itself from: the measured frame and the
+    // header's dimensions. `full` is a key for the same reason `frame.width` is - the two
+    // arrive from different effects in unpredictable order, and an effect that ran while
+    // either was still missing must be woken when it lands. Bench (2026-11-10, a 4000x3000
+    // pick): the header read lost that race, the effect returned early once, nothing ever
+    // re-ran it, and the panel sat on "reading the photo…" forever over a perfectly good
+    // picture. The `preview != null` guard keeps a second wake-up from decoding twice.
+    LaunchedEffect(source, frame.width, full) {
         val img = full ?: return@LaunchedEffect
         if (frame.width <= 0 || preview != null) return@LaunchedEffect
+        // A null here is a decode that genuinely failed - bounds read fine, pixels did not
+        // (an OOM on a low-RAM device, or a file torn between the two reads). Say so
+        // instead of lying "reading the photo…" forever, and let USE THIS PHOTO disable
+        // itself rather than cropping a file the panel could not even display.
         preview = decodePreview(source, img.first, img.second, frame.width)
+            ?: run { unreadable = true; null }
     }
 
     HudOverlayScrim {
@@ -227,40 +239,40 @@ fun PhotoCropPanel(
                             )
                             preview?.let { bmp ->
                                 val img = full ?: return@let
-                                val density = LocalDensity.current
-                                // Cover fit at zoom 1, then the user's zoom. Everything the
-                                // gesture maths speak in — the [frame] from onSizeChanged, the
-                                // pan deltas, the translation below — is **screen pixels**, so
-                                // the box is built in pixels too and only then divided through
-                                // the density into dp. An earlier build handed that pixel count
-                                // to Compose as dp straight: on a density-3 phone the preview
-                                // drew three times larger than the crop maths think it is, so a
-                                // fresh photo looked hopelessly stretched, the pan clamp (which
-                                // the model computes for the true size) refused almost every
-                                // drag, and what USE THIS PHOTO produced did not match what the
-                                // eye had framed. The displayed box keeps the file's aspect by
-                                // construction, which is what makes FillBounds safe here
-                                // instead of a distortion machine.
+                                // Cover fit at zoom 1, then the user's zoom — all of it in
+                                // **screen pixels**, and this time with no dp round-trip to
+                                // lose a density factor on the way. The old build measured
+                                // this image through Modifier.size(Dp, Dp) built by dividing
+                                // those pixel numbers through the density; on the bench Tab A
+                                // (@213 dpi) the layout came back one density smaller than
+                                // the numbers say, so a fresh photo drew 1092x820 inside the
+                                // 1092x1092 window — bands of empty frame top and bottom —
+                                // and zooming it to reach the brackets overshot the crop
+                                // USE THIS PHOTO performs. Modifier.layout measures and places
+                                // in raw px (Constraints.fixed, place(Int, Int)): the drawn
+                                // box is [PhotoCrop]'s cover fit, per pixel, and photo,
+                                // window and chrome are all anchored to the same [frame]
+                                // measurement. FillBounds stays safe because the box keeps
+                                // the file's aspect by construction.
                                 val cover = frame.width.toFloat() / minOf(img.first, img.second)
-                                val wPx = (img.first * cover * zoom).coerceAtLeast(1f)
-                                val hPx = (img.second * cover * zoom).coerceAtLeast(1f)
-                                with(density) {
-                                    Image(
-                                        bitmap = bmp.asImageBitmap(),
-                                        contentDescription = "the photo being framed for this card",
-                                        contentScale = ContentScale.FillBounds,
-                                        modifier = Modifier
-                                            .align(Alignment.Center)
-                                            .size(
-                                                (wPx / density.density).toDp(),
-                                                (hPx / density.density).toDp(),
+                                val wPx = (img.first * cover * zoom).roundToInt().coerceAtLeast(1)
+                                val hPx = (img.second * cover * zoom).roundToInt().coerceAtLeast(1)
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "the photo being framed for this card",
+                                    contentScale = ContentScale.FillBounds,
+                                    modifier = Modifier.layout { measurable, constraints ->
+                                        val placeable = measurable.measure(Constraints.fixed(wPx, hPx))
+                                        val vw = constraints.maxWidth
+                                        val vh = constraints.maxHeight
+                                        layout(vw, vh) {
+                                            placeable.place(
+                                                (vw - wPx) / 2 + offX.toInt(),
+                                                (vh - hPx) / 2 + offY.toInt(),
                                             )
-                                            .graphicsLayer {
-                                                translationX = offX
-                                                translationY = offY
-                                            },
-                                    )
-                                }
+                                        }
+                                    },
+                                )
                             }
                             if (preview == null && !unreadable) {
                                 Text(
@@ -271,9 +283,10 @@ fun PhotoCropPanel(
                                 )
                             }
                             // Dim outside, brackets and thirds inside: the crop metaphor,
-                            // drawn from the same box so it agrees with the window by
-                            // construction rather than by a second measurement.
-                            CropChrome(Modifier.fillMaxSize().align(Alignment.Center))
+                            // drawn from the window's own measurement - the same `frame`
+                            // the photo and the crop maths use - so the three squares
+                            // cannot drift apart and disagree with [PhotoCrop.rectFor].
+                            CropChrome(frame.width, Modifier.fillMaxSize().align(Alignment.Center))
                         }
                     }
                 }
@@ -325,16 +338,17 @@ fun PhotoCropPanel(
  * dimmed (that part of the photo is what the card will *not* keep), the square carries a
  * rule-of-thirds grid and corner brackets, and its outline is the window's own.
  *
- * It draws from [DrawScope]'s own box, so its square agrees with the invisible window
- * measured for the crop maths by construction: same centring rule (`(size − min edge)/2`)
- * in both places means they cannot drift apart and disagree with [PhotoCrop.rectFor] -
- * and a crop chrome that disagreed with the maths would be a picture frame over one photo
- * and a crop out of another.
+ * The square's side is [edgePx] - the px measurement the crop window reported when it was
+ * laid out, the very number [PhotoCrop.rectFor] is worked from - so chrome, photo and
+ * maths all agree on one square by construction. A second, independent measurement of
+ * "the same" square is exactly how a 2026-11-10 bench build ended up bracketing a 1092 px
+ * square around a photo and maths that lived in an 820 px one: two measurements, two
+ * answers, and a crop tool whose frame did not match its crop.
  */
 @Composable
-private fun CropChrome(modifier: Modifier = Modifier) {
+private fun CropChrome(edgePx: Int, modifier: Modifier = Modifier) {
     Canvas(modifier) {
-        val edge = minOf(size.width, size.height)
+        val edge = edgePx.toFloat()
         if (edge <= 0f) return@Canvas
         val left = (size.width - edge) / 2f
         val top = (size.height - edge) / 2f
