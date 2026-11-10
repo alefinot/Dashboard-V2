@@ -77,6 +77,17 @@
          users whose devices ignore it. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
+    <!-- The app's own updater (update/AppUpdate.kt). Like All files access, this is a special
+         access: the declaration buys nothing by itself, and the grant is made by the owner on a
+         system page the App Update card jumps to - there is no dialog code can raise. What it
+         permits is exactly one thing: this app handing a downloaded release APK to the package
+         installer. It is not sideloading in general - the only APK this app can offer is the
+         app-debug.apk of this repository's own releases, fetched over the same GitHub lane the
+         firmware card reads, and the system installer still shows its own confirmation. No
+         other app's package is ever named. Sideload distribution again (same trade recorded for
+         MANAGE_EXTERNAL_STORAGE above); a Play build would not need and not pass this. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Package visibility, Android 11+. The editor's TAKE PHOTO button hands an
          IMAGE_CAPTURE intent to whatever camera the device has, and from API 30 an app that
          does not declare the action here cannot see - so cannot resolve, so cannot launch -

@@ -228,6 +228,41 @@ class AppXmlWiringTest {
     }
 
     /**
+     * The app's own updater needs both halves of the same agreement the camera capture does:
+     * the manifest permission that permits handing an APK to the package installer, and a
+     * published provider root that can name the file it hands. Either half missing fails the
+     * same quiet way — INSTALL reports a refusal with no compile error anywhere — so the pair
+     * is asserted here, together with the third name that has to agree: `AppUpdate.APK_DIR`
+     * in code and the folder in the XML, the same agreement the camera capture's directory
+     * is checked under.
+     */
+    @Test
+    fun `the app updater may hand its downloaded APK to the installer`() {
+        val manifest = moduleFile("src/main/AndroidManifest.xml")
+        val declared = Regex("uses-permission[^>]*android\\.permission\\.([A-Z_]+)")
+            .findAll(manifest).map { it.groupValues[1] }.toSet()
+        assertTrue(
+            "REQUEST_INSTALL_PACKAGES is gone from the manifest: the App Update card can fetch " +
+                "an APK all day and never hand it to the installer - $declared",
+            declared.contains("REQUEST_INSTALL_PACKAGES"),
+        )
+        val updater = moduleFile("src/main/java/com/alefinot/dashboardpp/update/AppUpdate.kt")
+        val m = Regex("APK_DIR\\s*=\\s*\"([^\"]+)\"").find(updater)
+        if (m == null) {
+            throw AssertionError(
+                "AppUpdate no longer declares APK_DIR - update this test and files_path.xml " +
+                    "together",
+            )
+        }
+        val xml = moduleFile("src/main/res/xml/files_path.xml")
+        assertTrue(
+            "the updater writes APKs to \"${m.groupValues[1]}\" while files_path.xml publishes " +
+                "something else - getUriForFile will throw and INSTALL can only report a failure",
+            xml.contains("path=\"${m.groupValues[1]}/\""),
+        )
+    }
+
+    /**
      * The shared folder has to be a published root, or a drive cannot be shared (shared storage
      * plan §4), and both sides of that agreement are checked here.
      *

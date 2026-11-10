@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Files handed out by FileProvider. Four roots, and the split between them is the app's
+<!-- Files handed out by FileProvider. Five roots, and the split between them is the app's
      storage model in miniature (shared storage plan §2 and §4):
 
        Documents/Dashboard++/trips/    the drive CSVs, shared *where they lie*. The share sheet
@@ -18,6 +18,12 @@
                                        camera capture is a file another app writes into; both are
                                        regenerable or already cropped, which is what makes them
                                        safe to keep in a directory the OS may clear.
+       cache-path apk/                 the one APK the app updater downloads, handed to the
+                                       system package installer as a content:// URI. Same
+                                       scratch argument, one more reader: without this root
+                                       getUriForFile throws and INSTALL reports the failure.
+                                       The folder name is AppUpdate.APK_DIR in code, and
+                                       AppXmlWiringTest keeps the two spelling the same.
 
      `captures/` is the directory VehiclePhotoStore.captureFile writes, and the two names have
      to agree: getUriForFile throws IllegalArgumentException for a file under no declared root,
@@ -44,4 +50,8 @@
     <cache-path
         name="captures"
         path="captures/" />
+
+    <cache-path
+        name="apks"
+        path="apk/" />
 </paths>

@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.alefinot.dashboardpp.update.AppUpdate
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
@@ -36,6 +37,10 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
     // summary cache, and outlives tab switches (trip recording plan §5).
     val trips = remember { TripsViewModel(activity.application) }
     LaunchedEffect(Unit) { vm.boot() }
+    // The silent startup check for a newer released APK (`update/AppUpdate.kt`). Once per
+    // process is what the object's freshness gate gives, and the answer is only ever a bar
+    // dot and a card line — nothing on this path installs anything by itself.
+    LaunchedEffect(Unit) { AppUpdate.check(activity.application) }
     // The view model is remembered inside `setContent`, so the composable is the only thing
     // in the app that knows whether the screen is in front of somebody. That fact is what
     // makes "no reconnects with the screen off" enforceable: `ON_START` / `ON_STOP` bound

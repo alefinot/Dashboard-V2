@@ -201,6 +201,27 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
+        // ── App update ───────────────────────────────────────────────────
+        // The phone updating the phone. Same GitHub lane as the card above, different
+        // receiver: the installer runs on this device, so this card works with nothing
+        // linked, and the newest release is all it offers — the installer refuses
+        // downgrades, so offering them would be a button built to fail.
+        Column(
+            Modifier.fillMaxWidth().hudCard()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            CardHead("App Update")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "The installer replaces this app in place and keeps its data. A refused " +
+                    "or cancelled install changes nothing.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+            AppUpdateControl(installed = appVersion)
+        }
+        Spacer(Modifier.height(12.dp))
+
         // The page's switches live in cards with the sentence that explains them, not on
         // bare rows whose label is at the left edge of the screen and whose switch is at the
         // right one. `label { color: var(--accent-cyan) }` is still the page's own colour.

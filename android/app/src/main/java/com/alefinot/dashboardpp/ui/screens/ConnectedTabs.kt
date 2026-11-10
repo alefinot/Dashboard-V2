@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -61,6 +62,7 @@ import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripsEnabled
+import com.alefinot.dashboardpp.update.AppUpdate
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
@@ -201,6 +203,16 @@ fun AppShell(
     // The settled page. The bar's selection and which screen is `active` both follow
     // this one value.
     val page = BarLayout.pages.getOrElse(pager.currentPage) { BarLayout.home }
+
+    // The "a newer release is out" mark on the Settings slot, and the moment it is
+    // forgiven. The flag belongs to the process-wide updater (`update/AppUpdate.kt`), so the
+    // bar never asks GitHub anything of its own; it clears when the *settled* page is the one
+    // that draws the update card — every page is composed from startup, so "the card was
+    // composed" proves nobody saw it, while "the page settled on it" proves somebody did.
+    val updateDot by AppUpdate.showDot.collectAsStateWithLifecycle()
+    LaunchedEffect(page) {
+        if (page == AppTab.SETTINGS) AppUpdate.markSeen()
+    }
 
     // The page area's alpha, and the bar sheet's position when the pager itself is not
     // the thing moving. Both are Animatables: the first is read inside a graphics
@@ -532,6 +544,7 @@ fun AppShell(
                 cutPillActive = cutPillActive,
                 tripsAvailable = tripsAvailable,
                 connected = connected,
+                updateDot = updateDot,
                 onBounds = { slot, r -> bounds[slot] = r },
                 onSelect = { slot ->
                     val index = BarLayout.pageOf(slot)
@@ -707,6 +720,8 @@ private fun BottomBar(
     cutPillActive: Boolean,
     tripsAvailable: Boolean,
     connected: Boolean,
+    /** The Settings slot's "newer release" mark; the dot never sits on any other slot. */
+    updateDot: Boolean,
     onBounds: (AppTab, Rect) -> Unit,
     onSelect: (AppTab) -> Unit,
 ) {
@@ -744,6 +759,7 @@ private fun BottomBar(
                         colored = spec.colored,
                         size = spec.size,
                         box = spec.box,
+                        badge = tab == AppTab.SETTINGS && updateDot,
                         onBounds = { onBounds(tab, it) },
                         enabled = tab != AppTab.TRIPS || tripsAvailable,
                         onClick = { onSelect(tab) },
@@ -773,6 +789,8 @@ private fun BarGlyph(
     colored: Boolean = false,
     size: Dp,
     box: Dp,
+    /** A small amber mark on the slot's corner — the one thing the bar may shout about. */
+    badge: Boolean = false,
     enabled: Boolean = true,
     onBounds: (Rect) -> Unit = {},
     onClick: () -> Unit,
@@ -806,6 +824,17 @@ private fun BarGlyph(
             Image(icon, desc, modifier = Modifier.size(size).alpha(fade))
         } else {
             Image(icon, desc, colorFilter = ColorFilter.tint(tint), modifier = Modifier.size(size).alpha(fade))
+        }
+        if (badge) {
+            // Amber, not cyan: a selected slot is already cyan, and a mark that matches
+            // the selection cannot say "something here you have not looked at".
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(5.dp)
+                    .size(8.dp)
+                    .background(HudColors.Amber, CircleShape),
+            )
         }
     }
 }

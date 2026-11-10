@@ -16,7 +16,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 /**
- * One GitHub release that actually carries a firmware image for this unit.
+ * One GitHub release that actually carries the file the caller is after — for this
+ * object the unit's `firmware.bin`, for [AppUpdate] the app's own `app-debug.apk`.
  *
  * [version] is what every comparison in the firmware card runs on: the tag with its
  * leading `v` removed, so it matches the `DPPVER=` marker inside the image and the
@@ -99,6 +100,18 @@ object FirmwareReleases {
 
     /** The asset name every release carries, per AGENTS.md rule 27. */
     const val ASSET_NAME = "firmware.bin"
+
+    /** The app's own APK, the other asset rule 27 puts on every release — [AppUpdate] reads the
+     * same list for it. One endpoint, one user agent, one client, and one repository string to
+     * re-point at switch time (rule 23), which is why [AppUpdate] asks here instead of fetching. */
+    const val APK_ASSET_NAME = "app-debug.apk"
+
+    /**
+     * The release list's raw body, for the other reader of the same endpoint ([AppUpdate]).
+     * The lane itself stays in this file: it is the app's only GitHub home, and the one place
+     * the repository is named is what keeps AGENTS.md rule 23's switch to one edit.
+     */
+    internal fun fetchListBody(): String? = get(RELEASES_URL)
 
     /** How long a successful list stays good for an automatic refresh (REFRESH bypasses it). */
     const val LIST_TTL_MS = 60_000L
@@ -215,10 +228,11 @@ object FirmwareReleases {
      * Returns null when the body is not the array we asked for — that is how the
      * caller tells "no releases" (an empty list) from "GitHub answered something
      * else" (rate limit, moved route). Drafts never appear; a release without an
-     * uploaded [ASSET_NAME] asset never appears either, because rule 27 says every
-     * release meant to be flashed carries exactly one such file.
+     * uploaded [assetName] asset never appears either, because rule 27 says every
+     * release meant to be flashed carries exactly one such file — and every release
+     * meant to be installed carries its [APK_ASSET_NAME].
      */
-    fun parseReleases(body: String): List<FirmwareRelease>? {
+    fun parseReleases(body: String, assetName: String = ASSET_NAME): List<FirmwareRelease>? {
         // BleJson throws on a body that is not JSON at all — a login wall or an HTML error
         // page is exactly what a captive portal answers with. Same answer as "not an array":
         // the caller says GitHub answered something else.
@@ -235,7 +249,7 @@ object FirmwareReleases {
             val assets = release["assets"] as? List<*> ?: continue
             val asset = assets.firstOrNull { a ->
                 val m = a as? Map<*, *> ?: return@firstOrNull false
-                m["name"] == ASSET_NAME && m["state"] == "uploaded"
+                m["name"] == assetName && m["state"] == "uploaded"
             } as? Map<*, *> ?: continue
             val url = asset["browser_download_url"] as? String ?: continue
             if (url.isEmpty()) continue
@@ -304,11 +318,24 @@ object FirmwareReleases {
      * redirect page or a wrong asset into memory is what `MAX_BYTES` exists to stop.
      * Returns the byte count as a string, "" for a dead connection, or "too_big".
      */
-    private fun download(release: FirmwareRelease, tmp: File): String {
-        val request = Request.Builder()
-            .url(release.downloadUrl)
-            .header("User-Agent", USER_AGENT)
-            .build()
+    private fun download(release: FirmwareRelease, tmp: File): String = downloadAsset(
+        release.downloadUrl, tmp, OtaController.MAX_BYTES.toLong(),
+    ) { got ->
+        _file.value = FirmwareFileState.Downloading(release, got)
+    }
+
+    /**
+     * The shared streaming half: one GET, one cap, one progress beat, for either asset of
+     * either release card ([AppUpdate] passes its own ceiling). Returns the byte count as a
+     * string, "" for a dead connection or a refused response, or "too_big".
+     */
+    internal fun downloadAsset(
+        url: String,
+        tmp: File,
+        maxBytes: Long,
+        onProgress: (Long) -> Unit,
+    ): String {
+        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
         var lastPublished = 0L
         return try {
             http.newCall(request).execute().use { response ->
@@ -322,13 +349,13 @@ object FirmwareReleases {
                             val n = input.read(block)
                             if (n < 0) break
                             got += n
-                            if (got > OtaController.MAX_BYTES) return "too_big"
+                            if (got > maxBytes) return "too_big"
                             out.write(block, 0, n)
                             // Publish on a coarse step so the bar moves without recomposing
                             // a settings card for every 64 KB.
                             if (got - lastPublished >= 128 * 1024L) {
                                 lastPublished = got
-                                _file.value = FirmwareFileState.Downloading(release, got)
+                                onProgress(got)
                             }
                         }
                     }
