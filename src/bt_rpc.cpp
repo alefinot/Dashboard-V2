@@ -659,7 +659,8 @@ static void methodCalAmbient(uint16_t seq, uint32_t id, JsonVariantConst p) {
 
 // POST /api/time. The phone is the only clock source now, so this is the one
 // write that must not fail silently: an unvalidated value put the clock in 1970
-// or 2106, which broke the date display and the night-mode window (issue #40).
+// or 2106, which broke the date display and the weather card's day/night rule
+// (issue #40).
 static void methodTimeSet(uint16_t seq, uint32_t id, JsonVariantConst p) {
   if (!p["timestamp"].is<long long>()) {
     rpcErr(seq, id, "bad_timestamp");

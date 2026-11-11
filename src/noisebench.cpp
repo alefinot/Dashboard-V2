@@ -95,7 +95,7 @@ static void noiseBenchTask(void *pv) {
     job[r].id = NB_RUN_IDS[r];
     if (r == 1) noiseBenchTft = true;  // full-frame repaint every display tick
     if (r == 2) {
-      noiseBenchHoldBl = true;  // stop auto-brightness / night mode writes
+      noiseBenchHoldBl = true;  // stop auto-brightness backlight writes
       applyBacklight(10);
     }
     if (r == 3) applyBacklight(90);

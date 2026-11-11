@@ -331,7 +331,8 @@ static void drawDsDigitPair(LGFX_ST7789_4 &g, const char *str, int baseX, int y)
 
 // ----------------------------------------------------------------------------
 // Weather day/night state. Uses the fetched sunrise/sunset times when
-// available, otherwise falls back to the fixed NIGHT_MODE window.
+// available, otherwise asks the ambient light sensor, which is the same
+// reading auto-brightness dims the panel from.
 // ----------------------------------------------------------------------------
 // Bounded copy for the weather change cache. The shared weather text fields
 // are fixed-size arrays, not Strings (issue #8).
@@ -364,7 +365,18 @@ static bool weatherIsNight(const SensorSnapshot &snap) {
     int nowMin = snap.localHour * 60 + snap.minute;
     return (nowMin >= sunsetMin || nowMin < sunriseMin);
   }
-  return (snap.localHour >= NIGHT_MODE_START_HOUR || snap.localHour < NIGHT_MODE_END_HOUR);
+  // No sun times yet (the phone has never pushed weather to this unit): the
+  // photoresistor decides. Its reading is normalised over the calibrated band
+  // exactly the way auto-brightness normalises it (main.cpp), so "dark half of
+  // the band" is the same line the panel already starts dimming at, and it
+  // moves with a calibration the owner took in their own garage rather than
+  // with a clock window somebody guessed at. The smoothed reading is used, not
+  // the raw one: a single cloud must not flip the widget's icon. Zero counts as
+  // dark — a reading of literally nothing means the sensor has not been read
+  // yet, and a sun icon on a unit that has never seen light would be a lie.
+  if (LIGHT_SENSOR_BRIGHT_VAL == LIGHT_SENSOR_DARK_VAL) return true;
+  return filteredAmbientValue <=
+         ((float)LIGHT_SENSOR_DARK_VAL + (float)LIGHT_SENSOR_BRIGHT_VAL) / 2.0f;
 }
 
 // Effective weather card size in pixels. The CFG_TABLE band already clamps the
@@ -2265,25 +2277,6 @@ if (!vlw120Ready) {
   tAfterOdo = millis();
 
   finishFrame();
-}
-
-void checkNightMode(const SensorSnapshot &snap) {
-  static bool isNightModeActive = false, firstCheck = true;
-  if (snap.timeValid && ENABLE_NIGHT_MODE) {
-    bool shouldBeNightMode = (snap.localHour >= NIGHT_MODE_START_HOUR ||
-                              snap.localHour < NIGHT_MODE_END_HOUR);
-    if (shouldBeNightMode != isNightModeActive || firstCheck) {
-      isNightModeActive = shouldBeNightMode;
-      firstCheck = false;
-      // One writer for the backlight (issue #20): applyBacklight() owns the
-      // percent->duty conversion and the 0..100 limit, and it keeps
-      // currentBrightnessTarget aligned so the sleep/wake fades ramp from the
-      // level night mode actually left the panel at.
-      // The noise bench holds an explicit backlight level for bl10/bl90.
-      if (!noiseBenchHoldBl)
-        applyBacklight(isNightModeActive ? NIGHT_BACKLIGHT : BACKLIGHT_BRIGHTNESS);
-    }
-  }
 }
 
 // ----------------------------------------------------------------------------

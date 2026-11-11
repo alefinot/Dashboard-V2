@@ -21,14 +21,14 @@ class BleJsonTest {
     @Test
     fun readsAConfigChunkWithItsSettingsObject() {
         val obj = BleJson.obj(
-            """{"id":3,"i":2,"last":false,"d":{"speedScale":1.25,"nightMode":true,"cityName":"Aosta"}}""",
+            """{"id":3,"i":2,"last":false,"d":{"speedScale":1.25,"ENABLE_AUTO_BRIGHTNESS":true,"cityName":"Aosta"}}""",
         )!!
 
         assertEquals(2, BleJson.int(obj, "i"))
         assertEquals(false, BleJson.bool(obj, "last"))
         val d = obj["d"] as Map<*, *>
         assertEquals(1.25, d["speedScale"])
-        assertEquals(true, d["nightMode"])
+        assertEquals(true, d["ENABLE_AUTO_BRIGHTNESS"])
         assertEquals("Aosta", d["cityName"])
     }
 

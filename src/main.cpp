@@ -910,8 +910,8 @@ void loop() {
   lastLoopEntryMs = now;
 
   // An open install owns the unit. Nothing below this point runs while it is
-  // window is open: no sensor snapshot, no clock refresh, no dashboard draw, no
-  // night mode, no CPU scaler, no factory-reset button watch (decision B of the
+  // window is open: no sensor snapshot, no clock refresh, no dashboard draw,
+  // no CPU scaler, no factory-reset button watch (decision B of the
   // BLE install plan: producers parked, panel owns the screen). What does run is
   // the heap release the install asked for, the update frame and its progress bar,
   // the trip-button gesture, and the BLE liveness guard. The tick is slow on
@@ -1086,7 +1086,6 @@ void loop() {
         updateBigDisplay(snap);
         drawFpsOverlay();
         drawGpsDebugOverlay();
-        checkNightMode(snap);
       }
     } else if (otaUpdateInProgress && otaScreenStage == (uint8_t)OTA_SCREEN_UPDATING) {
       animateOtaProgress();

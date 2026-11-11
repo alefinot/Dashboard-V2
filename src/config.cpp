@@ -190,9 +190,6 @@ bool GPS_DEBUG_DEFAULT = false;
 int OFFSET_BIG_FPS_X = -9;
 int OFFSET_BIG_FPS_Y = -7;
 
-int NIGHT_MODE_START_HOUR = 23;
-int NIGHT_MODE_END_HOUR = 0;
-int NIGHT_BACKLIGHT = 29;
 bool DISPLAY_INVERT_COLORS = false;
 
 int REFRESH_SPEED_MS = 250;
@@ -240,7 +237,6 @@ int ambientLightValue = 0;
 float filteredAmbientValue = 0.0f;
 int FADE_DURATION_MS = 700;
 
-bool ENABLE_NIGHT_MODE = false;
 bool ENABLE_DYNAMIC_CPU = false;
 int MANUAL_CPU_FREQ = 240;
 bool ENABLE_CPU_THROTTLE = false;
@@ -842,14 +838,6 @@ static const CfgParam CFG_TABLE[] = {
   { &CPU_THROTTLE_TEMP_WARN, "CPU_THROTTLE_TEMP_WARN", "CPU_THR_W", nullptr, -50, 150, 50, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &CPU_THROTTLE_TEMP_CRIT, "CPU_THROTTLE_TEMP_CRIT", "CPU_THR_C", nullptr, -50, 150, 60, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &ENABLE_NIGHT_MODE, "ENABLE_NIGHT_MODE", "EN_NIGHT", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
-
-  { &NIGHT_MODE_START_HOUR, "NIGHT_MODE_START_HOUR", "NGHT_SRT", nullptr, 0, 23, 23, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &NIGHT_MODE_END_HOUR, "NIGHT_MODE_END_HOUR", "NGHT_END", nullptr, 0, 23, 0, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &NIGHT_BACKLIGHT, "NIGHT_BACKLIGHT", "NGHT_BL", nullptr, 0, 100, 29, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &DISPLAY_INVERT_COLORS, "DISPLAY_INVERT_COLORS", "INV_COLORS", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 

@@ -539,4 +539,74 @@ class ConfigStoreTest {
         assertFalse("a credential was written to the unit", gateway.stored.containsKey("WIFI_SSID"))
         assertEquals(9, (gateway.stored["A_ONE"] as Number).toInt())
     }
+
+    /**
+     * A backup written by a firmware that still had night mode names four keys this one does
+     * not have. They are dropped before anything is sent — `CFG_TABLE` has no row for them, so
+     * the unit would refuse the whole batch and report them as failures the owner cannot act
+     * on — and no line is printed for them, because a feature that left is not a setting that
+     * got lost.
+     *
+     * The drop is keyed, not general: the unlabelled `BOOST_LEVEL` rides in the same file and
+     * goes back as it always did. A restore that quietly dropped every key this app's schema
+     * has no row for would be a far worse bug than the one being fixed. The same four keys
+     * arriving through the other door — a stale app whose schema still has a night row — are
+     * held by the test below, because that path fails differently: the night row shares a
+     * batch with real rows, so the unit's `unknown_key` would refuse those too.
+     */
+    @Test
+    fun aBackupFromAFirmwareThatHadNightModeRestoresWithoutThem() = runBlocking {
+        val store = store(int("A_ONE", def = 1))
+        val backup = """{"A_ONE":9,"ENABLE_NIGHT_MODE":true,"NIGHT_MODE_START_HOUR":23,""" +
+            """"NIGHT_MODE_END_HOUR":0,"NIGHT_BACKLIGHT":29,"BOOST_LEVEL":7}"""
+        val report = store.restore(backup)
+        assertEquals(
+            "the four night-mode keys were counted as restored: ${report.summary}",
+            2, report.applied,
+        )
+        assertEquals("a silent drop is still reported as a problem: ${report.problems}", 0, report.leftOut)
+        assertEquals("a silent drop produced a report line: ${report.problems}", 0, report.problems.size)
+        assertTrue(
+            "a restore that said nothing still complained: ${report.summary}",
+            report.summary.contains("restored 2 keys"),
+        )
+        assertTrue(
+            "a night-mode key reached the unit",
+            gateway.writtenKeys.none { it in ConfigStore.LEGACY_REMOVED_KEYS },
+        )
+        assertTrue(
+            "a night-mode key landed on the unit anyway",
+            gateway.stored.keys.none { it in ConfigStore.LEGACY_REMOVED_KEYS },
+        )
+        assertTrue(
+            "a key the schema has no row for was dropped along with them",
+            gateway.stored["BOOST_LEVEL"] != null,
+        )
+    }
+
+    /**
+     * The same four keys when a **stale app** still draws them — an installed build whose
+     * bundled schema predates the removal, restoring onto firmware that no longer has them.
+     *
+     * Here the key arrives through the card loop rather than the unlabelled batch, which is a
+     * different code path and a different failure: the night row sits in the same batch as the
+     * rows around it, so the unit's `unknown_key` would refuse those too.
+     */
+    @Test
+    fun aStaleSchemaThatStillCarriesANightRowDoesNotSendIt() = runBlocking {
+        val store = store(
+            int("A_ONE", def = 1),
+            int("NIGHT_BACKLIGHT", min = 0.0, max = 100.0, def = 29),
+        )
+        val report = store.restore("""{"A_ONE":9,"NIGHT_BACKLIGHT":40}""")
+        assertEquals("the stale night row was restored: ${report.summary}", 1, report.applied)
+        assertEquals(0, report.refused)
+        assertEquals("a refused batch was reported: ${report.problems}", 0, report.problems.size)
+        assertTrue("the night row reached the unit", gateway.writtenKeys.none { it == "NIGHT_BACKLIGHT" })
+        assertEquals(
+            "the night row was left at the backup's value on the fake unit",
+            29, (gateway.stored["NIGHT_BACKLIGHT"] as Number).toInt(),
+        )
+        assertEquals(9, (gateway.stored["A_ONE"] as Number).toInt())
+    }
 }

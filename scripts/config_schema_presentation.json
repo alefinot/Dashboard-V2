@@ -386,28 +386,6 @@
           "max": 5000,
           "step": 100,
           "unit": "ms"
-        },
-        {
-          "id": "ENABLE_NIGHT_MODE",
-          "label": "Enable Night Mode"
-        },
-        {
-          "id": "NIGHT_MODE_START_HOUR",
-          "label": "Start Time",
-          "unit": "Hour"
-        },
-        {
-          "id": "NIGHT_MODE_END_HOUR",
-          "label": "End Time",
-          "unit": "Hour"
-        },
-        {
-          "id": "NIGHT_BACKLIGHT",
-          "label": "Night Backlight",
-          "type": "range",
-          "min": 0,
-          "max": 100,
-          "step": 1
         }
       ]
     },

@@ -2,7 +2,7 @@
  "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and scripts/config_schema_presentation.json (labels, grouping).",
  "schemaVersion": 1,
  "firmware": "2.0.4",
- "rows": 178,
+ "rows": 174,
  "groups": [
   {
    "id": "system_general",
@@ -508,42 +508,6 @@
        "uiMin": 100,
        "uiMax": 5000,
        "step": 100
-      },
-      {
-       "key": "ENABLE_NIGHT_MODE",
-       "kind": "bool",
-       "default": 0,
-       "label": "Enable Night Mode"
-      },
-      {
-       "key": "NIGHT_MODE_START_HOUR",
-       "kind": "int",
-       "default": 23,
-       "label": "Start Time",
-       "min": 0,
-       "max": 23,
-       "unit": "Hour"
-      },
-      {
-       "key": "NIGHT_MODE_END_HOUR",
-       "kind": "int",
-       "default": 0,
-       "label": "End Time",
-       "min": 0,
-       "max": 23,
-       "unit": "Hour"
-      },
-      {
-       "key": "NIGHT_BACKLIGHT",
-       "kind": "int",
-       "default": 29,
-       "label": "Night Backlight",
-       "min": 0,
-       "max": 100,
-       "slider": true,
-       "uiMin": 0,
-       "uiMax": 100,
-       "step": 1
       }
      ],
      "widget": "ambientCalibrate"

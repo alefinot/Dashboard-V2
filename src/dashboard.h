@@ -285,10 +285,6 @@ extern bool GPS_DEBUG_DEFAULT;
 extern int OFFSET_BIG_FPS_X;
 extern int OFFSET_BIG_FPS_Y;
 
-extern bool ENABLE_NIGHT_MODE;
-extern int NIGHT_MODE_START_HOUR;
-extern int NIGHT_MODE_END_HOUR;
-extern int NIGHT_BACKLIGHT;
 extern bool DISPLAY_INVERT_COLORS;
 
 extern int TARGET_FPS;
@@ -1000,7 +996,6 @@ void copyFixed(char *dst, size_t n, const char *src);
 // UI API
 // ----------------------------------------------------------------------------
 void updateBigDisplay(const SensorSnapshot &snap);
-void checkNightMode(const SensorSnapshot &snap);
 
 // ----------------------------------------------------------------------------
 // Sensor API

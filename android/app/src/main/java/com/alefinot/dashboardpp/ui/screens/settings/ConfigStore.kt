@@ -129,6 +129,23 @@ class ConfigStore(
         /** `WIFI_SSID_1` → `Wifi Ssid 1`. The schema's fallback label, and this one's. */
         fun humanize(key: String): String =
             key.lowercase().replace('_', ' ').replaceFirstChar { it.uppercaseChar() }
+
+        /**
+         * The four night-mode keys, deleted from `CFG_TABLE` on 2026-11-12.
+         *
+         * A backup written by an older firmware still names them, and a firmware without
+         * night mode has no row to put them in, so the unit would answer the whole batch
+         * `unknown_key` and the restore would report the night mode as a failure the owner
+         * cannot act on. [restore] drops them before anything is sent, and says nothing:
+         * they are not settings the owner chose that got lost, they are a feature that
+         * left, and there is no decision left to make about them.
+         *
+         * The unit-side copies of those keys are simply orphaned in NVS — nothing reads
+         * them, and the next factory reset takes them with everything else.
+         */
+        val LEGACY_REMOVED_KEYS = setOf(
+            "ENABLE_NIGHT_MODE", "NIGHT_MODE_START_HOUR", "NIGHT_MODE_END_HOUR", "NIGHT_BACKLIGHT",
+        )
     }
 
     private val _state = MutableStateFlow(SettingsState())
@@ -593,6 +610,9 @@ class ConfigStore(
      * cap, and a card is the largest group that still means something if one batch
      * turns out to be refused. Each batch is cut again by [RpcFraming] if it is
      * still too large.
+     *
+     * The only keys a restore throws away on its own are [LEGACY_REMOVED_KEYS]: keys of a
+     * feature this firmware no longer has, which the unit would refuse as a batch error.
      */
     suspend fun restore(text: String): RestoreReport {
         val parsed = BleJson.obj(text)
@@ -606,8 +626,12 @@ class ConfigStore(
         for (card in schema.groups.flatMap { it.cards }) {
             val batch = LinkedHashMap<String, Any?>()
             for (item in card.items) {
-                if (parsed.containsKey(item.key)) batch[item.key] = parsed[item.key]
-                item.keyY?.let { if (parsed.containsKey(it)) batch[it] = parsed[it] }
+                if (parsed.containsKey(item.key) && item.key !in LEGACY_REMOVED_KEYS) {
+                    batch[item.key] = parsed[item.key]
+                }
+                item.keyY?.let {
+                    if (parsed.containsKey(it) && it !in LEGACY_REMOVED_KEYS) batch[it] = parsed[it]
+                }
             }
             if (batch.isEmpty()) continue
             batches++
@@ -626,7 +650,8 @@ class ConfigStore(
         // it is a firmware row that the schema keeps out of the cards, and a backup
         // that did not bring it back would quietly turn advanced mode off.
         val rest = parsed.filter { (key, _) ->
-            !schema.isHidden(key) && schema.item(key) == null && !unshippable(key)
+            !schema.isHidden(key) && schema.item(key) == null && !unshippable(key) &&
+                key !in LEGACY_REMOVED_KEYS
         }
         if (rest.isNotEmpty()) {
             batches++
