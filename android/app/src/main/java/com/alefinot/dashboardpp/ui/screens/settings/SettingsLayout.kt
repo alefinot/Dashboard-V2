@@ -112,6 +112,28 @@ object SettingsLayout {
     }
 
     /**
+     * The readings a widget card draws for itself, keyed by the widget that owns them.
+     *
+     * `cal.ambient` takes no number the owner typed: it stores whatever the sensor says at the
+     * instant the button is pressed, which is why the firmware assigns `ambientLightValue` to the
+     * point's row (`bt_rpc.cpp`). A number that is the input to a button belongs on the card with
+     * that button — the unit's own page had it there, in the card's toolbar beside `Capture Dark`
+     * and `Capture Bright` — and once it is on the card it is not repeated under "Values the unit
+     * reports". [isCardReading] is what keeps the two from disagreeing.
+     *
+     * A reading is not searchable, here or on the unit's page (`webui.html` said live readings
+     * are "deliberately NOT searchable"), so hosting one on a card does not change what a query
+     * finds: the card shows when its rows match, and the number rides along.
+     */
+    private val CARD_READINGS = mapOf("ambientCalibrate" to "ambientLightValue")
+
+    /** The key this card's widget draws inside the card, if it draws one. */
+    fun cardReadingKey(widget: String?): String? = CARD_READINGS[widget]
+
+    /** True when [key] is drawn on its own card, and so must be left out of the readings list. */
+    fun isCardReading(key: String): Boolean = CARD_READINGS.containsValue(key)
+
+    /**
      * What one group is made of on screen: its cards, each with the rows it will draw.
      *
      * The section titles are recomputed here rather than carried, because a section header
@@ -130,6 +152,14 @@ object SettingsLayout {
             if (!cardShown(card, query, advanced)) continue
             val kept = rowsOf(card, query, advanced).toSet()
             val body = ArrayList<RenderBody>()
+            // A reading the card's own control acts on is drawn on the card, above the control,
+            // the way the unit's page put it in that card's toolbar. Nothing to draw when the
+            // unit has not sent it — an absent reading is not a zero.
+            cardReadingKey(card.widget)?.let { key ->
+                state.unitStatus.firstOrNull { it.first.key == key }?.let { (spec, value) ->
+                    body += RenderReading(spec, value)
+                }
+            }
             // A card that grew an action on the unit's page draws that action inside
             // itself; the rows the card holds are still rows, and they stay under it.
             card.widget?.let { body += RenderWidget(it) }
@@ -339,6 +369,15 @@ data class RenderRow(val item: SchemaItem) : RenderBody
  * `odometerSet`, `firmwareUpdate`, `tempCalibrate`, `batteryCalibrate`).
  */
 data class RenderWidget(val widget: String) : RenderBody
+
+/**
+ * A value the unit reports that a widget card draws inside itself — the ambient light ADC on the
+ * card whose capture buttons store it.
+ *
+ * It is not a [RenderRow]: there is no setting behind it, nothing to write back, and no debounce
+ * timer to own it. The card draws it read-only, above the control that acts on it.
+ */
+data class RenderReading(val spec: ConfigSchema.ExtraSpec, val value: Any?) : RenderBody
 
 /**
  * A card as the grid moves it: its heading and its body together, because the card is the

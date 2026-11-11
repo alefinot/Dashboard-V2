@@ -54,6 +54,7 @@ import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorCard
 import com.alefinot.dashboardpp.ui.screens.settings.RenderBlock
+import com.alefinot.dashboardpp.ui.screens.settings.RenderReading
 import com.alefinot.dashboardpp.ui.screens.settings.RenderRow
 import com.alefinot.dashboardpp.ui.screens.settings.RenderSection
 import com.alefinot.dashboardpp.ui.screens.settings.RenderWidget
@@ -479,16 +480,18 @@ fun DashboardSettingsScreen(
                 }
             }
 
-            // Values the unit streams that the schema describes as readings rather than
-            // settings — the ambient light ADC, the ESP core and build versions. They are read
-            // only on purpose: a stepper next to a compiled-in version string only invites a
-            // write the unit will spend a flash cycle refusing.
-            if (state.unitStatus.isNotEmpty()) {
+            // Values the unit streams that the schema describes as readings rather than settings
+            // — the ESP core and build versions. They are read only on purpose: a stepper next to a
+            // compiled-in version string only invites a write the unit will spend a flash cycle
+            // refusing. A reading a card's own control acts on is drawn on that card instead, so it
+            // is left out here rather than shown twice.
+            val readings = state.unitStatus.filterNot { SettingsLayout.isCardReading(it.first.key) }
+            if (readings.isNotEmpty()) {
                 item(key = "readings") {
                     HudAccordion(open = extrasOpen, modifier = Modifier.padding(bottom = 14.dp)) {
                         HudAccordionHeader(
                             title = "Values the unit reports",
-                            meta = "${state.unitStatus.size}",
+                            meta = "${readings.size}",
                             open = extrasOpen,
                             onClick = { extrasOpen = !extrasOpen },
                         )
@@ -498,35 +501,7 @@ fun DashboardSettingsScreen(
                                     Modifier.fillMaxWidth().hudCard()
                                         .padding(horizontal = 14.dp, vertical = 12.dp),
                                 ) {
-                                    state.unitStatus.forEach { (spec, value) ->
-                                        // The asset's kinds are lower-case ("int", "text"), and
-                                        // the store has already turned a whole-number reading
-                                        // into an Int so this row draws "2678" and not "2678.0".
-                                        val numeric = spec.kind.equals("int", ignoreCase = true)
-                                        SettingsRow(
-                                            item = SchemaItem(
-                                                key = spec.key,
-                                                kind = if (numeric) ValueKind.INT else ValueKind.STR,
-                                                control = RowControl.TEXT,
-                                                label = spec.label,
-                                            ),
-                                            view = RowView(
-                                                value,
-                                                null,
-                                                RowStatus.SYNCED,
-                                                null,
-                                            ),
-                                            imperial = false,
-                                            unitSwap = emptyMap(),
-                                            enabled = false,
-                                            onEdit = { _, _ -> },
-                                            readOnlyHint = if (spec.live) {
-                                                "live reading, not a setting"
-                                            } else {
-                                                "fixed in firmware, not a setting"
-                                            },
-                                        )
-                                    }
+                                    readings.forEach { (spec, value) -> ReadingRow(spec, value) }
                                     // The one extra that is a real setting (the fuel calibration
                                     // table) has no row of its own here, so the page says where
                                     // it lives rather than pretending the card is a reading.
@@ -726,6 +701,7 @@ private fun CardBlock(
         }
         block.body.forEach { renderable ->
             when (renderable) {
+                is RenderReading -> ReadingRow(renderable.spec, renderable.value)
                 is RenderSection -> SectionHead(renderable.title)
                 is RenderWidget -> WidgetControl(
                     widget = renderable.widget,
@@ -752,6 +728,43 @@ private fun CardBlock(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// A value the unit reports
+// ---------------------------------------------------------------------------
+
+/**
+ * One reading, drawn as a row that cannot be edited — the shape every other row on the page has,
+ * so a number the owner cannot change is still recognisably the same kind of line.
+ *
+ * The row is a fiction: [SchemaItem] describes a setting, and there is no setting behind a reading,
+ * so this builds the plainest one that exists (an int or a string, a text control, nothing else)
+ * purely so the row widget does the laying out. It is `enabled = false` with a hint that says why
+ * in the owner's words rather than the firmware's, because the honest answer to "why can't I type
+ * in this box" is that the box is not a setting. The store has already turned a whole-number
+ * reading into an `Int`, so an ADC count draws as "2678" and not "2678.0".
+ *
+ * Two callers, on purpose: the readings card, and the one card whose own control acts on the
+ * number (`SettingsLayout.CARD_READINGS`). A reading must not be drawn in both places at once.
+ */
+@Composable
+private fun ReadingRow(spec: ConfigSchema.ExtraSpec, value: Any?) {
+    val numeric = spec.kind.equals("int", ignoreCase = true)
+    SettingsRow(
+        item = SchemaItem(
+            key = spec.key,
+            kind = if (numeric) ValueKind.INT else ValueKind.STR,
+            control = RowControl.TEXT,
+            label = spec.label,
+        ),
+        view = RowView(value, null, RowStatus.SYNCED, null),
+        imperial = false,
+        unitSwap = emptyMap(),
+        enabled = false,
+        onEdit = { _, _ -> },
+        readOnlyHint = if (spec.live) "live reading, not a setting" else "fixed in firmware, not a setting",
+    )
 }
 
 // ---------------------------------------------------------------------------

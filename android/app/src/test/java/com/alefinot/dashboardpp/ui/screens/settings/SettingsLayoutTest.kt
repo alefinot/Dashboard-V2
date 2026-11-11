@@ -251,8 +251,77 @@ class SettingsLayoutTest {
                     is RenderSection -> it.title
                     is RenderRow -> it.item.key
                     is RenderWidget -> it.widget
+                    is RenderReading -> it.spec.key
                 }
             },
+        )
+    }
+
+    /**
+     * The ambient light reading is drawn on the Auto Brightness card, above the two capture
+     * buttons that store it — and so is not repeated in the list of values the unit reports.
+     *
+     * `cal.ambient` takes no number the owner typed: it stores whatever the sensor says at the
+     * instant the button is pressed, which is why the firmware writes `ambientLightValue` straight
+     * into the point's row. A number that is the input to a control belongs beside that control,
+     * which is where the unit's own page kept it, in that card's toolbar. Two rules keep the move
+     * honest: an absent reading draws nothing (a card that invents a zero is a card that lies), and
+     * a reading is still not searchable, on this page or the unit's.
+     */
+    @Test
+    fun theAmbientReadingIsDrawnOnTheCardWhoseButtonsStoreIt() {
+        val spec = ConfigSchema.ExtraSpec(
+            key = "ambientLightValue",
+            label = "Ambient light reading (ADC)",
+            kind = "int",
+            readOnly = false,
+            live = true,
+            countKey = null,
+        )
+        val read = SettingsLayout.blocksFor(
+            group, ConfigStore.SettingsState(unitStatus = listOf(spec to 2678)), "", false,
+        ).first { it.card.title == "Auto brightness" }.body
+
+        assertEquals(
+            "the reading is no longer the first thing on the card, above the capture buttons " +
+                "that store it",
+            listOf("ambientLightValue", "ambientCalibrate", "ENABLE_AUTO_BRIGHTNESS"),
+            read.map {
+                when (it) {
+                    is RenderReading -> it.spec.key
+                    is RenderWidget -> it.widget
+                    is RenderRow -> it.item.key
+                    is RenderSection -> it.title
+                }
+            },
+        )
+        assertEquals(
+            "2678 arrived as something the page would draw as 2678.0 or not at all",
+            2678, (read.first() as RenderReading).value,
+        )
+        assertTrue(
+            "a reading the page draws on its own card is still counted by the readings list, so " +
+                "the owner sees it twice",
+            SettingsLayout.isCardReading("ambientLightValue"),
+        )
+        assertNull(
+            "the readings list would now drop a value no card has taken responsibility for",
+            SettingsLayout.cardReadingKey(null),
+        )
+    }
+
+    /** The unit sent nothing for the reading: the card shows its control and invents no number. */
+    @Test
+    fun aReadingTheUnitNeverSentIsNotDrawnAsZero() {
+        val body = SettingsLayout.blocksFor(group, ConfigStore.SettingsState(), "", false)
+            .first { it.card.title == "Auto brightness" }.body
+        assertTrue(
+            "a card grew a reading the unit never sent",
+            body.none { it is RenderReading },
+        )
+        assertTrue(
+            "the capture buttons went away with the number above them",
+            body.any { it is RenderWidget },
         )
     }
 

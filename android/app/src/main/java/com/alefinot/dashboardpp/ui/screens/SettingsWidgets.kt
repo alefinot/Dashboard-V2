@@ -167,6 +167,13 @@ private fun OdometerControl(
  * points a fixed distance apart), and the note says so, because a capture that moved a value
  * nobody touched looks like a bug unless the screen mentions it. The read is forced
  * afterwards: the rows of this same card just changed on the unit.
+ *
+ * What the two buttons store is whatever the sensor says at the instant one is pressed — the
+ * firmware assigns `ambientLightValue` to the point's row (`bt_rpc.cpp`) — so the reading itself
+ * is drawn on this card, above the buttons, by `SettingsLayout.CARD_READINGS`. It is a snapshot of
+ * the last read rather than a stream (the settings page has no telemetry feed of its own), and the
+ * forced re-read below is what keeps it honest: after a capture the number on the card is the
+ * number that just went into the row, not the one that was on the screen when the finger landed.
  */
 @Composable
 private fun AmbientCalibrationControl(
@@ -181,7 +188,7 @@ private fun AmbientCalibrationControl(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
     ) {
         Text(
-            "captures the current light reading",
+            "stores the reading above as the point you tap",
             style = HudeCfgHelp(),
             color = HudColors.TextDim,
             modifier = Modifier.weight(1f),
