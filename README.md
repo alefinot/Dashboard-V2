@@ -954,7 +954,7 @@ The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradle
 
 | Slot | `AppTab` | Screen | |
 |---|---|---|---|
-| 0 | `LIVE` | `LiveTab` | The app's own live gauges, drawn from the telemetry the unit pushes (1 Hz) |
+| 0 | `LIVE` | `LiveTab` | The app's own live gauges, drawn from the telemetry the unit pushes (1 Hz) — five cards, and nothing about the dashboard's own health (see *The Live page*) |
 | 1 | `TRIPS` | `TripsTab` | Recorded drives, badges, filter, detail |
 | 2 | `VEHICLES` | `VehicleScreen` | **The garage, and the only place a pairing or a connection is made. `centre` and `home`: the app opens here.** |
 | 3 | `WEB` | `DashboardSettingsScreen` | The unit's configuration, drawn natively and read over Bluetooth. The enum case is still spelled `WEB` — renaming it means touching every `when` that switches on it — and the bar's glyph says "Dashboard settings" |
@@ -963,6 +963,10 @@ The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradle
 Index 2 is the middle of five and the app opens there (`BarLayout.home`, which is the pager's `initialPage`). The garage became the home screen because it is where a connection is made: before it, every page assumed a dashboard was already there and an unreachable one left the whole app with one sentence and an address box. The bar carries one glyph size (`BarLayout.glyph`) - the centre larger - and a dimmed slot means "nothing behind this right now", not "quieter".
 
 Pages are composed lazily but kept warm once reached, and the pager distinguishes two questions that used to be collapsed into one: "is this page inside the viewport" (may it paint and take touches) and "is this the settled page" (may it put requests on the one link). Collapsing them made swipes sluggish; two pages polling the same link was a real bug in the HTTP era, and the same rule keeps the recorder and the settings page from reading over each other now.
+
+### The Live page: five cards, and nothing about the dashboard itself
+
+`ui/screens/LiveTab.kt` draws the telemetry the unit pushes, and nothing else: **SPEED** (the round gauge), **THIS TRIP**, **POWER · COOLANT**, **FUEL**, **GNSS**. The battery and coolant figures carry the five-minute traces; the rest are strips of plain figures. The sixth card the WebUI page had — `UNIT`, with the panel's frame rate, its free heap and the ambient light ADC — came out on 2026-11-12 at the maintainer's request, because a driver does not open a driving screen to ask how the dashboard is doing and all three of those numbers are read better where they now live: *Current / Average / Target FPS* and the heap lines are in the **Performance Monitor** card off the unit's own `perf` reply at 1 s (four times the rate, with the low-water mark and the largest free block beside them), and the ADC is on the **Auto Brightness** card above the two capture buttons that store it. `LivePageReadoutsTest` still guards every other figure the old two-up stat-cell wall drew, and now holds this removal as well, naming where each of the three went so the move cannot be undone from one file. The card's other two claims were not readings: the firmware version is on the vehicle card and the firmware card, and *Uptime* is a `perf` row.
 
 ### The garage: a card is a vehicle and the unit that belongs to it
 

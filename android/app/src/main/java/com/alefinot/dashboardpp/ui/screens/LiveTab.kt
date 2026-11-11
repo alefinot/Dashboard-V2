@@ -189,7 +189,6 @@ fun LiveTab(active: Boolean) {
             PowerCard(snapshot, trends, step = 3)
             FuelCard(snapshot, step = 4)
             GnssCard(snapshot, step = 5)
-            UnitCard(snapshot, step = 6)
         } else {
             // The page is here, the link may be up, and nothing has been
             // measured yet. Say that and nothing more: the reason a frame is
@@ -255,9 +254,10 @@ private fun LiveCard(
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
             content()
-            // 8 dp, not the page's 12: six of these stacked inside one 748 dp screen is the
-            // whole difference between the UNIT card landing above the tab bar and needing a
-            // scroll (measured on the bench, 2026-11-08).
+            // 8 dp, not the page's 12: five of these stacked inside one 748 dp screen is the
+            // whole difference between the GNSS card landing above the tab bar and needing a
+            // scroll (measured on the bench, 2026-11-08, and still true with the UNIT card
+            // gone on 2026-11-12 - the page got shorter, the gap stayed the reason it fits).
             Spacer(Modifier.height(HudSpace.Gap))
         }
     }
@@ -664,24 +664,6 @@ private fun GnssCard(s: Snapshot, step: Int) {
             Figure("SATS", s.sats.toString(), color = if (s.fix == 1) HudColors.Green else HudColors.Amber),
             Figure("HDOP", if (s.hdop >= 0) fmt(s.hdop, 1) else "—"),
             Figure("ALT", if (s.alt >= 0) fmt(s.alt, 0) else "—", if (s.alt >= 0) "m" else ""),
-        )
-    }
-}
-
-/**
- * The dashboard's own health: how fast its display is running, how much heap it has left,
- * and the ambient light sensor the page drew as a bare number. The version and the uptime are
- * the card's note, because they identify the unit rather than measure it.
- */
-@Composable
-private fun UnitCard(s: Snapshot, step: Int) {
-    LiveCard(title = "UNIT", step = step, meta = "V${s.version} · up ${hudDuration(s.up * 1000L)}") {
-        Strip(
-            Figure("DISPLAY", fmt(s.fps, 0), "fps"),
-            Figure("FREE HEAP", (s.heap / 1024L).toString(), "kB"),
-            // "amb" is the ambient LIGHT sensor (raw value, no unit) - the page showed
-            // it as a bare reading, so this does too. Not a temperature.
-            Figure("LIGHT", s.amb.toString()),
         )
     }
 }

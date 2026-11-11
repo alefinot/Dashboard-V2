@@ -7,10 +7,10 @@ import org.junit.Test
 
 /**
  * The Live page was re-composed for the phone (phone-layout plan §4a): the wall of two-up stat
- * cells became six cards with traces. That is a layout change, and a layout change on the one
+ * cells became cards with traces. That is a layout change, and a layout change on the one
  * page whose job is to show *everything* is exactly where a reading gets quietly dropped - so
  * the guard here is on the data, not on the wording: every figure the old page drew has to be
- * read by the new one.
+ * read by the new one, or has to be named below as something the page no longer claims.
  *
  * Labels were renamed where the old name only made sense beside its neighbours ("AVG ECO" next
  * to "INST ECO" became "INST"/"AVG" inside a card already titled FUEL), which is why these
@@ -51,14 +51,11 @@ class LivePageReadoutsTest {
             "fuelSt" to "the fuel input's state",
             "volts" to "battery",
             "temp" to "coolant",
-            "amb" to "the ambient light sensor",
             "sats" to "satellite count",
             "hdop" to "HDOP",
             "alt" to "altitude",
             "tmrSt" to "the acceleration timer's state",
             "tmrS" to "the acceleration timer's seconds",
-            "fps" to "the unit's display refresh",
-            "heap" to "free heap",
             "lat" to "the position",
             "lon" to "the position",
             "fix" to "the fix state",
@@ -67,6 +64,64 @@ class LivePageReadoutsTest {
             .filter { (field, _) -> !Regex("\\.$field\\b").containsMatchIn(page) }
             .map { (field, what) -> "$field ($what)" }
         assertTrue("the redesigned Live page stopped reading: $missing", missing.isEmpty())
+    }
+
+    /**
+     * Three readings the UNIT card drew, taken out on 2026-11-12 at the maintainer's request:
+     * a driver does not come to the Live page to ask how the dashboard itself is doing, and
+     * every one of them is measured better where it now lives.
+     *
+     *  - `fps` and `heap` — the **Performance Monitor** card on the unit's settings page reads
+     *    them from the unit's own `perf` reply, at 1 s, with current/average/target frame rate,
+     *    the low-water heap mark and the largest free block beside them. The Live card had one
+     *    number from the 1 Hz telemetry frame.
+     *  - `amb` — the **Auto Brightness** card on the unit's settings page draws it as *Ambient
+     *    light reading (ADC)*, above the two capture buttons that store that very reading
+     *    (`SettingsLayout.CARD_READINGS`, held by `SettingsLayoutTest`), and the same value is
+     *    what auto-brightness dims the panel from. A bare `LIGHT 2844` with no band beside it
+     *    was the least useful place in the app for that number.
+     *
+     * What the card also carried — the firmware version and the uptime — is not a reading and
+     * is not lost either: `perf` prints *Uptime*, and the version is in the settings page's
+     * firmware card and on the vehicle card.
+     */
+    @Test
+    fun theUnitCardIsGoneAndItsThreeReadingsLiveWhereTheyAreMeasured() {
+        val page = codeOnly("LiveTab.kt")
+        assertFalse(
+            "the Live page draws a UNIT card again",
+            Regex("title = \"UNIT\"").containsMatchIn(page),
+        )
+        val cards = Regex("LiveCard\\(\\s").findAll(page).count()
+        assertTrue(
+            "the Live page grew past the five cards it is allowed to hold ($cards LiveCard calls) - " +
+                "the sixth, UNIT, came out on 2026-11-12: fps and heap belong to the Performance " +
+                "Monitor and the light ADC to the Auto Brightness card",
+            cards <= 5,
+        )
+        for (field in listOf("fps", "heap", "amb")) {
+            assertFalse(
+                "the Live page reads .$field again - it belongs to the Performance Monitor and " +
+                    "the Auto Brightness card, not to a driving screen",
+                Regex("\\.$field\\b").containsMatchIn(page),
+            )
+        }
+        // Where they went. Named here so the move cannot be undone from one file.
+        val monitor = File(screens, "settings/PerfMonitorCard.kt")
+        assertTrue("missing PerfMonitorCard.kt", monitor.exists())
+        val monitorText = monitor.readText()
+        assertTrue(
+            "the performance monitor no longer reads the frame rate the Live card gave up",
+            Regex("fpsCurrent").containsMatchIn(monitorText),
+        )
+        assertTrue(
+            "the performance monitor no longer reads the heap the Live card gave up",
+            Regex("freeHeap").containsMatchIn(monitorText),
+        )
+        assertTrue(
+            "the performance monitor no longer prints the uptime the Live card carried",
+            Regex("Uptime").containsMatchIn(monitorText),
+        )
     }
 
     @Test
