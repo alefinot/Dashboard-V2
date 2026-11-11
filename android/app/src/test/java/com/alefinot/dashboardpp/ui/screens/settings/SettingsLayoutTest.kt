@@ -14,7 +14,7 @@ import org.junit.Test
 /**
  * Which rows the settings page is allowed to draw, in what order, and where the cards land.
  *
- * The unit's form map has 242 rows; the generated schema describes 179 of them; the page
+ * The unit's form map has 242 rows; the generated schema covers 178 of them; the page
  * draws a subset of those depending on the master switch and the search box. Every one of
  * those reductions is a setting the owner cannot reach, so each has to be written down with
  * its reason — and this is the check that a row never disappears twice.

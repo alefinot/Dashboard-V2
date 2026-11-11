@@ -1,8 +1,8 @@
 {
  "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and scripts/config_schema_presentation.json (labels, grouping).",
  "schemaVersion": 1,
- "firmware": "2.0.3",
- "rows": 179,
+ "firmware": "2.0.4",
+ "rows": 178,
  "groups": [
   {
    "id": "system_general",
@@ -1806,37 +1806,11 @@
      ]
     }
    ]
-  },
-  {
-   "id": "more",
-   "title": "More settings",
-   "icon": "more",
-   "cards": [
-    {
-     "title": "More settings",
-     "items": [
-      {
-       "key": "ENABLE_CIRCLE_TEST",
-       "kind": "bool",
-       "default": 0,
-       "label": "Enable Circle Test",
-       "generated": true
-      },
-      {
-       "key": "FUEL_ADC_VREF",
-       "kind": "float",
-       "default": 3.3,
-       "label": "Fuel Adc Vref",
-       "generated": true,
-       "min": 2.5,
-       "max": 4.2
-      }
-     ]
-    }
-   ]
   }
  ],
- "hidden": [],
+ "hidden": [
+  "FUEL_ADC_VREF"
+ ],
  "advancedKey": "ADV_MODE",
  "extras": {
   "fuelCalOhms": {

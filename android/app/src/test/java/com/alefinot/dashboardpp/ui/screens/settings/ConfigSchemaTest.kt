@@ -127,12 +127,11 @@ class ConfigSchemaTest {
     }
 
     /**
-     * A hidden key is one the unit has in NVS but cannot act on. Drawing it would
-     * be a lie, so the renderer must never reach one. The list is empty as of the
-     * BLE-only cleanup (`7104bf96` deleted the 14 dead V2 keys out of `CFG_TABLE`
-     * instead of hiding them), and this test stays as the guard for the day the
-     * generator lists one again — a key retired from the firmware but left in a
-     * backup is exactly the case it catches.
+     * A hidden key is one the app must never draw. The list carries two kinds: a
+     * key the unit has no feature for (the 14 dead V2 keys were deleted from
+     * `CFG_TABLE` rather than hidden, `7104bf96`), and a key the unit applies but a
+     * phone must not move (`FUEL_ADC_VREF`, issue #55). Either way the renderer must
+     * never reach one, and this is the guard that says it did not.
      */
     @Test
     fun noHiddenKeyReachesAGroup() {
@@ -141,6 +140,22 @@ class ConfigSchemaTest {
             assertTrue("hidden key ${item.key} is rendered", !schema.isHidden(item.key))
             item.keyY?.let { assertTrue("hidden key $it is rendered", !schema.isHidden(it)) }
         }
+    }
+
+    /**
+     * The fuel reference is the second kind of hidden key, and the one a future
+     * "let's just give it a label" edit would quietly put back on the page — which
+     * is the bug issue #55 was: a typed number moving the fuel trim. It has to stay
+     * off every card and off the unknown-keys card alike, while the firmware keeps
+     * the row, its NVS key and its place in every backup.
+     */
+    @Test
+    fun theFuelReferenceIsHiddenRatherThanDeleted() {
+        val schema = SettingsFixtures.asset
+        val key = "FUEL_ADC_VREF"
+        assertTrue("the settings page draws the fuel ADC reference", schema.isHidden(key))
+        assertNull("the fuel ADC reference is a card row", schema.item(key))
+        assertNull("the fuel ADC reference is a streaming extra", schema.extra(key))
     }
 
     /**

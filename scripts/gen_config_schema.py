@@ -245,6 +245,21 @@ DEAD_KEYS = [
     "NTP_ENABLED", "NTP_SERVER",
 ]
 
+# Keys that are NOT dead: the firmware still applies them, they keep their NVS
+# name, and every config backup still carries them - but the app must not offer
+# a field for them. A number a phone can move is a number someone will move
+# while the engine is running, so it stays off the settings page; setting one is
+# a bench job over the RPC, not a rider's slider. It is listed here, and not
+# simply left out of the presentation tree, so the drift check keeps accounting
+# for the row: verify() wants every CFG_TABLE row to land in exactly one of
+# three places - a control, the advanced switch, or the hidden list.
+APP_HIDDEN_KEYS: list[str] = [
+    # Fuel-trim reference voltage (README issue #55): the divider hangs off the
+    # 3.3 V rail, and typing a different number only corrupted the suggested
+    # excitation resistor.
+    "FUEL_ADC_VREF",
+]
+
 # ---------------------------------------------------------------------------
 # 4. Build the schema
 # ---------------------------------------------------------------------------
@@ -353,7 +368,7 @@ def options_of(item):
 
 def build(rows, groups_js):
     table = {r["key"]: r for r in rows}
-    hidden = {k for k in DEAD_KEYS if k in table}
+    hidden = {k for k in DEAD_KEYS + APP_HIDDEN_KEYS if k in table}
     out_groups = []
     labelled = set()
 
@@ -675,7 +690,7 @@ def main():
         print(f"  labelled by presentation : {rendered - len(by_state['unlabelled'])} - see the _about note in scripts/config_schema_presentation.json")
         print(f"  generated labels      : {len(by_state['unlabelled'])}")
         print(f"advanced switch row   : 1 ({ADVANCE_KEY})")
-        print(f"hidden (V2 dead keys): {len(by_state['hidden'])}")
+        print(f"hidden (off the tab): {len(by_state['hidden'])}")
         print(f"extras (not in the table): {len(EXTRAS)}")
         print(f"reboot-required    : {len(schema['rebootKeys'])}")
         print(("wrote  " if written else "up to date  ") +

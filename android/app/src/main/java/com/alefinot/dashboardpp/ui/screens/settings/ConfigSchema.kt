@@ -159,6 +159,12 @@ data class ConfigSchema(
     val generated: String,
     val rows: Int,
     val groups: List<SchemaGroup>,
+    /**
+     * Keys `CFG_TABLE` has and this app must not draw — either because the unit has
+     * no feature for them any more, or because it does and a phone must stay off
+     * them (the fuel reference). Either way they are real values the unit streams,
+     * so the store keeps them and never offers them as settings.
+     */
     val hidden: List<String>,
     /** The key that is the tab's own "show advanced" switch rather than a row. */
     val advancedKey: String,

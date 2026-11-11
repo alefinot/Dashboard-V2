@@ -897,9 +897,6 @@ if (!vlw120Ready) {
   // endWrite + slow-frame diagnostics, shared by the deferral early-return and
   // the normal end of frame.
   auto finishFrame = [&]() {
-    if ((componentUpdated || forceDraw) && ENABLE_CIRCLE_TEST)
-      for (int i = 0; i < 4; i++)
-        drawAACircle(display, BIG_CENTER_X, BIG_CENTER_Y, 173 - i, TFT_CYAN);
     display.endWrite();
     unsigned long tFrameEnd = millis();
     if (tFrameEnd - tFrame0 > 33) {

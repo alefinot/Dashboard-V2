@@ -180,7 +180,6 @@ int WEATHER_HEIGHT = 28;
 WeatherData g_weatherData;
 bool ENABLE_POWER_SENSE = false;
 int POWER_SENSE_OFF_MS = 10000;
-bool ENABLE_CIRCLE_TEST = false;
 bool ENABLE_DEMO_MODE = false;
 bool ADV_MODE = false;
 bool ENABLE_ANTIALIASING = true;
@@ -823,8 +822,6 @@ static const CfgParam CFG_TABLE[] = {
   { &ENABLE_POWER_SENSE, "ENABLE_POWER_SENSE", "PWR_SNS", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
   { &POWER_SENSE_OFF_MS, "POWER_SENSE_OFF_MS", "PWR_OFF_MS", nullptr, 500, 120000, 10000, 0.0f, 0.0f, 0.0f, 0, CK_INT },
-
-  { &ENABLE_CIRCLE_TEST, "ENABLE_CIRCLE_TEST", "CIRC_TST", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
   { &ENABLE_DEMO_MODE, "ENABLE_DEMO_MODE", "DEMO_MODE", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 

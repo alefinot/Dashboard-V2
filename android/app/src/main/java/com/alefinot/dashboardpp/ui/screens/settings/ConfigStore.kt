@@ -642,9 +642,9 @@ class ConfigStore(
         }
         // Two different reasons a key in the file does not get written, and they mean
         // different things to whoever holds the backup: the hidden keys are real settings
-        // this app chooses not to show (Wi-Fi credentials, NTP), while the readings are not
-        // settings at all. "This unit has no use for them" is simply untrue of a Wi-Fi
-        // credential the unit streamed out itself a minute earlier.
+        // this app chooses not to show (the fuel ADC reference today), while the readings
+        // are not settings at all. "This unit has no use for them" is simply untrue of a
+        // value the unit streamed back out of its own NVS a minute earlier.
         val hidden = parsed.keys.filter { schema.isHidden(it) }.distinct()
         val readings = parsed.keys.filter { !schema.isHidden(it) && unshippable(it) }.distinct()
         if (hidden.isNotEmpty()) {
