@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -47,11 +46,10 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
-import com.alefinot.dashboardpp.ui.components.PageFade
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
-import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorScreen
+import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorCard
 import com.alefinot.dashboardpp.ui.screens.settings.RenderBlock
 import com.alefinot.dashboardpp.ui.screens.settings.RenderRow
 import com.alefinot.dashboardpp.ui.screens.settings.RenderSection
@@ -154,11 +152,11 @@ fun DashboardSettingsScreen(
     // A note about something that happened on the link — a restart the app asked for, a
     // restore — goes stale the moment the link changes. On the bench the page spent the rest
     // of a session saying "restarting…" about a unit that had been back and re-read for
-    // minutes. Two things conspired: opening the monitor page below returns from this
-    // composable and disposes everything after this point, so the transition tracking has to
-    // sit above it if it is going to see the link come back; and it has to fire on both edges,
-    // because a note about a link that just dropped is as dead as one about a link that just
-    // returned.
+    // minutes. It has to fire on both edges, because a note about a link that just dropped is
+    // as dead as one about a link that just returned. It had a second reason to sit this high
+    // once: the monitor route below returned from this composable and disposed everything under
+    // the early return. The monitor is a card in the scroll now, and there is no route left to
+    // dispose it.
     val linked = linkState is BleLinkState.Ready
     var wasLinked by remember { mutableStateOf(linked) }
     LaunchedEffect(linkState) {
@@ -166,24 +164,11 @@ fun DashboardSettingsScreen(
         wasLinked = linked
     }
 
-    // The unit's performance monitor, taken the way the old link panel was: it needs the whole
-    // screen for the memory and partition figures, it is reached from the last row of the
-    // scroll, and because it is the only thing composed while it is open, its polling stops
-    // the moment the user is back.
-    var showPerf by remember { mutableStateOf(false) }
-    if (showPerf) {
-        // The monitor is the page's second route; it fades in like any arrival
-        // rather than swapping the settings list out in one frame.
-        PageFade(Modifier.fillMaxSize()) {
-            PerfMonitorScreen(
-                store = store,
-                link = link,
-                timeNote = timeNote,
-                onBack = { showPerf = false },
-            )
-        }
-        return
-    }
+    // The unit's performance monitor, now one of the scroll's own cards rather than a page it
+    // opened. It reads while it is open and stops when it closes, so nothing here has to remember
+    // to leave a route: the card is the last block of the scroll, above Factory Reset, where the
+    // unit's page kept its own performance panel.
+    var perfOpen by remember { mutableStateOf(false) }
 
     val ready = linked
     val groups = schema?.groups ?: emptyList()
@@ -567,15 +552,30 @@ fun DashboardSettingsScreen(
                 }
             }
 
-            // The last row of the scroll, where the unit page keeps its own performance panel.
+            // The last card of the scroll, where the unit page keeps its own performance panel. It
+            // opens like a group now — including under a search, whose rule is that a card whose
+            // title matches shows itself — and the note effect above stays in composition while it
+            // does: this page no longer has a route that disposes the scroll it belongs to.
             item(key = "performance") {
-                HudAccordion(open = false, modifier = Modifier.padding(bottom = 14.dp)) {
-                    HudAccordionHeader(
-                        title = "Performance Monitor",
-                        open = false,
-                        onClick = { showPerf = true },
-                    )
-                }
+                val perfSearching = searching &&
+                    SettingsLayout.matches(query, "Performance Monitor") &&
+                    "performance" !in closedWhileSearching
+                val perfShown = if (searching) perfSearching else perfOpen
+                PerfMonitorCard(
+                    store = store,
+                    link = link,
+                    open = perfShown,
+                    onToggle = {
+                        if (searching) {
+                            closedWhileSearching =
+                                if (perfShown) closedWhileSearching + "performance"
+                                else closedWhileSearching - "performance"
+                        } else {
+                            perfOpen = !perfOpen
+                        }
+                    },
+                    timeNote = timeNote,
+                )
             }
 
             // The page's `.bottom-toolbar` ends with Factory Reset spanning the width and

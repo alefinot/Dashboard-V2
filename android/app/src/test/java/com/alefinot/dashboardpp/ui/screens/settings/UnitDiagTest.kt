@@ -352,24 +352,24 @@ class UnitDiagTest {
     )
 
     /**
-     * The monitor is opened from the last row of the settings scroll and closed again; a screen
-     * that only exists in the source is how a feature ends up unreachable. Read from source,
-     * because the module has no Compose test harness.
+     * The monitor is a card in the settings scroll, opened and closed by tapping its header the way
+     * a group is. A card that only exists in the source is how a feature ends up unreachable. Read
+     * from source, because the module has no Compose test harness.
      */
     @Test
-    fun theSettingsScrollOpensItAndNothingButTheLinkFeedsIt() {
-        val page = moduleSource("DashboardSettingsScreen.kt")
+    fun theSettingsScrollDrawsItAndNothingButTheLinkFeedsIt() {
+        val page = codeOf(moduleSource("DashboardSettingsScreen.kt"))
         assertTrue(
-            "nothing opens the performance monitor",
-            Regex("PerfMonitorScreen\\s*\\(").containsMatchIn(codeOf(page)),
+            "nothing draws the performance monitor",
+            Regex("PerfMonitorCard\\s*\\(").containsMatchIn(page),
         )
+        val screen = codeOf(moduleSource("settings/PerfMonitorCard.kt"))
         assertTrue(
-            "the scroll does not name the entry where a user will look for it",
-            // The row carries the WebUI's own title case since the 1.6.0 restyle; what the guard
-            // cares about is that the entry is NAMED in the scroll, not how it is capitalised.
-            Regex("\"Performance Monitor\"").containsMatchIn(page),
+            "the card does not name itself where a user will look for it",
+            // The row carried the WebUI's own title case since the 1.6.0 restyle; what the guard
+            // cares about is that the card is NAMED, not how it is capitalised.
+            Regex("\"Performance Monitor\"").containsMatchIn(screen),
         )
-        val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
         for (banned in listOf("http://", "https://", "android.webkit", "EspApi", "HttpURLConnection")) {
             assertFalse("the monitor still reaches the unit by $banned", screen.contains(banned))
         }
@@ -383,20 +383,74 @@ class UnitDiagTest {
     }
 
     /**
-     * An auto-refresh loop that outlives the screen keeps spending link round trips after the
-     * user has left, and a loop with no delay at all can starve the settings read it shares the
-     * link with. Both are locked here: the loop is keyed to the cadence, and it waits.
+     * The card's only control is its own header. BACK was the exit from a page that is not a page
+     * any more, and READ NOW and CADENCE were a toolbar on a card that has no toolbar: a button
+     * inside this card means the toolbar came back.
+     *
+     * The three names the removed buttons carried are searched as string literals, so this file's
+     * own prose about them cannot trip the guard.
      */
     @Test
-    fun theAutoReadLoopIsKeyedToItsCadenceAndWaitsBetweenReads() {
-        val screen = codeOf(moduleSource("settings/PerfMonitorScreen.kt"))
+    fun theCardHasNoToolbarOfItsOwnAndIsBuiltLikeTheCardsBesideIt() {
+        val screen = codeOf(moduleSource("settings/PerfMonitorCard.kt"))
+        for (gone in listOf("BACK", "READ NOW", "CADENCE")) {
+            assertFalse("a \"$gone\" button is back on the monitor", screen.contains("\"$gone\""))
+        }
+        assertFalse(
+            "the monitor draws a button, so it has a toolbar again",
+            Regex("HudButton\\s*\\(").containsMatchIn(screen),
+        )
+        // And it is a dropdown card like the groups it sits beside: same shell, same header, same
+        // body that is only composed while open.
+        for (part in listOf("HudAccordion(", "HudAccordionHeader(", "HudAccordionBody(")) {
+            assertTrue("the monitor is not built from the accordion's $part", screen.contains(part))
+        }
+    }
+
+    /**
+     * The spread card reads [PerfTrends], a plain class whose windows fill without anything
+     * observable changing. Without a count that moves on every round the card is composed once,
+     * skipped for the rest of the time the monitor is open, and prints "no samples yet" under
+     * figures that tick along — which is exactly what it did on the bench on 2026-11-11.
+     */
+    @Test
+    fun theSpreadCardIsWokenByTheReadingThatJustArrived() {
+        val screen = codeOf(moduleSource("settings/PerfMonitorCard.kt"))
         assertTrue(
-            "the read loop is not a LaunchedEffect keyed to the cadence",
-            Regex("LaunchedEffect\\s*\\([^)]*cadence").containsMatchIn(screen),
+            "the reading count is not observable state, so nothing wakes the spread card",
+            Regex("var sampled by remember \\{ mutableIntStateOf\\(0\\) \\}").containsMatchIn(screen),
+        )
+        assertTrue(
+            "a round that stores a sample does not count it",
+            Regex("trends\\.add\\(parsed\\)").containsMatchIn(screen) &&
+                Regex("sampled\\s*\\+=\\s*1").containsMatchIn(screen),
+        )
+        assertTrue(
+            "the spread card is not handed the count that recomposes it",
+            Regex("SpreadCard\\(\\s*trends\\s*,\\s*sampled\\s*\\)").containsMatchIn(screen) &&
+                Regex("fun SpreadCard\\(trends: PerfTrends, sampled: Int").containsMatchIn(screen),
+        )
+    }
+
+    /**
+     * An auto-refresh loop that outlives the card keeps spending link round trips after the user
+     * has closed it, and a loop with no delay at all can starve the settings read it shares the
+     * link with. Both are locked here: the loop is keyed to the card being open, and it waits.
+     */
+    @Test
+    fun theAutoReadLoopRunsOnlyWhileTheCardIsOpenAndWaitsBetweenReads() {
+        val screen = codeOf(moduleSource("settings/PerfMonitorCard.kt"))
+        assertTrue(
+            "the read loop is not keyed to the card being open",
+            Regex("LaunchedEffect\\s*\\(\\s*open\\s*\\)").containsMatchIn(screen),
+        )
+        assertTrue(
+            "a closed card still reads the unit",
+            Regex("if\\s*\\(\\s*!open\\s*\\)\\s*return@LaunchedEffect").containsMatchIn(screen),
         )
         assertTrue("the read loop never waits", Regex("delay\\s*\\(").containsMatchIn(screen))
         assertFalse(
-            "an unmanaged scope means the loop survives leaving the screen",
+            "an unmanaged scope means the loop survives closing the card",
             Regex("GlobalScope").containsMatchIn(screen),
         )
         // The wait has to be inside the loop, and the loop has to end on cancellation rather than on
@@ -409,12 +463,12 @@ class UnitDiagTest {
 
     /**
      * A monitor that keeps reading after the link drops shows a frozen set of numbers as if they
-     * were live. The screen has to say what it is holding: the last read, and whether the unit
+     * were live. The card has to say what it is holding: the last read, and whether the unit
      * is still there.
      */
     @Test
     fun aStaleReadIsLabelledAsStale() {
-        val screen = moduleSource("settings/PerfMonitorScreen.kt")
+        val screen = moduleSource("settings/PerfMonitorCard.kt")
         assertTrue("the screen does not track the link state", Regex("link\\.state").containsMatchIn(screen))
         assertTrue(
             "the screen never says when it last read the unit",

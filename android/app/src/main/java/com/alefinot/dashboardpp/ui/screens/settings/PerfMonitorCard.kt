@@ -17,12 +17,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,12 +41,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
+import com.alefinot.dashboardpp.ui.components.HudAccordion
+import com.alefinot.dashboardpp.ui.components.HudAccordionBody
+import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
 import com.alefinot.dashboardpp.ui.components.HudBanner
-import com.alefinot.dashboardpp.ui.components.HudButton
-import com.alefinot.dashboardpp.ui.components.HudButtonStyle
-import com.alefinot.dashboardpp.ui.components.HudPage
-import com.alefinot.dashboardpp.ui.components.HudPageHeader
-import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeBodyFamily
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
@@ -61,10 +59,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * The unit's Performance Monitor, drawn as the panel the ESP's own Web UI used to serve.
+ * The unit's Performance Monitor, as one more dropdown card in the settings scroll.
+ *
+ * It used to be a second page: the last row of the scroll opened it full-screen, and a BACK button
+ * was the only way out. That made the unit's own numbers a place of their own, with a header, a
+ * toolbar and a poller that ran until you navigated away — for figures that only mean something
+ * beside the settings they explain, a CPU bar beside the frame rate it is costing, a heap line
+ * beside a reboot nobody asked for. So the entry row became the card: it opens the way a group
+ * opens, closes the way a group closes, and draws the panel the ESP's own Web UI used to serve.
  *
  * Every number here is the unit talking about itself: `perf`, `health`, `live` and `boot` from
- * `src/bt_rpc.cpp`. Nothing on this page is something the app could work out for itself — that is
+ * `src/bt_rpc.cpp`. Nothing in it is something the app could work out for itself — that is
  * the point. The questions it exists to answer are bench questions: is the display really running
  * at `TARGET_FPS`, is the heap flat over ten minutes or climbing, how much stack does each task
  * have left, did this unit reboot without anybody asking, and how much room is left in the settings
@@ -74,34 +79,36 @@ import kotlinx.coroutines.isActive
  *
  *  - **Display | System** side by side on anything tablet-sized, one above the other on a
  *    phone, the way `.perf-grid` reflows below 600 px. Display carries the frame figures;
- *    System carries uptime, the SPI clock, the heap line and the read cadence.
+ *    System carries uptime, the SPI clock, the heap line and the read interval.
  *  - **CPU Performance** and **Memory & Storage** span the grid. Both are `.perf-card`
  *    tiles with a caption line over a 20 dp `--bg-tertiary` bar, and Memory keeps the
  *    segmented flash bar, its legend and the settings-budget line under it.
  *  - **The app-only cards** — the Bluetooth link, task stacks, why the unit is running, the
- *    inputs it is measuring and the spread over the time the page was open — use the same
+ *    inputs it is measuring and the spread over the time the card has been open — use the same
  *    tile so they read as part of the panel rather than as an appendix.
  *  - **Serial Output Monitor** is the one card that did not travel: serial is a cable on the
  *    bench, and this app has no wire to the unit.
  *
- * Reading costs link round trips and `perf` is the widest reply on the link, so the cadence is a
- * choice rather than a constant. It defaults to 2 s, and leaving the screen stops it.
+ * Reading costs link round trips, and `perf` is the widest reply on the link, so the cadence is a
+ * fixed one second rather than a control the page spends a button on. It runs only while the card
+ * is open: closing it, or scrolling it out of the list, cancels the loop instead of leaving a
+ * poller competing with the settings read that shares the link.
  */
 @Composable
-fun PerfMonitorScreen(
+fun PerfMonitorCard(
     store: ConfigStore,
     link: BleLink,
+    /** Whether this card is the open one; the read follows it, the way the body's draw does. */
+    open: Boolean,
+    onToggle: () -> Unit,
     /** Why the unit's clock was not set from the phone; null when it was set [plan §4]. */
     timeNote: String? = null,
-    onBack: () -> Unit,
 ) {
     val linkState by link.state.collectAsStateWithLifecycle()
     val linked = linkState is BleLinkState.Ready
 
-    var cadence by remember { mutableStateOf(Cadence.TWO) }
-    // Bumped by READ NOW and by changing the cadence: both restart the effect below, which reads
-    // once in full and then keeps to the cadence.
-    var round by remember { mutableStateOf(0) }
+    // There is no cadence control any more: opening the card is the whole interface, and
+    // [PollEvery] is the interval it reads at.
     var perf by remember { mutableStateOf<PerfReadout?>(null) }
     var health by remember { mutableStateOf<HealthReadout?>(null) }
     var live by remember { mutableStateOf<LiveReadout?>(null) }
@@ -109,12 +116,16 @@ fun PerfMonitorScreen(
     var error by remember { mutableStateOf("") }
     var lastRead by remember { mutableStateOf("") }
     var reading by remember { mutableStateOf(false) }
+    // [PerfTrends] is a plain class: its windows fill up without anything observable changing, so a
+    // card that only reads it is composed once, skipped on every later round, and prints "no
+    // samples yet" for as long as it is open. `sampled` is the observed half of the same fact.
+    var sampled by remember { mutableIntStateOf(0) }
     val trends = remember { PerfTrends() }
 
     /**
      * One round of reads. A tick takes `perf` and `live`; a full round also takes `health` (the
      * largest free block, which `perf` does not report) and `boot`, which changes only when the
-     * unit restarts — so polling it every two seconds buys nothing.
+     * unit restarts — so asking for it on every tick buys nothing.
      */
     suspend fun read(full: Boolean) {
         reading = true
@@ -124,6 +135,7 @@ fun PerfMonitorScreen(
             if (parsed != null) {
                 perf = parsed
                 trends.add(parsed)
+                sampled += 1
             }
             val liveCall = store.action("live")
             if (liveCall.ok) live = UnitDiag.live(liveCall.fields) ?: live
@@ -145,43 +157,46 @@ fun PerfMonitorScreen(
             }
             lastRead = clock()
         } finally {
-            // A cancelled round leaves the page anyway; a round that threw must not leave the
+            // A cancelled round leaves the card anyway; a round that threw must not leave the
             // header stuck saying "reading…" over numbers that stopped moving.
             reading = false
         }
     }
 
-    // One effect drives everything: keyed on the cadence and on the round, so changing cadence or
-    // pressing READ NOW restarts it, and so that leaving the screen — or switching the cadence to
-    // off — cancels the loop instead of leaving a poller running on a link the settings page needs.
-    LaunchedEffect(cadence, round) {
+    // One effect drives everything, keyed on the card being open: opening it reads once in full and
+    // then keeps to the interval, and closing it — or scrolling it out of the list, which is what
+    // disposes a list item — cancels the loop instead of leaving a poller running on a link the
+    // settings read needs. Unlike a group's rows, a monitor behind a closed header would still poll,
+    // so the open flag is both the draw condition and the loop's key.
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
         read(full = true)
-        if (cadence == Cadence.OFF) return@LaunchedEffect
         while (isActive) {
-            delay(cadence.millis)
+            delay(PollEveryMillis)
             if (!isActive) break
             read(full = false)
         }
     }
 
-    Column(Modifier.hudPage()) {
-        // `.header` + `.ip-banner` + the controls the page kept in its toolbar. The header is
-        // centred over the column; READ NOW sits in the corner slot where a browser put its
-        // advanced-mode switch.
-        Column(
-            Modifier.fillMaxWidth()
-                .padding(horizontal = HudPage.Gutter)
-                .padding(top = 10.dp, bottom = 4.dp),
-        ) {
-            HudPageHeader(
-                title = "Performance Monitor",
-                trailing = {
-                    HudButton(
-                        label = "READ NOW",
-                        style = HudButtonStyle.PRIMARY,
-                        onClick = { round += 1 },
-                    )
-                },
+    HudAccordion(open = open, modifier = Modifier.padding(bottom = 14.dp)) {
+        HudAccordionHeader(
+            title = "Performance Monitor",
+            // The other cards count their rows in this slot. A monitor has no rows to count, so the
+            // chip says what the numbers are doing instead: reading now, polling now, or — behind a
+            // closed header — how stale the figures it is holding are.
+            meta = when {
+                open && reading -> "reading…"
+                open -> "polling every $PollEveryLabel"
+                lastRead.isEmpty() -> null
+                else -> "last read $lastRead"
+            },
+            open = open,
+            onClick = onToggle,
+        )
+        HudAccordionBody(open = open) {
+            Column(
+                Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 HudBanner(
                     text = when (val state = linkState) {
@@ -196,81 +211,41 @@ fun PerfMonitorScreen(
                     },
                     color = if (linked) HudColors.Green else HudColors.Amber,
                 )
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                HudButton(
-                    label = "BACK",
-                    style = HudButtonStyle.SECONDARY,
-                    onClick = onBack,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    when {
-                        reading -> "reading…"
-                        cadence == Cadence.OFF -> "polling off"
-                        else -> "polling every ${cadence.label}"
-                    },
-                    style = HudeCfgNote(),
-                    color = if (reading) HudColors.Cyan else HudColors.TextDim,
-                )
-                HudButton(
-                    label = "CADENCE",
-                    style = HudButtonStyle.SECONDARY,
-                    onClick = {
-                        cadence = cadence.next()
-                        round += 1
-                    },
-                )
-            }
-            // The clock is part of the link's state, and the only place it is reported is
-            // here — the app pushed it on the way in, and if that failed the unit's own
-            // stamps are the thing that is wrong, which is a fact about the numbers below.
-            timeNote?.let {
-                Text(
-                    it,
-                    style = HudeCfgNote(),
-                    color = HudColors.Amber,
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                )
-            }
-            if (error.isNotEmpty()) {
-                Text(
-                    error,
-                    style = HudeCfgNote(),
-                    color = HudColors.Red,
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                )
-            }
-        }
+                // The clock is part of the link's state, and the only place it is reported is
+                // here — the app pushed it on the way in, and if that failed the unit's own
+                // stamps are the thing that is wrong, which is a fact about the numbers below.
+                timeNote?.let {
+                    Text(
+                        it,
+                        style = HudeCfgNote(),
+                        color = HudColors.Amber,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (error.isNotEmpty()) {
+                    Text(
+                        error,
+                        style = HudeCfgNote(),
+                        color = HudColors.Red,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
-        val p = perf
-        val l = live
-        val h = health
-        val b = boot
-        // `health` reports the largest single free block, `boot` carries a fallback copy; the
-        // System card says whichever one the unit has actually sent.
-        val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) }
-            ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
-            ?: "--"
-        // `.perf-grid` is two 1fr tracks above 600 px and one `auto-fit` track below it.
-        val twoUp = LocalConfiguration.current.screenWidthDp >= 600
+                val p = perf
+                val l = live
+                val h = health
+                val b = boot
+                // `health` reports the largest single free block, `boot` carries a fallback copy; the
+                // System card says whichever one the unit has actually sent.
+                val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) }
+                    ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
+                    ?: "--"
+                // `.perf-grid` is two 1fr tracks above 600 px and one `auto-fit` track below it.
+                val twoUp = LocalConfiguration.current.screenWidthDp >= 600
 
-        // The list is the only child that flexes, so the header stays put while the panel scrolls
-        // under it - the page's `details` content did the same inside its own container.
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter),
-        ) {
-            item { Spacer(Modifier.height(10.dp)) }
-
-            // Display | System. The row is measured to its taller card and both fill that height,
-            // which is what `align-items: stretch` did to the page's grid row.
-            if (twoUp) {
-                item {
+                // Display | System. The row is measured to its taller card and both fill that
+                // height, which is what `align-items: stretch` did to the page's grid row.
+                if (twoUp) {
                     Row(
                         Modifier.fillMaxWidth().height(IntrinsicSize.Max),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -279,62 +254,43 @@ fun PerfMonitorScreen(
                         SystemCard(
                             p = p,
                             largestBlock = largestBlock,
-                            cadence = cadence,
                             lastRead = lastRead,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         )
                     }
+                } else {
+                    DisplayCard(p)
+                    SystemCard(p = p, largestBlock = largestBlock, lastRead = lastRead)
                 }
-            } else {
-                item { DisplayCard(p) }
-                item { Spacer(Modifier.height(10.dp)) }
-                item {
-                    SystemCard(
-                        p = p,
-                        largestBlock = largestBlock,
-                        cadence = cadence,
-                        lastRead = lastRead,
-                    )
-                }
+
+                CpuCard(p)
+                MemoryCard(p)
+
+                // The cards below are this app's own bench additions. They did not exist on the page
+                // (its Serial Output Monitor took the last full-width slot), but they are the reason
+                // the monitor is worth opening on a phone, so they keep the same `.perf-card` tile.
+                LinkCard(p)
+                StacksCard(p)
+                BootCard(b)
+                MeasuringCard(l)
+                SpreadCard(trends, sampled)
             }
-
-            item { Spacer(Modifier.height(10.dp)) }
-            item { CpuCard(p) }
-            item { Spacer(Modifier.height(10.dp)) }
-            item { MemoryCard(p) }
-
-            // The cards below are this app's own bench additions. They did not exist on the page
-            // (its Serial Output Monitor took the last full-width slot), but they are the reason
-            // the monitor is worth opening on a phone, so they keep the same `.perf-card` tile.
-            item { Spacer(Modifier.height(10.dp)) }
-            item { LinkCard(p) }
-            item { Spacer(Modifier.height(10.dp)) }
-            item { StacksCard(p) }
-            item { Spacer(Modifier.height(10.dp)) }
-            item { BootCard(b) }
-            item { Spacer(Modifier.height(10.dp)) }
-            item { MeasuringCard(l) }
-            item { Spacer(Modifier.height(10.dp)) }
-            item { SpreadCard(trends) }
-            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
-/** How often the monitor asks the unit for another set of figures. */
-private enum class Cadence(val label: String, val millis: Long) {
-    OFF("off", 0L),
-    ONE("1s", 1_000L),
-    TWO("2s", 2_000L),
-    FIVE("5s", 5_000L),
-    TEN("10s", 10_000L),
-    ;
+/**
+ * The read's interval while the card is open, and the same interval in the words the header chip
+ * and the System card use.
+ *
+ * A fixed one second, where the page used to offer off/1s/2s/5s/10s from a toolbar button: the
+ * card's own open and closed states are the control now, so the only rate that has to be chosen is
+ * the one that fits a `perf` reply — the widest frame the link carries — beside the settings writes
+ * that share it.
+ */
+private const val PollEveryMillis = 1_000L
 
-    fun next(): Cadence {
-        val all = values()
-        return all[(ordinal + 1) % all.size]
-    }
-}
+private const val PollEveryLabel = "1 s"
 
 // ─── The page's `.perf-card` recipe ────────────────────────────────────────────
 
@@ -510,7 +466,6 @@ private fun DisplayCard(p: PerfReadout?, modifier: Modifier = Modifier) {
 private fun SystemCard(
     p: PerfReadout?,
     largestBlock: String,
-    cadence: Cadence,
     lastRead: String,
     modifier: Modifier = Modifier,
 ) {
@@ -537,10 +492,7 @@ private fun SystemCard(
         }
         // `#p-live-poll` and the dim detail line under it: what the monitor is doing, and
         // when it last heard from the unit.
-        PerfRow(
-            "Live Poll",
-            if (cadence == Cadence.OFF) "off" else "every ${cadence.label}",
-        )
+        PerfRow("Live Poll", "every $PollEveryLabel")
         Text(
             if (lastRead.isEmpty()) "--" else "last read $lastRead",
             style = HudeTable(),
@@ -837,9 +789,17 @@ private fun MeasuringCard(l: LiveReadout?, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * The spread of the figures over the readings this card has taken.
+ *
+ * [sampled] is what makes this card move. The windows inside [trends] are not observable state, so
+ * without a count that changes on every round this composable is skippable forever after its first
+ * composition and the card reads "no samples yet" while the numbers above it tick along (bench,
+ * Xiaomi Mi 9 Lite, 2026-11-11).
+ */
 @Composable
-private fun SpreadCard(trends: PerfTrends, modifier: Modifier = Modifier) {
-    PerfCard("Spread While This Screen Is Open", modifier) {
+private fun SpreadCard(trends: PerfTrends, sampled: Int, modifier: Modifier = Modifier) {
+    PerfCard("Spread While This Card Is Open", modifier) {
         for ((name, decimals) in listOf(
             "fps" to 1,
             "heap" to 0,
@@ -850,7 +810,8 @@ private fun SpreadCard(trends: PerfTrends, modifier: Modifier = Modifier) {
             PerfRow(trendLabel(name), DiagFormat.trend(trends.series(name), decimals))
         }
         Text(
-            "Last ${trends.cap} readings while this page was open.",
+            "${sampled.coerceAtMost(trends.cap)} of the last ${trends.cap} readings taken while " +
+                "this card has been open.",
             style = HudeCfgHelp(),
             color = HudColors.TextDim,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),

@@ -146,19 +146,26 @@ class SettingsPageBenchFindingsTest {
     }
 
     /**
-     * The cleared-note effect has to stay in composition while another page is up. This guard
-     * compares offsets in the file: the effect must appear before the early return.
+     * The cleared-note effect has to stay in composition while the monitor is up. It used to have a
+     * second reason to sit where it does: the monitor was a second page, and the early return that
+     * drew it disposed everything below. The monitor is a card in the scroll now, so this page has
+     * no route that can dispose the effect — and that is what this guard keeps true.
      */
     @Test
     fun theRestartNoteIsClearedWhenTheLinkComesBack() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         val clearAt = page.indexOf("wasLinked = linked")
-        val panelAt = page.indexOf("PerfMonitorScreen(")
+        val cardAt = page.indexOf("PerfMonitorCard(")
         assertTrue("the restart note is no longer cleared on a link change", clearAt > 0)
         assertTrue(
-            "the effect that clears the note sits below the early return that draws the monitor " +
-                "page, so opening it destroys the effect and the note outlives the reboot",
-            clearAt in 0 until panelAt,
+            "the monitor is no longer the scroll's own card, drawn below the effect that clears " +
+                "the note",
+            cardAt > clearAt,
+        )
+        assertTrue(
+            "the settings page has a second route again: returning from it disposes the effect " +
+                "that clears the note, which is the bug this test was written for",
+            !Regex("PageFade\\s*\\(").containsMatchIn(page),
         )
     }
 
