@@ -236,18 +236,19 @@ fun DashboardSettingsScreen(
                 .padding(top = 6.dp, bottom = 4.dp),
         ) {
             HudPageHeader(title = "Dashboard++ Setup")
-            // Three lines and nothing else: the page's name, the search box with its SYNC, and
-            // the five action glyphs. The maintainer had the rest of the header's chrome taken
-            // out on 2026-11-11 — the identity pill (`unit V2.0.4 · schema V2.0.4 · linked to
-            // Motosbu · MTU 517`), which had already swallowed the separate link line to save one
-            // line, and the two notes that used to sit under the icons (`read 182 keys (178 table
-            // rows) in 6 chunks`, `4 groups · 156 settings · tap a group to open it`).
+            // Three lines and nothing else: the page's name, its search box, and the five action
+            // glyphs. The maintainer had the rest of the header's chrome taken out on 2026-11-11 —
+            // the identity pill (`unit V2.0.4 · schema V2.0.4 · linked to Motosbu · MTU 517`),
+            // which had already swallowed the separate link line to save one line, and the two
+            // notes that used to sit under the icons (`read 182 keys (178 table rows) in 6 chunks`,
+            // `4 groups · 156 settings · tap a group to open it`). The standing `SYNC` button came
+            // out the same day, for the reason written where the search row is.
             //
             // What that costs, written down so nobody rediscovers it by surprise: the page no
             // longer says which firmware it is talking to, which schema it expects, that the link
             // is up, how many keys the read covered, or that a read came back before the link
-            // dropped — and a *failed* read (`SyncPhase.Failed`) no longer prints its reason, so
-            // it shows only as the search row's button turning to `RETRY`. Typing no longer prints
+            // dropped — and a *failed* read (`SyncPhase.Failed`) no longer prints its reason, so it
+            // shows only as an amber `RETRY` growing out of the search row. Typing no longer prints
             // `N settings and M cards match "gps"` either; what the box found is said by the groups
             // that open and the ones that vanish. What is still drawn here is only what happened
             // since the last look: the flush and restart notes, a refused action, the reboot
@@ -273,12 +274,28 @@ fun DashboardSettingsScreen(
                         )
                     },
                 )
-                HudButton(
-                    label = if (state.sync is SyncPhase.Failed) "RETRY" else "SYNC",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = ready && state.sync !is SyncPhase.Running,
-                    onClick = { store.syncIfNeeded(force = true) },
-                )
+                // A re-read, drawn only for the one state the page cannot get out of on its own.
+                // Everything else that made a standing `SYNC` button worth pressing is already
+                // automatic: the read follows the link into `Ready` above, re-entering the tab past
+                // the store's 60 s TTL re-reads, and the actions that move unit-side numbers
+                // (factory reset, the ambient capture) force their own read. So `SYNC` here at rest
+                // was a refresh wearing a commit button's name — the word the flush glyph's own
+                // documentation spends a paragraph denying — and it was not even free: `applyFetch`
+                // sets `pending = 0`, so a read landing between an edit and its 600 ms debounce dim
+                // the flush glyph while that write was still on its way.
+                //
+                // A read the unit never answered is a different thing: nothing re-runs it while the
+                // link stays up, and since the status line came out of the header this amber `RETRY`
+                // is the only thing on the page saying a read failed at all. Amber, not red, because
+                // red on this page means FACTORY RESET.
+                if (state.sync is SyncPhase.Failed) {
+                    HudButton(
+                        label = "RETRY",
+                        style = HudButtonStyle.WARNING,
+                        enabled = ready,
+                        onClick = { store.syncIfNeeded(force = true) },
+                    )
+                }
             }
             // The five actions that belong to no row, drawn on one line under the search box. The
             // header is the part of the page that does not scroll, so these five hold one y — the

@@ -241,6 +241,20 @@ class PhoneViewportTest {
                 page.contains(line),
             )
         }
+        // The header's one control: a re-read, drawn only for the state the page cannot get out of
+        // by itself. A standing `SYNC` is what the maintainer took out on 2026-11-11 — every other
+        // read the page needs it for, it already runs on its own, and the word promised a commit the
+        // page deliberately does not make.
+        assertFalse(
+            "a standing SYNC button is back in the search row; the page re-reads on its own and " +
+                "this control is now the failed read's RETRY and nothing else",
+            Regex("label = \"SYNC\"").containsMatchIn(page),
+        )
+        assertTrue(
+            "the re-read button lost its condition and is drawn at rest again",
+            Regex("if \\(state\\.sync is SyncPhase\\.Failed\\)\\s*\\{\\s*HudButton\\(\\s*" +
+                "label = \"RETRY\"").containsMatchIn(page),
+        )
         assertFalse(
             "a control came back into the page header; the maintainer had the Advanced Mode " +
                 "card removed on 2026-11-08 and the tab shows every row",
