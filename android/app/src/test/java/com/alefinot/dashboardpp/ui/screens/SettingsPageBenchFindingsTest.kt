@@ -179,6 +179,115 @@ class SettingsPageBenchFindingsTest {
         )
     }
 
+    /**
+     * The five actions at the foot of the page, as five glyphs on one line (2026-11-11).
+     *
+     * A word button fails silently when it becomes a glyph: nothing on the screen says which
+     * action was lost, or that it ever had a name. So each of the four things the words carried
+     * is pinned here as its own rule — that there are five and one line, that each still names
+     * itself, that each is pressable by a finger, and that the one action that cannot be undone
+     * asks before it acts.
+     */
+    @Test
+    fun theActionsAtTheFootOfThePageAreFiveNamedIcons() {
+        val page = codeOnly("DashboardSettingsScreen.kt")
+        val start = page.indexOf("private fun ActionBar(")
+        val end = page.indexOf("private fun RowScope.ActionSlot(")
+        assertTrue("the page has no action line of its own", start in 1 until end)
+        val bar = page.substring(start, end)
+
+        assertEquals(
+            "the action line is no longer exactly five slots",
+            5, Regex("ActionSlot\\(").findAll(bar).count(),
+        )
+        // One line, and the list still flexes above it — the bug this bar was born from is the
+        // list taking the whole column and the bar being left zero pixels tall.
+        assertTrue("the five slots are no longer one Row", Regex("Row\\(").containsMatchIn(bar))
+        assertTrue(
+            "the list above the action line took back the whole height",
+            Regex("LazyColumn\\(Modifier\\.weight\\(1f\\)").containsMatchIn(page),
+        )
+        // The glyphs are the app's own set; nothing here is a Material icon or a drawable.
+        for (glyph in listOf(
+            "HudIcons.Flush", "HudIcons.Power", "HudIcons.ExportFile",
+            "HudIcons.ImportFile", "HudIcons.Bin",
+        )) {
+            assertTrue("the action line lost its $glyph", bar.contains(glyph))
+        }
+        assertEquals(
+            "a word button is back on the action line; the page's five actions are glyphs",
+            0, Regex("HudButton\\(").findAll(bar).count(),
+        )
+    }
+
+    /**
+     * A glyph has no label, so the name has to live where a screen reader looks. `uiautomator`
+     * wrote the same complaint about this page's switches on 2026-11-08: five unnamed boxes
+     * read as "button, button, button, button, button".
+     */
+    @Test
+    fun everyIconOnTheActionLineSaysWhatItDoesAndIsBigEnoughToHit() {
+        val page = codeOnly("DashboardSettingsScreen.kt")
+        val bar = page.substring(
+            page.indexOf("private fun ActionBar("),
+            page.indexOf("private fun noteOfFlush("),
+        )
+        assertEquals(
+            "an action slot lost its spoken name",
+            5, Regex("description = ").findAll(bar).count(),
+        )
+        assertTrue(
+            "the slot no longer passes its name to the glyph, or to the action a double-tap takes",
+            Regex("contentDescription = description").containsMatchIn(bar) &&
+                Regex("onClickLabel = description").containsMatchIn(bar),
+        )
+        assertTrue(
+            "the glyph's target dropped below the app's 48 dp floor — a labelled button may be " +
+                "36 dp because the label says what it is, a lone glyph may not",
+            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(bar) &&
+                Regex("hudPressable\\(").containsMatchIn(bar),
+        )
+        // The count the old button spelled out ("SAVE 3") is now a colour, and only amber can
+        // say it: a number painted back onto the glyph would put text on a line the maintainer
+        // asked to have drawn.
+        assertTrue(
+            "the save slot went back to spelling its pending count onto the bar",
+            !Regex("\"SAVE \\$\\{").containsMatchIn(bar) &&
+                Regex("pending > 0 -> HudColors\\.Amber|pending > 0 && ready -> HudColors\\.Amber")
+                    .containsMatchIn(bar),
+        )
+    }
+
+    /**
+     * FACTORY RESET came up into the icon line, where the unit's page deliberately kept it away
+     * from the thumb that taps SAVE. What makes that safe is that it cannot fire on a tap: it
+     * opens the app's own confirm box, and the RPC exists only inside that box's answer.
+     */
+    @Test
+    fun theFifthIconWipesNothingUntilTheConfirmBoxIsAnswered() {
+        val page = codeOnly("DashboardSettingsScreen.kt")
+        assertTrue(
+            "the bin went back to the two-press button, which on a phone is one press a driver " +
+                "takes without looking at the label",
+            !page.contains("press again to confirm"),
+        )
+        assertTrue(
+            "the factory-reset RPC is no longer inside the confirm box's onConfirm",
+            Regex("factoryAsk = false[\\s\\S]{0,400}store\\.action\\(\"factory\\.reset\"\\)")
+                .containsMatchIn(page),
+        )
+        assertEquals(
+            "a factory.reset is reachable without the box being up",
+            1,
+            Regex("store\\.action\\(\"factory\\.reset\"\\)").findAll(page).count(),
+        )
+        assertTrue(
+            "the box stopped saying what it does in the button that does it",
+            Regex("confirmLabel = \"FACTORY RESET\"").containsMatchIn(page) &&
+                Regex("confirmStyle = HudButtonStyle\\.DANGER").containsMatchIn(page),
+        )
+    }
+
     /** The readings entry must not carry a second, unexplained copy of that problem. */
     @Test
     fun readingsFromTheUnitAreMarkedAsReadings() {

@@ -4,14 +4,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,8 +28,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -41,12 +44,14 @@ import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
 import com.alefinot.dashboardpp.ui.components.HudBanner
+import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorCard
@@ -148,6 +153,8 @@ fun DashboardSettingsScreen(
     var odoText by remember { mutableStateOf("") }
     var noiseLine by remember { mutableStateOf("never run") }
     var restoring by remember { mutableStateOf(false) }
+    /** The bin in the action line was tapped; the confirm box is up. */
+    var factoryAsk by remember { mutableStateOf(false) }
 
     // A note about something that happened on the link — a restart the app asked for, a
     // restore — goes stale the moment the link changes. On the bench the page spent the rest
@@ -166,7 +173,7 @@ fun DashboardSettingsScreen(
 
     // The unit's performance monitor, now one of the scroll's own cards rather than a page it
     // opened. It reads while it is open and stops when it closes, so nothing here has to remember
-    // to leave a route: the card is the last block of the scroll, above Factory Reset, where the
+    // to leave a route: the card is the last block of the scroll, above the action line, where the
     // unit's page kept its own performance panel.
     var perfOpen by remember { mutableStateOf(false) }
 
@@ -348,8 +355,8 @@ fun DashboardSettingsScreen(
         val unplaced = SettingsLayout.unlabelledBlock(state, query)
 
         // The list is the only child that flexes: without the weight it takes the whole
-        // height and pushes the action grid off the bottom of the screen, which is where
-        // SAVE / RESTART / BACKUP / RESTORE had been since the page was written.
+        // height and pushes the action line off the bottom of the screen, which is where these
+        // five actions had been since the page was written.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter)) {
             item {
                 Text(
@@ -578,37 +585,6 @@ fun DashboardSettingsScreen(
                 )
             }
 
-            // The page's `.bottom-toolbar` ends with Factory Reset spanning the width and
-            // set apart from the four buttons above it: it is the one action here that
-            // cannot be undone, so it is not in the thumb's resting place.
-            item(key = "factory-reset") {
-                Column(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                    HudButton(
-                        label = if (confirm == "factory.reset") "CONFIRM FACTORY RESET"
-                        else "FACTORY RESET",
-                        style = HudButtonStyle.DANGER,
-                        enabled = ready,
-                        modifier = Modifier.fillMaxWidth().height(HudTouch.Button),
-                        onClick = {
-                            if (confirm != "factory.reset") {
-                                confirm = "factory.reset"
-                                note = "press again to confirm"
-                            } else {
-                                scope.launch {
-                                    val r = store.action("factory.reset")
-                                    confirm = null
-                                    note = if (r.ok || r.error == "timeout") {
-                                        "factory reset done — re-reading"
-                                    } else {
-                                        "factory reset refused: ${r.error}"
-                                    }
-                                    store.syncIfNeeded(force = true)
-                                }
-                            }
-                        },
-                    )
-                }
-            }
             item { Spacer(Modifier.height(8.dp)) }
         }
 
@@ -621,6 +597,39 @@ fun DashboardSettingsScreen(
             onExport = { exportLauncher.launch("dashboardpp-settings.json") },
             onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
             restoring = restoring,
+            onFactoryReset = { factoryAsk = true },
+        )
+    }
+
+    // The bin in the line above asks first, and nothing is sent until this is answered. That is
+    // what makes the fifth action safe to put on the same line as SAVE: the icon costs a finger
+    // the width of a thumbnail, and the answer costs a look.
+    //
+    // The wording follows what `factory.reset` actually does on the unit (src/config.cpp
+    // `factoryResetConfig()` + src/bt_rpc.cpp): it clears the `cfg` namespace and calls
+    // `btClearBonds()`, so the settings and every pairing go, while the odometer lives in the
+    // separate `dashboard` namespace and is deliberately kept.
+    if (factoryAsk) {
+        HudConfirmDialog(
+            message = "Wipe every setting on the unit and restart it? The whole configuration " +
+                "goes back to the shipped defaults, and every paired phone is forgotten — this " +
+                "app will have to be paired again. The odometer is kept. Only a backup written " +
+                "before this can put a setup back.",
+            confirmLabel = "FACTORY RESET",
+            confirmStyle = HudButtonStyle.DANGER,
+            onConfirm = {
+                factoryAsk = false
+                scope.launch {
+                    val r = store.action("factory.reset")
+                    note = if (r.ok || r.error == "timeout") {
+                        "factory reset done — re-reading"
+                    } else {
+                        "factory reset refused: ${r.error}"
+                    }
+                    store.syncIfNeeded(force = true)
+                }
+            },
+            onDismiss = { factoryAsk = false },
         )
     }
 }
@@ -717,26 +726,35 @@ private fun CardBlock(
 }
 
 // ---------------------------------------------------------------------------
-// The action grid
+// The action line
 // ---------------------------------------------------------------------------
 
 /**
- * The page's `.bottom-toolbar`: two columns of four actions, pinned under the list.
+ * The page's `.bottom-toolbar`: the five actions that belong to no card, drawn as five small
+ * icons on one line, pinned under the list.
+ *
+ * They were words until 2026-11-11 — four in a two-by-two grid, and Factory Reset as a full-width
+ * button at the end of the scroll. The words and the colours now share the work: **amber** says
+ * the phone still holds rows the unit has not got, **dim** says this action is not available as
+ * things stand, and a red bin says what cannot be undone.
  *
  * **SAVE** is not how a row is saved — a row writes itself, and reports what happened to it.
  * What is left in the phone's RAM is a debounce window's worth of edits, and a driver who has
  * changed four rows and is about to walk outside wants them on the unit, not in a timer that a
- * dropped link will undo. The button says how many rows are waiting, and after writing, says
- * what is left.
+ * dropped link will undo. The flush glyph is that action. The count the button used to spell out
+ * (`SAVE 3`) is not on the screen any more: the colour is the count — amber when anything waits,
+ * and the rows themselves still say which ones and why.
  *
  * The bar is pinned, and that is a fix rather than a preference: it used to sit under a
  * `fillMaxSize()` list, which took the whole column and left the bar zero pixels tall, so
  * none of these five actions could be pressed at all. The list now takes `weight(1f)` and
- * the grid keeps its own height.
+ * the bar keeps its own height.
  *
- * Factory Reset is not here. The page puts it on a third row of its own, spanning the width,
- * and in the app it is the last item of the scroll instead — the one action that cannot be
- * undone should not sit under the thumb that is tapping SAVE.
+ * Factory Reset came up into the line with the rest, which is the one thing the unit's page did
+ * deliberately and this page now does the other way: it kept that action on a third row of its
+ * own, away from the thumb that taps SAVE. What makes it safe here is that the glyph is a bin —
+ * not mistakable for its neighbours — and it is the only action on the page that asks first: the
+ * icon opens [HudConfirmDialog], and not one byte reaches the unit until that is answered.
  */
 @Composable
 private fun ActionBar(
@@ -748,69 +766,121 @@ private fun ActionBar(
     onExport: () -> Unit,
     onRestore: () -> Unit,
     restoring: Boolean,
+    onFactoryReset: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().background(HudColors.Bg)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
-        Column(
+        // One line, five equal slots. Five 48 dp boxes and their padding cost less height than the
+        // two rows of word buttons they replace did, which is the part that matters on a phone:
+        // every dp this bar keeps is a dp of settings the owner has to scroll for.
+        Row(
             Modifier.fillMaxWidth()
-                .padding(horizontal = HudPage.Gutter, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = HudPage.Gutter, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            // Four actions in two rows of two, each `HudTouch.Button` tall. They used to carry a
-            // hand-picked 44 dp — taller than the token, shorter than Material's 48, which is the
-            // worst of both: this bar is pinned above the tab bar, so every dp it takes is
-            // settings the owner has to scroll for. That 44 dp is also why the token alone did
-            // not shrink this page on 2026-11-08.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HudButton(
-                    label = when {
-                        state.pending > 0 -> "SAVE ${state.pending}"
-                        state.sync is SyncPhase.Ready -> "SAVED"
-                        else -> "SAVE"
-                    },
-                    style = HudButtonStyle.PRIMARY,
-                    enabled = ready && state.pending > 0,
-                    modifier = Modifier.weight(1f).height(HudTouch.Button),
-                    onClick = {
-                        scope.launch {
-                            noteOfFlush(store.flush())?.let(onNote)
-                        }
-                    },
-                )
-                HudButton(
-                    label = "RESTART",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = ready,
-                    modifier = Modifier.weight(1f).height(HudTouch.Button),
-                    onClick = {
-                        scope.launch {
-                            val r = store.action("reboot")
-                            if (r.ok || r.error == "timeout") store.clearRebootPending()
-                            onNote(
-                                if (r.ok || r.error == "timeout") "restarting…"
-                                else "restart refused: ${r.error}",
-                            )
-                        }
-                    },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HudButton(
-                    label = "BACKUP",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = state.sync is SyncPhase.Ready,
-                    modifier = Modifier.weight(1f).height(HudTouch.Button),
-                    onClick = onExport,
-                )
-                HudButton(
-                    label = if (restoring) "RESTORING…" else "RESTORE",
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = state.sync is SyncPhase.Ready && !restoring,
-                    modifier = Modifier.weight(1f).height(HudTouch.Button),
-                    onClick = onRestore,
-                )
-            }
+            val pending = state.pending
+            val synced = state.sync is SyncPhase.Ready
+            ActionSlot(
+                glyph = HudIcons.Flush,
+                // The number the button used to show lives here instead, where it costs the eye
+                // nothing and a driver who cannot see the colour still gets it.
+                description = if (pending > 0) {
+                    "write the $pending waiting row${if (pending == 1) "" else "s"} to the unit now"
+                } else {
+                    "write the rows still waiting in this phone to the unit — nothing is waiting"
+                },
+                ink = when {
+                    pending > 0 && ready -> HudColors.Amber
+                    else -> HudColors.TextDim
+                },
+                enabled = ready && pending > 0,
+                onClick = {
+                    scope.launch {
+                        noteOfFlush(store.flush())?.let(onNote)
+                    }
+                },
+            )
+            ActionSlot(
+                glyph = HudIcons.Power,
+                description = "restart the unit",
+                ink = if (ready) HudColors.Cyan else HudColors.TextDim,
+                enabled = ready,
+                onClick = {
+                    scope.launch {
+                        val r = store.action("reboot")
+                        if (r.ok || r.error == "timeout") store.clearRebootPending()
+                        onNote(
+                            if (r.ok || r.error == "timeout") "restarting…"
+                            else "restart refused: ${r.error}",
+                        )
+                    }
+                },
+            )
+            ActionSlot(
+                glyph = HudIcons.ExportFile,
+                description = "back up every setting to a file",
+                ink = if (synced) HudColors.Cyan else HudColors.TextDim,
+                enabled = synced,
+                onClick = onExport,
+            )
+            ActionSlot(
+                glyph = HudIcons.ImportFile,
+                description = if (restoring) "restoring the settings from that file…"
+                else "restore the settings from a backup file",
+                ink = if (synced && !restoring) HudColors.Cyan else HudColors.TextDim,
+                enabled = synced && !restoring,
+                onClick = onRestore,
+            )
+            ActionSlot(
+                glyph = HudIcons.Bin,
+                description = "factory reset the unit — wipes every setting",
+                ink = if (ready) HudColors.Red else HudColors.TextDim,
+                enabled = ready,
+                onClick = onFactoryReset,
+            )
         }
+    }
+}
+
+/**
+ * One icon slot of [ActionBar]: a glyph on the app's 48 dp floor, and the words the removed
+ * labels used to carry.
+ *
+ * A `RowScope` extension because the slot claims an equal share of the line with `weight`, and
+ * that share is what keeps the five actions one apart no matter how narrow the phone is.
+ *
+ * 48 dp and not [HudTouch.Button]'s 36: a labelled button may be small, because the label tells
+ * you what it is. A lone glyph cannot, so the target is the largest of the app's two floors and
+ * the name goes where a finger cannot read it — into `contentDescription`, and into
+ * `onClickLabel`, which is what TalkBack reads as the action a double-tap will take.
+ */
+@Composable
+private fun RowScope.ActionSlot(
+    glyph: ImageVector,
+    description: String,
+    ink: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier.weight(1f).heightIn(min = HudTouch.Min)
+            .hudPressable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = description,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            glyph,
+            // Five glyphs and no words anywhere on the bar. Without a description on each, a
+            // screen reader reads this bar as "button, button, button, button, button" — the
+            // same complaint `uiautomator` wrote down about the page's switches.
+            contentDescription = description,
+            colorFilter = ColorFilter.tint(ink),
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 

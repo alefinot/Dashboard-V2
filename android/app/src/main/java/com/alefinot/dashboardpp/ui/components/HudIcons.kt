@@ -20,6 +20,10 @@ import java.util.Locale
  * else in the app carries one and a borrowed shape would be a new visual language on top of
  * an existing one.
  *
+ * The unit's settings page draws from the same set for the five actions at its foot
+ * ([Flush], [Power], [ExportFile], [ImportFile], [Bin]) at the same 22 dp, so one legibility
+ * rule governs both lines of glyphs in the app.
+ *
  * The one rule the set obeys is legibility at the bar's 22 dp (60 px on the bench phone),
  * and it cuts both ways: a 1.9-unit stroke is ~5 px there, so a mark with interior detail
  * has to be a filled body with the detail *cut* out of it by counter-winding - the wheel, the
@@ -43,7 +47,7 @@ object HudIcons {
     /** The grid every glyph is drawn on, matching the CSS icons' 24x24 box. */
     private const val VB = 24f
 
-    /** Stroke weight shared by the four drawn glyphs. */
+    /** Stroke weight shared by every glyph that is drawn as a line rather than a body. */
     private const val W = 1.9f
 
     /**
@@ -326,6 +330,139 @@ object HudIcons {
         ).addPath(
             // The arrowhead: a corner at the end of that stroke, drawn as two legs.
             PathParser().parsePathString("M1,4 L1,10 L7,10").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).build()
+    }
+
+    // ─── The unit's settings page: the five actions at its foot ─────────────────
+    //
+    // They were word buttons until 2026-11-11, when the maintainer had the page's five actions
+    // drawn as five small icons on one line. At the 22 dp they are drawn, a W stroke is ~4 px, so
+    // the set's one rule binds here as it does in the bar: nothing is drawn *inside* a closed
+    // outline. All five are open shapes, and the three that carry a direction carry it in an
+    // arrow that stands clear of the container it points at — an arrow inside a box is exactly
+    // the mark this file says dies at that size.
+
+    /**
+     * **SAVE** (`flush`): an arrow down onto a line.
+     *
+     * Not a floppy disc, because nothing here writes a file: this button pushes the rows that are
+     * still waiting out their debounce over the link to the unit. The arrow is the page's own
+     * mark for data arriving, and the landing line is a line and not a box for a reason — the two
+     * file actions beside it, [ExportFile] and [ImportFile], carry a box, and the difference
+     * between "to the unit" and "to a file" is the one thing a driver must not guess at.
+     *
+     * Its colour does the rest of the talking: amber when rows are waiting, dim when the phone
+     * has nothing left to write.
+     */
+    val Flush: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudFlush", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString("M12,3.5 L12,12").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M7.5,7.5 L12,12 L16.5,7.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            PathParser().parsePathString("M4.5,19 L19.5,19").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /**
+     * **RESTART**: the power mark — a ring open at the top with the stem standing in the gap.
+     *
+     * Deliberately not the round arrow [Reset] carries, because `config.reset` and `reboot` sit on
+     * the same screen: one undoes a setting, the other restarts the unit, and two circular arrows
+     * an inch apart would say they are the same action.
+     *
+     * The ring is one 300° arc (centre 12,12, radius 7, the gap centred on the top from -60° to
+     * -120°, so 30° either side of vertical — wide enough that the stem reads as *in* the opening
+     * and not as a mistake in the circle).
+     */
+    val Power: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudPower", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            // Start (15.50,5.94) = -60°, end (8.50,5.94) = -120°, clockwise through right, bottom
+            // and left: large-arc 1, sweep 1.
+            PathParser().parsePathString("M15.50,5.94 A7,7 0 1 1 8.50,5.94").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M12,2.5 L12,10.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).build()
+    }
+
+    /**
+     * **BACKUP**: an arrow leaving an open box — the settings going out to a file.
+     *
+     * The box is open at the top so the arrow can leave it without being drawn inside a closed
+     * outline, and it is the same box [ImportFile] uses: the pair is one container with two
+     * directions, which is the whole difference between the two actions.
+     */
+    val ExportFile: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudExportFile", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString("M4,14.5 L4,21 L20,21 L20,14.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            PathParser().parsePathString("M12,12 L12,3.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M7.5,8 L12,3.5 L16.5,8").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).build()
+    }
+
+    /** **RESTORE**: the same open box, arrow pointing in — a file coming back onto the unit. */
+    val ImportFile: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudImportFile", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString("M4,14.5 L4,21 L20,21 L20,14.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            PathParser().parsePathString("M12,3.5 L12,12").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M7.5,7.5 L12,12 L16.5,7.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).build()
+    }
+
+    /**
+     * **FACTORY RESET**: a bin — lid, handle, and the body tapering to the base.
+     *
+     * No ribs. The upright lines a bin usually carries are detail inside a closed body, and the
+     * rule above says what that does at 22 dp: the stroke and the ribs fuse into one grey smudge.
+     * The lid and the taper carry the shape on their own.
+     */
+    val Bin: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudBin", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString("M4,6.5 L20,6.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString("M9.5,6.5 L9.5,3.5 L14.5,3.5 L14.5,6.5").toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            PathParser().parsePathString("M6.5,6.5 L7.4,20.5 L16.6,20.5 L17.5,6.5").toNodes(),
             stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
             strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
         ).build()
