@@ -20,7 +20,7 @@ import java.util.Locale
  * else in the app carries one and a borrowed shape would be a new visual language on top of
  * an existing one.
  *
- * The unit's settings page draws from the same set for the five actions at its foot
+ * The unit's settings page draws from the same set for the five actions under its search box
  * ([Flush], [Power], [ExportFile], [ImportFile], [Bin]) at the same 22 dp, so one legibility
  * rule governs both lines of glyphs in the app.
  *
@@ -335,7 +335,7 @@ object HudIcons {
         ).build()
     }
 
-    // ─── The unit's settings page: the five actions at its foot ─────────────────
+    // ─── The unit's settings page: its five actions, under the search box ───────
     //
     // They were word buttons until 2026-11-11, when the maintainer had the page's five actions
     // drawn as five small icons on one line. At the 22 dp they are drawn, a W stroke is ~4 px, so

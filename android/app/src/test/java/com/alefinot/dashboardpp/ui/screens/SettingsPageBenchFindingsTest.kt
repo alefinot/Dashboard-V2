@@ -180,16 +180,16 @@ class SettingsPageBenchFindingsTest {
     }
 
     /**
-     * The five actions at the foot of the page, as five glyphs on one line (2026-11-11).
+     * The page's five actions, as five glyphs on one line under the search box (2026-11-11).
      *
      * A word button fails silently when it becomes a glyph: nothing on the screen says which
-     * action was lost, or that it ever had a name. So each of the four things the words carried
-     * is pinned here as its own rule — that there are five and one line, that each still names
-     * itself, that each is pressable by a finger, and that the one action that cannot be undone
-     * asks before it acts.
+     * action was lost, or that it ever had a name. So each of the things the words carried is
+     * pinned here as its own rule — that there are five on one line, that the line sits under the
+     * search box in the header that does not scroll, that each glyph still names itself, that each
+     * is pressable by a finger, and that the one action that cannot be undone asks before it acts.
      */
     @Test
-    fun theActionsAtTheFootOfThePageAreFiveNamedIcons() {
+    fun thePageDrawsItsFiveActionIconsUnderTheSearchBox() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         val start = page.indexOf("private fun ActionBar(")
         val end = page.indexOf("private fun RowScope.ActionSlot(")
@@ -200,11 +200,22 @@ class SettingsPageBenchFindingsTest {
             "the action line is no longer exactly five slots",
             5, Regex("ActionSlot\\(").findAll(bar).count(),
         )
-        // One line, and the list still flexes above it — the bug this bar was born from is the
-        // list taking the whole column and the bar being left zero pixels tall.
+        // Where the line is drawn: after the search field, before the list. The header is the part
+        // of the page that does not scroll, and five glyphs tapped by position are worth more
+        // holding one y than moving as the page's note lines come and go.
+        val callAt = page.indexOf("onFactoryReset = { factoryAsk = true }")
+        val searchAt = page.indexOf("HudInputStyle.SEARCH")
+        val listAt = page.indexOf("LazyColumn(")
+        assertTrue(
+            "the action line left the space under the search box: it is drawn after the search " +
+                "field and before the list, in the header that stays put",
+            searchAt in 1 until callAt && callAt < listAt,
+        )
+        // One line, and the list still flexes below it — the bug this line was born from is the
+        // list taking the whole column and the actions being left zero pixels tall.
         assertTrue("the five slots are no longer one Row", Regex("Row\\(").containsMatchIn(bar))
         assertTrue(
-            "the list above the action line took back the whole height",
+            "the list below the action line took back the whole height",
             Regex("LazyColumn\\(Modifier\\.weight\\(1f\\)").containsMatchIn(page),
         )
         // The glyphs are the app's own set; nothing here is a Material icon or a drawable.

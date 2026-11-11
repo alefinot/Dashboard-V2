@@ -3,7 +3,6 @@ package com.alefinot.dashboardpp.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -173,8 +172,8 @@ fun DashboardSettingsScreen(
 
     // The unit's performance monitor, now one of the scroll's own cards rather than a page it
     // opened. It reads while it is open and stops when it closes, so nothing here has to remember
-    // to leave a route: the card is the last block of the scroll, above the action line, where the
-    // unit's page kept its own performance panel.
+    // to leave a route: the card is the last block of the scroll, under the header with its five
+    // action glyphs, where the unit's page kept its own performance panel.
     var perfOpen by remember { mutableStateOf(false) }
 
     val ready = linked
@@ -275,6 +274,20 @@ fun DashboardSettingsScreen(
                     onClick = { store.syncIfNeeded(force = true) },
                 )
             }
+            // The five actions that belong to no row, drawn on one line under the search box. They
+            // are in the header, not in the scroll, so they hold their place while the page's own
+            // note lines above the list grow and shrink and the owner taps them by position.
+            ActionBar(
+                store = store,
+                state = state,
+                ready = ready,
+                scope = scope,
+                onNote = { note = it },
+                onExport = { exportLauncher.launch("dashboardpp-settings.json") },
+                onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                restoring = restoring,
+                onFactoryReset = { factoryAsk = true },
+            )
             Spacer(Modifier.height(4.dp))
             Text(syncText, style = HudeCfgNote(), color = syncColor)
             if (state.missingKeys.isNotEmpty()) {
@@ -354,9 +367,10 @@ fun DashboardSettingsScreen(
             .coerceAtMost(2)
         val unplaced = SettingsLayout.unlabelledBlock(state, query)
 
-        // The list is the only child that flexes: without the weight it takes the whole
-        // height and pushes the action line off the bottom of the screen, which is where these
-        // five actions had been since the page was written.
+        // The list is the only child that flexes. The header above it - title, pill, search row and
+        // the five action glyphs - keeps its own height, and the list takes everything left, which
+        // is what stopped the action line being squeezed to zero pixels when it lived under a
+        // `fillMaxSize()` list at the foot of the page.
         LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter)) {
             item {
                 Text(
@@ -587,18 +601,6 @@ fun DashboardSettingsScreen(
 
             item { Spacer(Modifier.height(8.dp)) }
         }
-
-        ActionBar(
-            store = store,
-            state = state,
-            ready = ready,
-            scope = scope,
-            onNote = { note = it },
-            onExport = { exportLauncher.launch("dashboardpp-settings.json") },
-            onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
-            restoring = restoring,
-            onFactoryReset = { factoryAsk = true },
-        )
     }
 
     // The bin in the line above asks first, and nothing is sent until this is answered. That is
@@ -730,13 +732,13 @@ private fun CardBlock(
 // ---------------------------------------------------------------------------
 
 /**
- * The page's `.bottom-toolbar`: the five actions that belong to no card, drawn as five small
- * icons on one line, pinned under the list.
+ * The five actions that belong to no card, drawn as five small icons on one line, in the page's
+ * `.sticky-top` header directly under the search box.
  *
- * They were words until 2026-11-11 — four in a two-by-two grid, and Factory Reset as a full-width
- * button at the end of the scroll. The words and the colours now share the work: **amber** says
- * the phone still holds rows the unit has not got, **dim** says this action is not available as
- * things stand, and a red bin says what cannot be undone.
+ * They were words until 2026-11-11 — four in a two-by-two grid at the foot of the screen, and
+ * Factory Reset as a full-width button at the end of the scroll. The words and the colours now
+ * share the work: **amber** says the phone still holds rows the unit has not got, **dim** says this
+ * action is not available as things stand, and a red bin says what cannot be undone.
  *
  * **SAVE** is not how a row is saved — a row writes itself, and reports what happened to it.
  * What is left in the phone's RAM is a debounce window's worth of edits, and a driver who has
@@ -745,16 +747,18 @@ private fun CardBlock(
  * (`SAVE 3`) is not on the screen any more: the colour is the count — amber when anything waits,
  * and the rows themselves still say which ones and why.
  *
- * The bar is pinned, and that is a fix rather than a preference: it used to sit under a
- * `fillMaxSize()` list, which took the whole column and left the bar zero pixels tall, so
- * none of these five actions could be pressed at all. The list now takes `weight(1f)` and
- * the bar keeps its own height.
+ * The line lives in the header, so it does not scroll: five glyphs the owner taps by position are
+ * worth more at a fixed y than at the bottom of a page that grows and shrinks its own notes. It
+ * was pinned at the foot until the maintainer moved it up on 2026-11-11; both places depend on the
+ * same thing, that the list takes `weight(1f)` — in the old one, a `fillMaxSize()` list left the
+ * bar zero pixels tall and none of these five actions could be pressed at all.
  *
  * Factory Reset came up into the line with the rest, which is the one thing the unit's page did
  * deliberately and this page now does the other way: it kept that action on a third row of its
- * own, away from the thumb that taps SAVE. What makes it safe here is that the glyph is a bin —
- * not mistakable for its neighbours — and it is the only action on the page that asks first: the
- * icon opens [HudConfirmDialog], and not one byte reaches the unit until that is answered.
+ * own, away from the hand that taps SAVE. Up here it is further from that hand than ever, and the
+ * glyph is a bin — not mistakable for its neighbours — but what really makes it safe is that it is
+ * the only action on the page that asks first: the icon opens [HudConfirmDialog], and not one byte
+ * reaches the unit until that is answered.
  */
 @Composable
 private fun ActionBar(
@@ -768,77 +772,74 @@ private fun ActionBar(
     restoring: Boolean,
     onFactoryReset: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().background(HudColors.Bg)) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
-        // One line, five equal slots. Five 48 dp boxes and their padding cost less height than the
-        // two rows of word buttons they replace did, which is the part that matters on a phone:
-        // every dp this bar keeps is a dp of settings the owner has to scroll for.
-        Row(
-            Modifier.fillMaxWidth()
-                .padding(horizontal = HudPage.Gutter, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            val pending = state.pending
-            val synced = state.sync is SyncPhase.Ready
-            ActionSlot(
-                glyph = HudIcons.Flush,
-                // The number the button used to show lives here instead, where it costs the eye
-                // nothing and a driver who cannot see the colour still gets it.
-                description = if (pending > 0) {
-                    "write the $pending waiting row${if (pending == 1) "" else "s"} to the unit now"
-                } else {
-                    "write the rows still waiting in this phone to the unit — nothing is waiting"
-                },
-                ink = when {
-                    pending > 0 && ready -> HudColors.Amber
-                    else -> HudColors.TextDim
-                },
-                enabled = ready && pending > 0,
-                onClick = {
-                    scope.launch {
-                        noteOfFlush(store.flush())?.let(onNote)
-                    }
-                },
-            )
-            ActionSlot(
-                glyph = HudIcons.Power,
-                description = "restart the unit",
-                ink = if (ready) HudColors.Cyan else HudColors.TextDim,
-                enabled = ready,
-                onClick = {
-                    scope.launch {
-                        val r = store.action("reboot")
-                        if (r.ok || r.error == "timeout") store.clearRebootPending()
-                        onNote(
-                            if (r.ok || r.error == "timeout") "restarting…"
-                            else "restart refused: ${r.error}",
-                        )
-                    }
-                },
-            )
-            ActionSlot(
-                glyph = HudIcons.ExportFile,
-                description = "back up every setting to a file",
-                ink = if (synced) HudColors.Cyan else HudColors.TextDim,
-                enabled = synced,
-                onClick = onExport,
-            )
-            ActionSlot(
-                glyph = HudIcons.ImportFile,
-                description = if (restoring) "restoring the settings from that file…"
-                else "restore the settings from a backup file",
-                ink = if (synced && !restoring) HudColors.Cyan else HudColors.TextDim,
-                enabled = synced && !restoring,
-                onClick = onRestore,
-            )
-            ActionSlot(
-                glyph = HudIcons.Bin,
-                description = "factory reset the unit — wipes every setting",
-                ink = if (ready) HudColors.Red else HudColors.TextDim,
-                enabled = ready,
-                onClick = onFactoryReset,
-            )
-        }
+    // One line, five equal slots, the same left edge as the search box it sits under (the header
+    // column owns the gutter padding). Five 48 dp boxes cost less height than the two rows of word
+    // buttons they replaced did, which is the part that matters on a phone: every dp this line
+    // keeps is a dp of settings the owner has to scroll for.
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        val pending = state.pending
+        val synced = state.sync is SyncPhase.Ready
+        ActionSlot(
+            glyph = HudIcons.Flush,
+            // The number the button used to show lives here instead, where it costs the eye
+            // nothing and a driver who cannot see the colour still gets it.
+            description = if (pending > 0) {
+                "write the $pending waiting row${if (pending == 1) "" else "s"} to the unit now"
+            } else {
+                "write the rows still waiting in this phone to the unit — nothing is waiting"
+            },
+            ink = when {
+                pending > 0 && ready -> HudColors.Amber
+                else -> HudColors.TextDim
+            },
+            enabled = ready && pending > 0,
+            onClick = {
+                scope.launch {
+                    noteOfFlush(store.flush())?.let(onNote)
+                }
+            },
+        )
+        ActionSlot(
+            glyph = HudIcons.Power,
+            description = "restart the unit",
+            ink = if (ready) HudColors.Cyan else HudColors.TextDim,
+            enabled = ready,
+            onClick = {
+                scope.launch {
+                    val r = store.action("reboot")
+                    if (r.ok || r.error == "timeout") store.clearRebootPending()
+                    onNote(
+                        if (r.ok || r.error == "timeout") "restarting…"
+                        else "restart refused: ${r.error}",
+                    )
+                }
+            },
+        )
+        ActionSlot(
+            glyph = HudIcons.ExportFile,
+            description = "back up every setting to a file",
+            ink = if (synced) HudColors.Cyan else HudColors.TextDim,
+            enabled = synced,
+            onClick = onExport,
+        )
+        ActionSlot(
+            glyph = HudIcons.ImportFile,
+            description = if (restoring) "restoring the settings from that file…"
+            else "restore the settings from a backup file",
+            ink = if (synced && !restoring) HudColors.Cyan else HudColors.TextDim,
+            enabled = synced && !restoring,
+            onClick = onRestore,
+        )
+        ActionSlot(
+            glyph = HudIcons.Bin,
+            description = "factory reset the unit — wipes every setting",
+            ink = if (ready) HudColors.Red else HudColors.TextDim,
+            enabled = ready,
+            onClick = onFactoryReset,
+        )
     }
 }
 
