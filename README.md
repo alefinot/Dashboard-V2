@@ -1166,7 +1166,7 @@ Sharing does not copy a drive. `trips/TripExport.kt` hands `FileProvider` the tr
 
 ### Updating the app itself
 
-App Settings carries an **App Update** card under **Firmware Update**, and it is the firmware card's sibling down to the wire: the phone fetches its own `app-debug.apk` from this repository's GitHub releases (`update/FirmwareReleases.kt`, the app's only HTTP lane) and hands it to the system package installer. `update/AppUpdate.kt` owns the state: a silent check at startup plus an explicit REFRESH, **newest release only**, and only when its tag is newer than the running `versionName` under the same dotted-number comparator the firmware dropdown uses — a downgrade is never offered, because the installer would refuse it anyway. DOWNLOAD fetches into `cacheDir/apk/` (size-capped, length-checked against the advertised asset, reused without a second fetch, one APK kept); INSTALL publishes that file through FileProvider — the `apk/` cache root in `files_path.xml`, pinned to `AppUpdate.APK_DIR` by `AppXmlWiringTest` — and starts the installer's own confirmation.
+The app's own half of App Settings' **Updates** card — the other half pushes the unit's firmware — fetches the app's own `app-debug.apk` from this repository's GitHub releases (`update/FirmwareReleases.kt`, the app's only HTTP lane) and hands it to the system package installer. `update/AppUpdate.kt` owns the state: a silent check at startup plus an explicit REFRESH, **newest release only**, and only when its tag is newer than the running `versionName` under the same dotted-number comparator the firmware dropdown uses — a downgrade is never offered, because the installer would refuse it anyway. DOWNLOAD fetches into `cacheDir/apk/` (size-capped, length-checked against the advertised asset, reused without a second fetch, one APK kept); INSTALL publishes that file through FileProvider — the `apk/` cache root in `files_path.xml`, pinned to `AppUpdate.APK_DIR` by `AppXmlWiringTest` — and starts the installer's own confirmation.
 
 Two things the card cannot promise and says so. **`REQUEST_INSTALL_PACKAGES` is a special access**: no dialog can request it, so until the owner grants it on the system page the primary button is **ALLOW INSTALLS**, the same jump shape as the Storage card's grant, re-checked when the app resumes. And the released APKs are debug-signed: an update installs in place, data kept, only when it carries the same signing key as the running app — an APK from another machine needs an uninstall first, and the installer, not this card, is the verifier (`AGENTS.md` rule 3: no signing, anywhere). What an update never is: silent. Android shows its own screens — on MIUI the grant carries a scary-confirm pass and the install a Play Protect scan — and the app process is expected to die in the install hand and come back replaced.
 
@@ -1694,8 +1694,9 @@ are **the Android app over Bluetooth** and **a USB cable with PlatformIO**:
 3. **The Android app over Bluetooth** is the wireless path. It reached the old endpoint
    through the WebView of the unit's own page; that WebView and the unit's HTTP server are
    both gone, and nothing in the app aims a socket at a unit — the transport is the OTA
-   characteristic and the frames under *Firmware over the link*. The card (App Settings →
-   **Firmware Update**, since 2026-11-09) takes its file from either of two doors and runs
+   characteristic and the frames under *Firmware over the link*. The card's firmware half
+   (App Settings → **Updates** → *FIRMWARE*, the two update halves having merged into one
+   card on 2026-11-11; this half moved onto App Settings on 2026-11-09) takes its file from either of two doors and runs
    one pipeline from there:
 
    - **The version dropdown** reads this project's GitHub releases on the phone

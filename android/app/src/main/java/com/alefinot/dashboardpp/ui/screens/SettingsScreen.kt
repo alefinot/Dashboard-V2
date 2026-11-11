@@ -208,17 +208,21 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        // ── Firmware update ──────────────────────────────────────────────
-        // The card moved here from the unit's settings page on 2026-11-09: it is the one
-        // control that *changes* the unit rather than adjusting it, and it earns its keep
-        // offline — the dropdown and the download need only the phone's network. The old
-        // settings page is settings and nothing else.
+        // ── Updates ──────────────────────────────────────────────────────
+        // One card, two targets: the unit's firmware and this app's own APK. They
+        // merged on 2026-11-11 because they answer one question - *what is newer than
+        // what I am running, and how does it get in?* - and every half kept its own
+        // honesty sentence: the spare-slot promise above the firmware buttons, the
+        // in-place-and-keeps-data promise above the app ones. A failed press on either
+        // half changes nothing on either device.
         var firmwareLine by remember { mutableStateOf("") }
         Column(
             Modifier.fillMaxWidth().hudCard()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            CardHead("Firmware Update")
+            CardHead("Updates")
+            Spacer(Modifier.height(10.dp))
+            Text("FIRMWARE", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(6.dp))
             Text(
                 "Writes to the spare flash slot. A refused or interrupted install " +
@@ -235,19 +239,14 @@ fun SettingsScreen(
                 Spacer(Modifier.height(4.dp))
                 Text(firmwareLine, color = HudColors.TextMuted, style = HudeCfgNote())
             }
-        }
-        Spacer(Modifier.height(12.dp))
 
-        // ── App update ───────────────────────────────────────────────────
-        // The phone updating the phone. Same GitHub lane as the card above, different
-        // receiver: the installer runs on this device, so this card works with nothing
-        // linked, and the newest release is all it offers — the installer refuses
-        // downgrades, so offering them would be a button built to fail.
-        Column(
-            Modifier.fillMaxWidth().hudCard()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-        ) {
-            CardHead("App Update")
+            Spacer(Modifier.height(16.dp))
+            // The phone updating the phone. Same GitHub lane as the half above,
+            // different receiver: the installer runs on this device, so this half works
+            // with nothing linked, and the newest release is all it offers — the
+            // installer refuses downgrades, so offering them would be a button built
+            // to fail.
+            Text("APP", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(6.dp))
             Text(
                 "The installer replaces this app in place and keeps its data. A refused " +

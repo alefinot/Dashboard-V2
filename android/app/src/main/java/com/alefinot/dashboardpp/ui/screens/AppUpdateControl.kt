@@ -38,13 +38,14 @@ import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
 
 /**
- * The controls under the "App Update" card's head — the phone updating the phone.
+ * The controls under the "APP" half of the page's Updates card — the phone updating the phone.
  *
- * It is the firmware card's sibling and does as little as that one does: the check, the
- * download and the install hand all live in `update/AppUpdate.kt`, where they outlive this
- * composable, for the same reason the transfer lives in `OtaController` — a progress bar that
- * disappears when you scroll is a progress bar that makes people press the button twice, and
- * an updater that dies with the tab is an update that starts twice.
+ * It is the FIRMWARE half's partner inside the same card and does as little as that one
+ * does: the check, the download and the install hand all live in `update/AppUpdate.kt`,
+ * where they outlive this composable, for the same reason the transfer lives in
+ * `OtaController` — a progress bar that disappears when you scroll is a progress bar
+ * that makes people press the button twice, and an updater that dies with the tab is an
+ * update that starts twice.
  *
  * What the card may promise is one sentence and true: the system installer replaces the app
  * in place and keeps its data, and a refused install — wrong signing key included — changes
