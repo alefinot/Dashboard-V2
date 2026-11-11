@@ -81,13 +81,14 @@ import kotlinx.coroutines.isActive
  *  - **CPU Performance** and **Memory & Storage** span the grid. Both are `.perf-card`
  *    tiles with a caption line over a 20 dp `--bg-tertiary` bar, and Memory keeps the
  *    segmented flash bar, its legend and the settings-budget line under it.
- *  - **Bluetooth Link**, the one app-only card that is left, uses the same tile so it reads as
- *    part of the panel rather than as an appendix. The four that used to follow it — task stacks,
- *    why the unit is running, the inputs it is measuring, and the spread over the time the card
- *    has been open — were taken out on 2026-11-11 at the maintainer's request. The unit still
- *    answers `live` and `boot` (`src/bt_rpc.cpp`) and [UnitDiag] still knows how to read them;
- *    the card simply stopped asking, because a round trip that ends in a figure nobody looks at
- *    is the only kind of link traffic that is pure cost.
+ *  - **Four tiles, and only four.** The **Bluetooth Link** card and the four bench additions that
+ *    used to follow it — task stacks, why the unit is running, the inputs the unit is measuring,
+ *    and the spread over the time the card has been open — were all taken out on 2026-11-11 at the
+ *    maintainer's request, and the card stopped asking for `live` and `boot` with them. What the
+ *    link *is* still gets said once, in the banner over the body: the phone's own name and MTU for
+ *    the unit, which is all the panel needs about the radio to be trustworthy about the rest.
+ *    [UnitDiag] still parses `live`, `boot` and the link block of `perf`, because the unit still
+ *    answers every one of them.
  *  - **Serial Output Monitor** is the one card that did not travel: serial is a cable on the
  *    bench, and this app has no wire to the unit.
  *
@@ -248,10 +249,6 @@ fun PerfMonitorCard(
 
                 CpuCard(p)
                 MemoryCard(p)
-
-                // The unit's own side of the link. The page this panel came from drew a Wi-Fi block
-                // here instead; a BLE-only unit has exactly one radio, and this is it.
-                LinkCard(p)
             }
         }
     }
@@ -700,17 +697,6 @@ private fun LegendItem(
             style = HudeCfgNote(),
             color = if (dim) HudColors.TextDim else HudColors.TextMuted,
         )
-    }
-}
-
-@Composable
-private fun LinkCard(p: PerfReadout?, modifier: Modifier = Modifier) {
-    PerfCard("Bluetooth Link", modifier) {
-        PerfRow("Radio", p?.let { DiagFormat.bleState(it.bleState) } ?: "--")
-        PerfRow("Link up on the unit side", if (p?.bleConnected == true) "yes" else "no")
-        PerfRow("MTU (unit side)", p?.let { "${it.bleMtu} bytes" } ?: "--")
-        PerfRow("Passkey entry open", if (p?.blePairing == true) "yes" else "no")
-        PerfRow("Unit MAC", p?.mac?.ifEmpty { "--" } ?: "--")
     }
 }
 
