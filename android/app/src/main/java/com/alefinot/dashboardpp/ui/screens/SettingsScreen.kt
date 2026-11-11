@@ -137,6 +137,43 @@ fun SettingsScreen(
             "?"
         }
     }
+    // The Storage half of the Trips & Storage card reads the volume, and the answer has
+    // to be re-read whenever the page comes back to the foreground: the grant is made on
+    // a system page the card opens, and a card that latched the answer from its first
+    // composition would go on telling the owner the folder is private after they granted
+    // it, which is the one thing this card exists to tell them.
+    var storageTick by remember { mutableIntStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) storageTick++
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    }
+    // Null until the first read finishes, so the storage block arrives a frame late rather
+    // than promising a folder the app has not confirmed. The read touches the volume (it
+    // creates the folder it reports on, and asks the volume for free space) and so stays
+    // off the main thread.
+    var storage by remember { mutableStateOf<StorageSnapshot?>(null) }
+    // The card counts with the Trips index, so the index is the thing that has to be fresh.
+    // Two effects, because they answer different questions: this one asks the volume again the
+    // moment the page is opened or the app comes back to it - the owner may have spent that
+    // time deleting a drive in a file manager, or granting storage, which moves the files -
+    // and the one below rebuilds the card from whatever that look publishes.
+    LaunchedEffect(storageTick) { trips.refresh() }
+    val tripCounts by trips.tripCounts.collectAsStateWithLifecycle()
+    LaunchedEffect(storageTick, tripCounts) {
+        storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
+    }
+    // Android 8.1 through 10: there, the ordinary runtime permission is what makes Documents
+    // writable at all, and this is the page the owner is standing on if the dialog at launch
+    // went unanswered or was declined. From Android 11 nothing like it can be asked - All
+    // files access is a special access and no code can bring its page up for them, only hand
+    // them the page.
+    val legacyStorageAsk = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { storageTick++ }
     Column(
         Modifier.hudPage()
             .verticalScroll(rememberScrollState())
@@ -222,6 +259,12 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
+        // ── Trips & Storage ──────────────────────────────────────────────
+        // One card, because the three questions are one story: is the drive being
+        // recorded, where does it go, and what is already in there. They used to be
+        // three cards - the switches, the folder, and the actions over the files - and
+        // the folder answer, the one that decides whether a drive can be found in a
+        // file manager at all, sat under its own heading at the far end of the page.
         // The page's switches live in cards with the sentence that explains them, not on
         // bare rows whose label is at the left edge of the screen and whose switch is at the
         // right one. `label { color: var(--accent-cyan) }` is still the page's own colour.
@@ -229,7 +272,8 @@ fun SettingsScreen(
             Modifier.fillMaxWidth().hudCard()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            CardHead("Trip Recording")
+            CardHead("Trips & Storage")
+            Spacer(Modifier.height(10.dp))
             ToggleRow(
                 label = "AUTO-START ON CONNECT",
                 on = recordingEnabled,
@@ -261,6 +305,58 @@ fun SettingsScreen(
                 on = motionOn,
                 toggleLabel = "motion",
             ) { on -> scope.launch { settings.setMotionEnabled(on) } }
+
+            Spacer(Modifier.height(16.dp))
+            Text("STORAGE", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(8.dp))
+            val snap = storage
+            if (snap == null) {
+                // Not a guess and not a spinner: this block's whole job is naming a
+                // folder, and the folder has not finished being confirmed yet.
+                Text(
+                    "reading the storage folder\u2026",
+                    color = HudColors.TextDim,
+                    style = HudeCfgNote(),
+                )
+            } else {
+                StorageSection(
+                    snapshot = snap,
+                    onGrant = {
+                        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                            legacyStorageAsk.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        } else {
+                            openStorageGrantScreen(context)
+                        }
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text("RECORDED DRIVES", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HudButton(
+                    "STORAGE & FILES",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.SECONDARY,
+                ) {
+                    storageLine = hudBytes(trips.storageBytes.value) + " recorded · " +
+                        trips.rows.value.size + " trip files"
+                }
+                // The page never asks by turning one button into two: `confirmDialog()`
+                // puts a modal box over the screen, and the only ways out are its two
+                // buttons or Escape. Same here - and deleting every recorded drive is
+                // exactly the kind of action that should not be one careless tap deep.
+                HudButton(
+                    "DELETE ALL TRIPS",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.DANGER,
+                ) { showConfirmClear = true }
+            }
+            if (storageLine.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
+            }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -330,88 +426,6 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(12.dp))
 
-        // ── Storage ─────────────────────────────────────────────────────
-        // Where the drive files are going, and the one control that can change it.
-        // Re-read whenever the page comes back to the foreground, because the grant is
-        // made on a system page this card opens: a card that latched the answer from its
-        // first composition would go on telling the owner the folder is private after
-        // they granted it, which is the one thing this card exists to tell them.
-        var storageTick by remember { mutableIntStateOf(0) }
-        val lifecycle = LocalLifecycleOwner.current
-        DisposableEffect(lifecycle) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) storageTick++
-            }
-            lifecycle.lifecycle.addObserver(observer)
-            onDispose { lifecycle.lifecycle.removeObserver(observer) }
-        }
-        // Null until the first read finishes, so the card arrives a frame late rather than
-        // promising a folder it has not confirmed. The read touches the volume (it creates
-        // the folder it reports on, and asks the volume for free space) and so stays off
-        // the main thread.
-        var storage by remember { mutableStateOf<StorageSnapshot?>(null) }
-        // The card counts with the Trips index, so the index is the thing that has to be fresh.
-        // Two effects, because they answer different questions: this one asks the volume again the
-        // moment the page is opened or the app comes back to it - the owner may have spent that
-        // time deleting a drive in a file manager, or granting storage, which moves the files -
-        // and the one below rebuilds the card from whatever that look publishes.
-        LaunchedEffect(storageTick) { trips.refresh() }
-        val tripCounts by trips.tripCounts.collectAsStateWithLifecycle()
-        LaunchedEffect(storageTick, tripCounts) {
-            storage = withContext(Dispatchers.IO) { StorageSnapshot.of(context, vm, trips) }
-        }
-        // Android 8.1 through 10: there, the ordinary runtime permission is what makes Documents
-        // writable at all, and this is the page the owner is standing on if the dialog at launch
-        // went unanswered or was declined. From Android 11 nothing like it can be asked - All
-        // files access is a special access and no code can bring its page up for them, only hand
-        // them the page.
-        val legacyStorageAsk = rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission(),
-        ) { storageTick++ }
-        storage?.let { snap ->
-            StorageCard(
-                snapshot = snap,
-                onGrant = {
-                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                        legacyStorageAsk.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    } else {
-                        openStorageGrantScreen(context)
-                    }
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-        }
-
-        Column(
-            Modifier.fillMaxWidth().hudCard()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-        ) {
-            CardHead("Recorded Drives")
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HudButton(
-                    "STORAGE & FILES",
-                    modifier = Modifier.weight(1f),
-                    style = HudButtonStyle.SECONDARY,
-                ) {
-                    storageLine = hudBytes(trips.storageBytes.value) + " recorded · " +
-                        trips.rows.value.size + " trip files"
-                }
-                // The page never asks by turning one button into two: `confirmDialog()`
-                // puts a modal box over the screen, and the only ways out are its two
-                // buttons or Escape. Same here - and deleting every recorded drive is
-                // exactly the kind of action that should not be one careless tap deep.
-                HudButton(
-                    "DELETE ALL TRIPS",
-                    modifier = Modifier.weight(1f),
-                    style = HudButtonStyle.DANGER,
-                ) { showConfirmClear = true }
-            }
-            if (storageLine.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
-            }
-        }
         Spacer(Modifier.height(20.dp))
         Text(
             "Dashboard++ by @ale.finot",
@@ -507,68 +521,63 @@ private class StorageSnapshot(
 }
 
 /**
- * Where the user's files are, in the words they can act on.
+ * Where the user's files are, in the words they can act on — the **STORAGE** block of the
+ * page's Trips & Storage card, so it carries no card of its own.
  *
- * The card exists because the answer used to be "inside the app's private folder",
+ * This block exists because the answer used to be "inside the app's private folder",
  * which a user could not see in a file manager, could not copy over USB, and could
  * not clean up by hand — and because the answer now depends on a grant no dialog can
  * request, so the page has to say which of the two it is *and* hand them the way to
  * change it. Both states are stated plainly: granted says the path, ungranted says
  * the fallback in the warning colour rather than leaving the files somewhere the
- * owner assumes is the folder named on the Recorded Drives card.
+ * owner assumes is the folder named on the card.
  */
 @Composable
-private fun StorageCard(snapshot: StorageSnapshot, onGrant: () -> Unit) {
+private fun StorageSection(snapshot: StorageSnapshot, onGrant: () -> Unit) {
     val counts = StorageCopy.cardCounts(
         snapshot.tripFiles, snapshot.cars, snapshot.otherTripFiles, snapshot.otherTripFilesInOwnFolder,
     ) + (if (snapshot.freeBytes >= 0) " \u00b7 ${hudBytes(snapshot.freeBytes)} free" else "")
-    Column(
-        Modifier.fillMaxWidth().hudCard()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-    ) {
-        CardHead("Storage")
+    Text(
+        (if (snapshot.shared) AppRoot.sharedRootLabel() else "app-private folder") + " $counts",
+        color = if (snapshot.shared) HudColors.TextPrimary else HudColors.Amber,
+        style = HudeCfgNote(),
+    )
+    if (snapshot.shared) {
+        // Named file by file, because this line is also what a user follows after the editor
+        // tells them the garage could not be read: the folder is easy to find, the file inside
+        // it is the thing they have to open.
+        Spacer(Modifier.height(6.dp))
         Text(
-            (if (snapshot.shared) AppRoot.sharedRootLabel() else "app-private folder") + " $counts",
-            color = if (snapshot.shared) HudColors.TextPrimary else HudColors.Amber,
-            style = HudeCfgNote(),
-        )
-        if (snapshot.shared) {
-            // Named file by file, because this line is also what a user follows after the editor
-            // tells them the garage could not be read: the folder is easy to find, the file inside
-            // it is the thing they have to open.
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "${AppRoot.GARAGE_FILE} \u00b7 ${AppRoot.TRIPS}/ \u00b7 ${AppRoot.VEHICLES}/",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        // Every Android version gets the button, because every one has a way in
-        // (`AppRoot.GrantPath`); the version decides what it does. Hiding it below API 30 - as
-        // this card did, on the theory that Android 10 has nothing to offer - hid the only control
-        // that works there, while the sentence above it went on describing a folder the owner
-        // could have had for one tap.
-        val grantPath = AppRoot.grantPath(Build.VERSION.SDK_INT)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.heightIn(min = 44.dp)) {
-                // Already granted is said, not offered: a button that does nothing looks
-                // like a button that is broken, and the honest state is the one thing this
-                // card can prove.
-                HudButton(
-                    StorageCopy.grantButton(snapshot.shared, grantPath),
-                    style = HudButtonStyle.SECONDARY,
-                    enabled = !snapshot.shared,
-                ) { onGrant() }
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        Text(
-            StorageCopy.storageNote(snapshot.shared, grantPath),
+            "${AppRoot.GARAGE_FILE} \u00b7 ${AppRoot.TRIPS}/ \u00b7 ${AppRoot.VEHICLES}/",
             color = HudColors.TextDim,
             style = HudeCfgNote(),
         )
     }
+    Spacer(Modifier.height(10.dp))
+    // Every Android version gets the button, because every one has a way in
+    // (`AppRoot.GrantPath`); the version decides what it does. Hiding it below API 30 - as
+    // this card did, on the theory that Android 10 has nothing to offer - hid the only control
+    // that works there, while the sentence above it went on describing a folder the owner
+    // could have had for one tap.
+    val grantPath = AppRoot.grantPath(Build.VERSION.SDK_INT)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.heightIn(min = 44.dp)) {
+            // Already granted is said, not offered: a button that does nothing looks
+            // like a button that is broken, and the honest state is the one thing this
+            // card can prove.
+            HudButton(
+                StorageCopy.grantButton(snapshot.shared, grantPath),
+                style = HudButtonStyle.SECONDARY,
+                enabled = !snapshot.shared,
+            ) { onGrant() }
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    Text(
+        StorageCopy.storageNote(snapshot.shared, grantPath),
+        color = HudColors.TextDim,
+        style = HudeCfgNote(),
+    )
 }
 
 /**
