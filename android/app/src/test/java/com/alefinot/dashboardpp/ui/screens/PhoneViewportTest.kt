@@ -214,31 +214,47 @@ class PhoneViewportTest {
     /**
      * The Dashboard++ Setup header cost 239 dp of a 748 dp scroll viewport before the first
      * group appeared: title, identity pill, an Advanced Mode card of its own, a link line, the
-     * search row, and a sync line. Measured on the bench phone after the pass, that is 171 dp and
-     * all five groups plus the two extra sections are on screen without scrolling.
+     * search row, and a sync line. Measured on the bench phone after the first pass, that was
+     * 171 dp; after the maintainer took the pill and the two note lines out on 2026-11-11 it is
+     * 133 dp — title, search row, the five action glyphs — and every group is on screen with room
+     * to spare.
      *
-     * Two structural facts are what hold that up, so those are what is pinned. The identity pill
-     * carries the link state in the same pill (`HudBanner(..., note = ...)`), because two centred
-     * status lines were a sixth of the page for one sentence. And the header carries no control:
-     * the Advanced Mode card is gone, so nothing else can reappear there and take a line back.
+     * What is pinned is the shape of that header, because every one of those lines came back once
+     * already when a change needed somewhere to say a thing: the page draws no banner and no status
+     * or count line at rest, its header is title → search row → action glyphs in that order, and it
+     * carries no control (the Advanced Mode card is gone, so nothing can reappear there and take a
+     * line back).
      */
     @Test
     fun theSetupHeaderSpendsItsChromeOnTheSettingsNotOnItself() {
         val page = code(screens, "DashboardSettingsScreen.kt")
-        assertTrue(
-            "the identity pill and the link state split back into two centred lines; that is " +
-                "37 dp of a phone's scroll viewport spent repeating one fact",
-            Regex("HudBanner\\([^)]*note\\s*=\\s*linkText").containsMatchIn(page),
+        assertFalse(
+            "a status pill is back over the search box; the maintainer had it taken out on " +
+                "2026-11-11 and the page says what it is talking to nowhere else — which is the " +
+                "trade that was made, not an oversight to fix by putting the pill back",
+            page.contains("HudBanner("),
         )
+        for (line in listOf("linkLine(", "syncLine(", "tap a group to open it")) {
+            assertFalse(
+                "the header grew the note line $line back; at rest it is title, search row and " +
+                    "the five glyphs, and only what just happened gets a line of its own",
+                page.contains(line),
+            )
+        }
         assertFalse(
             "a control came back into the page header; the maintainer had the Advanced Mode " +
                 "card removed on 2026-11-08 and the tab shows every row",
             page.contains("Advanced Mode"),
         )
+        // The three lines the header does own, in order: the page's name, then the search row,
+        // then the action glyphs. Everything else on the page is in the scroll below them.
+        val titleAt = page.indexOf("HudPageHeader(title = \"Dashboard++ Setup\")")
+        val searchAt = page.indexOf("HudInputStyle.SEARCH")
+        val actionsAt = page.indexOf("onFactoryReset = { factoryAsk = true }")
+        val listAt = page.indexOf("LazyColumn(")
         assertTrue(
-            "the header stopped measuring its own height against a phone: the pill must sit in " +
-                "the same centred column as the title and the search row",
-            Regex("HudPageHeader\\(title = \"Dashboard\\+\\+ Setup\"\\)").containsMatchIn(page),
+            "the header's own lines are no longer title, search row, action glyphs, in that order",
+            titleAt in 1 until searchAt && searchAt < actionsAt && actionsAt < listAt,
         )
     }
 

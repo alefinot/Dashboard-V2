@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -31,7 +32,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.R
@@ -42,7 +42,6 @@ import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
-import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
@@ -218,8 +217,8 @@ fun DashboardSettingsScreen(
         }
     }
 
-    // `.sticky-top`: the page's own header, its status pill and the search box, held
-    // above the scroll the way the page holds them above its 198 rows. `hudPage` is
+    // `.sticky-top`: the page's own header — its title, its search box, the five action glyphs —
+    // held above the scroll the way the page holds them above its 198 rows. `hudPage` is
     // `.main-content`: a 920 dp column with `margin: 0 auto`, which is the thing this
     // page never had - every control used to sit at the far edge of a 1920 px screen
     // from the label it belonged to.
@@ -229,10 +228,6 @@ fun DashboardSettingsScreen(
     // the instruction to show everything: the gate below is simply open, and `ADV_MODE` stays a
     // firmware row that a config backup still writes back (see [ConfigStore]).
     val advanced = true
-    val unitTag = store.buildVersion.ifEmpty { "—" }.let { "unit V$it" }
-    val schemaTag = "schema " + (schema?.firmware?.let { "V$it" } ?: "missing")
-    val (linkText, linkColor) = linkLine(linkState)
-    val (syncText, syncColor) = syncLine(state, ready)
 
     Column(Modifier.hudPage()) {
         Column(
@@ -241,11 +236,22 @@ fun DashboardSettingsScreen(
                 .padding(top = 6.dp, bottom = 4.dp),
         ) {
             HudPageHeader(title = "Dashboard++ Setup")
-            Spacer(Modifier.height(4.dp))
-            // One pill, not a pill and a line. Which unit this is, which schema it speaks and
-            // whether the link is up are one statement, and on a phone they were two lines and
-            // an eighth of the viewport.
-            HudBanner("$unitTag  ·  $schemaTag", note = linkText, noteColor = linkColor)
+            // Three lines and nothing else: the page's name, the search box with its SYNC, and
+            // the five action glyphs. The maintainer had the rest of the header's chrome taken
+            // out on 2026-11-11 — the identity pill (`unit V2.0.4 · schema V2.0.4 · linked to
+            // Motosbu · MTU 517`), which had already swallowed the separate link line to save one
+            // line, and the two notes that used to sit under the icons (`read 182 keys (178 table
+            // rows) in 6 chunks`, `4 groups · 156 settings · tap a group to open it`).
+            //
+            // What that costs, written down so nobody rediscovers it by surprise: the page no
+            // longer says which firmware it is talking to, which schema it expects, that the link
+            // is up, how many keys the read covered, or that a read came back before the link
+            // dropped — and a *failed* read (`SyncPhase.Failed`) no longer prints its reason, so
+            // it shows only as the search row's button turning to `RETRY`. Typing no longer prints
+            // `N settings and M cards match "gps"` either; what the box found is said by the groups
+            // that open and the ones that vanish. What is still drawn here is only what happened
+            // since the last look: the flush and restart notes, a refused action, the reboot
+            // prompt, and keys the unit left out of the read.
             Spacer(Modifier.height(8.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -274,9 +280,10 @@ fun DashboardSettingsScreen(
                     onClick = { store.syncIfNeeded(force = true) },
                 )
             }
-            // The five actions that belong to no row, drawn on one line under the search box. They
-            // are in the header, not in the scroll, so they hold their place while the page's own
-            // note lines above the list grow and shrink and the owner taps them by position.
+            // The five actions that belong to no row, drawn on one line under the search box. The
+            // header is the part of the page that does not scroll, so these five hold one y — the
+            // note lines under them only appear when something has just happened, and they do not
+            // push the glyphs around any more.
             ActionBar(
                 store = store,
                 state = state,
@@ -288,8 +295,14 @@ fun DashboardSettingsScreen(
                 restoring = restoring,
                 onFactoryReset = { factoryAsk = true },
             )
-            Spacer(Modifier.height(4.dp))
-            Text(syncText, style = HudeCfgNote(), color = syncColor)
+            // Only what happened since the last look is drawn under the icon line, and only when
+            // something is actually there does that block need its own gap from the glyphs.
+            if (
+                state.missingKeys.isNotEmpty() || state.rebootPending.isNotEmpty() ||
+                note.isNotEmpty() || state.error != null
+            ) {
+                Spacer(Modifier.height(4.dp))
+            }
             if (state.missingKeys.isNotEmpty()) {
                 Text(
                     "${state.missingKeys.size} keys the schema knows are missing from the " +
@@ -367,26 +380,16 @@ fun DashboardSettingsScreen(
             .coerceAtMost(2)
         val unplaced = SettingsLayout.unlabelledBlock(state, query)
 
-        // The list is the only child that flexes. The header above it - title, pill, search row and
-        // the five action glyphs - keeps its own height, and the list takes everything left, which
-        // is what stopped the action line being squeezed to zero pixels when it lived under a
+        // The list is the only child that flexes. The header above it - title, search row and the
+        // five action glyphs - keeps its own height, and the list takes everything left, which is
+        // what stopped the action line being squeezed to zero pixels when it lived under a
         // `fillMaxSize()` list at the foot of the page.
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter)) {
-            item {
-                Text(
-                    if (searching) {
-                        SettingsLayout.searchSummary(groups, query, advanced)
-                    } else {
-                        "${groups.size} groups · ${groups.sumOf { g -> g.cards.sumOf { c -> c.items.size } }} " +
-                            "settings · tap a group to open it"
-                    },
-                    style = HudeCfgNote(),
-                    color = HudColors.TextDim,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
-                )
-            }
-
+        // Its own top padding is what keeps the first group clear of the icon line now that the
+        // count line that used to sit between them is gone.
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter),
+            contentPadding = PaddingValues(top = 10.dp),
+        ) {
             for (group in shown) {
                 val groupOpen = isOpen(group.id)
                 // One `details` per group: the summary band and its cards are a single
@@ -902,49 +905,8 @@ private fun noteOfFlush(flush: ConfigStore.Flush): String? = when {
 }
 
 // ---------------------------------------------------------------------------
-// The lines above the scroll
+// The reboot prompt
 // ---------------------------------------------------------------------------
-
-/**
- * `#msg`: what the link is doing, as a sentence and a colour.
- *
- * The page's status strip is centred between the title and the search box, which is where a
- * status line has to be now that the header is a column and not a left-aligned row: the old
- * layout put "linked to Motosbu · MTU 517" under a heading at the far left of a 1920 px
- * screen, where it read as a caption to the title rather than as the state of the link.
- *
- * No button here. Pairing is something you do to a vehicle, and the Vehicles page is where a
- * vehicle is picked up; a second way to start pairing, on a page that only makes sense once a
- * unit is already linked, was a second story about how the app ever finds a unit.
- */
-private fun linkLine(linkState: BleLinkState): Pair<String, Color> = when (val link = linkState) {
-    is BleLinkState.Ready -> "linked to ${link.name} · MTU ${link.mtu}" to HudColors.Green
-    is BleLinkState.Pairing ->
-        "pairing — confirm the code shown on the dashboard" to HudColors.Cyan
-    is BleLinkState.Connecting -> "connecting to ${link.name}…" to HudColors.Cyan
-    is BleLinkState.Failed -> "link failed: ${link.reason}" to HudColors.Red
-    BleLinkState.Idle -> "no Bluetooth link" to HudColors.TextDim
-}
-
-/** The read's own line, under the search box: which of the unit's keys the read covered. */
-private fun syncLine(state: ConfigStore.SettingsState, ready: Boolean): Pair<String, Color> =
-    when (val sync = state.sync) {
-        is SyncPhase.Running ->
-            "reading the unit's settings… ${sync.chunks} chunks in" to HudColors.Cyan
-        is SyncPhase.Ready ->
-            // An xy row is one row that streams two keys, so "keys" is always a little more
-            // than "rows"; the count that means something is whether a row the schema
-            // describes came back at all.
-            (
-                "read ${sync.keys} keys (${sync.rows} table rows) in ${sync.chunks} chunks" +
-                    if (!ready) " · read before the link dropped" else ""
-                ) to
-                (if (state.missingKeys.isEmpty()) HudColors.Green else HudColors.Amber)
-        is SyncPhase.Failed -> sync.reason to HudColors.Red
-        SyncPhase.Idle ->
-            if (ready) "not read yet" to HudColors.Amber
-            else "the settings are read over Bluetooth" to HudColors.TextDim
-    }
 
 /**
  * The bar a boot-only change leaves behind. `DISPLAY_ROTATION` and friends are read once at

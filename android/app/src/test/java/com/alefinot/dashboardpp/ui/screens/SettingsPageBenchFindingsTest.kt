@@ -216,7 +216,7 @@ class SettingsPageBenchFindingsTest {
         assertTrue("the five slots are no longer one Row", Regex("Row\\(").containsMatchIn(bar))
         assertTrue(
             "the list below the action line took back the whole height",
-            Regex("LazyColumn\\(Modifier\\.weight\\(1f\\)").containsMatchIn(page),
+            Regex("LazyColumn\\(\\s*Modifier\\.weight\\(1f\\)").containsMatchIn(page),
         )
         // The glyphs are the app's own set; nothing here is a Material icon or a drawable.
         for (glyph in listOf(

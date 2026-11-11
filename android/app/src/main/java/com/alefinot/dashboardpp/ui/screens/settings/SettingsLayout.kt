@@ -235,6 +235,10 @@ object SettingsLayout {
      * as a card is part of the answer - "1 of 159 settings" would be a denominator the page
      * shows nowhere else, and an install is not a setting. Rows alone keep the page's own
      * "N of M settings".
+     *
+     * Drawn by nothing since 2026-11-11, when the maintainer had the settings page's two note
+     * lines taken out of its header; the matcher it summarises is still what decides which groups
+     * open, and the sentence is tested, so the answer is still here for a page that wants it.
      */
     fun searchSummary(groups: List<SchemaGroup>, query: String, advanced: Boolean): String {
         val total = groups.sumOf { g -> g.cards.sumOf { it.items.size } }
