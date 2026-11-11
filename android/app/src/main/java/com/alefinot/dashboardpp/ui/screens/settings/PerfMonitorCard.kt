@@ -22,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,12 +67,11 @@ import kotlinx.coroutines.isActive
  * beside a reboot nobody asked for. So the entry row became the card: it opens the way a group
  * opens, closes the way a group closes, and draws the panel the ESP's own Web UI used to serve.
  *
- * Every number here is the unit talking about itself: `perf`, `health`, `live` and `boot` from
- * `src/bt_rpc.cpp`. Nothing in it is something the app could work out for itself — that is
- * the point. The questions it exists to answer are bench questions: is the display really running
- * at `TARGET_FPS`, is the heap flat over ten minutes or climbing, how much stack does each task
- * have left, did this unit reboot without anybody asking, and how much room is left in the settings
- * budget.
+ * Every number here is the unit talking about itself: `perf` and `health` from `src/bt_rpc.cpp`.
+ * Nothing in it is something the app could work out for itself — that is the point. The questions
+ * it exists to answer are bench questions: is the display really running at `TARGET_FPS`, how much
+ * heap is free and how much of it is one block, how hot is the CPU doing that, and how much room is
+ * left in the settings budget.
  *
  * The layout is the deleted page's `#perf-panel`, not a stack of rows:
  *
@@ -83,9 +81,13 @@ import kotlinx.coroutines.isActive
  *  - **CPU Performance** and **Memory & Storage** span the grid. Both are `.perf-card`
  *    tiles with a caption line over a 20 dp `--bg-tertiary` bar, and Memory keeps the
  *    segmented flash bar, its legend and the settings-budget line under it.
- *  - **The app-only cards** — the Bluetooth link, task stacks, why the unit is running, the
- *    inputs it is measuring and the spread over the time the card has been open — use the same
- *    tile so they read as part of the panel rather than as an appendix.
+ *  - **Bluetooth Link**, the one app-only card that is left, uses the same tile so it reads as
+ *    part of the panel rather than as an appendix. The four that used to follow it — task stacks,
+ *    why the unit is running, the inputs it is measuring, and the spread over the time the card
+ *    has been open — were taken out on 2026-11-11 at the maintainer's request. The unit still
+ *    answers `live` and `boot` (`src/bt_rpc.cpp`) and [UnitDiag] still knows how to read them;
+ *    the card simply stopped asking, because a round trip that ends in a figure nobody looks at
+ *    is the only kind of link traffic that is pure cost.
  *  - **Serial Output Monitor** is the one card that did not travel: serial is a cable on the
  *    bench, and this app has no wire to the unit.
  *
@@ -111,48 +113,33 @@ fun PerfMonitorCard(
     // [PollEvery] is the interval it reads at.
     var perf by remember { mutableStateOf<PerfReadout?>(null) }
     var health by remember { mutableStateOf<HealthReadout?>(null) }
-    var live by remember { mutableStateOf<LiveReadout?>(null) }
-    var boot by remember { mutableStateOf<BootReadout?>(null) }
     var error by remember { mutableStateOf("") }
     var lastRead by remember { mutableStateOf("") }
     var reading by remember { mutableStateOf(false) }
-    // [PerfTrends] is a plain class: its windows fill up without anything observable changing, so a
-    // card that only reads it is composed once, skipped on every later round, and prints "no
-    // samples yet" for as long as it is open. `sampled` is the observed half of the same fact.
-    var sampled by remember { mutableIntStateOf(0) }
-    val trends = remember { PerfTrends() }
 
     /**
-     * One round of reads. A tick takes `perf` and `live`; a full round also takes `health` (the
-     * largest free block, which `perf` does not report) and `boot`, which changes only when the
-     * unit restarts — so asking for it on every tick buys nothing.
+     * One round of reads: `perf` for everything the panel draws, and `health` for the one figure
+     * `perf` does not carry — the largest single free block. Since the cards that drew `live` and
+     * `boot` were taken out, the round is the same every second: there is no longer a slow half
+     * worth spacing out, and a `health` reply read once at opening would sit there as if it were
+     * current for as long as the card stayed open.
      */
-    suspend fun read(full: Boolean) {
+    suspend fun read() {
         reading = true
         try {
             val perfCall = store.action("perf")
             val parsed = if (perfCall.ok) UnitDiag.perf(perfCall.fields) else null
-            if (parsed != null) {
-                perf = parsed
-                trends.add(parsed)
-                sampled += 1
-            }
-            val liveCall = store.action("live")
-            if (liveCall.ok) live = UnitDiag.live(liveCall.fields) ?: live
-            if (full) {
-                val healthCall = store.action("health")
-                if (healthCall.ok) health = UnitDiag.health(healthCall.fields) ?: health
-                val bootCall = store.action("boot")
-                if (bootCall.ok) boot = UnitDiag.boot(bootCall.fields) ?: boot
-            }
+            if (parsed != null) perf = parsed
+            val healthCall = store.action("health")
+            if (healthCall.ok) health = UnitDiag.health(healthCall.fields) ?: health
             error = when {
-                !perfCall.ok && !liveCall.ok ->
-                    "the unit did not answer: ${perfCall.error ?: liveCall.error}"
+                !perfCall.ok && !healthCall.ok ->
+                    "the unit did not answer: ${perfCall.error ?: healthCall.error}"
                 // An ok reply with nothing in it is its own failure: the unit said yes and sent no
                 // numbers, and drawing that as a page full of dashes would blame the unit later.
                 perfCall.ok && parsed == null -> "perf answered, but sent no fields"
                 !perfCall.ok -> "perf refused: ${perfCall.error}"
-                !liveCall.ok -> "live refused: ${liveCall.error}"
+                !healthCall.ok -> "health refused: ${healthCall.error}"
                 else -> ""
             }
             lastRead = clock()
@@ -163,18 +150,18 @@ fun PerfMonitorCard(
         }
     }
 
-    // One effect drives everything, keyed on the card being open: opening it reads once in full and
-    // then keeps to the interval, and closing it — or scrolling it out of the list, which is what
+    // One effect drives everything, keyed on the card being open: opening it reads once and then
+    // keeps to the interval, and closing it — or scrolling it out of the list, which is what
     // disposes a list item — cancels the loop instead of leaving a poller running on a link the
     // settings read needs. Unlike a group's rows, a monitor behind a closed header would still poll,
     // so the open flag is both the draw condition and the loop's key.
     LaunchedEffect(open) {
         if (!open) return@LaunchedEffect
-        read(full = true)
+        read()
         while (isActive) {
             delay(PollEveryMillis)
             if (!isActive) break
-            read(full = false)
+            read()
         }
     }
 
@@ -232,14 +219,10 @@ fun PerfMonitorCard(
                 }
 
                 val p = perf
-                val l = live
                 val h = health
-                val b = boot
-                // `health` reports the largest single free block, `boot` carries a fallback copy; the
-                // System card says whichever one the unit has actually sent.
-                val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) }
-                    ?: b?.let { DiagFormat.bytes(it.maxAlloc) }
-                    ?: "--"
+                // `health` reports the largest single free block, which `perf` does not; the System
+                // card says that one only when the unit has actually sent it.
+                val largestBlock = h?.let { DiagFormat.bytes(it.maxAlloc) } ?: "--"
                 // `.perf-grid` is two 1fr tracks above 600 px and one `auto-fit` track below it.
                 val twoUp = LocalConfiguration.current.screenWidthDp >= 600
 
@@ -266,14 +249,9 @@ fun PerfMonitorCard(
                 CpuCard(p)
                 MemoryCard(p)
 
-                // The cards below are this app's own bench additions. They did not exist on the page
-                // (its Serial Output Monitor took the last full-width slot), but they are the reason
-                // the monitor is worth opening on a phone, so they keep the same `.perf-card` tile.
+                // The unit's own side of the link. The page this panel came from drew a Wi-Fi block
+                // here instead; a BLE-only unit has exactly one radio, and this is it.
                 LinkCard(p)
-                StacksCard(p)
-                BootCard(b)
-                MeasuringCard(l)
-                SpreadCard(trends, sampled)
             }
         }
     }
@@ -736,103 +714,11 @@ private fun LinkCard(p: PerfReadout?, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
-private fun StacksCard(p: PerfReadout?, modifier: Modifier = Modifier) {
-    PerfCard("Task Stacks", modifier) {
-        if (p == null || p.stacks.isEmpty()) {
-            PerfRow("Stack left", "--")
-        } else {
-            // These are words of stack still free, read from the unit's own high-water marks:
-            // the number that has to stay away from zero, and the one that says a task is
-            // about to overflow before it does.
-            for (stack in p.stacks) {
-                PerfRow(
-                    "Stack left · ${stack.label}",
-                    "${stack.wordsFree} words",
-                    warn = stack.wordsFree < 512,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BootCard(b: BootReadout?, modifier: Modifier = Modifier) {
-    PerfCard("Why This Unit Is Running", modifier) {
-        PerfRow(
-            "Reset reason",
-            b?.resetReason?.ifEmpty { "unknown" } ?: "--",
-            warn = b != null && DiagFormat.resetLooksUnasked(b.resetReason),
-        )
-        PerfRow("Boot count", b?.let { "${it.bootCount}" } ?: "--")
-        PerfRow(
-            "Boot storm",
-            if (b?.storm == true) "yes — it rebooted too many times in a row" else "no",
-            warn = b?.storm == true,
-        )
-        PerfRow("Last reboot tag", b?.lastRebootTag?.ifEmpty { "none recorded" } ?: "--")
-        PerfRow("Heap at last reboot", b?.let { DiagFormat.bytes(it.heapAtLastReboot) } ?: "--")
-        PerfRow("Lowest free heap · last boot", b?.let { DiagFormat.bytes(it.minHeapLastBoot) } ?: "--")
-        PerfRow("Lowest free heap · this boot", b?.let { DiagFormat.bytes(it.minHeapSinceBoot) } ?: "--")
-    }
-}
-
-@Composable
-private fun MeasuringCard(l: LiveReadout?, modifier: Modifier = Modifier) {
-    PerfCard("What The Unit Is Measuring", modifier) {
-        PerfRow("Battery", l?.let { fixed(it.volts, 2) + " V" } ?: "--")
-        PerfRow("Engine temperature", l?.let { fixed(it.engineTempC, 1) + " °C" } ?: "--")
-        PerfRow("Ambient light", l?.let { "${it.ambient}" } ?: "--")
-        PerfRow("Odometer", l?.let { fixed(it.odometerKm, 2) + " km" } ?: "--")
-        PerfRow("Fuel sender", l?.let { "${it.fuelRaw} ADC · ${fixed(it.fuelOhm, 1)} ohm" } ?: "--")
-        PerfRow("Fuel input", l?.let { DiagFormat.fuelState(it.fuelState) } ?: "--")
-    }
-}
-
-/**
- * The spread of the figures over the readings this card has taken.
- *
- * [sampled] is what makes this card move. The windows inside [trends] are not observable state, so
- * without a count that changes on every round this composable is skippable forever after its first
- * composition and the card reads "no samples yet" while the numbers above it tick along (bench,
- * Xiaomi Mi 9 Lite, 2026-11-11).
- */
-@Composable
-private fun SpreadCard(trends: PerfTrends, sampled: Int, modifier: Modifier = Modifier) {
-    PerfCard("Spread While This Card Is Open", modifier) {
-        for ((name, decimals) in listOf(
-            "fps" to 1,
-            "heap" to 0,
-            "minheap" to 0,
-            "cpu" to 1,
-            "cputemp" to 1,
-        )) {
-            PerfRow(trendLabel(name), DiagFormat.trend(trends.series(name), decimals))
-        }
-        Text(
-            "${sampled.coerceAtMost(trends.cap)} of the last ${trends.cap} readings taken while " +
-                "this card has been open.",
-            style = HudeCfgHelp(),
-            color = HudColors.TextDim,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        )
-    }
-}
-
 /** The NVS line's colour ladder, straight out of the page's `updatePerf()`. */
 private fun nvsColor(available: Long, total: Long): Color = when {
     available > total * 0.15 -> HudColors.Green
     available > total * 0.03 -> HudColors.Amber
     else -> HudColors.Red
-}
-
-private fun trendLabel(name: String): String = when (name) {
-    "fps" -> "FPS"
-    "heap" -> "free heap"
-    "minheap" -> "lowest free heap"
-    "cpu" -> "CPU usage %"
-    "cputemp" -> "CPU °C"
-    else -> name
 }
 
 private fun fixed(value: Double, decimals: Int): String =

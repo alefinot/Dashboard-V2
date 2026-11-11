@@ -304,7 +304,7 @@ class UnitDiagTest {
         val trends = PerfTrends(cap = 3)
         listOf(10.0, 4.0, 7.0, 9.0).forEach { trends.add(perfOf(fps = it, freeHeap = (it * 1000).toLong())) }
         val fps = trends.series("fps")
-        assertNotNull("the window must answer for a name the screen tracks", fps)
+        assertNotNull("the window must answer for a name the reader tracks", fps)
         assertEquals(3, fps!!.count)
         assertEquals(9.0, fps!!.last, 1e-9)
         assertEquals(4.0, fps!!.min, 1e-9)
@@ -317,7 +317,7 @@ class UnitDiagTest {
     }
 
     @Test
-    fun everyTrendTheScreenNamesHasASeries() {
+    fun everyTrendTheReaderDefinesHasASeries() {
         val trends = PerfTrends(cap = 2)
         trends.add(perfOf(fps = 1.0, freeHeap = 2L))
         val want = mapOf(
@@ -329,11 +329,11 @@ class UnitDiagTest {
         )
         for ((name, expected) in want) {
             val s = trends.series(name)
-            assertNotNull("$name must have a series, the screen names it", s)
+            assertNotNull("$name must have a series, the reader names it", s)
             assertEquals("$name counted one sample", 1, s!!.count)
             assertEquals("$name keeps the value it was given", expected, s.last, 1e-9)
         }
-        // A name the screen invents must not answer with an empty series that draws as zeros.
+        // A name this class is not given must not answer with an empty series that draws as zeros.
         assertNull(trends.series("nonsense"))
     }
 
@@ -373,11 +373,19 @@ class UnitDiagTest {
         for (banned in listOf("http://", "https://", "android.webkit", "EspApi", "HttpURLConnection")) {
             assertFalse("the monitor still reaches the unit by $banned", screen.contains(banned))
         }
-        // The four methods the plan names as its sources.
-        for (method in listOf("perf", "health", "live", "boot")) {
+        // The two methods the card asks for. `live` and `boot` are still served by the unit and
+        // still parsed in [UnitDiag], but nothing here draws them, so the card stopped spending
+        // the round trips on 2026-11-11.
+        for (method in listOf("perf", "health")) {
             assertTrue(
                 "the monitor never asks the unit for $method",
                 Regex("action\\(\\s*\"$method\"").containsMatchIn(screen),
+            )
+        }
+        for (gone in listOf("live", "boot")) {
+            assertFalse(
+                "the monitor still reads $gone, which no card on it draws",
+                Regex("action\\(\\s*\"$gone\"").containsMatchIn(screen),
             )
         }
     }
@@ -405,31 +413,6 @@ class UnitDiagTest {
         for (part in listOf("HudAccordion(", "HudAccordionHeader(", "HudAccordionBody(")) {
             assertTrue("the monitor is not built from the accordion's $part", screen.contains(part))
         }
-    }
-
-    /**
-     * The spread card reads [PerfTrends], a plain class whose windows fill without anything
-     * observable changing. Without a count that moves on every round the card is composed once,
-     * skipped for the rest of the time the monitor is open, and prints "no samples yet" under
-     * figures that tick along — which is exactly what it did on the bench on 2026-11-11.
-     */
-    @Test
-    fun theSpreadCardIsWokenByTheReadingThatJustArrived() {
-        val screen = codeOf(moduleSource("settings/PerfMonitorCard.kt"))
-        assertTrue(
-            "the reading count is not observable state, so nothing wakes the spread card",
-            Regex("var sampled by remember \\{ mutableIntStateOf\\(0\\) \\}").containsMatchIn(screen),
-        )
-        assertTrue(
-            "a round that stores a sample does not count it",
-            Regex("trends\\.add\\(parsed\\)").containsMatchIn(screen) &&
-                Regex("sampled\\s*\\+=\\s*1").containsMatchIn(screen),
-        )
-        assertTrue(
-            "the spread card is not handed the count that recomposes it",
-            Regex("SpreadCard\\(\\s*trends\\s*,\\s*sampled\\s*\\)").containsMatchIn(screen) &&
-                Regex("fun SpreadCard\\(trends: PerfTrends, sampled: Int").containsMatchIn(screen),
-        )
     }
 
     /**

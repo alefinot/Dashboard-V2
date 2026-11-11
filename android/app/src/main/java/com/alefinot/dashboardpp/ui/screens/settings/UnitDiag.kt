@@ -6,8 +6,10 @@ package com.alefinot.dashboardpp.ui.screens.settings
  * These are transcriptions of the four diagnostic methods in `src/bt_rpc.cpp` — `methodPerf`,
  * `methodHealth`, `methodLive` and `methodBoot` — under the firmware's own key names, so a field
  * that goes missing on the unit shows up as a missing field here instead of as a plausible zero.
- * The performance monitor draws them; nothing else in the app needs them, and nothing here parses
- * a value the firmware does not actually send.
+ * The performance monitor draws `perf` and `health`; `live` and `boot` are the app's side of the
+ * two methods it no longer asks for, kept here so the firmware contract stays transcribed and
+ * tested. Nothing else in the app needs any of them, and nothing here parses a value the firmware
+ * does not actually send.
  *
  * One thing worth knowing before reading the parsers: this firmware prints its booleans with `%d`.
  * `ble_connected`, `mem_saver`, `cpu_dynamic`, `storm` all arrive as the numbers 0 or 1, never as
@@ -319,12 +321,15 @@ class Series(
 )
 
 /**
- * The spread of a handful of figures over the time the monitor has been open.
+ * The spread of a handful of figures over a run of `perf` readings.
  *
  * A single reading tells you what the unit is doing this second; a leak, a stack that is running
  * out, and an FPS figure that only dips while the config stream runs are all things you can only
- * see as a range. The window is capped because the screen may stay open for an hour on a tablet
+ * see as a range. The window is capped because a screen may stay open for an hour on a tablet
  * and this app has no business growing an unbounded list.
+ *
+ * Nothing draws this today — the performance monitor's spread card was taken out on 2026-11-11 —
+ * so it stays as the tested machinery a re-drawn one would sit on.
  */
 class PerfTrends(val cap: Int = 60) {
 
