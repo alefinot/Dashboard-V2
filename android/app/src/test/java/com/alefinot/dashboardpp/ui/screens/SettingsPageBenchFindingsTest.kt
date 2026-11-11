@@ -229,6 +229,49 @@ class SettingsPageBenchFindingsTest {
             "a word button is back on the action line; the page's five actions are glyphs",
             0, Regex("HudButton\\(").findAll(bar).count(),
         )
+        // The one word the maintainer asked for under each glyph (2026-11-11), pinned in the line's
+        // order. A caption is the cheapest thing on this bar to lose: nothing else breaks, no test
+        // fails on the screen, and the bar silently goes back to being five shapes a first-timer
+        // has to guess. `WIPE` rather than `RESET` is deliberate — next to `RESTART` on the same
+        // line, `RESET` is a finger's coin toss.
+        val captions = Regex("caption = \"([^\"]+)\"").findAll(bar).map { it.groupValues[1] }.toList()
+        assertEquals(
+            "the captions under the five glyphs are no longer these five words in this order",
+            listOf("SAVE", "RESTART", "BACKUP", "RESTORE", "WIPE"), captions,
+        )
+    }
+
+    /**
+     * The caption has to be part of the action, not a label standing under it.
+     *
+     * Two ways this goes wrong silently: the word drifts outside the pressed box, so the slot's own
+     * tap target is only the glyph and the word is decoration a finger misses; or it is painted a
+     * fixed grey, so a dim glyph — an action that is not available — keeps a bright, available-
+     * looking word under it, which is the one thing a caption must not do.
+     */
+    @Test
+    fun everyCaptionIsPressedWithItsGlyphAndPaintedInItsInk() {
+        val slot = codeOnly("DashboardSettingsScreen.kt")
+            .let { it.substring(it.indexOf("private fun RowScope.ActionSlot(")) }
+        // The caption is drawn, in the ramp's tiny-label role, in the same ink the glyph is tinted
+        // with, and the press modifier is on the Box that contains both.
+        assertTrue(
+            "the caption lost the 11 px label role it is drawn in",
+            Regex("Text\\(\\s*caption,\\s*style = HudeMetricUnit\\(\\)").containsMatchIn(slot),
+        )
+        assertTrue(
+            "the caption stopped sharing its glyph's ink, so an unavailable action keeps a bright " +
+                "word under a dim icon",
+            Regex("Text\\(\\s*caption,[\\s\\S]{0,120}?color = ink").containsMatchIn(slot),
+        )
+        assertTrue(
+            "the caption left the pressed box: the word is no longer inside the same container " +
+                "that carries hudPressable, so tapping it does nothing",
+            Regex(
+                "hudPressable\\([\\s\\S]{0,700}?Column\\(horizontalAlignment[\\s\\S]{0,400}?" +
+                    "Text\\(\\s*caption",
+            ).containsMatchIn(slot),
+        )
     }
 
     /**

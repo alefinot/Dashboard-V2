@@ -69,6 +69,7 @@ import com.alefinot.dashboardpp.ui.screens.settings.ValueKind
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
+import com.alefinot.dashboardpp.ui.theme.HudeMetricUnit
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.hudCard
@@ -237,12 +238,18 @@ fun DashboardSettingsScreen(
         ) {
             HudPageHeader(title = "Dashboard++ Setup")
             // Three lines and nothing else: the page's name, its search box, and the five action
-            // glyphs. The maintainer had the rest of the header's chrome taken out on 2026-11-11 —
+            // glyphs with one word under each. The maintainer had the rest of the header's chrome
+            // taken out on 2026-11-11 —
             // the identity pill (`unit V2.0.4 · schema V2.0.4 · linked to Motosbu · MTU 517`),
             // which had already swallowed the separate link line to save one line, and the two
             // notes that used to sit under the icons (`read 182 keys (178 table rows) in 6 chunks`,
             // `4 groups · 156 settings · tap a group to open it`). The standing `SYNC` button came
             // out the same day, for the reason written where the search row is.
+            //
+            // The words under the glyphs are not those labels come back: one word each, inside the
+            // same press target as the glyph and painted in the same ink, at the size a metric's
+            // unit is drawn at. They cost the header no height — the 48 dp slot the glyph already
+            // filled was taller than glyph plus caption.
             //
             // What that costs, written down so nobody rediscovers it by surprise: the page no
             // longer says which firmware it is talking to, which schema it expects, that the link
@@ -752,20 +759,24 @@ private fun CardBlock(
 // ---------------------------------------------------------------------------
 
 /**
- * The five actions that belong to no card, drawn as five small icons on one line, in the page's
- * `.sticky-top` header directly under the search box.
+ * The five actions that belong to no card, drawn as five small icons with one word under each, on
+ * one line, in the page's `.sticky-top` header directly under the search box.
  *
  * They were words until 2026-11-11 — four in a two-by-two grid at the foot of the screen, and
- * Factory Reset as a full-width button at the end of the scroll. The words and the colours now
- * share the work: **amber** says the phone still holds rows the unit has not got, **dim** says this
- * action is not available as things stand, and a red bin says what cannot be undone.
+ * Factory Reset as a full-width button at the end of the scroll. What came back when the captions
+ * went on the same day is one word per action, not the sentences the buttons printed: the shape is
+ * what a finger finds, the word is what it checks, and the colour does the rest — **amber** says the
+ * phone still holds rows the unit has not got, **dim** says this action is not available as things
+ * stand, and a red bin says what cannot be undone. The word is painted in the glyph's own ink for
+ * exactly that reason: an action that is not available looks unavailable twice over.
  *
- * **SAVE** is not how a row is saved — a row writes itself, and reports what happened to it.
- * What is left in the phone's RAM is a debounce window's worth of edits, and a driver who has
- * changed four rows and is about to walk outside wants them on the unit, not in a timer that a
- * dropped link will undo. The flush glyph is that action. The count the button used to spell out
- * (`SAVE 3`) is not on the screen any more: the colour is the count — amber when anything waits,
- * and the rows themselves still say which ones and why.
+ * **SAVE** is the word the maintainer asked for, and it is still not how a row is saved — a row
+ * writes itself, and reports what happened to it. What is left in the phone's RAM is a debounce
+ * window's worth of edits, and a driver who has changed four rows and is about to walk outside wants
+ * them on the unit, not in a timer that a dropped link will undo. The flush glyph is that action.
+ * The count the button used to spell out (`SAVE 3`) is not on the screen: the colour is the count —
+ * amber when anything waits — and the sentence, which still carries the number, is in
+ * `contentDescription` for whoever cannot read the colour at all.
  *
  * The line lives in the header, so it does not scroll: five glyphs the owner taps by position are
  * worth more at a fixed y than at the bottom of a page that grows and shrinks its own notes. It
@@ -775,10 +786,10 @@ private fun CardBlock(
  *
  * Factory Reset came up into the line with the rest, which is the one thing the unit's page did
  * deliberately and this page now does the other way: it kept that action on a third row of its
- * own, away from the hand that taps SAVE. Up here it is further from that hand than ever, and the
- * glyph is a bin — not mistakable for its neighbours — but what really makes it safe is that it is
- * the only action on the page that asks first: the icon opens [HudConfirmDialog], and not one byte
- * reaches the unit until that is answered.
+ * own, away from the hand that taps SAVE. Up here it is further from that hand than ever, its word
+ * is `WIPE` and its glyph a bin — neither mistakable for its neighbours — but what really makes it
+ * safe is that it is the only action on the page that asks first: the icon opens
+ * [HudConfirmDialog], and not one byte reaches the unit until that is answered.
  */
 @Composable
 private fun ActionBar(
@@ -793,9 +804,9 @@ private fun ActionBar(
     onFactoryReset: () -> Unit,
 ) {
     // One line, five equal slots, the same left edge as the search box it sits under (the header
-    // column owns the gutter padding). Five 48 dp boxes cost less height than the two rows of word
-    // buttons they replaced did, which is the part that matters on a phone: every dp this line
-    // keeps is a dp of settings the owner has to scroll for.
+    // column owns the gutter padding). Glyph plus one word per slot still costs less height than the
+    // two rows of word buttons they replaced, which is the part that matters on a phone: every dp
+    // this line keeps is a dp of settings the owner has to scroll for.
     Row(
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -804,8 +815,9 @@ private fun ActionBar(
         val synced = state.sync is SyncPhase.Ready
         ActionSlot(
             glyph = HudIcons.Flush,
-            // The number the button used to show lives here instead, where it costs the eye
-            // nothing and a driver who cannot see the colour still gets it.
+            caption = "SAVE",
+            // The number the button used to show lives in the ink instead, where it costs the eye
+            // nothing and a driver who cannot see the colour still gets the count from the sentence.
             description = if (pending > 0) {
                 "write the $pending waiting row${if (pending == 1) "" else "s"} to the unit now"
             } else {
@@ -824,6 +836,7 @@ private fun ActionBar(
         )
         ActionSlot(
             glyph = HudIcons.Power,
+            caption = "RESTART",
             description = "restart the unit",
             ink = if (ready) HudColors.Cyan else HudColors.TextDim,
             enabled = ready,
@@ -840,6 +853,7 @@ private fun ActionBar(
         )
         ActionSlot(
             glyph = HudIcons.ExportFile,
+            caption = "BACKUP",
             description = "back up every setting to a file",
             ink = if (synced) HudColors.Cyan else HudColors.TextDim,
             enabled = synced,
@@ -847,6 +861,7 @@ private fun ActionBar(
         )
         ActionSlot(
             glyph = HudIcons.ImportFile,
+            caption = "RESTORE",
             description = if (restoring) "restoring the settings from that file…"
             else "restore the settings from a backup file",
             ink = if (synced && !restoring) HudColors.Cyan else HudColors.TextDim,
@@ -855,6 +870,7 @@ private fun ActionBar(
         )
         ActionSlot(
             glyph = HudIcons.Bin,
+            caption = "WIPE",
             description = "factory reset the unit — wipes every setting",
             ink = if (ready) HudColors.Red else HudColors.TextDim,
             enabled = ready,
@@ -864,20 +880,30 @@ private fun ActionBar(
 }
 
 /**
- * One icon slot of [ActionBar]: a glyph on the app's 48 dp floor, and the words the removed
- * labels used to carry.
+ * One icon slot of [ActionBar]: a glyph on the app's 48 dp floor, the one word the removed label
+ * carried, and the sentence those words used to be written out as.
  *
  * A `RowScope` extension because the slot claims an equal share of the line with `weight`, and
  * that share is what keeps the five actions one apart no matter how narrow the phone is.
  *
  * 48 dp and not [HudTouch.Button]'s 36: a labelled button may be small, because the label tells
- * you what it is. A lone glyph cannot, so the target is the largest of the app's two floors and
- * the name goes where a finger cannot read it — into `contentDescription`, and into
- * `onClickLabel`, which is what TalkBack reads as the action a double-tap will take.
+ * you what it is. A glyph with a caption still cannot be small, because a finger does not read an
+ * 11 px word before pressing — it reads the shape, and the word is only there to confirm after
+ * that the shape was the right one. So the target stays the largest of the app's two floors, the
+ * word sits under it in the ramp's tiny-label role ([HudeMetricUnit], the same 11 px/600/0.15em
+ * that marks a metric's unit) and is painted in the glyph's own ink, so an action that is not
+ * available reads unavailable in both channels. The sentence goes where a finger cannot read it —
+ * into `contentDescription`, and into `onClickLabel`, which is what TalkBack reads as the action a
+ * double-tap will take.
+ *
+ * The word and the whole slot are the press target: the caption is inside the pressed `Box`, so
+ * tapping the word is tapping the action, and the target grows a label's height taller than the
+ * 48 dp it had when the line was glyphs alone.
  */
 @Composable
 private fun RowScope.ActionSlot(
     glyph: ImageVector,
+    caption: String,
     description: String,
     ink: Color,
     enabled: Boolean,
@@ -893,15 +919,24 @@ private fun RowScope.ActionSlot(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            glyph,
-            // Five glyphs and no words anywhere on the bar. Without a description on each, a
-            // screen reader reads this bar as "button, button, button, button, button" — the
-            // same complaint `uiautomator` wrote down about the page's switches.
-            contentDescription = description,
-            colorFilter = ColorFilter.tint(ink),
-            modifier = Modifier.size(22.dp),
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                glyph,
+                // The caption names the action in one word; this is the sentence the word buttons
+                // used to print, and the only version a screen reader gets. Without a description
+                // on each, a screen reader reads this bar as "button, button, button, button,
+                // button" — the same complaint `uiautomator` wrote down about the page's switches.
+                contentDescription = description,
+                colorFilter = ColorFilter.tint(ink),
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                caption,
+                style = HudeMetricUnit(),
+                color = ink,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }
 
