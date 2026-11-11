@@ -118,8 +118,7 @@ object SettingsLayout {
      * instant the button is pressed, which is why the firmware assigns `ambientLightValue` to the
      * point's row (`bt_rpc.cpp`). A number that is the input to a button belongs on the card with
      * that button — the unit's own page had it there, in the card's toolbar beside `Capture Dark`
-     * and `Capture Bright` — and once it is on the card it is not repeated under "Values the unit
-     * reports". [isCardReading] is what keeps the two from disagreeing.
+     * and `Capture Bright`.
      *
      * A reading is not searchable, here or on the unit's page (`webui.html` said live readings
      * are "deliberately NOT searchable"), so hosting one on a card does not change what a query
@@ -129,9 +128,6 @@ object SettingsLayout {
 
     /** The key this card's widget draws inside the card, if it draws one. */
     fun cardReadingKey(widget: String?): String? = CARD_READINGS[widget]
-
-    /** True when [key] is drawn on its own card, and so must be left out of the readings list. */
-    fun isCardReading(key: String): Boolean = CARD_READINGS.containsValue(key)
 
     /**
      * What one group is made of on screen: its cards, each with the rows it will draw.
@@ -200,26 +196,6 @@ object SettingsLayout {
     /** The section title the body currently sits under, if any. */
     private fun currentSection(body: List<Renderable>): String? =
         body.lastOrNull { it is RenderSection }?.let { (it as RenderSection).title }
-
-    /**
-     * The unlabelled keys: values the unit streams that this app's schema has no row for.
-     *
-     * They cannot be placed in a group — the schema is what does the placing — so they form
-     * their own block. They are shown rather than dropped, and searched like any other
-     * block: a setting that cannot be found looks exactly like a setting that does not
-     * exist.
-     */
-    fun unlabelledBlock(state: SettingsState, query: String): RenderBlock? {
-        val kept = state.unknown.filter { rowShown(it, SchemaCard("", emptyList()), query) }
-        if (kept.isEmpty()) return null
-        return RenderBlock(
-            card = RenderCard(
-                "Keys this app's schema does not describe",
-                "kept as they are, editable, included in exports",
-            ),
-            body = kept.map { RenderRow(it) },
-        )
-    }
 
     /** Which group headers are open. Null [open] is "none"; an active query overrides. */
     fun openGroups(open: String?, query: String, groups: List<SchemaGroup>, advanced: Boolean): Set<String> {

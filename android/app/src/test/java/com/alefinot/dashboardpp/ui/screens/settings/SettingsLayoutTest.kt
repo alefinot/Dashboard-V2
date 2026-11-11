@@ -5,7 +5,6 @@ import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.columns
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.openGroups
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.pack
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.tapOpen
-import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout.unlabelledBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -259,7 +258,7 @@ class SettingsLayoutTest {
 
     /**
      * The ambient light reading is drawn on the Auto Brightness card, above the two capture
-     * buttons that store it — and so is not repeated in the list of values the unit reports.
+     * buttons that store it — the only place the page shows it.
      *
      * `cal.ambient` takes no number the owner typed: it stores whatever the sensor says at the
      * instant the button is pressed, which is why the firmware writes `ambientLightValue` straight
@@ -283,8 +282,7 @@ class SettingsLayoutTest {
         ).first { it.card.title == "Auto brightness" }.body
 
         assertEquals(
-            "the reading is no longer the first thing on the card, above the capture buttons " +
-                "that store it",
+            "the reading is drawn first on the card, above the capture buttons that store it",
             listOf("ambientLightValue", "ambientCalibrate", "ENABLE_AUTO_BRIGHTNESS"),
             read.map {
                 when (it) {
@@ -299,13 +297,8 @@ class SettingsLayoutTest {
             "2678 arrived as something the page would draw as 2678.0 or not at all",
             2678, (read.first() as RenderReading).value,
         )
-        assertTrue(
-            "a reading the page draws on its own card is still counted by the readings list, so " +
-                "the owner sees it twice",
-            SettingsLayout.isCardReading("ambientLightValue"),
-        )
         assertNull(
-            "the readings list would now drop a value no card has taken responsibility for",
+            "a widget with no reading of its own must not take one",
             SettingsLayout.cardReadingKey(null),
         )
     }
@@ -383,32 +376,6 @@ class SettingsLayoutTest {
                 assertTrue("$key appeared in ${group.title}", hits.none { it == key })
             }
         }
-    }
-
-    /**
-     * A key the unit streams that this app's schema has no row for — a setting a newer
-     * firmware grew — has to be reachable. It cannot be placed in a group (the schema is
-     * what does the placing), so it forms a block of its own, and dropping it would make the
-     * setting stop existing on the phone with nothing on screen to say why.
-     */
-    @Test
-    fun aKeyTheSchemaDoesNotKnowIsReachableBySearch() {
-        val guessed = SchemaItem(
-            key = "NEW_THING",
-            kind = ValueKind.INT,
-            control = RowControl.NUMBER,
-            label = "New thing",
-            labelIsGuessed = true,
-        )
-        val state = ConfigStore.SettingsState(unknown = listOf(guessed))
-        val found = unlabelledBlock(state, "new")
-        assertEquals("the unlabelled key is not drawn", listOf(guessed), found?.body?.map { (it as RenderRow).item })
-        assertNull("an empty unlabelled set made an empty block", unlabelledBlock(ConfigStore.SettingsState(), "new"))
-        assertEquals(
-            "the unlabelled key survived a query that does not mention it",
-            null,
-            unlabelledBlock(state, "gearbox"),
-        )
     }
 
     /**

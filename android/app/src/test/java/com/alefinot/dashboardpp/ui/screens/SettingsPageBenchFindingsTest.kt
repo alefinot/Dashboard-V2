@@ -342,18 +342,13 @@ class SettingsPageBenchFindingsTest {
         )
     }
 
-    /** The readings entry must not carry a second, unexplained copy of that problem. */
+    /** The one reading the page still draws must not read like a setting that refuses to change. */
     @Test
     fun readingsFromTheUnitAreMarkedAsReadings() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         assertTrue(
             "a reading drawn among the settings reads like a setting that refuses to change",
             page.contains("not a setting"),
-        )
-        assertEquals(
-            "the page must say which editable extras the unit has that the schema does not know",
-            1,
-            Regex("editable extras").findAll(page).count(),
         )
     }
 }

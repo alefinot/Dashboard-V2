@@ -146,8 +146,6 @@ fun DashboardSettingsScreen(
      * someone scrolling a long result list wants to shut the group they just read.
      */
     var closedWhileSearching by remember { mutableStateOf(setOf<String>()) }
-    var extrasOpen by remember { mutableStateOf(false) }
-    var unplacedOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf("") }
     var odoText by remember { mutableStateOf("") }
@@ -403,7 +401,6 @@ fun DashboardSettingsScreen(
         // screen, which is the width the rows were designed against.
         val columns = SettingsLayout.columns(widthDp.coerceAtMost(HudPage.Width.value.toInt()))
             .coerceAtMost(2)
-        val unplaced = SettingsLayout.unlabelledBlock(state, query)
 
         // The list is the only child that flexes. The header above it - title, search row and the
         // five action glyphs - keeps its own height, and the list takes everything left, which is
@@ -470,101 +467,6 @@ fun DashboardSettingsScreen(
                                                 onOdo = { odoText = it },
                                                 noiseLine = noiseLine,
                                                 onNoise = { noiseLine = it },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Values the unit streams that the schema describes as readings rather than settings
-            // — the ESP core and build versions. They are read only on purpose: a stepper next to a
-            // compiled-in version string only invites a write the unit will spend a flash cycle
-            // refusing. A reading a card's own control acts on is drawn on that card instead, so it
-            // is left out here rather than shown twice.
-            val readings = state.unitStatus.filterNot { SettingsLayout.isCardReading(it.first.key) }
-            if (readings.isNotEmpty()) {
-                item(key = "readings") {
-                    HudAccordion(open = extrasOpen, modifier = Modifier.padding(bottom = 14.dp)) {
-                        HudAccordionHeader(
-                            title = "Values the unit reports",
-                            meta = "${readings.size}",
-                            open = extrasOpen,
-                            onClick = { extrasOpen = !extrasOpen },
-                        )
-                        HudAccordionBody(open = extrasOpen) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Column(
-                                    Modifier.fillMaxWidth().hudCard()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                ) {
-                                    readings.forEach { (spec, value) -> ReadingRow(spec, value) }
-                                    // The one extra that is a real setting (the fuel calibration
-                                    // table) has no row of its own here, so the page says where
-                                    // it lives rather than pretending the card is a reading.
-                                    val hint = schema.extras.keys
-                                        .mapNotNull { schema.extra(it) }
-                                        .filter { it.editable }
-                                        .joinToString(", ") { it.label }
-                                    if (hint.isNotEmpty()) {
-                                        Text(
-                                            "editable extras: $hint",
-                                            style = HudeCfgNote(),
-                                            color = HudColors.TextDim,
-                                            modifier = Modifier.padding(bottom = 6.dp),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // A firmware that grew a setting nobody regenerated the schema for streams a key
-            // with no row. It cannot be placed in a group — the schema is what does the placing
-            // — so it gets a group of its own, and it is in the export either way. A setting
-            // that cannot be found looks exactly like a setting that does not exist, which is
-            // why this is not left to the search box.
-            if (unplaced != null) {
-                item(key = "unplaced") {
-                    HudAccordion(open = unplacedOpen, modifier = Modifier.padding(bottom = 14.dp)) {
-                        HudAccordionHeader(
-                            title = unplaced.card.title,
-                            meta = "${unplaced.body.size}",
-                            open = unplacedOpen,
-                            onClick = { unplacedOpen = !unplacedOpen },
-                        )
-                        HudAccordionBody(open = unplacedOpen) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                                Column(
-                                    Modifier.fillMaxWidth().hudCard()
-                                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                                ) {
-                                    unplaced.card.hint?.let {
-                                        Text(
-                                            it,
-                                            style = HudeCfgHelp(),
-                                            color = HudColors.Amber,
-                                            modifier = Modifier.fillMaxWidth()
-                                                .padding(vertical = 6.dp),
-                                        )
-                                    }
-                                    unplaced.body.forEach { renderable ->
-                                        if (renderable is RenderRow) {
-                                            SettingsRow(
-                                                item = renderable.item,
-                                                view = state.rows[renderable.item.key],
-                                                imperial = state.imperial,
-                                                unitSwap = schema.imperial,
-                                                enabled = unitEnabled,
-                                                onEdit = { x, y ->
-                                                    store.edit(renderable.item, x, y)
-                                                },
-                                                onReset = { store.reset(renderable.item) },
                                             )
                                         }
                                     }
@@ -731,7 +633,7 @@ private fun CardBlock(
 }
 
 // ---------------------------------------------------------------------------
-// A value the unit reports
+// A reading drawn on a card
 // ---------------------------------------------------------------------------
 
 /**
@@ -745,8 +647,8 @@ private fun CardBlock(
  * in this box" is that the box is not a setting. The store has already turned a whole-number
  * reading into an `Int`, so an ADC count draws as "2678" and not "2678.0".
  *
- * Two callers, on purpose: the readings card, and the one card whose own control acts on the
- * number (`SettingsLayout.CARD_READINGS`). A reading must not be drawn in both places at once.
+ * One caller: the card whose own control acts on the number (`SettingsLayout.CARD_READINGS`).
+ * A reading has no other home on the page.
  */
 @Composable
 private fun ReadingRow(spec: ConfigSchema.ExtraSpec, value: Any?) {

@@ -271,6 +271,27 @@ class SettingsTabReplacesTheWebPageTest {
         )
     }
 
+    /**
+     * The page used to carry two catch-all menus besides its schema groups: *Values the unit
+     * reports* and *Keys this app's schema does not describe*. The maintainer removed both on
+     * 2026-11-12. A reading that a control acts on is drawn on that control's card (the ambient
+     * light value on Auto Brightness), and a key the bundled schema cannot place is not
+     * something an owner can do anything with. The page is the schema's groups and the
+     * Performance Monitor, nothing else — and this guard keeps the two menus from growing back
+     * with the next convenience panel.
+     */
+    @Test
+    fun theSettingsPageHasNoCatchAllMenus() {
+        val src = codeOnly(moduleSource("DashboardSettingsScreen.kt")) +
+            codeOnly(File(settingsDir(), "SettingsLayout.kt").readText())
+        for (title in listOf(
+            "Values the unit reports",
+            "Keys this app's schema does not describe",
+        )) {
+            assertFalse("the settings page grew the \"$title\" menu back", src.contains(title))
+        }
+    }
+
     private fun codeOnly(src: String): String = src
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), " ")
         .replace(Regex("//.*"), " ")
