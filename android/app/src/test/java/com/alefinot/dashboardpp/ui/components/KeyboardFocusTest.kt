@@ -20,7 +20,11 @@ import org.junit.Test
  *      `true` on the bench phone, does not come back;
  *   2. focus is cleared on the open → closed edge, not on the closed state itself, so a
  *      page with no keyboard cannot steal focus from a field the user has just tapped;
- *   3. the rule is installed once, above the shell, and every text field is still the
+ *   3. a tap that lands on no text field at all is caught on the Initial pass and
+ *      clears the same focus, so the keyboard lets go when the user clicks away, not
+ *      only on Back — while a tap on any field (the focused one or another) is left
+ *      alone, so focus moves without the keyboard ever blinking;
+ *   4. both rules are installed once, above the shell, and every text field is still the
  *      shared `HudInput` rather than a screen's own `BasicTextField`.
  */
 class KeyboardFocusTest {
@@ -74,6 +78,71 @@ class KeyboardFocusTest {
         val rule = activity.indexOf("ClearFocusWhenKeyboardCloses()")
         val shell = activity.indexOf("DashboardRoot(this, vm)")
         assertTrue("the rule must sit above the shell, not inside a page", rule in 0 until shell)
+    }
+
+    @Test
+    fun `a tap outside the focused field closes the keyboard`() {
+        val focus = code("ui/components/KeyboardFocus.kt")
+        // The clear must ride the Initial pass: that is the only pass that runs before
+        // the tapped child sees the down, so nothing has to be undone afterwards.
+        assertTrue(
+            "the tap rule no longer intercepts the pointer down on the Initial pass",
+            Regex("awaitFirstDown\\(\\s*pass\\s*=\\s*PointerEventPass\\.Initial").containsMatchIn(focus),
+        )
+        // requireUnconsumed = false: the down that opens a scroll or a press is still a
+        // tap outside the field, and losing the keyboard is the right answer to it.
+        assertTrue(
+            "the tap rule waits for an unconsumed down instead of any down",
+            Regex("awaitFirstDown\\([\\s\\S]*?requireUnconsumed\\s*=\\s*false").containsMatchIn(focus),
+        )
+        // The clear must be gated on the down missing EVERY field. Clearing on any tap
+        // routes a tap on the focused field - or on another field, where the switch
+        // should just move focus - through "nothing": MIUI hides the keyboard on the
+        // blur and does not re-show it for a same-dispatch refocus, so the box keeps
+        // its ring but loses its keys and no further tap gets them back (bench,
+        // 2026-11-12).
+        assertTrue(
+            "the tap rule no longer clears focus only when the tap hits no text field",
+            Regex("!\\w*\\.under\\(down\\.position\\)\\)\\s*focusManager\\.clearFocus\\(\\)").containsMatchIn(focus),
+        )
+        assertFalse(
+            "the tap rule clears focus on every tap again",
+            Regex("requireUnconsumed\\s*=\\s*false,?\\s*\\)\\s*\\n\\s*focusManager\\.clearFocus\\(\\)").containsMatchIn(focus),
+        )
+        // The answer must come from every live field's rect, not the focused one only:
+        // a tap on a different field has to be left alone for focus to move directly.
+        assertTrue(
+            "the registry no longer asks every live field rect",
+            Regex("rects\\.any\\s*\\{[^}]*contains\\(offset\\)").containsMatchIn(focus),
+        )
+    }
+
+    @Test
+    fun `every text field registers its rect with the tap rule`() {
+        val hud = code("ui/components/Hud.kt")
+        assertTrue(
+            "HudInput no longer reads the tap rule's registry",
+            hud.contains("LocalTextRectRegistry.current"),
+        )
+        assertTrue("HudInput no longer registers its rect", hud.contains("fieldRects.register(ownRect)"))
+        assertTrue("HudInput no longer unregisters its rect", hud.contains("fieldRects.unregister(ownRect)"))
+        assertTrue(
+            "the field rect is no longer measured in root coordinates, the tap space",
+            hud.contains("boundsInRoot()"),
+        )
+    }
+
+    @Test
+    fun `the tap rule wraps the shell once`() {
+        val activity = code("MainActivity.kt")
+        assertEquals(
+            "the outside-tap rule must be installed exactly once, around the shell",
+            1,
+            Regex("\\bClearFocusOnTapOutside\\s*\\{").findAll(activity).count(),
+        )
+        val wrapper = activity.indexOf("ClearFocusOnTapOutside")
+        val shell = activity.indexOf("DashboardRoot(this, vm)")
+        assertTrue("the shell must sit inside the tap rule's wrapper, not beside it", wrapper in 0 until shell)
     }
 
     @Test

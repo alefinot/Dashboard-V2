@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -329,6 +333,16 @@ fun HudInput(
 ) {
     val search = style == HudInputStyle.SEARCH
     var focused by remember { mutableStateOf(false) }
+    // The tap rule (`KeyboardFocus.ClearFocusOnTapOutside`) must not touch a tap that
+    // lands on a text field, so every live field publishes its rectangle here. It is a
+    // per-field state written only on change, so a scrolling list moves its own rect
+    // without disturbing anybody else's.
+    val fieldRects = LocalTextRectRegistry.current
+    val ownRect = remember { mutableStateOf<Rect?>(null) }
+    DisposableEffect(fieldRects) {
+        fieldRects.register(ownRect)
+        onDispose { fieldRects.unregister(ownRect) }
+    }
     val fill by animateColorAsState(
         when {
             !focused -> if (search) HudColors.Panel else HudColors.Field
@@ -368,7 +382,12 @@ fun HudInput(
             fontSize = if (search) 13.sp else 12.sp,
         ),
         cursorBrush = SolidColor(HudColors.Cyan),
-        modifier = modifier.onFocusEvent { state -> focused = state.isFocused },
+        modifier = modifier
+            .onGloballyPositioned { coords ->
+                val r = coords.boundsInRoot()
+                if (ownRect.value != r) ownRect.value = r
+            }
+            .onFocusEvent { state -> focused = state.isFocused },
         decorationBox = { inner ->
             Box(
                 Modifier.fillMaxWidth()
