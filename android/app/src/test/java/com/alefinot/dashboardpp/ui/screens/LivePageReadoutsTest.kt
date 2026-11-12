@@ -92,7 +92,11 @@ class LivePageReadoutsTest {
             "the Live page draws a UNIT card again",
             Regex("title = \"UNIT\"").containsMatchIn(page),
         )
-        val cards = Regex("LiveCard\\(\\s").findAll(page).count()
+        // The five cards, counting call sites: `fun LiveCard(` is the declaration, not a card,
+        // and it used to sit inside the count because the POWER call happened to fit one line.
+        // All five calls are wrapped now (icon plan P8 gave every card its mark), so the
+        // declaration must be excluded or the cap means six.
+        val cards = Regex("(?<!fun )LiveCard\\(\\s").findAll(page).count()
         assertTrue(
             "the Live page grew past the five cards it is allowed to hold ($cards LiveCard calls) - " +
                 "the sixth, UNIT, came out on 2026-11-12: fps and heap belong to the Performance " +

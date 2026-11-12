@@ -100,6 +100,13 @@ object HudGlyphLedger {
             "places — the map, the list and the card already draw one pin.",
     )
 
+    /**
+     * The mark that owns a meaning, for a screen that knows the meaning and not the drawing.
+     * A typo'd id throws rather than drawing nothing: a screen asking for a meaning the ledger
+     * never wrote down is a bug, and the test bench is where it should surface.
+     */
+    fun mark(id: String): ImageVector = glyphOf.getValue(id)
+
     /** Every glyph name the set draws, for the ledger's own completeness check. */
     val drawnMarks: Set<String> = glyphOf.values.map { it.name.removePrefix("Hud") }.toSet()
 }

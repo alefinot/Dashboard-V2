@@ -1,9 +1,6 @@
-package com.alefinot.dashboardpp.ui.screens
+﻿package com.alefinot.dashboardpp.ui.screens
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,18 +20,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -48,7 +41,10 @@ import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudGauge
+import com.alefinot.dashboardpp.ui.components.HudGlyphLedger
+import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudPage
+import com.alefinot.dashboardpp.ui.components.HudStateChip
 import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
@@ -56,37 +52,12 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudSpace
-import com.alefinot.dashboardpp.ui.theme.HudeBody
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlin.math.PI
-import kotlin.math.cos
-
-/**
- * The breathing half of a live recording state. The page defined `pulseGlow`
- * (`src/webui.html:70` - `box-shadow: 0 0 12px rgba(0,229,255,.2)` at the ends of
- * the keyframe, `0 0 24px rgba(0,229,255,.5)` in the middle) and, on the last
- * reading of that file before it was deleted, never attached it to a selector: the
- * page had no recording indicator to animate. The app has that state, so the chip
- * borrows the page's own keyframe instead of inventing a motion. The page set no
- * duration for it, because nothing used it; 2 s is the app's number, chosen so one
- * breath spans two 1 Hz samples - slow enough to read as a pulse and not as a blink.
- */
-private const val CHIP_PULSE_MS = 2000L
-
-/**
- * The breath is recomputed ~16 times a second instead of on every frame: a glow
- * that takes a second to reach its bright stop has nothing to show between those
- * steps, and a per-frame loop measured 48 repaints a second on the test tablet
- * (SM-T590) for as long as the recorder ran.
- */
-private const val CHIP_PULSE_STEP_MS = 60L
 
 /**
  * The gauge's box, square. The page's own gauge filled a `#live-display` panel; the
@@ -224,6 +195,10 @@ private fun LiveCard(
     step: Int,
     modifier: Modifier = Modifier,
     meta: String? = null,
+    /** The card's readout mark, from the ledger (`readout.speed`, `readout.fuel`, …). */
+    mark: ImageVector? = null,
+    /** A mark worn by the meta note - `Warn` beside a `NO FIX`, and nothing else today. */
+    metaMark: ImageVector? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     HudEnter(modifier = Modifier.fillMaxWidth(), delayMs = step * HudMotion.STAGGER_MS) {
@@ -238,9 +213,29 @@ private fun LiveCard(
                 Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // D2: the header says the card twice, the way every other card does - the
+                // mark the ledger owns for the reading, at the row size, in the title's own
+                // cyan. It names the card; it is not pressed, so the word next to it is
+                // what the a11y node reads and the picture carries no sentence of its own.
+                if (mark != null) {
+                    Image(
+                        mark,
+                        null,
+                        modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 6.dp),
+                        colorFilter = ColorFilter.tint(HudColors.Cyan),
+                    )
+                }
                 Text(title, style = HudeSectionCaps(), color = HudColors.Cyan)
                 if (meta != null) {
                     Spacer(Modifier.width(HudSpace.Gap))
+                    if (metaMark != null) {
+                        Image(
+                            metaMark,
+                            null,
+                            modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 4.dp),
+                            colorFilter = ColorFilter.tint(HudColors.Amber),
+                        )
+                    }
                     Text(
                         meta,
                         style = HudeCfgNote(),
@@ -349,6 +344,7 @@ private fun SpeedCard(s: Snapshot, trends: LiveTrends, step: Int) {
     LiveCard(
         title = "SPEED",
         step = step,
+        mark = HudGlyphLedger.mark("readout.speed"),
         meta = if (peak == null) {
             "${trends.windowLabel()} · collecting"
         } else {
@@ -469,6 +465,7 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
     LiveCard(
         title = "THIS TRIP",
         step = step,
+        mark = HudGlyphLedger.mark("readout.trip"),
         meta = if (state.recording && elapsedMs >= 0L) {
             "recording ${hudDuration(elapsedMs)}"
         } else {
@@ -508,7 +505,12 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
  */
 @Composable
 private fun PowerCard(s: Snapshot, trends: LiveTrends, step: Int) {
-    LiveCard(title = "POWER · COOLANT", step = step, meta = trends.windowLabel()) {
+    LiveCard(
+        title = "POWER · COOLANT",
+        step = step,
+        mark = HudGlyphLedger.mark("readout.power"),
+        meta = trends.windowLabel(),
+    ) {
         Spacer(Modifier.height(HudSpace.Gap))
         TrendRow(
             label = "BATT",
@@ -594,6 +596,7 @@ private fun FuelCard(s: Snapshot, step: Int) {
     LiveCard(
         title = "FUEL",
         step = step,
+        mark = HudGlyphLedger.mark("readout.fuel"),
         meta = "${fmt(s.trpL, 2)} L used · ${if (s.akml > 0.0) fmt(s.akml, 1) else "—"} km/L avg",
     ) {
         Spacer(Modifier.height(HudSpace.Gap))
@@ -653,7 +656,11 @@ private fun GnssCard(s: Snapshot, step: Int) {
     LiveCard(
         title = "GNSS",
         step = step,
+        mark = HudGlyphLedger.mark("readout.gnss"),
         meta = if (s.hasPosition) "${fmt(s.lat, 5)}, ${fmt(s.lon, 5)}" else "NO FIX",
+        // The declined position is a warning the page used to spell in three letters; the
+        // ledger already owns the mark for a stale/absent reading, so it wears that.
+        metaMark = if (s.hasPosition) null else HudGlyphLedger.mark("readout.stale"),
     ) {
         Strip(
             Figure(
@@ -761,112 +768,39 @@ private fun fmt(value: Double, places: Int = 1): String =
     String.format(java.util.Locale.US, "%.${places}f", value)
 
 /**
- * The run state as one of the page's pills (`.ip-banner` radius) carrying a
- * `.msg-success` / `.msg-error` tint: the accent at 8% behind the glass, a 30%
- * accent hairline, accent text.
+ * The run state as one [HudStateChip] pill: the mark the ledger owns for the state,
+ * its word, and its ink. The mapping lives here, next to the state it reads; the
+ * pill itself - the `.ip-banner` shape, the `.msg-*` tint, the breath while
+ * recording - is the shared component the icon plan made of it (P8), so any other
+ * page with a run state says it in the same words.
  */
 @Composable
 private fun StatusChip(state: TripRuntimeState, active: Boolean) {
-    val (label, target) = when {
-        state.recording -> "RECORDING" to HudColors.Green
+    when {
+        state.recording -> HudStateChip(
+            "RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.Green,
+            pulse = true, active = active,
+        )
         // Nothing has come back yet on this connection - that is not the same
         // claim as "the dashboard stopped answering", which is what NO DATA means.
-        state.lastOkMs == 0L -> "CONNECTING" to HudColors.TextDim
-        state.polling && state.stale -> "NO DATA" to HudColors.Red
-        state.polling -> "LOGGING IDLE" to HudColors.Cyan
-        else -> "NOT RECORDING" to HudColors.TextDim
-    }
-    // The state changes without the user touching anything (the recorder starts,
-    // the page takes the connection, data goes stale), so both halves of the pill
-    // move: the colour over the page's 0.2s control easing, the word crossfading
-    // into its place.
-    val color by animateColorAsState(
-        target,
-        tween(HudMotion.SWITCH_MS, easing = HudMotion.Ease),
-        label = "chipColor",
-    )
-    // `pulseGlow`, held by the pill while RECORDING. The fraction is a state object
-    // read *inside* the draw lambda below: a step of the breath invalidates the
-    // chip's own layer, not the Live screen behind it. When the state stops
-    // recording the breath is left at its dim stop, and the pill settles back to the
-    // plain tint the CSS gives a `.msg-*` pill.
-    val glow = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(state.recording, active) {
-        // `active` is not decoration: the page is now composed whether or not the
-        // user is looking at it, and a breath that runs off-screen invalidates that
-        // chip's layer ~30 times a second for nobody. It restarts from the dim stop
-        // when the page comes back, which is where a breath starting from rest
-        // belongs anyway.
-        if (!state.recording || !active) {
-            glow.floatValue = 0f
-            return@LaunchedEffect
-        }
-        val start = android.os.SystemClock.elapsedRealtime()
-        while (isActive) {
-            val p = (android.os.SystemClock.elapsedRealtime() - start) % CHIP_PULSE_MS
-            // The keyframe sits at one stop for 0% and 100% and the other for 50%,
-            // which is a cosine and not a triangle: it eases at both ends, so there
-            // is no snap at the bottom of the breath.
-            glow.floatValue = 0.5f - 0.5f * cos(2f * PI.toFloat() * p / CHIP_PULSE_MS)
-            delay(CHIP_PULSE_STEP_MS)
-        }
-    }
-    Box(
-        Modifier
-            // `.ip-banner` for the shape (--bg-card pill, hairline, 4x12 padding),
-            // `.msg-success`/`.msg-error` for the state: that colour as a 30%
-            // hairline and an 8% wash, and in the label. The padding sits on the
-            // label rather than the box, so the layer that draws the breath spans
-            // the whole pill and its ring lands on the hairline.
-            .hudCard(
-                shape = HudRadius.PillShape,
-                fill = HudColors.Panel,
-                borderColor = color.copy(alpha = 0.3f),
-            )
-            .background(color.copy(alpha = 0.08f), HudRadius.PillShape),
-    ) {
-        // `#ip-banner` is 13px with no weight of its own, and `#msg`'s variants put
-        // the colour in the text: same here.
-        Crossfade(label, animationSpec = tween(HudMotion.SWITCH_MS), label = "chipText") {
-            Text(
-                it,
-                color = color,
-                style = HudeBody(),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            )
-        }
-        Canvas(Modifier.matchParentSize()) {
-            val g = glow.floatValue
-            if (g > 0.01f) {
-                val h = size.height
-                val path = Path()
-                path.addRoundRect(
-                    RoundRect(Rect(0f, 0f, size.width, h), CornerRadius(h / 2f, h / 2f)),
-                )
-                // The page's shadow is a blur outside the pill, and this layer has no
-                // blur to give it (blurring what is behind needs API 31, the app
-                // supports 26), so the halo is three strokes growing inward from the
-                // hairline - a stroke is centred on the path, so the outer half of
-                // each is cut off by the layer. Their alphas peak under the page's
-                // bright stop (.5) so the stack never reads heavier than the single
-                // shadow it stands in for, and all three ride the same cosine the
-                // keyframe does.
-                drawPath(
-                    path,
-                    color.copy(alpha = 0.05f + 0.07f * g),
-                    style = Stroke(width = 7.dp.toPx()),
-                )
-                drawPath(
-                    path,
-                    color.copy(alpha = 0.07f + 0.11f * g),
-                    style = Stroke(width = 3.5.dp.toPx()),
-                )
-                drawPath(
-                    path,
-                    color.copy(alpha = 0.18f + 0.30f * g),
-                    style = Stroke(width = 1.5.dp.toPx()),
-                )
-            }
-        }
+        // It is "the link is not up yet", and that is the link-off mark, in dim.
+        state.lastOkMs == 0L -> HudStateChip(
+            "CONNECTING", HudGlyphLedger.mark("link.off"), HudColors.TextDim,
+            active = active,
+        )
+        state.polling && state.stale -> HudStateChip(
+            "NO DATA", HudGlyphLedger.mark("readout.stale"), HudColors.Red,
+            active = active,
+        )
+        state.polling -> HudStateChip(
+            "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Cyan,
+            active = active,
+        )
+        else -> HudStateChip(
+            // The recorder's own state in the not-running ink: the same mark, so
+            // a dim pill cannot claim a second meaning for the dot.
+            "NOT RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.TextDim,
+            active = active,
+        )
     }
 }
