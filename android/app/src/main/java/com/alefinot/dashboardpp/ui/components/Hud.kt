@@ -86,6 +86,43 @@ import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
  */
 enum class HudButtonStyle { PRIMARY, SECONDARY, WARNING, DANGER }
 
+/**
+ * The word button, kept on purpose as the grammar's exception box — read this before
+ * adding a call site, because `GlyphLedgerTest`'s ratchet says a bare `HudButton(label)`
+ * is no longer legal anywhere (the ceiling is zero) and this list is the only thing a
+ * new call may reach for.
+ *
+ * Legal shapes, both from the icon plan:
+ *
+ *  - **D3 — the risky verbs.** `START`/`CONFIRM FLASH`, the DELETE family, and the
+ *    `CONFIRM`/`CANCEL` footer of [HudConfirmDialog]: glyph **and** word, never bare.
+ *    The word is the second channel that survives the mark, on the acts that must not
+ *    be guessed.
+ *  - **D4 — the labels that cannot be drawn.** `ALLOW INSTALLS`, `GRANT STORAGE
+ *    ACCESS`, `PHONE BLUETOOTH SETTINGS`, `OPEN VEHICLE PAGE`, `RETRY`: a mark says the
+ *    family (usually the cog, "an errand into a screen this app does not own") and the
+ *    word says which.
+ *
+ * Every other verb left the screen during P0–P8 as [HudGlyphAction] (a mark with a
+ * mandatory a11y sentence) or [HudCaptionedAction] (a mark over an 11 px caption).
+ * Inside a word button the [glyph] is decorative — the label is the name; a control
+ * that is *only* a mark goes through [HudGlyphAction], where a description cannot be
+ * omitted.
+ *
+ * `button` from the Web UI, copied: 8px radius, a 135° cyan→blue gradient fill, a
+ * cyan hairline, 9x14 padding, 12px/600 label.
+ *
+ * There is deliberately no ripple: the page's press feedback is `button:active` -
+ * the fill brightens, the shadow deepens and the whole button scales to 0.98 - and
+ * that is what this does on press, on the page's own 0.25s. Copying the look while
+ * keeping Material's white ripple would put a gesture the page never makes back
+ * into the same control.
+ *
+ * [glyph] is the mark of the act the button performs, drawn by [HudIcons] and painted in the
+ * button's own ink — mandatory in practice, since a mark-less call site is what the
+ * ratchet counts. A button that writes to the unit wears the same mark as the page's
+ * SAVE, so the two say they are one act.
+ */
 @Composable
 fun HudButton(
     label: String,
