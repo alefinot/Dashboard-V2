@@ -164,19 +164,23 @@ class PhotoEditsLandOnSaveOnlyTest {
     // ── 5. the keyboard, in the one place that has text fields ─────────────────
 
     @Test
-    fun `the editor clamps its own scroll viewport to the keyboard`() {
+    fun `the editor clamps its own sheet to the keyboard and scrolls only the cards`() {
         // targetSdk 35 forces edge-to-edge and the window no longer resizes for the IME
         // (API 30+): the keyboard is an inset to consume, or SAVE sits under it. It goes
-        // on the scrollable column, before verticalScroll, so the viewport - not just
-        // the panel - shrinks and the buttons can be scrolled to.
-        val column = Regex("Column\\(\\s*Modifier\\s*\\.hudGlass\\(\\)(?s).*?\\)\\s*\\{")
+        // on the sheet, outside the cards' scroll, so the whole sheet - heading, viewport
+        // and pinned footer - clamps to (scrim - keyboard). The footer is outside the
+        // scroll on purpose: SAVE and CANCEL stay reachable while the form scrolls.
+        val sheet = Regex("Column\\(\\s*Modifier\\s*\\.hudGlass\\((?s).*?\\.imePadding\\(\\),?\\s*\\)\\s*\\{")
             .find(editor)
-        assertTrue("the editor's scroll column is not recognisable - check the inset order", column != null)
-        val chain = column!!.value
-        val ime = chain.indexOf(".imePadding()")
-        val scroll = chain.indexOf(".verticalScroll(")
+        assertTrue("the editor's sheet is not recognisable - check the inset order", sheet != null)
+        assertTrue(
+            "the editor's cards are no longer a scrolling viewport",
+            Regex("\\.weight\\(1f, fill = false\\)\\s*\\.verticalScroll\\(").containsMatchIn(editor),
+        )
+        val ime = editor.indexOf(".imePadding()")
+        val scroll = editor.indexOf(".verticalScroll(")
         assertTrue("the editor stopped consuming the IME inset", ime >= 0)
-        assertTrue("imePadding must sit outside verticalScroll or the viewport will not clamp", ime < scroll)
+        assertTrue("imePadding must sit outside verticalScroll or the sheet will not clamp", ime < scroll)
     }
 
     @Test

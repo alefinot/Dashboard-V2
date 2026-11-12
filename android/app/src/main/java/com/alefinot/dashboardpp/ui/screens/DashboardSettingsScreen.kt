@@ -925,13 +925,17 @@ private fun RebootBar(
  * It used to be `.section-title` (11 px caps) with a hairline under it, drawn straight onto
  * the page. The page's cards name themselves with an `h4`, and the difference is what makes
  * a card read as a card instead of as a section of a long form.
+ *
+ * [color] is cyan everywhere a card holds settings; the vehicle editor passes red for its
+ * DELETE card, because that card is the one place this heading names something the page
+ * does not offer to the thumb by accident.
  */
 @Composable
-internal fun CardHead(title: String) {
+internal fun CardHead(title: String, color: Color = HudColors.Cyan) {
     Text(
         title,
         style = HudeSectionTitle(0.2f / 13f),
-        color = HudColors.Cyan,
+        color = color,
         modifier = Modifier.fillMaxWidth().padding(bottom = 5.dp),
     )
 }

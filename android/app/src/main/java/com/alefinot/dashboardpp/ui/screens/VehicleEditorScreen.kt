@@ -11,12 +11,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -35,12 +35,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
@@ -49,14 +51,17 @@ import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
+import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgLive
+import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
-import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
+import com.alefinot.dashboardpp.ui.theme.HudeHeading
+import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.ui.theme.hudGlass
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.PhotoEdit
@@ -255,185 +260,198 @@ fun VehicleEditorScreen(
 
     HudOverlayScrim {
         HudEnter(
-            Modifier.fillMaxWidth().widthIn(max = 520.dp).padding(horizontal = 24.dp),
+            Modifier.fillMaxWidth().widthIn(max = 520.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             durationMs = HudMotion.SHORT_MS,
             riseDp = 8,
             scaleFrom = 0.98f,
         ) {
+            // The sheet is the page's own black, not the overlay glass: this form is tall,
+            // and a translucent sheet that fills the phone lets the garage behind it read
+            // through every field. Cards on black are what the rest of the app looks like.
             Column(
                 Modifier
-                    .hudGlass()
+                    .hudGlass(fill = HudColors.Bg, elevation = 16.dp, highlight = 0f)
                     // The keyboard is an inset this screen must consume itself (Issue 1,
-                    // 2026-11-10): with targetSdk 35 edge-to-edge is forced, the window is
-                    // not resized for the soft keyboard, and the only inset the app takes
-                    // anywhere is DashboardRoot's system bars - so without this the scroll
-                    // viewport ran to the physical bottom and SAVE / CANCEL / DELETE sat
-                    // under the keys with no scroll that could reach them. imePadding
-                    // first, then the scroll: the glass panel and its viewport clamp to
-                    // (scrim - keyboard) and the buttons scroll into view. The root's
+                    // 2026-11-10): with targetSdk 35 edge-to-edge is forced on API 30+, the
+                    // window is not resized for the soft keyboard there, and the only inset
+                    // the app takes anywhere is DashboardRoot's system bars - so without this
+                    // the sheet ran to the physical bottom and SAVE / CANCEL sat under the
+                    // keys. API 29 and below take the manifest's adjustResize instead (the
+                    // platform default is pan, which hid the footer the same way), and the
+                    // inset then reads zero - one path without counting the keyboard twice.
+                    // The inset goes on the sheet, outside the scroll: the cards scroll in
+                    // what is left and the footer stays above the keyboard. The root's
                     // statusBars/navigationBars padding stays where it is - the IME is a
                     // distinct inset, so nothing is counted twice (PhoneViewportTest).
-                    .imePadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(22.dp),
+                    .imePadding(),
             ) {
-                Text(
-                    if (isNew) "NAME THIS DASHBOARD" else "EDIT VEHICLE",
-                    color = HudColors.Cyan,
-                    style = HudeSectionTitle(),
+                EditorHeader(
+                    title = if (isNew) "NAME THIS DASHBOARD" else "EDIT VEHICLE",
+                    name = name,
+                    type = type,
+                    identityTail = identityTail,
                 )
-                Spacer(Modifier.height(16.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
 
-                PhotoWell(
-                    hasPhoto = hasPhoto,
-                    preview = wellPreview,
-                    onGallery = {
-                        pickFromGallery.launch(
-                            PickVisualMediaRequest(
-                                ActivityResultContracts.PickVisualMedia.ImageOnly,
-                            ),
+                // Only the cards scroll; the title above and SAVE/CANCEL below stay put, so
+                // a long form or an open keyboard cannot hide the two ways out.
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PhotoCard(
+                        hasPhoto = hasPhoto,
+                        preview = wellPreview,
+                        note = photoNote,
+                        onGallery = {
+                            pickFromGallery.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                ),
+                            )
+                        },
+                        onCamera = { askForCamera() },
+                        onReframe = {
+                            // A pending draft crop re-frames its own source, so the user can
+                            // adjust the framing before SAVE; anything else opens what is on
+                            // disk, and `storedPhotoFile` answers the card's stored *original*
+                            // when it has one. Neither door writes: the panel only frames, and
+                            // USE THIS PHOTO only stages.
+                            photoNote = null
+                            val pending = photoEdit as? PhotoEdit.Crop
+                            if (pending != null) {
+                                reframeFrom = pending.source
+                            } else {
+                                vm.storedPhotoFile(draft.id) { f ->
+                                    if (f == null) {
+                                        photoNote = "This card's photo file could not be opened."
+                                    } else {
+                                        reframeFrom = f
+                                    }
+                                }
+                            }
+                        },
+                        onRemove = {
+                            // Draft-scoped since 2026-11-10: the well shows the wheel glyph and
+                            // the files stay exactly where they are until SAVE says otherwise.
+                            photoEdit = PhotoEdit.Remove
+                            photoNote = null
+                        },
+                    )
+
+                    EditorCard("VEHICLE") {
+                        Field(
+                            "NAME",
+                            name,
+                            onValueChange = { name = it },
+                            placeholder = "UNTITLED $identityTail",
                         )
-                    },
-                    onCamera = { askForCamera() },
-                    onReframe = {
-                        // A pending draft crop re-frames its own source, so the user can
-                        // adjust the framing before SAVE; anything else opens what is on
-                        // disk, and `storedPhotoFile` answers the card's stored *original*
-                        // when it has one. Neither door writes: the panel only frames, and
-                        // USE THIS PHOTO only stages.
-                        photoNote = null
-                        val pending = photoEdit as? PhotoEdit.Crop
-                        if (pending != null) {
-                            reframeFrom = pending.source
-                        } else {
-                            vm.storedPhotoFile(draft.id) { f ->
-                                if (f == null) {
-                                    photoNote = "This card's photo file could not be opened."
-                                } else {
-                                    reframeFrom = f
+
+                        // A row of three rather than a spinner: the app has no dropdown in its
+                        // furniture, and on a tablet all three choices are visible at once and
+                        // one tap away, which is what a dropdown was for in the first place.
+                        // The weight is on the button itself, not on a wrapper Box: a Box that
+                        // weights one while the button inside hugs its label is three unequal
+                        // pills, which is what the old TYPE row was.
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("TYPE", color = HudColors.TextMuted, style = HudeFormLabel())
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                for (option in VehicleType.values()) {
+                                    HudButton(
+                                        option.name,
+                                        modifier = Modifier.weight(1f),
+                                        style = if (option == type) {
+                                            HudButtonStyle.PRIMARY
+                                        } else {
+                                            HudButtonStyle.SECONDARY
+                                        },
+                                        onClick = { type = option },
+                                    )
                                 }
                             }
                         }
-                    },
-                    onRemove = {
-                        // Draft-scoped since 2026-11-10: the well shows the wheel glyph and
-                        // the files stay exactly where they are until SAVE says otherwise.
-                        photoEdit = PhotoEdit.Remove
-                        photoNote = null
-                    },
-                )
-                // A photo problem is said under the photo, not at the foot of a scrolling
-                // form: the note was produced by this block's buttons, and a fix — pick
-                // again — is one glance and one reach away.
-                photoNote?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = HudColors.Amber, style = HudeCfgHelp())
-                }
-                Spacer(Modifier.height(20.dp))
 
-                // The evidence half, read-only. A blank identity is stated rather than left
-                // out: it is the reason this card cannot be recognised when it answers, and
-                // hiding that would leave the user guessing why the other card exists.
-                // The two lines are not interchangeable. The MAC is the dashboard's own claim
-                // about itself and survives anything; the paired address is this phone's link to
-                // that radio, and it changes if the pairing is redone — which is why it is
-                // labelled as a pairing and never offered as an identity.
-                Field(
-                    "IDENTITY (FROM THE DASHBOARD)",
-                    draft.mac ?: "not reported by this dashboard",
-                )
-                Spacer(Modifier.height(8.dp))
-                Field(
-                    "PAIRED BY THIS PHONE",
-                    draft.bleAddress ?: "no pairing yet — search for it from the vehicle page",
-                )
-                Spacer(Modifier.height(8.dp))
-                Field(
-                    "FIRMWARE LAST SEEN",
-                    draft.firmwareVersion ?: "unknown",
-                )
-                Spacer(Modifier.height(20.dp))
-
-                Field(
-                    "NAME",
-                    name,
-                    onValueChange = { name = it },
-                    placeholder = "UNTITLED $identityTail",
-                )
-                Spacer(Modifier.height(12.dp))
-
-                // A row of three rather than a spinner: the app has no dropdown in its
-                // furniture, and on a tablet all three choices are visible at once and one
-                // tap away, which is what a dropdown was for in the first place.
-                Text("TYPE", color = HudColors.TextMuted, style = HudeFormLabel())
-                Spacer(Modifier.height(6.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (option in VehicleType.values()) {
-                        Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-                            HudButton(
-                                option.name,
-                                style = if (option == type) HudButtonStyle.PRIMARY else HudButtonStyle.SECONDARY,
-                            ) { type = option }
-                        }
+                        Field("PLATE", plate, onValueChange = { plate = it }, placeholder = "plate, if the vehicle has one")
+                        Field("MAKER", maker, onValueChange = { maker = it }, placeholder = "Toyota")
+                        Field("MODEL", model, onValueChange = { model = it }, placeholder = "Corolla")
+                        Field(
+                            "YEAR", year,
+                            onValueChange = { year = it.filter { c -> c.isDigit() }.take(4) },
+                            placeholder = "1998",
+                            keyboardType = KeyboardType.Number,
+                        )
+                        Field("NOTES", notes, onValueChange = { notes = it }, placeholder = "anything the card should remember")
                     }
-                }
-                Spacer(Modifier.height(12.dp))
 
-                Field("PLATE", plate, onValueChange = { plate = it }, placeholder = "plate, if the vehicle has one")
-                Spacer(Modifier.height(12.dp))
-                Field("MAKER", maker, onValueChange = { maker = it }, placeholder = "Toyota")
-                Spacer(Modifier.height(12.dp))
-                Field("MODEL", model, onValueChange = { model = it }, placeholder = "Corolla")
-                Spacer(Modifier.height(12.dp))
-                Field(
-                    "YEAR", year,
-                    onValueChange = { year = it.filter { c -> c.isDigit() }.take(4) },
-                    placeholder = "1998",
-                    keyboardType = KeyboardType.Number,
-                )
-                Spacer(Modifier.height(12.dp))
-                Field("NOTES", notes, onValueChange = { notes = it }, placeholder = "anything the card should remember")
+                    // The evidence half, read-only. A blank identity is stated rather than left
+                    // out: it is the reason this card cannot be recognised when it answers, and
+                    // hiding that would leave the user guessing why the other card exists.
+                    // The two lines are not interchangeable. The MAC is the dashboard's own claim
+                    // about itself and survives anything; the paired address is this phone's link to
+                    // that radio, and it changes if the pairing is redone — which is why it is
+                    // labelled as a pairing and never offered as an identity.
+                    EditorCard("DASHBOARD") {
+                        Text(
+                            "Read-only — what the app measured.",
+                            color = HudColors.TextDim,
+                            style = HudeCfgNote(),
+                        )
+                        Fact(
+                            "IDENTITY (FROM THE DASHBOARD)",
+                            draft.mac ?: "not reported by this dashboard",
+                        )
+                        Fact(
+                            "PAIRED BY THIS PHONE",
+                            draft.bleAddress ?: "no pairing yet — search for it from the vehicle page",
+                        )
+                        Fact("FIRMWARE LAST SEEN", draft.firmwareVersion ?: "unknown")
+                    }
 
-                // A save refusal stays here, right above the SAVE that caused it; the
-                // photo notes live under the photo well, where they were earned.
-                if (refusal != null) {
-                    Spacer(Modifier.height(14.dp))
-                    Text(refusal, color = HudColors.Red, style = HudeCfgHelp())
-                }
-
-                Spacer(Modifier.height(20.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.weight(1f).heightIn(min = 48.dp)) {
-                        HudButton("SAVE", style = HudButtonStyle.PRIMARY) {
-                            // The typed fields and the staged photo decision leave this
-                            // screen together, and land together - one SAVE, or none.
-                            onSave(
-                                draft.copy(
-                                    name = name, type = type, plate = plate, maker = maker,
-                                    model = model, year = year, notes = notes,
-                                ),
-                                photoEdit,
+                    if (!isNew) {
+                        // Its own card under a red heading: what lives here is not part of the
+                        // form, and deleting is the one button here the user should never
+                        // brush past on the way to SAVE.
+                        EditorCard("DELETE", titleColor = HudColors.Red) {
+                            Text(
+                                "Removes the card and drops its pairing. Its drives stay in the trip log.",
+                                color = HudColors.TextMuted,
+                                style = HudeCfgHelp(),
+                            )
+                            HudButton(
+                                "DELETE VEHICLE",
+                                modifier = Modifier.fillMaxWidth(),
+                                style = HudButtonStyle.DANGER,
+                                onClick = { confirming = true },
                             )
                         }
                     }
-                    Box(Modifier.weight(1f).heightIn(min = 48.dp)) {
-                        HudButton("CANCEL", style = HudButtonStyle.SECONDARY) { onDismiss() }
-                    }
                 }
 
-                if (!isNew) {
-                    // The hairline is the sentence: what sits under it is not part of the
-                    // form. Deleting is the one button here the user should never brush past
-                    // on the way to SAVE.
-                    Spacer(Modifier.height(22.dp))
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
-                    Spacer(Modifier.height(14.dp))
-                    HudButton(
-                        "DELETE VEHICLE",
-                        modifier = Modifier.fillMaxWidth(),
-                        style = HudButtonStyle.DANGER,
-                    ) { confirming = true }
-                }
+                // A save refusal stays beside the SAVE that caused it; the photo notes live
+                // in the photo card, where they were earned.
+                EditorFooter(
+                    refusal = refusal,
+                    onSave = {
+                        // The typed fields and the staged photo decision leave this screen
+                        // together, and land together - one SAVE, or none.
+                        onSave(
+                            draft.copy(
+                                name = name, type = type, plate = plate, maker = maker,
+                                model = model, year = year, notes = notes,
+                            ),
+                            photoEdit,
+                        )
+                    },
+                    onCancel = onDismiss,
+                )
             }
         }
     }
@@ -487,28 +505,128 @@ fun VehicleEditorScreen(
 }
 
 /**
- * The photo well: the card's picture at the top of the form, and the four things that can
- * be done to it. A card with no photo shows the bar's wheel glyph rather than a blank frame,
- * the same honesty the garage cover keeps - an empty square that shows nothing looks broken,
- * and an empty square that shows the glyph says "vehicle, no photo yet".
- *
- * The two buttons that only mean something for a card that already has a picture — re-frame
- * and remove — appear on their own second row, so a card without a photo reads as two choices
- * and a card with one reads as four. Re-frame comes before remove because it is the answer to
- * "I don't like how this is framed", which is the kinder failure; remove is the one a slip of
- * the finger must not reach first.
+ * The sheet's heading: the page's `h2` in its gradient, with the live name and type in the
+ * `ip-banner` pill the page puts under every heading. The banner is fed from the fields, so
+ * naming a new card changes what the sheet says it is while the user types it.
  */
 @Composable
-private fun PhotoWell(
+private fun EditorHeader(
+    title: String,
+    name: String,
+    type: VehicleType,
+    identityTail: String,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
+    ) {
+        Text(title, style = HudeHeading().copy(brush = HudBrushes.title))
+        Spacer(Modifier.height(8.dp))
+        HudBanner(
+            text = name.ifBlank { "UNTITLED $identityTail" },
+            color = HudColors.TextPrimary,
+            note = type.name,
+            noteColor = HudColors.Cyan,
+        )
+    }
+}
+
+/**
+ * One section of the form, drawn as the page's `.card` — the same fill, hairline, 8 dp corners
+ * and 12x14 padding as every settings card, and `CardHead`'s `.card h4` title. The heading is
+ * what turns the editor from one undifferentiated stack of labels into the four records it
+ * actually holds: the photo, the user's half, the app's evidence, and the delete action.
+ */
+@Composable
+private fun EditorCard(
+    title: String,
+    titleColor: Color = HudColors.Cyan,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().hudCard().padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        CardHead(title, titleColor)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+    }
+}
+
+/**
+ * The photo card: the well beside its two doors, then — only for a card that already has a
+ * picture — re-frame and remove on their own row. The well keeps the garage cover's square
+ * and its wheel glyph, because the card the user is editing will show this picture at 76 dp
+ * under the same corners; the buttons are in a column to its right so the photo, not a row of
+ * labels, is what the eye lands on, and re-frame comes before remove because it is the kinder
+ * answer to "I don't like this framing".
+ */
+@Composable
+private fun PhotoCard(
     hasPhoto: Boolean,
     preview: Bitmap?,
+    note: String?,
     onGallery: () -> Unit,
     onCamera: () -> Unit,
     onReframe: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    Text("PHOTO", color = HudColors.TextMuted, style = HudeFormLabel())
-    Spacer(Modifier.height(6.dp))
+    EditorCard("PHOTO") {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            PhotoWell(preview)
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                HudButton(
+                    "CHOOSE PHOTO",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onGallery,
+                )
+                HudButton(
+                    "TAKE PHOTO",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onCamera,
+                )
+                Text(
+                    "Shown as a square on the card.",
+                    color = HudColors.TextDim,
+                    style = HudeCfgNote(),
+                )
+            }
+        }
+        if (hasPhoto) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HudButton(
+                    "RE-FRAME",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onReframe,
+                )
+                HudButton(
+                    "REMOVE",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.DANGER,
+                    onClick = onRemove,
+                )
+            }
+        }
+        // A photo problem is said inside the photo card, not at the foot of the form: the
+        // note was produced by this card's buttons, and a fix — pick again — is one glance
+        // and one reach away.
+        note?.let { Text(it, color = HudColors.Amber, style = HudeCfgHelp()) }
+    }
+}
+
+/**
+ * The well itself: the card's picture, or the bar's wheel glyph until it has one. The glyph
+ * is the same honesty the garage cover keeps — an empty square that shows nothing looks
+ * broken, and one that shows the glyph says "vehicle, no photo yet".
+ */
+@Composable
+private fun PhotoWell(preview: Bitmap?) {
     Box(
         Modifier
             .size(WELL_EDGE.dp)
@@ -517,76 +635,100 @@ private fun PhotoWell(
             .border(1.dp, HudColors.Hairline, HudRadius.CardShape),
         contentAlignment = Alignment.Center,
     ) {
-        preview?.let {
+        if (preview != null) {
             Image(
-                bitmap = it.asImageBitmap(),
+                bitmap = preview.asImageBitmap(),
                 contentDescription = "this card's photo",
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(WELL_EDGE.dp),
+                modifier = Modifier.fillMaxSize(),
             )
-        }
-        if (preview == null) {
+        } else {
             Icon(
                 HudIcons.Wheel,
                 contentDescription = null,
                 tint = HudColors.TextDim,
-                modifier = Modifier.size(46.dp),
+                modifier = Modifier.size(38.dp),
             )
         }
     }
-    Spacer(Modifier.height(10.dp))
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-            HudButton("CHOOSE PHOTO", style = HudButtonStyle.SECONDARY, onClick = onGallery)
-        }
-        Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-            HudButton("TAKE PHOTO", style = HudButtonStyle.SECONDARY, onClick = onCamera)
-        }
+}
+
+/**
+ * Edge of the editor's photo well, in dp. The garage cover is 76 dp; this is the same square
+ * at 120 dp — big enough to judge the framing, and small enough to leave the action column
+ * beside it room to spell `CHOOSE PHOTO` on a 360 dp phone.
+ */
+private const val WELL_EDGE = 120
+
+/** One read-only line of the DASHBOARD card: a label over the value the app measured. */
+@Composable
+private fun Fact(label: String, value: String) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(label, color = HudColors.TextMuted, style = HudeFormLabel())
+        Spacer(Modifier.height(4.dp))
+        Text(value, color = HudColors.TextPrimary, style = HudeCfgLive())
     }
-    if (hasPhoto) {
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.weight(1f).heightIn(min = 40.dp)) {
-                HudButton("RE-FRAME PHOTO", style = HudButtonStyle.SECONDARY, onClick = onReframe)
+}
+
+/**
+ * SAVE and CANCEL, pinned under the cards. They used to live at the end of the scroll, which
+ * on a filled form is a phone-screenful of fields away from the heading; a footer that stays
+ * put is also what lets the keyboard inset live on the sheet instead of on the scroll.
+ *
+ * A save refusal is drawn here, immediately above the SAVE that caused it, in red and in the
+ * same help voice as the photo notes.
+ */
+@Composable
+private fun EditorFooter(
+    refusal: String?,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            refusal?.let {
+                Text(it, color = HudColors.Red, style = HudeCfgHelp())
+                Spacer(Modifier.height(8.dp))
             }
-            Box(Modifier.weight(1f).heightIn(min = 40.dp)) {
-                HudButton("REMOVE PHOTO", style = HudButtonStyle.DANGER, onClick = onRemove)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HudButton(
+                    "SAVE",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.PRIMARY,
+                    onClick = onSave,
+                )
+                HudButton(
+                    "CANCEL",
+                    modifier = Modifier.weight(1f),
+                    style = HudButtonStyle.SECONDARY,
+                    onClick = onCancel,
+                )
             }
         }
     }
 }
 
-/** Edge of the editor's photo well, in dp — exactly twice the card cover's 76 dp. */
-private const val WELL_EDGE = 152
-
-/**
- * A label over a value. With [onValueChange] it is an editable field; without it the value
- * is text the user reads but does not type — the same furniture either way, so the read-only
- * rows above the form do not look like a different kind of control.
- */
+/** One editable field: its label over the input, in the same furniture as every settings row. */
 @Composable
 private fun Field(
     label: String,
     value: String,
-    onValueChange: ((String) -> Unit)? = null,
+    onValueChange: (String) -> Unit,
     placeholder: String = "",
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     Column(Modifier.fillMaxWidth()) {
         Text(label, color = HudColors.TextMuted, style = HudeFormLabel())
         Spacer(Modifier.height(6.dp))
-        if (onValueChange == null) {
-            Text(value, color = HudColors.TextPrimary, style = HudeCfgLive())
-        } else {
-            HudInput(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
-                style = HudInputStyle.FIELD,
-                placeholder = placeholder,
-                keyboardType = keyboardType,
-                imeAction = ImeAction.Next,
-            )
-        }
+        HudInput(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            style = HudInputStyle.FIELD,
+            placeholder = placeholder,
+            keyboardType = keyboardType,
+            imeAction = ImeAction.Next,
+        )
     }
 }

@@ -124,10 +124,16 @@
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
 
+        <!-- adjustResize: on API 29 and below edge-to-edge is not forced, and the platform's
+             default (pan) slides the window up instead of shrinking it, which pushed the
+             vehicle editor's pinned SAVE/CANCEL footer under the keys. Resizing the window is
+             what lets the sheet's imePadding and the footer above it stay reachable there; on
+             API 30+ edge-to-edge is in charge and the inset path is the same as before. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|uiMode|keyboard|keyboardHidden|navigation|density|smallestScreenSize|layoutDirection|locale">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
