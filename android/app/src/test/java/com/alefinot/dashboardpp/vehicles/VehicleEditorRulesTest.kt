@@ -130,4 +130,33 @@ class VehicleEditorRulesTest {
         assertEquals(stored.photoFile, saved.photoFile)
         assertEquals(stored.createdAtMs, saved.createdAtMs)
     }
+
+    @Test
+    fun `a custom label is kept only while the card is filed under OTHER`() {
+        val stored = Vehicle(id = "v1", name = "Bike", type = VehicleType.MOTORCYCLE)
+
+        val other = mergeTypedFields(
+            stored,
+            stored.copy(type = VehicleType.OTHER, customType = "  Rickshaw  "),
+        )
+        assertEquals(VehicleType.OTHER, other.type)
+        assertEquals("Rickshaw", other.customType)
+        assertEquals("RICKSHAW", other.typeLabel)
+
+        // The draft keeps the typed word while the user tries presets, but the saved card
+        // must not: a VAN that still says Rickshaw is a record the next editor cannot explain.
+        val preset = mergeTypedFields(
+            other,
+            other.copy(type = VehicleType.VAN, customType = "Rickshaw"),
+        )
+        assertEquals(VehicleType.VAN, preset.type)
+        assertEquals("", preset.customType)
+        assertEquals("VAN", preset.typeLabel)
+
+        // Choosing OTHER without writing anything is still a legal card: the catch-all
+        // label says exactly what it is.
+        val blank = mergeTypedFields(other, other.copy(customType = "   "))
+        assertEquals("", blank.customType)
+        assertEquals("OTHER", blank.typeLabel)
+    }
 }

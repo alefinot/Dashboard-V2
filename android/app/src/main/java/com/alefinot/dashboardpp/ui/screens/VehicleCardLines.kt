@@ -88,7 +88,7 @@ fun specLine(v: Vehicle): String {
     val makerModel = listOfNotNull(fieldOf(v.maker), fieldOf(v.model))
         .joinToString(" ")
     val what = listOfNotNull(
-        v.type.name,
+        v.typeLabel,
         makerModel.takeIf { it.isNotEmpty() }?.uppercase(),
         fieldOf(v.year),
     )

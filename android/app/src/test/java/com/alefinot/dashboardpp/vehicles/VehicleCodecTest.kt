@@ -221,11 +221,13 @@ class VehicleCodecTest {
     fun `a type this build does not know falls back to OTHER and keeps the card`() {
         // Dropping the card over a category is the worst possible trade: the user
         // loses the name, the photo and the bound unit over a label.
-        val newer = """{"v":"v1","id":"v6","name":"Truck","type":"TRUCK","mac":"A4:CF:12:3B:9E:07"}"""
+        val newer = """{"v":"v1","id":"v6","name":"Truck","type":"HOVERCRAFT",""" +
+            """"mac":"A4:CF:12:3B:9E:07"}"""
 
         val back = VehicleCodec.decode(newer)
 
         assertEquals(VehicleType.OTHER, back?.type)
+        assertEquals("", back?.customType)
         assertEquals("Truck", back?.name)
         assertEquals("A4:CF:12:3B:9E:07", back?.mac)
 
@@ -233,6 +235,35 @@ class VehicleCodecTest {
         // is not: that one takes the data-class default, CAR.
         assertEquals(VehicleType.OTHER, VehicleCodec.decode("""{"v":"v1","type":42}""")?.type)
         assertEquals(VehicleType.CAR, VehicleCodec.decode("""{"v":"v1","id":"v6"}""")?.type)
+    }
+
+    @Test
+    fun `a broad preset and a custom OTHER label round trip`() {
+        val presets = listOf(
+            VehicleType.SCOOTER,
+            VehicleType.VAN,
+            VehicleType.TRUCK,
+            VehicleType.BUS,
+            VehicleType.CAMPER,
+            VehicleType.BICYCLE,
+            VehicleType.E_BIKE,
+            VehicleType.BOAT,
+            VehicleType.TRACTOR,
+        )
+        for (preset in presets) {
+            val v = Vehicle(id = "p", type = preset)
+            assertEquals(preset, VehicleCodec.decode(VehicleCodec.encode(v))?.type)
+        }
+
+        val other = Vehicle(id = "o", type = VehicleType.OTHER, customType = "Rickshaw")
+        val decoded = VehicleCodec.decode(VehicleCodec.encode(other))
+        assertEquals(VehicleType.OTHER, decoded?.type)
+        assertEquals("Rickshaw", decoded?.customType)
+        assertEquals("RICKSHAW", decoded?.typeLabel)
+
+        // Presets are still upper-case labels even when their enum constant spells them
+        // with an underscore.
+        assertEquals("E-BIKE", Vehicle(id = "e", type = VehicleType.E_BIKE).typeLabel)
     }
 
     @Test

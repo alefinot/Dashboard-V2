@@ -104,6 +104,21 @@ class VehicleCardLinesTest {
             "MOTORCYCLE · 1972",
             specLine(Vehicle(id = "v1", type = VehicleType.MOTORCYCLE, year = "1972")),
         )
+        assertEquals(
+            "E-BIKE · 2020",
+            specLine(Vehicle(id = "v1", type = VehicleType.E_BIKE, year = "2020")),
+        )
+        // A custom type is the user's word, uppercased like the rest of the spec line,
+        // not the OTHER label the dropdown used to choose it.
+        assertEquals(
+            "RICKSHAW · TOYOTA · 1972",
+            specLine(
+                Vehicle(
+                    id = "v1", type = VehicleType.OTHER, customType = "Rickshaw",
+                    maker = "Toyota", year = "1972",
+                ),
+            ),
+        )
     }
 
     @Test

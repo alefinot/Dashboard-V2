@@ -46,13 +46,14 @@ object VehicleCodec {
     private const val MAX_DEPTH = 8
 
     fun encode(v: Vehicle): String {
-        val parts = ArrayList<String>(15)
+        val parts = ArrayList<String>(16)
         parts.add(field("v", quote(V)))
         parts.add(field("id", quote(v.id)))
         parts.add(field("mac", nullable(v.mac)))
         parts.add(field("name", quote(v.name)))
         parts.add(field("photoFile", nullable(v.photoFile)))
         parts.add(field("type", quote(v.type.name)))
+        parts.add(field("customType", quote(v.customType)))
         parts.add(field("plate", quote(v.plate)))
         parts.add(field("maker", quote(v.maker)))
         parts.add(field("model", quote(v.model)))
@@ -88,6 +89,7 @@ object VehicleCodec {
             name = str(obj, "name", ""),
             photoFile = nullableStr(obj, "photoFile"),
             type = typeOf(obj),
+            customType = str(obj, "customType", ""),
             plate = str(obj, "plate", ""),
             maker = str(obj, "maker", ""),
             model = str(obj, "model", ""),
@@ -167,14 +169,12 @@ object VehicleCodec {
         return text.toLongOrNull() ?: text.toDoubleOrNull()?.toLong()
     }
 
-    private fun typeOf(obj: Map<*, *>): VehicleType = when (obj["type"]) {
-        null -> VehicleType.CAR // missing key: the data-class default
-        "CAR" -> VehicleType.CAR
-        "MOTORCYCLE" -> VehicleType.MOTORCYCLE
-        "OTHER" -> VehicleType.OTHER
-        // A name this build does not know (a newer app wrote "TRUCK"): keep the
-        // card and file it under the catch-all; dropping it would delete a vehicle.
-        else -> VehicleType.OTHER
+    private fun typeOf(obj: Map<*, *>): VehicleType {
+        val raw = obj["type"] ?: return VehicleType.CAR // missing key: the data-class default
+        val name = raw as? String ?: return VehicleType.OTHER
+        // Listing the enum instead of repeating its names means a preset added to
+        // [VehicleType] is readable by this build without a second switch to update.
+        return VehicleType.values().firstOrNull { it.name == name } ?: VehicleType.OTHER
     }
 
     // --- writer ----------------------------------------------------------------

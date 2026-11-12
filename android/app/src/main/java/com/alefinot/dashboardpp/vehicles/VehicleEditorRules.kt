@@ -72,16 +72,20 @@ fun refusalMessage(clash: Vehicle): String {
 /**
  * Copy the user's fields onto the stored record and nothing else.
  *
- * The editor edits half of a [Vehicle]: name, type, plate, maker, model, year, notes. The
- * other half — `mac`, `ips`, `lastConnectedAtMs`, `firmwareVersion`, `createdAtMs`,
- * `photoFile` — is evidence and files the app owns, written by a connect and by the photo
- * pipeline. A save that rebuilt the record from the form would drop that evidence and
- * silently unbind the card from the unit it was adopted from, which is a worse bug than the
- * typo the user was fixing.
+ * The editor edits half of a [Vehicle]: name, type, custom type label, plate, maker,
+ * model, year, notes. The other half — `mac`, `ips`, `lastConnectedAtMs`,
+ * `firmwareVersion`, `createdAtMs`, `photoFile` — is evidence and files the app owns,
+ * written by a connect and by the photo pipeline. A save that rebuilt the record from the
+ * form would drop that evidence and silently unbind the card from the unit it was adopted
+ * from, which is a worse bug than the typo the user was fixing.
+ *
+ * A custom label only belongs to `OTHER`: selecting a preset after typing one clears it,
+ * so a card can never carry a label its dropdown does not show.
  */
 fun mergeTypedFields(stored: Vehicle, typed: Vehicle): Vehicle = stored.copy(
     name = typed.name.trim(),
     type = typed.type,
+    customType = if (typed.type == VehicleType.OTHER) typed.customType.trim() else "",
     plate = typed.plate.trim(),
     maker = typed.maker.trim(),
     model = typed.model.trim(),

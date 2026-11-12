@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.Bitmap
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -41,6 +45,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
@@ -51,6 +56,7 @@ import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
+import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -67,6 +73,7 @@ import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.PhotoEdit
 import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import com.alefinot.dashboardpp.vehicles.VehicleType
+import com.alefinot.dashboardpp.vehicles.vehicleTypeLabel
 import java.io.File
 
 /**
@@ -133,6 +140,7 @@ fun VehicleEditorScreen(
 
     var name by remember(draft.id) { mutableStateOf(draft.name) }
     var type by remember(draft.id) { mutableStateOf(draft.type) }
+    var customType by remember(draft.id) { mutableStateOf(draft.customType) }
     var plate by remember(draft.id) { mutableStateOf(draft.plate) }
     var maker by remember(draft.id) { mutableStateOf(draft.maker) }
     var model by remember(draft.id) { mutableStateOf(draft.model) }
@@ -242,6 +250,7 @@ fun VehicleEditorScreen(
     }
 
     val identityTail = draft.mac?.takeLast(6)?.uppercase() ?: draft.id.uppercase()
+    val shownType = vehicleTypeLabel(type, customType)
 
     // What the well and its buttons describe: the staged decision first, the stored
     // photo only while nothing is pending. This is why CANCEL can be true - the screen
@@ -285,7 +294,7 @@ fun VehicleEditorScreen(
                 EditorHeader(
                     title = if (isNew) "NAME THIS DASHBOARD" else "EDIT VEHICLE",
                     name = name,
-                    type = type,
+                    typeLabel = shownType,
                     identityTail = identityTail,
                 )
                 Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
@@ -347,31 +356,28 @@ fun VehicleEditorScreen(
                             placeholder = "UNTITLED $identityTail",
                         )
 
-                        // A row of three rather than a spinner: the app has no dropdown in its
-                        // furniture, and on a tablet all three choices are visible at once and
-                        // one tap away, which is what a dropdown was for in the first place.
-                        // The weight is on the button itself, not on a wrapper Box: a Box that
-                        // weights one while the button inside hugs its label is three unequal
-                        // pills, which is what the old TYPE row was.
+                        // A dropdown now that the menu is longer than a row: twelve choices
+                        // would be one-word buttons stacked down the page. The trigger is drawn
+                        // like the app's text fields and opens the same popup furniture the
+                        // firmware release picker uses. `OTHER` reveals the free-text box under
+                        // it; the custom word lives in the same draft as every other field, so
+                        // CANCEL and Back discard it the same way.
                         Column(Modifier.fillMaxWidth()) {
                             Text("TYPE", color = HudColors.TextMuted, style = HudeFormLabel())
                             Spacer(Modifier.height(6.dp))
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                for (option in VehicleType.values()) {
-                                    HudButton(
-                                        option.name,
-                                        modifier = Modifier.weight(1f),
-                                        style = if (option == type) {
-                                            HudButtonStyle.PRIMARY
-                                        } else {
-                                            HudButtonStyle.SECONDARY
-                                        },
-                                        onClick = { type = option },
-                                    )
-                                }
+                            TypeDropdown(
+                                selected = type,
+                                selectedLabel = shownType,
+                                onSelect = { type = it },
+                            )
+                            if (type == VehicleType.OTHER) {
+                                Spacer(Modifier.height(8.dp))
+                                Field(
+                                    "CUSTOM TYPE",
+                                    customType,
+                                    onValueChange = { customType = it },
+                                    placeholder = "your own vehicle type",
+                                )
                             }
                         }
 
@@ -440,8 +446,8 @@ fun VehicleEditorScreen(
                         // together, and land together - one SAVE, or none.
                         onSave(
                             draft.copy(
-                                name = name, type = type, plate = plate, maker = maker,
-                                model = model, year = year, notes = notes,
+                                name = name, type = type, customType = customType, plate = plate,
+                                maker = maker, model = model, year = year, notes = notes,
                             ),
                             photoEdit,
                         )
@@ -509,7 +515,7 @@ fun VehicleEditorScreen(
 private fun EditorHeader(
     title: String,
     name: String,
-    type: VehicleType,
+    typeLabel: String,
     identityTail: String,
 ) {
     Column(
@@ -520,7 +526,7 @@ private fun EditorHeader(
         HudBanner(
             text = name.ifBlank { "UNTITLED $identityTail" },
             color = HudColors.TextPrimary,
-            note = type.name,
+            note = typeLabel,
             noteColor = HudColors.Cyan,
         )
     }
@@ -726,5 +732,74 @@ private fun Field(
             keyboardType = keyboardType,
             imeAction = ImeAction.Next,
         )
+    }
+}
+
+/**
+ * The TYPE control: a field-shaped trigger over the app's dropdown popup.
+ *
+ * The trigger keeps the same fill, edge and 0.22 s focus transition as the release picker
+ * below it, because the editor already treats a menu as a field you choose rather than a
+ * button you press. The selected option is named in the cyan the app uses for what is
+ * active, and `OTHER`'s custom word is the trigger's own label — the card should say
+ * `RICKSHAW`, not hide the fact behind a generic category.
+ */
+@Composable
+private fun TypeDropdown(
+    selected: VehicleType,
+    selectedLabel: String,
+    onSelect: (VehicleType) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val fill by animateColorAsState(
+        if (open) HudColors.FieldFocus else HudColors.Field,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "typeMenuFill",
+    )
+    val edge by animateColorAsState(
+        if (open) HudColors.Cyan else HudColors.Hairline,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
+        label = "typeMenuEdge",
+    )
+    Box(Modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .hudPressable(onClickLabel = "Choose vehicle type") { open = true }
+                .background(fill, HudRadius.FieldShape)
+                .border(1.dp, edge, HudRadius.FieldShape)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                "$selectedLabel  ▾",
+                color = HudColors.TextPrimary,
+                style = HudeCfgNote(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = HudColors.Sheet,
+        ) {
+            for (option in VehicleType.values()) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            option.label + if (option == selected) "  ✓" else "",
+                            color = if (option == selected) HudColors.Cyan else HudColors.TextPrimary,
+                            style = HudeCfgNote(),
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(option)
+                    },
+                )
+            }
+        }
     }
 }

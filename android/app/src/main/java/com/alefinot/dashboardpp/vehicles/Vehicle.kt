@@ -2,8 +2,41 @@ package com.alefinot.dashboardpp.vehicles
 
 import java.util.Locale
 
-/** What a vehicle is filed under in the editor and in filters. */
-enum class VehicleType { CAR, MOTORCYCLE, OTHER }
+/**
+ * What a vehicle is filed under in the editor and in filters.
+ *
+ * [label] is what the HUD draws; [name] is the JSON row written to `vehicles.json` and
+ * must not be renamed casually, because existing cards store it. `OTHER` is the only
+ * value that can carry a user-written label ([Vehicle.customType]).
+ */
+enum class VehicleType(val label: String) {
+    CAR("CAR"),
+    MOTORCYCLE("MOTORCYCLE"),
+    SCOOTER("SCOOTER"),
+    VAN("VAN"),
+    TRUCK("TRUCK"),
+    BUS("BUS"),
+    CAMPER("CAMPER"),
+    BICYCLE("BICYCLE"),
+    E_BIKE("E-BIKE"),
+    BOAT("BOAT"),
+    TRACTOR("TRACTOR"),
+    OTHER("OTHER"),
+}
+
+/**
+ * The type as the HUD writes it: the preset's label, or the user's own word when the
+ * card is filed under [VehicleType.OTHER]. Uppercase because the card's spec line and
+ * the editor banner are uppercase; the stored [Vehicle.customType] keeps the user's case.
+ */
+fun vehicleTypeLabel(type: VehicleType, customType: String): String {
+    val custom = customType.trim()
+    return if (type == VehicleType.OTHER && custom.isNotEmpty()) {
+        custom.uppercase(Locale.US)
+    } else {
+        type.label
+    }
+}
 
 /**
  * A vehicle in the garage — the thing the app *means* when it connects.
@@ -59,6 +92,14 @@ data class Vehicle(
 
     val type: VehicleType = VehicleType.CAR,
 
+    /**
+     * The user's own word for a vehicle filed under [VehicleType.OTHER] — "Rickshaw",
+     * "Jetski". Empty for every preset, and trimmed by the editor on save. Stored
+     * separately from [type] so the category keeps its stable JSON key while the label
+     * stays free text.
+     */
+    val customType: String = "",
+
     /** Free text, as entered. Blank means "not filled in", and there is no format to enforce. */
     val plate: String = "",
 
@@ -99,6 +140,9 @@ data class Vehicle(
 ) {
     /** This card has a recorded identity: a `mac` the identity rules can read. */
     val hasIdentity: Boolean get() = !mac.isNullOrBlank()
+
+    /** What the card, editor banner and menu draw for this card's type. */
+    val typeLabel: String get() = vehicleTypeLabel(type, customType)
 
     /** This phone has a pairing to dial. Says nothing about *which* unit it reaches. */
     val hasPairing: Boolean get() = !bleAddress.isNullOrBlank()
