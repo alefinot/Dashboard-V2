@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudEnter
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeBody
@@ -127,7 +128,15 @@ fun NotLinkedCover(
                     style = HudeCfgNote(),
                 )
                 Spacer(Modifier.height(18.dp))
-                HudButton("OPEN VEHICLE PAGE", style = HudButtonStyle.PRIMARY, onClick = onOpenVehicles)
+                HudButton(
+                    "OPEN VEHICLE PAGE",
+                    style = HudButtonStyle.PRIMARY,
+                    // The bar's own wheel: the mark that means "vehicle" in the bar is the
+                    // mark on the door to the vehicle page, so the cover points at the tab
+                    // it is sending you to rather than only spelling it.
+                    glyph = HudIcons.Wheel,
+                    onClick = onOpenVehicles,
+                )
             }
         }
     }

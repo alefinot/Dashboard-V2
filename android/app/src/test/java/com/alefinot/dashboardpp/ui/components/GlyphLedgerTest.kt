@@ -175,11 +175,11 @@ class GlyphLedgerTest {
     // ── reading the sources ───────────────────────────────────────────────────────
 
     /**
-     * Lower this as each phase converts a screen; never raise it. It is the count the ratchet test
-     * found on 2026-11-12, after the trip screens came onto marks: only the phone settings page and
-     * the not-linked cover (P7) are left standing.
+     * Lower this as each phase converts a screen; never raise it. P7 (2026-11-12) closed the
+     * ladder at **zero**: every `HudButton` in the app now wears its ledger mark beside its
+     * word — a bare word button is not allowed any more, and this test is what says so.
      */
-    private val maxWordOnlyButtons = 6
+    private val maxWordOnlyButtons = 0
 
     // The scanner itself is shared with `TypedPseudoGlyphTest` in ui/SourceScan.kt, because both
     // guards read the same files and only one of them can be trusted if they disagree about what a

@@ -339,6 +339,7 @@ fun SettingsScreen(
                     "STORAGE & FILES",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.Cog,
                 ) {
                     storageLine = hudBytes(trips.storageBytes.value) + " recorded · " +
                         trips.rows.value.size + " trip files"
@@ -351,6 +352,7 @@ fun SettingsScreen(
                     "DELETE ALL TRIPS",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.DANGER,
+                    glyph = HudIcons.Bin,
                 ) { showConfirmClear = true }
             }
             if (storageLine.isNotEmpty()) {
@@ -391,6 +393,7 @@ fun SettingsScreen(
                     "SAVE CITY",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.Check,
                 ) {
                     val typed = cityEdit ?: weatherCity.typed
                     scope.launch { weatherLine = saveWeatherCity(typed, weatherFeed, weatherSettings) }
@@ -399,6 +402,7 @@ fun SettingsScreen(
                     "PUSH NOW",
                     modifier = Modifier.weight(1f),
                     enabled = weatherStatus.unitKey != null,
+                    glyph = HudIcons.Flush,
                 ) {
                     val key = weatherStatus.unitKey ?: return@HudButton
                     scope.launch { weatherFeed.pushNow(key) }
@@ -571,6 +575,9 @@ private fun StorageSection(snapshot: StorageSnapshot, onGrant: () -> Unit) {
                 StorageCopy.grantButton(snapshot.shared, grantPath),
                 style = HudButtonStyle.SECONDARY,
                 enabled = !snapshot.shared,
+                // D4: the button opens a phone screen this app cannot draw, so the cog
+                // says "errand into the phone's own settings" and the label stays exact.
+                glyph = HudIcons.Cog,
             ) { onGrant() }
         }
     }
