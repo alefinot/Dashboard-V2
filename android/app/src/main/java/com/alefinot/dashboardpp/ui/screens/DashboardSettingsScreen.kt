@@ -45,6 +45,7 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
+import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
@@ -178,6 +179,16 @@ fun DashboardSettingsScreen(
         if (linkState is BleLinkState.Ready && schema != null) store.syncIfNeeded()
     }
     LaunchedEffect(query) { closedWhileSearching = emptySet() }
+
+    // An armed second press does not get to outlive the page it was armed on. The bar's pages stay
+    // composed while a different one is on screen — the pager keeps them, which is why the scroll
+    // position survives a tab change — so `confirm` survived one too: on 2026-11-12 the bench armed
+    // `RESET TRIP`, went to App Settings, came back, and found a button one press away from
+    // `trip.reset` with no memory of why anyone wanted the trip gone. Leaving view is the disarm,
+    // whatever armed it. The two-press safety stays exactly where it was, on this page, where the
+    // press that arms and the press that fires are in front of the same eyes.
+    val inView = LocalEnterActive.current
+    LaunchedEffect(inView) { if (!inView) confirm = null }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),

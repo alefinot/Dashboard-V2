@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Five things the bench showed the native settings page doing wrong, each pinned here because
+ * Six things the bench showed the native settings page doing wrong, each pinned here because
  * none of them are reachable from a JVM test of the store: they live in the composition, and
  * the module has no Compose test harness. Same method as [ConnectActionsOnOnePageTest] and
  * [SettingsTabReplacesTheWebPageTest] — read the source, assert the fix is in it, so the next
@@ -27,7 +27,10 @@ import org.junit.Test
  *      effect that clears the note was below the early return that draws the link panel, and
  *      opening the panel destroyed it;
  *   5. with no link at all the page drew every row with an empty box — a wall of controls that
- *      looked broken and refused every tap.
+ *      looked broken and refused every tap;
+ *   6. an armed second press outlived the page that armed it — arm `RESET TRIP`, visit App
+ *      Settings, come back, and the button is still one press from `trip.reset` (see
+ *      [anArmedSecondPressDiesWhenThePageLeavesView]).
  */
 class SettingsPageBenchFindingsTest {
 
@@ -382,6 +385,46 @@ class SettingsPageBenchFindingsTest {
         assertTrue(
             "a reading drawn among the settings reads like a setting that refuses to change",
             page.contains("not a setting"),
+        )
+    }
+
+    /**
+     * A waiting second press belongs to the page that armed it, and dies there.
+     *
+     * The bottom bar keeps its pages composed while a different one is on screen — that is why the
+     * settings scroll remembers where it was — and the very same retention kept `confirm` alive.
+     * On the bench: tap `RESET TRIP`, walk over to App Settings, walk back, and the button is
+     * still amber `CONFIRM`, one press from destroying a trip distance nobody has thought about for
+     * five minutes. The pager already publishes the fact that a page left the viewport as
+     * `LocalEnterActive` — the same signal the enter animations and the live tab read — so the page
+     * has a real leaving event to disarm on, rather than having to guess one.
+     *
+     * Pinned in both directions: the disarm must be keyed to *leaving*, not to arriving (a
+     * clear-on-entry effect is the same bug with a different spelling, because the tap that fires
+     * comes after the return), and the trip reset must still be a two-press act — the fix is not to
+     * hand the destruction back to a single tap.
+     */
+    @Test
+    fun anArmedSecondPressDiesWhenThePageLeavesView() {
+        val page = codeOnly("DashboardSettingsScreen.kt")
+        assertTrue(
+            "the page no longer reads whether it is the page on screen",
+            Regex("val inView = LocalEnterActive\\.current").containsMatchIn(page),
+        )
+        assertTrue(
+            "nothing disarms a waiting second press when the page leaves view",
+            Regex("LaunchedEffect\\(inView\\)\\s*\\{\\s*if \\(!inView\\) confirm = null")
+                .containsMatchIn(page),
+        )
+        val widget = codeOnly("SettingsWidgets.kt")
+        assertTrue(
+            "the trip reset stopped asking before it reset",
+            Regex("onConfirm\\(\"trip\\.reset\"\\)").containsMatchIn(widget),
+        )
+        assertEquals(
+            "a trip.reset escaped the armed branch and became reachable on the first press",
+            1,
+            Regex("store\\.action\\(\"trip\\.reset\"\\)").findAll(widget).count(),
         )
     }
 }
