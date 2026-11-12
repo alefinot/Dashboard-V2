@@ -298,7 +298,8 @@ class SettingsPageBenchFindingsTest {
         assertTrue(
             "the captioned action shrank below the app's 48 dp floor — a labelled button may be " +
                 "36 dp because the label says what it is, a glyph with a word under it may not",
-            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(slot),
+            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(slot) &&
+                Regex("widthIn\\(min = HudTouch\\.Min\\)").containsMatchIn(slot),
         )
     }
 

@@ -42,6 +42,7 @@ import com.alefinot.dashboardpp.update.fileError
 import com.alefinot.dashboardpp.update.listError
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudSelectMenu
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -161,9 +162,8 @@ internal fun FirmwareUpdateControl(
                 modifier = Modifier.weight(1f),
                 onPick = { chosen = it },
             )
-            HudButton(
-                label = "REFRESH",
-                style = HudButtonStyle.SECONDARY,
+            UpdateReloadAction(
+                description = "ask GitHub again for the released firmware versions",
                 enabled = list !is ReleaseList.Loading,
                 onClick = { FirmwareReleases.refresh(force = true) },
             )
@@ -198,15 +198,19 @@ internal fun FirmwareUpdateControl(
         }
 
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         ) {
             val downloading = fileState is FirmwareFileState.Downloading
-            HudButton(
-                label = if (downloading) "FETCHING…" else "DOWNLOAD",
-                style = HudButtonStyle.PRIMARY,
+            val fetching = fileState as? FirmwareFileState.Downloading
+            UpdateFetchAction(
+                description = chosen?.let {
+                    if (downloading) "fetching ${it.title} out of its GitHub release, into this phone"
+                    else "fetch ${it.title} out of its GitHub release and hold it on this phone"
+                } ?: "pick a released version above first",
                 enabled = chosen != null && !downloading && !OtaController.busy(),
+                progress = fetching?.let { updateFraction(it.release.size, it.got) },
                 onClick = {
                     chosen?.let {
                         armed = false
@@ -215,12 +219,13 @@ internal fun FirmwareUpdateControl(
                     }
                 },
             )
-            if (fileState is FirmwareFileState.Downloading) {
-                val d = fileState as FirmwareFileState.Downloading
+            if (downloading && fetching != null) {
                 Text(
-                    "downloading ${d.release.title} · ${mb(d.got)} of ${mb(d.release.size)}",
+                    "downloading ${fetching.release.title} · ${mb(fetching.got)} of " +
+                        "${mb(fetching.release.size)}",
                     style = HudeCfgNote(),
                     color = HudColors.TextDim,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -239,13 +244,12 @@ internal fun FirmwareUpdateControl(
 
         // ── The shared controls: whichever door the file came through ──
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         ) {
-            HudButton(
-                label = "CHOOSE FILE",
-                style = HudButtonStyle.SECONDARY,
+            UpdateFileAction(
+                description = "use a firmware file this phone already holds, instead of a released one",
                 enabled = !OtaController.busy(),
                 onClick = {
                     armed = false
@@ -253,21 +257,28 @@ internal fun FirmwareUpdateControl(
                 },
             )
             when (view.stage) {
-                OtaStage.Paused -> HudButton(
-                    label = "RESUME",
-                    style = HudButtonStyle.PRIMARY,
+                OtaStage.Paused -> UpdateBeginAction(
+                    caption = "RESUME",
+                    description = "continue the paused install from the offset the unit confirmed",
                     enabled = linked,
-                    onClick = { OtaController.start(context) },
-                )
-                OtaStage.Sending, OtaStage.Handshaking, OtaStage.Verifying, OtaStage.Reading -> HudButton(
-                    label = "WORKING…",
-                    style = HudButtonStyle.PRIMARY,
-                    enabled = false,
-                    onClick = {},
-                )
+                ) { OtaController.start(context) }
+                OtaStage.Sending, OtaStage.Handshaking, OtaStage.Verifying, OtaStage.Reading ->
+                    UpdateBeginAction(
+                        caption = "WORKING",
+                        description = "the install is running; this waits for the unit",
+                        enabled = false,
+                        // The transfer's own fraction, in the mark's place — the same number the bar
+                        // and the sentence below carry, and the reason `WORKING…` never needed to be
+                        // spelled out with a character.
+                        progress = view.fraction(),
+                        onClick = {},
+                    )
                 else -> HudButton(
                     label = if (armed) "CONFIRM FLASH" else "START",
                     style = if (armed) HudButtonStyle.WARNING else HudButtonStyle.PRIMARY,
+                    // The risky verb of the app (D3): this one writes a device, so it keeps its word
+                    // next to the mark and is never reduced to a caption under one.
+                    glyph = HudIcons.Play,
                     enabled = linked && OtaController.canStart(),
                     onClick = {
                         if (!armed) {
@@ -287,9 +298,13 @@ internal fun FirmwareUpdateControl(
                 )
             }
             if (view.stage != OtaStage.Idle) {
-                HudButton(
-                    label = if (OtaController.busy()) "STOP" else "CLEAR",
-                    style = HudButtonStyle.WARNING,
+                UpdateStopAction(
+                    caption = if (OtaController.busy()) "STOP" else "CLEAR",
+                    description = if (OtaController.busy()) {
+                        "abort the install in progress; the unit keeps running the firmware it has now"
+                    } else {
+                        "put this card back to waiting for the next file"
+                    },
                     enabled = true,
                     onClick = {
                         armed = false

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -171,6 +172,12 @@ fun HudGlyphAction(
  * [description] is the sentence the word buttons used to print — the caption is one word, and a
  * screen reader gets the whole clause, both as the image's own name and as `onClickLabel`, which is
  * what TalkBack reads as the action a double-tap will take.
+ *
+ * [progress], when the act this slot names is running, replaces the mark with a ring at that
+ * fraction in the same ink. It is what the `…` on `FETCHING…` and `WORKING…` used to be: a typed
+ * pretend glyph, and one that said nothing a bar elsewhere on the card was not already saying. A ring
+ * in the mark's place says *the thing this control does is the thing that is happening*, in the same
+ * 22 dp box, without adding a character to the app.
  */
 @Composable
 fun HudCaptionedAction(
@@ -179,6 +186,7 @@ fun HudCaptionedAction(
     description: String,
     ink: Color,
     enabled: Boolean,
+    progress: Float? = null,
     onClick: () -> Unit,
 ) {
     CaptionedBody(
@@ -187,6 +195,7 @@ fun HudCaptionedAction(
         description = description,
         ink = ink,
         enabled = enabled,
+        progress = progress,
         onClick = onClick,
     )
 }
@@ -199,6 +208,7 @@ fun RowScope.HudCaptionedAction(
     description: String,
     ink: Color,
     enabled: Boolean,
+    progress: Float? = null,
     onClick: () -> Unit,
 ) {
     Box(Modifier.weight(1f)) {
@@ -208,6 +218,7 @@ fun RowScope.HudCaptionedAction(
             description = description,
             ink = ink,
             enabled = enabled,
+            progress = progress,
             onClick = onClick,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -221,11 +232,17 @@ private fun CaptionedBody(
     description: String,
     ink: Color,
     enabled: Boolean,
+    progress: Float?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
+        // The floor is both ways, not just tall. A line that is not evenly shared — one glyph beside
+        // a labelled word button — leaves each slot its own width, and a caption is ~30 dp of word:
+        // a 30 × 48 box is a target a thumb misses sideways, which is the same failure the 48 dp
+        // height was put here to stop.
         modifier.heightIn(min = HudTouch.Min)
+            .widthIn(min = HudTouch.Min)
             .hudPressable(
                 enabled = enabled,
                 role = Role.Button,
@@ -235,12 +252,7 @@ private fun CaptionedBody(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(
-                glyph,
-                description,
-                colorFilter = ColorFilter.tint(ink),
-                modifier = Modifier.size(HudGlyphSize.Action.dp),
-            )
+            CaptionedMark(glyph, description, ink, progress)
             Text(
                 caption,
                 style = HudeMetricUnit(),
@@ -248,6 +260,38 @@ private fun CaptionedBody(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+    }
+}
+
+/**
+ * The mark's place in a [CaptionedBody]: the glyph, or — while the act it names is running — a ring at
+ * that fraction in the same ink.
+ *
+ * Two forms in one fixed box, so a control that starts working does not grow, shrink or move the
+ * caption beside it. The ring is the answer to `FETCHING…` and `WORKING…`: those labels spelled a
+ * state with a typed character, and the character said less than the ring does while saying nothing a
+ * bar on the same card was not already saying.
+ */
+@Composable
+private fun CaptionedMark(
+    glyph: ImageVector,
+    description: String,
+    ink: Color,
+    progress: Float?,
+) {
+    if (progress == null) {
+        Image(
+            glyph,
+            description,
+            colorFilter = ColorFilter.tint(ink),
+            modifier = Modifier.size(HudGlyphSize.Action.dp),
+        )
+    } else {
+        ScanProgressRing(
+            progress.coerceIn(0f, 1f),
+            modifier = Modifier.size(HudGlyphSize.Action.dp),
+            ink = ink,
+        )
     }
 }
 

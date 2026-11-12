@@ -463,13 +463,20 @@ fun HudInput(
     )
 }
 
-/** The page's own spinner (`#pullRefresh`, `refreshSpin 1s linear`): a cyan ring. */
+/**
+ * The page's own spinner (`#pullRefresh`, `refreshSpin 1s linear`): a ring.
+ *
+ * [ink] is the caller's state ink, not a decoration: rule 3 says a mark's caption, badge and ring all
+ * inherit the glyph's ink, so a control that has gone dim cannot keep a bright ring, and one that is
+ * amber because it is *waiting* says so in the ring too. The default is the cyan the page's pull
+ * refresh has always drawn.
+ */
 @Composable
-fun ScanProgressRing(progress: Float, modifier: Modifier = Modifier) {
+fun ScanProgressRing(progress: Float, modifier: Modifier = Modifier, ink: Color = HudColors.Cyan) {
     CircularProgressIndicator(
         progress = { progress },
         modifier = modifier,
-        color = HudColors.Cyan,
+        color = ink,
         trackColor = HudColors.Hairline,
         strokeWidth = 3.dp,
     )

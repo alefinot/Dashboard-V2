@@ -33,6 +33,7 @@ import com.alefinot.dashboardpp.update.appFileError
 import com.alefinot.dashboardpp.update.listError
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
@@ -86,46 +87,59 @@ internal fun AppUpdateControl(installed: String) {
         val offer = offered(state)
         if (offer != null) {
             Spacer(Modifier.height(8.dp))
+            // One action line, drawn the way the firmware half draws its own: a mark with the one word
+            // under it, in the mark's ink. The two halves of this card used to spell the same two verbs
+            // out twice, in two files, with nothing shared.
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 when (state) {
                     is AppUpdateState.ReadyToInstall -> {
                         if (canInstall) {
-                            HudButton(
-                                label = "INSTALL",
-                                style = HudButtonStyle.PRIMARY,
-                                onClick = {
-                                    AppUpdate.install(context, offer)?.let { installLine = appFileError(it) }
-                                },
-                            )
+                            UpdateBeginAction(
+                                caption = "INSTALL",
+                                description = "hand ${offer.title} to the system installer; it asks " +
+                                    "first, and a refused install changes nothing on the phone",
+                                enabled = true,
+                            ) {
+                                AppUpdate.install(context, offer)?.let { installLine = appFileError(it) }
+                            }
                         } else {
                             // No dialog can grant a special access, so the primary button is
                             // the jump to the page that can, and INSTALL waits for the return.
+                            // The word is the control here (D4): a cog can say "a settings panel",
+                            // it cannot say which permission, so the sentence stays and the mark
+                            // rides beside it — the same mark the app's own settings slot wears.
                             HudButton(
                                 label = "ALLOW INSTALLS",
                                 style = HudButtonStyle.WARNING,
+                                glyph = HudIcons.Cog,
                                 onClick = { AppUpdate.openInstallGrant(context) },
                             )
                         }
                     }
-                    is AppUpdateState.Downloading -> HudButton(
-                        label = "FETCHING…",
-                        style = HudButtonStyle.PRIMARY,
-                        enabled = false,
-                        onClick = {},
-                    )
-                    else -> HudButton(
-                        label = "DOWNLOAD",
-                        style = HudButtonStyle.PRIMARY,
-                        onClick = { AppUpdate.download(context, offer) },
-                    )
+                    is AppUpdateState.Downloading -> {
+                        val d = state as AppUpdateState.Downloading
+                        UpdateFetchAction(
+                            description = "the release is being fetched; this waits until the file " +
+                                "is on the phone",
+                            enabled = false,
+                            progress = updateFraction(d.release.size, d.got),
+                            onClick = {},
+                        )
+                    }
+                    else -> UpdateFetchAction(
+                        description = "fetch ${offer.title} and keep it on this phone until the " +
+                            "installer takes it",
+                        enabled = true,
+                    ) {
+                        AppUpdate.download(context, offer)
+                    }
                 }
-                HudButton(
-                    label = "REFRESH",
-                    style = HudButtonStyle.SECONDARY,
+                UpdateReloadAction(
+                    description = "ask GitHub again whether a newer release of this app is out",
                     enabled = state !is AppUpdateState.Checking &&
                         state !is AppUpdateState.Downloading,
                     onClick = { AppUpdate.check(context, force = true) },
@@ -133,18 +147,23 @@ internal fun AppUpdateControl(installed: String) {
             }
         } else if (state is AppUpdateState.UpToDate || state is AppUpdateState.FailedList) {
             Spacer(Modifier.height(8.dp))
-            HudButton(
-                label = "REFRESH",
-                style = HudButtonStyle.SECONDARY,
-                enabled = state !is AppUpdateState.Checking,
-                onClick = { AppUpdate.check(context, force = true) },
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                UpdateReloadAction(
+                    description = "ask GitHub again whether a newer release of this app is out",
+                    enabled = state !is AppUpdateState.Checking,
+                    onClick = { AppUpdate.check(context, force = true) },
+                )
+            }
         }
 
         if (state is AppUpdateState.Downloading) {
             val d = state as AppUpdateState.Downloading
             Spacer(Modifier.height(8.dp))
-            UpdateBar(d.release.let { if (it.size > 0) (d.got.toFloat() / it.size) else 0f })
+            UpdateBar(updateFraction(d.release.size, d.got))
             Text(
                 "downloaded ${mb(d.got)} of ${mb(d.release.size)}",
                 style = HudeCfgNote(),
