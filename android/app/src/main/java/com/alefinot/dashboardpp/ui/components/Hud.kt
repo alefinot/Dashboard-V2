@@ -5,14 +5,17 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -38,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.font.FontFamily
@@ -45,6 +49,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -70,6 +75,14 @@ import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
  * that is what this does on press, on the page's own 0.25s. Copying the look while
  * keeping Material's white ripple would put a gesture the page never makes back
  * into the same control.
+ *
+ * [glyph] is the mark of the act the button performs, drawn by [HudIcons] and painted in the
+ * button's own ink. It is for the slots where the word cannot come off - a destructive verb, a
+ * flash, anything the owner must not have to guess - and it is what keeps a word honest: a button
+ * that writes to the unit wears the same mark as the page's SAVE, so the two say they are one act.
+ * Inside a word button the mark is decorative and carries no description of its own; the label is
+ * the name. A control that is *only* a mark goes through [HudGlyphAction] instead, where a
+ * description cannot be omitted.
  */
 enum class HudButtonStyle { PRIMARY, SECONDARY, WARNING, DANGER }
 
@@ -79,6 +92,7 @@ fun HudButton(
     modifier: Modifier = Modifier,
     style: HudButtonStyle = HudButtonStyle.PRIMARY,
     enabled: Boolean = true,
+    glyph: ImageVector? = null,
     onClick: () -> Unit,
 ) {
     val shape = HudRadius.CardShape
@@ -144,7 +158,22 @@ fun HudButton(
             .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label.uppercase(), color = foreground, style = HudeButtonLabel())
+        if (glyph != null) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(
+                    glyph,
+                    contentDescription = null,
+                    colorFilter = ColorFilter.tint(foreground),
+                    modifier = Modifier.size(HudGlyphSize.Row.dp),
+                )
+                Text(label.uppercase(), color = foreground, style = HudeButtonLabel())
+            }
+        } else {
+            Text(label.uppercase(), color = foreground, style = HudeButtonLabel())
+        }
     }
 }
 

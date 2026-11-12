@@ -33,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
@@ -43,6 +42,7 @@ import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
+import com.alefinot.dashboardpp.ui.components.HudStepButton
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -307,7 +307,7 @@ private fun NumberControl(
         if (parsed != null && parsed != (box as? Number)?.toDouble()) onCommit(parsed)
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        StepButton("−", enabled) {
+        HudStepButton(HudIcons.Minus, "Decrease ${item.label}", enabled) {
             val next = ((box as? Number)?.toDouble() ?: 0.0) - step
             text = renderNumber(next, decimals)
             onCommit(next)
@@ -322,7 +322,7 @@ private fun NumberControl(
             imeAction = ImeAction.Done,
             onDone = commit,
         )
-        StepButton("+", enabled) {
+        HudStepButton(HudIcons.Plus, "Increase ${item.label}", enabled) {
             val next = ((box as? Number)?.toDouble() ?: 0.0) + step
             text = renderNumber(next, decimals)
             onCommit(next)
@@ -335,34 +335,6 @@ private fun numberWidth(item: SchemaItem): Dp = when {
     (item.uiMax ?: item.max ?: 0.0) >= 100000 -> 132.dp
     (item.uiMax ?: item.max ?: 0.0) >= 1000 -> 104.dp
     else -> 78.dp
-}
-
-/**
- * The page's `.adv-btn`: a 30 dp square, drawn and hit at 30 dp.
- *
- * The phone pass widened this to a 48 dp touch box and the maintainer asked for the small button
- * back (2026-11-08), so the row keeps its density here at the cost of [HudTouch.Min] - and the
- * field beside it is the primary input anyway: type the value, press Done. The ± are the quick
- * nudge on a value that is already visible.
- */
-@Composable
-private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(4.dp)
-    Box(
-        Modifier.size(30.dp)
-            .hudPressable(enabled = enabled, onClick = onClick)
-            .clip(shape)
-            .background(if (enabled) HudColors.Field else HudColors.Panel)
-            .border(1.dp, HudColors.Hairline, shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            symbol,
-            color = if (enabled) HudColors.Cyan else HudColors.TextDim,
-            fontSize = 15.sp,
-            fontFamily = FontFamily.SansSerif,
-        )
-    }
 }
 
 /**
@@ -621,6 +593,10 @@ private fun FuelTableControl(
             label = "apply table",
             style = HudButtonStyle.SECONDARY,
             enabled = enabled,
+            // The page's SAVE wears this mark, and this is the same act with one row's worth of
+            // scope: it writes what is in the field into the unit. Before the mark existed the two
+            // agreed only in prose.
+            glyph = HudIcons.Flush,
             modifier = Modifier.padding(top = 6.dp),
             onClick = { parseOhmList(text)?.let(onApply) },
         )

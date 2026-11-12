@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -238,6 +240,49 @@ private fun CaptionedBody(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+    }
+}
+
+/**
+ * One step of a numeric setting, drawn as [HudIcons.Plus] or [HudIcons.Minus].
+ *
+ * This was `StepButton("−")` / `StepButton("+")`: a MINUS SIGN codepoint and an ASCII plus in a
+ * `Text`, which a font centres however it likes — and which is why the two buttons of one stepper
+ * never looked like siblings of each other. The marks come from the same set as every other verb in
+ * the app, so a step up and a step down are the same family as a dismiss and a confirm.
+ *
+ * The 30 dp square is the maintainer's, not an accident: the row is dense, the field beside it is
+ * the primary input, and the phone-sized 48 dp box was asked back down on 2026-11-08 (see
+ * `SettingsRow`'s note on `.adv-btn`). [description] is still mandatory — a glyph that small is
+ * exactly the case where a screen reader has nothing else to say.
+ */
+@Composable
+fun HudStepButton(
+    glyph: ImageVector,
+    description: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(4.dp)
+    Box(
+        Modifier.size(30.dp)
+            .hudPressable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = description,
+                onClick = onClick,
+            )
+            .clip(shape)
+            .background(if (enabled) HudColors.Field else HudColors.Panel)
+            .border(1.dp, HudColors.Hairline, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            glyph,
+            description,
+            colorFilter = ColorFilter.tint(if (enabled) HudColors.Cyan else HudColors.TextDim),
+            modifier = Modifier.size(HudGlyphSize.Row.dp),
+        )
     }
 }
 

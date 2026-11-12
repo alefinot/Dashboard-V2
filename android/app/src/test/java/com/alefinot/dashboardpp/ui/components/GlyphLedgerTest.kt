@@ -1,5 +1,8 @@
 package com.alefinot.dashboardpp.ui.components
 
+import com.alefinot.dashboardpp.ui.argumentText
+import com.alefinot.dashboardpp.ui.codeOnly
+import com.alefinot.dashboardpp.ui.uiSources
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -75,7 +78,7 @@ class GlyphLedgerTest {
         // name mentioned in prose cannot satisfy the guard — or trip it.
         val missing = linkedMapOf<String, MutableList<String>>()
         for (file in sources()) {
-            for (match in Regex("""HudIcons\.(\w+)""").findAll(codeOnly(file))) {
+            for (match in Regex("""HudIcons\.(\w+)""").findAll(file.codeOnly())) {
                 val name = match.groupValues[1]
                 if (name !in registered) {
                     missing.getOrPut(name) { mutableListOf() } += file.name
@@ -98,7 +101,7 @@ class GlyphLedgerTest {
             // HudActions.kt is where the two controls are *declared*: there the parameter has no
             // default, which is the compiler's job. What this guard is for is the call sites, where
             // a description can be present and still be nothing.
-            val code = codeOnly(file)
+            val code = file.codeOnly()
             for (call in listOf("HudGlyphAction", "HudCaptionedAction")) {
                 var from = 0
                 while (true) {
@@ -123,7 +126,7 @@ class GlyphLedgerTest {
         // go through the enum.
         val strays = mutableListOf<String>()
         for (file in sources().filter { it.name != "HudActions.kt" }) {
-            val code = codeOnly(file)
+            val code = file.codeOnly()
             for (match in Regex("""\bsize\s*=\s*(\d+(?:\.\d+)?)\.dp""").findAll(code)) {
                 val line = code.substring(0, match.range.first).count { it == '\n' } + 1
                 strays += "${file.name}:$line sizes something ${match.groupValues[1]}.dp by hand"
@@ -133,84 +136,15 @@ class GlyphLedgerTest {
     }
 
     // ── reading the sources ───────────────────────────────────────────────────────
+    //
+    // The scanner itself is shared with `TypedPseudoGlyphTest` in ui/SourceScan.kt, because both
+    // guards read the same files and only one of them can be trusted if they disagree about what a
+    // comment is.
 
-    private fun sources(): List<File> {
-        assertTrue("the guard cannot see the sources at $uiRoot", uiRoot.exists())
-        return uiRoot.walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .filter { it.name != "HudIcons.kt" && it.name != "HudGlyphLedger.kt" }
-            .toList()
-    }
+    private fun sources(): List<File> = uiSources(uiRoot)
 
-    private fun codeOnly(relative: String): String = codeOnly(File(uiRoot, relative))
-
-    /**
-     * Comment-free source, so a description remembered in a comment cannot satisfy a guard.
-     *
-     * A scanner, not a regex: the block-comment pattern that worked on paper (`(?:[^*]|\*(?!/))*`)
-     * blew the JVM stack on a 900-line screen, which is the kind of failure a guard should not have.
-     */
-    private fun codeOnly(file: File): String {
-        assertTrue("missing ${file.path}", file.exists())
-        val src = file.readText()
-        val out = StringBuilder(src.length)
-        var i = 0
-        var blockDepth = 0
-        while (i < src.length) {
-            val c = src[i]
-            val next = if (i + 1 < src.length) src[i + 1] else ' '
-            when {
-                blockDepth > 0 -> when {
-                    c == '*' && next == '/' -> { blockDepth--; i += 2 }
-                    c == '/' && next == '*' -> { blockDepth++; i += 2 }
-                    // A newline is kept so a line number in a failure message still means something.
-                    else -> { if (c == '\n') out.append(c); i++ }
-                }
-
-                c == '/' && next == '/' -> {
-                    while (i < src.length && src[i] != '\n') i++
-                }
-
-                c == '/' && next == '*' -> { blockDepth = 1; i += 2 }
-
-                c == '"' || c == '\'' -> {
-                    // Strings are copied: a `//` inside one is not a comment, and neither is a `"`.
-                    val quote = c
-                    out.append(c); i++
-                    while (i < src.length && src[i] != quote) {
-                        if (src[i] == '\\') {
-                            out.append(src[i]); i++
-                            if (i < src.length) { out.append(src[i]); i++ }
-                        } else {
-                            out.append(src[i]); i++
-                        }
-                    }
-                    if (i < src.length) { out.append(src[i]); i++ }
-                }
-
-                else -> { out.append(c); i++ }
-            }
-        }
-        return out.toString()
-    }
+    private fun codeOnly(relative: String): String = File(uiRoot, relative).codeOnly()
 
     /** An id reads as a meaning — an area and a verb, dotted, lower case, hyphens inside a word. */
     private val ID = Regex("^[a-z]+(-[a-z]+)*(\\.[a-z]+(-[a-z]+)*)+$")
-
-    /** The text between a `(` and its matching `)`, one nesting level at a time. */
-    private fun argumentText(code: String, open: Int): String {
-        var depth = 0
-        for (i in open until code.length) {
-            when (code[i]) {
-                '(' -> depth++
-                ')' -> {
-                    depth--
-                    if (depth == 0) return code.substring(open + 1, i)
-                }
-            }
-        }
-        return code.substring(open + 1)
-    }
-
-    private operator fun String.contains(other: Regex): Boolean = other.containsMatchIn(this)
 }

@@ -1,8 +1,10 @@
 package com.alefinot.dashboardpp.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.DropdownMenu
@@ -28,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -76,6 +81,12 @@ fun <T> HudSelectMenu(
         tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
         label = "selectMenuEdge",
     )
+    // Right-pointing in the set, so 90 degrees is "opens downward" and 270 is "closes upward".
+    val triggerTurn by animateFloatAsState(
+        if (open) 270f else 90f,
+        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Standard),
+        label = "selectMenuChevron",
+    )
 
     LaunchedEffect(open) {
         if (open) {
@@ -98,13 +109,34 @@ fun <T> HudSelectMenu(
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
-            Text(
-                "$triggerLabel  ▾",
-                color = if (enabled) HudColors.TextPrimary else HudColors.TextDim,
-                style = HudeCfgNote(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    triggerLabel,
+                    modifier = Modifier.weight(1f),
+                    color = if (enabled) HudColors.TextPrimary else HudColors.TextDim,
+                    style = HudeCfgNote(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // The mark that says "this opens", drawn for the same reason the accordion's was:
+                // the field used to print a typed `▾`, and this device's font has no glyph for it, so
+                // the field showed a boxed question mark where the arrow should be (see Chevron).
+                // It turns on the page's control easing instead of swapping characters.
+                Image(
+                    HudIcons.Chevron,
+                    contentDescription = null,
+                    colorFilter = ColorFilter.tint(
+                        if (enabled) HudColors.TextMuted else HudColors.TextDim,
+                    ),
+                    modifier = Modifier
+                        .size(HudGlyphSize.Row.dp)
+                        .graphicsLayer { rotationZ = triggerTurn },
+                )
+            }
         }
         DropdownMenu(
             expanded = open && enabled && items.isNotEmpty(),
@@ -183,7 +215,15 @@ private fun HudSelectMenuRow(
                 overflow = TextOverflow.Ellipsis,
             )
             if (showCheck) {
-                Text("✓", color = HudColors.Cyan, style = HudeCfgNote())
+                // The mark a row wears when it is the value already in force. It replaces a typed
+                // U+2713: a codepoint this app can neither size nor weight, and one the bench
+                // phone's font has already failed on once for a relative of it (see Chevron).
+                Image(
+                    HudIcons.Check,
+                    contentDescription = "current value",
+                    colorFilter = ColorFilter.tint(HudColors.Cyan),
+                    modifier = Modifier.size(HudGlyphSize.Row.dp),
+                )
             }
         }
         if (!first) {

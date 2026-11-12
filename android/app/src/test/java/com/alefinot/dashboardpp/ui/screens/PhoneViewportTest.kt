@@ -337,10 +337,12 @@ class PhoneViewportTest {
      * way to reach the unit's own `config.reset` for a key, so it is not decoration that can be
      * ignored: it had to become hittable.
      *
-     * The ± steppers deliberately do *not* appear in this test. They were widened to the same
-     * 48 dp box in this pass and the maintainer asked for the small buttons back (2026-11-08), so
-     * the stepper cluster keeps the page's 30 dp squares and its tight gaps; the field beside
-     * them is the primary input.
+     * The stepper deliberately does *not* appear in the touch-floor half of this test. It was
+     * widened to the same 48 dp box in that pass and the maintainer asked for the small buttons back
+     * (2026-11-08), so the stepper cluster keeps the page's 30 dp squares and its tight gaps; the
+     * field beside them is the primary input. Since the icons were unified the stepper lives in
+     * [HudStepButton] rather than in `SettingsRow`, so both halves of that decision are asserted
+     * where the box is now drawn.
      */
     @Test
     fun theSettingsRowReachesTheTouchFloorWhereItStillHasTo() {
@@ -349,18 +351,36 @@ class PhoneViewportTest {
             "the reset target lost its heightIn(min = HudTouch.Min)",
             Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(row),
         )
+
+        val stepper = code(components, "HudActions.kt")
+        // The stepper's own function, so the 48 dp guard below is about the stepper and not about
+        // some other control in the same file that is allowed — and sized — by HudTouch.Min.
+        val body = Regex("fun HudStepButton\\(([\\s\\S]*?)\\n\\}").find(stepper)
+        assertTrue("HudStepButton is gone, so nothing is holding the stepper's size any more",
+            body != null)
+        val box = body!!.value
         assertFalse(
-            "the ± steppers grew into a 48 dp box again — the maintainer asked for the small " +
+            "the stepper grew into a 48 dp box again — the maintainer asked for the small " +
                 "buttons, and this is the assertion that notices them being re-grown",
-            Regex("size\\(HudTouch\\.Min\\)[\\s\\S]{0,80}(clickable|hudPressable)\\(").containsMatchIn(row),
+            Regex("size\\(HudTouch\\.Min\\)[\\s\\S]{0,80}(clickable|hudPressable)\\(").containsMatchIn(box),
         )
         assertTrue(
             "the stepper stopped being the page's 30 dp square",
             // The press is the shared `hudPressable` (the whole app's 0.97 scale, applied
             // before the fill it has to take down with it), and it has to sit on the 30 dp
             // box itself, not on a wrapper that grew around it.
-            Regex("size\\(30\\.dp\\)[\\s\\S]{0,120}hudPressable\\(enabled = enabled, onClick = onClick\\)")
-                .containsMatchIn(row),
+            Regex("size\\(30\\.dp\\)[\\s\\S]{0,200}hudPressable\\(").containsMatchIn(box),
+        )
+        // A drawn step needs a sentence for the screen reader: the ± it replaced were readable
+        // text, a mark is not, and the description is the only thing that says which way is up.
+        assertTrue(
+            "HudStepButton stopped naming itself to the screen reader (role / onClickLabel)",
+            Regex("role = Role\\.Button[\\s\\S]{0,80}onClickLabel = description")
+                .containsMatchIn(box),
+        )
+        assertFalse(
+            "a stepper came back as a typed character instead of a drawn mark",
+            Regex("Text\\(\\s*\"[+\u2212\uFF0B]\"").containsMatchIn(row),
         )
     }
 
