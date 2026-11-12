@@ -56,6 +56,26 @@ class VehicleTypeDropdownTest {
     }
 
     @Test
+    fun `the TYPE menu uses HUD rows and keeps a three-choice viewport`() {
+        assertFalse("the menu still uses Material menu rows", editor.contains("DropdownMenuItem("))
+        assertTrue("the menu rows are not HUD rows", editor.contains("TypeMenuRow("))
+        assertTrue("the menu rows do not disable Material's ripple", editor.contains("indication = null"))
+
+        assertTrue(
+            "the menu is not capped at three visible rows",
+            Regex("private const val VehicleTypeMenuVisibleRows = 3(?s).*?" +
+                "private val VehicleTypeMenuMaxHeight = VehicleTypeMenuRowHeight \\* VehicleTypeMenuVisibleRows")
+                .containsMatchIn(editor),
+        )
+        assertTrue("the menu viewport is not capped", editor.contains("heightIn(max = VehicleTypeMenuMaxHeight)"))
+        assertTrue("the menu is not scrollable", editor.contains("scrollState = menuScrollState"))
+
+        assertTrue("the menu does not use the HUD sheet", editor.contains("containerColor = HudColors.Sheet"))
+        assertTrue("the menu does not match field corners", editor.contains("shape = HudRadius.FieldShape"))
+        assertTrue("the menu has no HUD active edge", editor.contains("BorderStroke(1.dp, HudColors.HairlineActive)"))
+    }
+
+    @Test
     fun `OTHER reveals the custom label as part of the editor draft`() {
         assertTrue(
             "OTHER does not reveal a custom type field",

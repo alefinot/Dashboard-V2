@@ -7,9 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,15 +21,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -75,6 +79,11 @@ import com.alefinot.dashboardpp.vehicles.VehiclePhotoStore
 import com.alefinot.dashboardpp.vehicles.VehicleType
 import com.alefinot.dashboardpp.vehicles.vehicleTypeLabel
 import java.io.File
+
+/** A menu is a field, not a dialog: exactly three choices fit in the open viewport. */
+private const val VehicleTypeMenuVisibleRows = 3
+private val VehicleTypeMenuRowHeight = 44.dp
+private val VehicleTypeMenuMaxHeight = VehicleTypeMenuRowHeight * VehicleTypeMenuVisibleRows
 
 /**
  * One card's details, editable — a panel over the garage, not a route.
@@ -736,13 +745,14 @@ private fun Field(
 }
 
 /**
- * The TYPE control: a field-shaped trigger over the app's dropdown popup.
+ * The TYPE control: a field-shaped trigger over a HUD-styled option viewport.
  *
- * The trigger keeps the same fill, edge and 0.22 s focus transition as the release picker
- * below it, because the editor already treats a menu as a field you choose rather than a
- * button you press. The selected option is named in the cyan the app uses for what is
- * active, and `OTHER`'s custom word is the trigger's own label — the card should say
- * `RICKSHAW`, not hide the fact behind a generic category.
+ * The trigger keeps the same fill, edge and 0.22 s focus transition as the app's other
+ * selects. The open list deliberately uses the same opaque sheet, field radius, hairline
+ * and flat press behaviour as the rest of the HUD — Material's default menu items would
+ * carry their own ripple, elevation and spacing, which makes this popup look like a foreign
+ * widget. The viewport is three rows tall; the remaining presets are reachable by scrolling,
+ * and opening restores the current choice within that viewport.
  */
 @Composable
 private fun TypeDropdown(
@@ -751,6 +761,9 @@ private fun TypeDropdown(
     onSelect: (VehicleType) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
+    val options = remember { VehicleType.values().toList() }
+    val menuScrollState = rememberScrollState()
+    val density = LocalDensity.current
     val fill by animateColorAsState(
         if (open) HudColors.FieldFocus else HudColors.Field,
         tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
@@ -761,11 +774,22 @@ private fun TypeDropdown(
         tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
         label = "typeMenuEdge",
     )
+
+    LaunchedEffect(open) {
+        if (open) {
+            val selectedRow = options.indexOf(selected).coerceAtLeast(0)
+            val lastScrollableRow = (options.size - VehicleTypeMenuVisibleRows).coerceAtLeast(0)
+            val rowToReveal = selectedRow.coerceAtMost(lastScrollableRow)
+            val revealPx = with(density) { (VehicleTypeMenuRowHeight * rowToReveal).toPx().toInt() }
+            menuScrollState.scrollTo(revealPx)
+        }
+    }
+
     Box(Modifier.fillMaxWidth()) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(VehicleTypeMenuRowHeight)
                 .hudPressable(onClickLabel = "Choose vehicle type") { open = true }
                 .background(fill, HudRadius.FieldShape)
                 .border(1.dp, edge, HudRadius.FieldShape)
@@ -783,23 +807,89 @@ private fun TypeDropdown(
         DropdownMenu(
             expanded = open,
             onDismissRequest = { open = false },
+            modifier = Modifier
+                .widthIn(min = 220.dp, max = 280.dp)
+                .heightIn(max = VehicleTypeMenuMaxHeight),
+            scrollState = menuScrollState,
+            shape = HudRadius.FieldShape,
             containerColor = HudColors.Sheet,
+            tonalElevation = 0.dp,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, HudColors.HairlineActive),
         ) {
-            for (option in VehicleType.values()) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            option.label + if (option == selected) "  ✓" else "",
-                            color = if (option == selected) HudColors.Cyan else HudColors.TextPrimary,
-                            style = HudeCfgNote(),
-                        )
-                    },
+            options.forEachIndexed { index, option ->
+                TypeMenuRow(
+                    label = option.label,
+                    selected = option == selected,
+                    first = index == 0,
                     onClick = {
                         open = false
                         onSelect(option)
                     },
                 )
             }
+        }
+    }
+}
+
+/** One row in the TYPE viewport, drawn with the app's row surfaces and no Material ripple. */
+@Composable
+private fun TypeMenuRow(
+    label: String,
+    selected: Boolean,
+    first: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val rowFill by animateColorAsState(
+        when {
+            pressed -> HudColors.CardFillHover
+            selected -> HudColors.FieldFocus
+            else -> HudColors.Sheet
+        },
+        tween(if (HudMotion.enabled) HudMotion.SWITCH_MS else 0, easing = HudMotion.Ease),
+        label = "typeMenuRowFill",
+    )
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(VehicleTypeMenuRowHeight)
+            .background(rowFill)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
+                modifier = Modifier.weight(1f),
+                color = if (selected) HudColors.Cyan else HudColors.TextPrimary,
+                style = HudeCfgNote(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (selected) {
+                Text("✓", color = HudColors.Cyan, style = HudeCfgNote())
+            }
+        }
+        if (!first) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(HudColors.Hairline),
+            )
         }
     }
 }
