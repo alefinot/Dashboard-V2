@@ -182,19 +182,21 @@ class PhoneViewportTest {
             Regex("CardCover\\([\\s\\S]{0,400}?\\.size\\(76\\.dp\\)").containsMatchIn(screen),
         )
 
-        // The TAP TO line lives inside the text column, not under the cover: it is written after
-        // the identity line and before that column closes, so it shares the name's left edge.
-        // (code() strips comments, so the anchor is brace structure, not the corner-glyph text.)
-        val identity = screen.indexOf("vehicle.identityLabel()")
-        val tapLine = screen.indexOf("\"TAP TO DISCONNECT\"")
-        assertTrue(
-            "the TAP TO line must come after the identity line - it is the text column's last line",
-            identity in 1 until tapLine,
-        )
+        // The card used to close its text column with "TAP TO CONNECT" / "TAP TO DISCONNECT".
+        // That line is gone (2026-11-12, the icon grammar): the corner mark, the outline and the
+        // body's own onClickLabel already say what the tap does, and a fourth copy of the fact is
+        // text doing an icon's job. Pinned from both sides now: the hint may not come back, and
+        // the semantics that replaced it may not leave with it.
         assertFalse(
-            "the TAP TO line left the text column: the identity block, the column and the row " +
-                "all close before it now, so it sits under the cover instead of aligned with the name",
-            Regex("}\\s*}\\s*}").containsMatchIn(screen.substring(identity, tapLine)),
+            "the TAP TO hint came back; the corner glyph, the outline and the onClickLabel " +
+                "already say it, which is why it was deleted",
+            Regex("TAP TO (CONNECT|DISCONNECT)").containsMatchIn(screen),
+        )
+        assertTrue(
+            "the tap no longer carries its meaning where a screen reader can hear it - the " +
+                "onClickLabel is what makes the card body a connect control",
+            Regex("onClickLabel = \\(if \\(connected\\) \"Disconnect \" else \"Connect \"\\)")
+                .containsMatchIn(screen),
         )
 
         // No word-buttons left over on the card: the whole point was to fold them into the tap.

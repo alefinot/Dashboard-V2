@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -278,6 +279,7 @@ fun VehicleScreen(
                     "MAC ${it.mac.uppercase()})",
                 HudColors.Cyan,
                 actionLabel = "NAME IT",
+                actionGlyph = HudIcons.Edit,
                 onAction = onNameUnclaimed,
             )
             Spacer(Modifier.height(10.dp))
@@ -292,6 +294,7 @@ fun VehicleScreen(
                 it,
                 HudColors.Amber,
                 actionLabel = "PHONE BLUETOOTH SETTINGS",
+                actionGlyph = HudIcons.Cog,
                 onAction = { openPhoneBluetoothSettings(context) },
             )
             Spacer(Modifier.height(10.dp))
@@ -413,9 +416,11 @@ private fun CardCover(
  * looking when they reach for a vehicle, and the full-screen ring that used to answer the question
  * is gone.
  *
- * Every line of text — the name, the spec, the note, the status and the TAP TO hint — lives
- * in the one text column beside the cover, so they share a left edge; a hint that started
- * under the cover would read as the card's caption, not as the next line of the vehicle.
+ * Every line of text — the name, the spec, the note, the status — lives
+ * in the one text column beside the cover, so they share a left edge. What used to close that
+ * column, a TAP TO line, is gone (2026-11-12): the corner glyph, the outline and the body's own
+ * `onClickLabel` already say what the tap does, and a fourth copy of that fact is the kind of
+ * word the icon grammar exists to delete.
  *
  * Deleting a vehicle is not on the card - it is the editor's DELETE THE CARD - and it now does the
  * whole job: it removes the card *and* drops the pairing and identity it held, so there is no longer
@@ -529,16 +534,12 @@ private fun VehicleCard(
                             Text(it, color = HudColors.TextDim, style = HudePerfValue())
                         }
                     }
-                    // A line that says what tapping does, because the buttons that used to spell
-                    // it out are gone: the card is the control now, and a control whose meaning
-                    // lives only in the code is a control nobody learns. It lives in the text
-                    // column rather than under the cover, so it starts on the name's left edge.
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (connected) "TAP TO DISCONNECT" else "TAP TO CONNECT",
-                        color = if (connected) HudColors.Green else HudColors.Cyan,
-                        style = HudeCfgNote(),
-                    )
+                    // No "TAP TO CONNECT" line. The card used to spell the tap out under the status
+                    // line, and the grammar says a hint that duplicates a control is text doing an
+                    // icon's job: the link mark in the lower corner already says joined or not, the
+                    // outline is the same fact again in the card's edge, and the TalkBack label of
+                    // the body ("Connect Motosbu") is the same sentence a screen reader gets. What
+                    // would be left is a fourth copy for the eye alone.
                 }
             }
         }
@@ -602,7 +603,14 @@ private fun SweepRow(unit: Found, onPair: (Found) -> Unit) {
         }
         Spacer(Modifier.width(10.dp))
         Box(Modifier.heightIn(min = 44.dp)) {
-            HudButton("PAIR", style = HudButtonStyle.PRIMARY) { onPair(unit) }
+            // Glyph + word (D3 family in spirit): this press bonds a phone to a vehicle, so it
+            // keeps its word — but the broken link says which side of the join the button is on,
+            // the same mark the card corner draws for "not joined" everywhere else in the app.
+            HudButton(
+                "PAIR",
+                style = HudButtonStyle.PRIMARY,
+                glyph = HudIcons.LinkOff,
+            ) { onPair(unit) }
         }
     }
 }
@@ -639,6 +647,7 @@ private fun NoticeCard(
     text: String,
     accent: Color,
     actionLabel: String? = null,
+    actionGlyph: ImageVector? = null,
     onAction: (() -> Unit)? = null,
 ) {
     Column(
@@ -657,7 +666,14 @@ private fun NoticeCard(
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.heightIn(min = 44.dp)) {
-                    HudButton(actionLabel, style = HudButtonStyle.PRIMARY) { onAction() }
+                    // Glyph + word (D4): the notice names something outside this app — a card to
+                    // name, a system screen to open — and the mark says which kind of errand the
+                    // button starts while the word keeps it exact.
+                    HudButton(
+                        actionLabel,
+                        style = HudButtonStyle.PRIMARY,
+                        glyph = actionGlyph,
+                    ) { onAction() }
                 }
             }
         }
@@ -697,10 +713,15 @@ private fun AddVehicleCard(
     ) {
         Text("ADD VEHICLE", color = HudColors.TextDim, style = HudeSectionTitle())
         Spacer(Modifier.height(10.dp))
+        // One button, two marks, because they are two different acts (rule: one mark per meaning).
+        // A first sweep is a search - the magnifier the settings field wears. A re-ask after the
+        // radio already heard nothing is `list.reload` in the ladder's clothing: the same circular
+        // arrow every "ask the source again" in the app wears, and the word says so as well.
         HudButton(
             if (retry) "SEARCH AGAIN" else "SEARCH FOR DASHBOARD++",
             modifier = Modifier.fillMaxWidth(),
             style = HudButtonStyle.PRIMARY,
+            glyph = if (retry) HudIcons.Reset else HudIcons.Search,
         ) { onSearch() }
         Spacer(Modifier.height(10.dp))
 
