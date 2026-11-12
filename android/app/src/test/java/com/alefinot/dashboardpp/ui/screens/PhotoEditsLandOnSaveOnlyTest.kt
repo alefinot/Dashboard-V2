@@ -164,35 +164,44 @@ class PhotoEditsLandOnSaveOnlyTest {
     // ── 5. the keyboard, in the one place that has text fields ─────────────────
 
     @Test
-    fun `the editor clamps its own sheet to the keyboard and scrolls only the cards`() {
-        // targetSdk 35 forces edge-to-edge and the window no longer resizes for the IME
-        // (API 30+): the keyboard is an inset to consume, or SAVE sits under it. It goes
-        // on the sheet, outside the cards' scroll, so the whole sheet - heading, viewport
-        // and pinned footer - clamps to (scrim - keyboard). The footer is outside the
-        // scroll on purpose: SAVE and CANCEL stay reachable while the form scrolls.
-        val sheet = Regex("Column\\(\\s*Modifier\\s*\\.hudGlass\\((?s).*?\\.imePadding\\(\\),?\\s*\\)\\s*\\{")
-            .find(editor)
-        assertTrue("the editor's sheet is not recognisable - check the inset order", sheet != null)
+    fun `the editor clamps its sheet to the safe drawing area and scrolls only the cards`() {
+        // The sheet must sit inside the system bars and above the keyboard: it is its own
+        // surface, so it cannot rely on DashboardRoot's padding the way a page does.
+        // `safeDrawingPadding` on the wrapper consumes the system bars and the IME together;
+        // API 29 and below additionally resize the window through the manifest's
+        // `adjustResize`. The inset stays outside the cards' scroll, so SAVE and CANCEL do
+        // not move with the form.
+        assertTrue(
+            "the editor stopped consuming the safe drawing insets",
+            Regex("HudEnter\\((?s).*?\\.safeDrawingPadding\\(\\)").containsMatchIn(editor),
+        )
         assertTrue(
             "the editor's cards are no longer a scrolling viewport",
             Regex("\\.weight\\(1f, fill = false\\)\\s*\\.verticalScroll\\(").containsMatchIn(editor),
         )
-        val ime = editor.indexOf(".imePadding()")
+        val insets = editor.indexOf(".safeDrawingPadding()")
         val scroll = editor.indexOf(".verticalScroll(")
-        assertTrue("the editor stopped consuming the IME inset", ime >= 0)
-        assertTrue("imePadding must sit outside verticalScroll or the sheet will not clamp", ime < scroll)
+        assertTrue(
+            "safeDrawingPadding must sit outside verticalScroll or the sheet will not clamp",
+            insets in 0 until scroll,
+        )
     }
 
     @Test
-    fun `no other surface consumes the IME inset`() {
-        // Per the maintainer's scope decision: the editor only. An imePadding on the
-        // root or the settings pages would move decisions nobody made this time.
+    fun `no other surface consumes the system-bar insets into a scrolling form`() {
+        // Per the maintainer's scope decision: the editor only. A second inset consumer in
+        // a page would move decisions nobody made this time; DashboardRoot keeps taking the
+        // window chrome for every page, as before.
         val offenders = screens.listFiles { f: File -> f.isFile && f.name.endsWith(".kt") }
             .orEmpty()
-            .filter { it.name != "VehicleEditorScreen.kt" && code(screens, it.name).contains("imePadding") }
+            .filter {
+                it.name != "VehicleEditorScreen.kt" &&
+                    (code(screens, it.name).contains("imePadding") ||
+                        code(screens, it.name).contains("safeDrawingPadding"))
+            }
             .map { it.name }
             .sorted()
-        assertEquals("the IME inset is consumed outside the vehicle editor: $offenders", emptyList<String>(), offenders)
+        assertEquals("the system-bar insets are consumed outside the vehicle editor: $offenders", emptyList<String>(), offenders)
     }
 
     // ── 6. the crop window is still the window the maths assume ────────────────

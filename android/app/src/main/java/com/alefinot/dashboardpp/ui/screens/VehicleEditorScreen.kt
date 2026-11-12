@@ -17,8 +17,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -261,6 +261,7 @@ fun VehicleEditorScreen(
     HudOverlayScrim {
         HudEnter(
             Modifier.fillMaxWidth().widthIn(max = 520.dp)
+                .safeDrawingPadding()
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             durationMs = HudMotion.SHORT_MS,
             riseDp = 8,
@@ -269,22 +270,17 @@ fun VehicleEditorScreen(
             // The sheet is the page's own black, not the overlay glass: this form is tall,
             // and a translucent sheet that fills the phone lets the garage behind it read
             // through every field. Cards on black are what the rest of the app looks like.
+            //
+            // `safeDrawingPadding` on the wrapper keeps the sheet inside the system bars and
+            // above the keyboard: this overlay is its own surface, so it cannot rely on
+            // DashboardRoot's padding the way a page does. It carries the IME on API 30+
+            // (where edge-to-edge leaves the keyboard to the app), while API 29 and below
+            // resize the window through the manifest's `adjustResize`; one inset, both
+            // halves, and it stays outside the scroll so the footer never moves with the
+            // cards.
             Column(
                 Modifier
-                    .hudGlass(fill = HudColors.Bg, elevation = 16.dp, highlight = 0f)
-                    // The keyboard is an inset this screen must consume itself (Issue 1,
-                    // 2026-11-10): with targetSdk 35 edge-to-edge is forced on API 30+, the
-                    // window is not resized for the soft keyboard there, and the only inset
-                    // the app takes anywhere is DashboardRoot's system bars - so without this
-                    // the sheet ran to the physical bottom and SAVE / CANCEL sat under the
-                    // keys. API 29 and below take the manifest's adjustResize instead (the
-                    // platform default is pan, which hid the footer the same way), and the
-                    // inset then reads zero - one path without counting the keyboard twice.
-                    // The inset goes on the sheet, outside the scroll: the cards scroll in
-                    // what is left and the footer stays above the keyboard. The root's
-                    // statusBars/navigationBars padding stays where it is - the IME is a
-                    // distinct inset, so nothing is counted twice (PhoneViewportTest).
-                    .imePadding(),
+                    .hudGlass(fill = HudColors.Bg, elevation = 16.dp, highlight = 0f),
             ) {
                 EditorHeader(
                     title = if (isNew) "NAME THIS DASHBOARD" else "EDIT VEHICLE",
