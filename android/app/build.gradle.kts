@@ -12,7 +12,7 @@ android {
         applicationId = "com.alefinot.dashboardpp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 131
+        versionCode = 132
         versionName = "2.0.4"
     }
 

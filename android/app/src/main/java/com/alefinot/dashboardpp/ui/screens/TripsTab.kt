@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
@@ -46,6 +47,7 @@ import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
+import com.alefinot.dashboardpp.ui.components.ScanRing
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.hudPage
@@ -405,7 +407,10 @@ private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f
             Spacer(Modifier.height(6.dp))
             val s = row.summary
             if (s == null) {
-                Text("…", color = HudColors.TextMuted, style = HudeCfgHelp())
+                // The summary has not arrived from the file yet. A `…` is a word doing a
+                // spinner's job - the grammar's own words - so the row shows the app's
+                // waiting ring instead: nothing to count yet, so it turns rather than fills.
+                ScanRing(0f, Modifier.size(16.dp))
             } else {
                 Text(
                     "${fmtOrDash(s.distanceKm, 2)} km · ${formatDuration(s.durationMs)}",

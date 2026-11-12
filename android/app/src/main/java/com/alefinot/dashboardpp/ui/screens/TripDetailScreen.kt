@@ -86,9 +86,11 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
                 style = HudeCfgNote(),
             )
             Spacer(Modifier.height(16.dp))
-            HudButton("DELETE FILE", style = HudButtonStyle.DANGER) { vm.delete(row); onDismiss() }
+            HudButton("DELETE FILE", style = HudButtonStyle.DANGER, glyph = HudIcons.Bin) {
+                vm.delete(row); onDismiss()
+            }
             Spacer(Modifier.height(8.dp))
-            HudButton("CLOSE", style = HudButtonStyle.SECONDARY, onClick = onDismiss)
+            HudButton("CLOSE", style = HudButtonStyle.SECONDARY, glyph = HudIcons.Close, onClick = onDismiss)
         }
         return
     }
@@ -193,9 +195,15 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
         SummaryGrid(s)
 
         Spacer(Modifier.height(16.dp))
-        HudButton("SHARE CSV") { context.startActivity(vm.shareCsv(row)) }
+        // One mark for both shares: a file leaving this system is one act whoever the file is
+        // for, and the word says which format the sheet is being handed.
+        HudButton("SHARE CSV", glyph = HudIcons.ExportFile) { context.startActivity(vm.shareCsv(row)) }
         Spacer(Modifier.height(8.dp))
-        HudButton("SHARE GPX", style = HudButtonStyle.SECONDARY) { context.startActivity(vm.shareGpx(row)) }
+        HudButton(
+            "SHARE GPX",
+            style = HudButtonStyle.SECONDARY,
+            glyph = HudIcons.ExportFile,
+        ) { context.startActivity(vm.shareGpx(row)) }
         Spacer(Modifier.height(6.dp))
         // Where the file those buttons just handed over actually lives, in the same words the
         // Trips header and the settings page use. Said here because this is the moment a user
@@ -211,9 +219,11 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(8.dp))
-        HudButton("DELETE THIS TRIP", style = HudButtonStyle.DANGER) { confirmDelete = true }
+        HudButton("DELETE THIS TRIP", style = HudButtonStyle.DANGER, glyph = HudIcons.Bin) {
+            confirmDelete = true
+        }
         Spacer(Modifier.height(8.dp))
-        HudButton("CLOSE", style = HudButtonStyle.SECONDARY, onClick = onDismiss)
+        HudButton("CLOSE", style = HudButtonStyle.SECONDARY, glyph = HudIcons.Close, onClick = onDismiss)
         Spacer(Modifier.height(24.dp))
       }
 

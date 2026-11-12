@@ -176,10 +176,10 @@ class GlyphLedgerTest {
 
     /**
      * Lower this as each phase converts a screen; never raise it. It is the count the ratchet test
-     * found on 2026-11-12, after the vehicle editor and its crop panel came onto marks: the trip
-     * screens (P6) and the phone settings page (P7) are what is left standing.
+     * found on 2026-11-12, after the trip screens came onto marks: only the phone settings page and
+     * the not-linked cover (P7) are left standing.
      */
-    private val maxWordOnlyButtons = 12
+    private val maxWordOnlyButtons = 6
 
     // The scanner itself is shared with `TypedPseudoGlyphTest` in ui/SourceScan.kt, because both
     // guards read the same files and only one of them can be trusted if they disagree about what a
