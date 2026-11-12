@@ -157,12 +157,20 @@ fun HudGlyphAction(
  * cards, the notice cards. Promoting it is what makes "glyph + word" mean the same height, ink,
  * caption role and press box on every one of them instead of being re-derived per screen.
  *
+ * The box is [HudTouch.Min] and not [HudTouch.Button], and that is deliberate: a labelled button may
+ * be small, because the label tells you what it is before your finger arrives. A glyph with a caption
+ * still cannot be, because a finger does not read an 11 px word before pressing — it reads the shape,
+ * and the word is only there to confirm afterwards that the shape was the right one.
+ *
  * The word is inside the pressed box and painted in the glyph's own ink, for the two failure modes
  * that happen silently: a caption outside the box is a tap target a finger misses, and a caption in
- * a fixed grey keeps an unavailable action looking available under a dimmed mark.
+ * a fixed grey keeps an unavailable action looking available under a dimmed mark. It is drawn in the
+ * ramp's tiny-label role ([HudeMetricUnit], the same 11 px/600 that marks a metric's unit), so the
+ * caption costs the line nothing it did not already spend on the glyph.
  *
  * [description] is the sentence the word buttons used to print — the caption is one word, and a
- * screen reader gets the whole clause.
+ * screen reader gets the whole clause, both as the image's own name and as `onClickLabel`, which is
+ * what TalkBack reads as the action a double-tap will take.
  */
 @Composable
 fun HudCaptionedAction(

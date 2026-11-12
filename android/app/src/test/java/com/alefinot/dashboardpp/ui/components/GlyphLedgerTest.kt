@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.ui.components
 
 import com.alefinot.dashboardpp.ui.argumentText
 import com.alefinot.dashboardpp.ui.codeOnly
+import com.alefinot.dashboardpp.ui.lineOf
 import com.alefinot.dashboardpp.ui.uiSources
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -135,8 +136,52 @@ class GlyphLedgerTest {
         assertTrue(strays.joinToString("\n"), strays.isEmpty())
     }
 
+    /**
+     * Word-only buttons, counted rather than argued about.
+     *
+     * The grammar's end state is a word button nowhere except the confirm dialog, and a rule with no
+     * number attached to it is a rule that quietly stays un-finished: the app had ~45 of these, and
+     * "we'll get to them" is how seven wordings for destroying something got written in the first
+     * place. So the count is pinned, and every phase that converts a screen lowers the ceiling. It
+     * is a floor on progress in the only direction that matters here — a screen that adds a bare
+     * word button, or a phase that forgets to take its number down, fails the build.
+     *
+     * `HudConfirmDialog.kt` is exempt by design (D3): the box is the safety for the risky verbs, and
+     * the word on its buttons is the second channel that survives the glyph.
+     */
+    @Test
+    fun theNumberOfWordOnlyButtonsOnlyGoesDown() {
+        val wordOnly = mutableListOf<String>()
+        for (file in sources().filter { it.name != "Hud.kt" && it.name != "HudConfirmDialog.kt" }) {
+            val code = file.codeOnly()
+            var from = 0
+            while (true) {
+                val at = code.indexOf("HudButton(", from)
+                if (at < 0) break
+                val body = argumentText(code, code.indexOf('(', at))
+                from = at + 1
+                if (!body.contains("glyph =")) {
+                    wordOnly += "${file.name}:${lineOf(code, at)}"
+                }
+            }
+        }
+        assertTrue(
+            "the app is down to $maxWordOnlyButtons word-only buttons; this found " +
+                "${wordOnly.size}:\n" + wordOnly.joinToString("\n"),
+            wordOnly.size <= maxWordOnlyButtons,
+        )
+    }
+
     // ── reading the sources ───────────────────────────────────────────────────────
-    //
+
+    /**
+     * Lower this as each phase converts a screen; never raise it. It is the count the ratchet test
+     * found on 2026-11-12, after the unit settings page's line and its widget cards came onto marks:
+     * the update cards (P3), the vehicle pages (P4/P5), the crop panel (P5), the trip screens (P6)
+     * and the phone settings page (P7) are what is left standing.
+     */
+    private val maxWordOnlyButtons = 40
+
     // The scanner itself is shared with `TypedPseudoGlyphTest` in ui/SourceScan.kt, because both
     // guards read the same files and only one of them can be trusted if they disagree about what a
     // comment is.

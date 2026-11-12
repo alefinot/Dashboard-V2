@@ -8,11 +8,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,10 +26,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.R
@@ -39,6 +35,7 @@ import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudCaptionedAction
 import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
@@ -49,7 +46,6 @@ import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.hudPage
-import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorCard
@@ -70,9 +66,7 @@ import com.alefinot.dashboardpp.ui.screens.settings.ValueKind
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
-import com.alefinot.dashboardpp.ui.theme.HudeMetricUnit
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
-import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlinx.coroutines.CoroutineScope
@@ -299,6 +293,12 @@ fun DashboardSettingsScreen(
                         label = "RETRY",
                         style = HudButtonStyle.WARNING,
                         enabled = ready,
+                        // The reload mark, the same one a row's default and the release list wear:
+                        // this asks the unit for the read that did not come back. There is no mark
+                        // for "retry" as a word, and inventing one for a fifth of a screen is how a
+                        // set turns into a pile — so the description says which of the two the arrow
+                        // means here, which is the rule the ledger writes down for this merge.
+                        glyph = HudIcons.Reset,
                         onClick = { store.syncIfNeeded(force = true) },
                     )
                 }
@@ -728,7 +728,7 @@ private fun ActionBar(
     ) {
         val pending = state.pending
         val synced = state.sync is SyncPhase.Ready
-        ActionSlot(
+        HudCaptionedAction(
             glyph = HudIcons.Flush,
             caption = "SAVE",
             // The number the button used to show lives in the ink instead, where it costs the eye
@@ -749,7 +749,7 @@ private fun ActionBar(
                 }
             },
         )
-        ActionSlot(
+        HudCaptionedAction(
             glyph = HudIcons.Power,
             caption = "RESTART",
             description = "restart the unit",
@@ -766,7 +766,7 @@ private fun ActionBar(
                 }
             },
         )
-        ActionSlot(
+        HudCaptionedAction(
             glyph = HudIcons.ExportFile,
             caption = "BACKUP",
             description = "back up every setting to a file",
@@ -774,7 +774,7 @@ private fun ActionBar(
             enabled = synced,
             onClick = onExport,
         )
-        ActionSlot(
+        HudCaptionedAction(
             glyph = HudIcons.ImportFile,
             caption = "RESTORE",
             description = if (restoring) "restoring the settings from that file…"
@@ -783,7 +783,7 @@ private fun ActionBar(
             enabled = synced && !restoring,
             onClick = onRestore,
         )
-        ActionSlot(
+        HudCaptionedAction(
             glyph = HudIcons.Bin,
             caption = "WIPE",
             description = "factory reset the unit — wipes every setting",
@@ -791,67 +791,6 @@ private fun ActionBar(
             enabled = ready,
             onClick = onFactoryReset,
         )
-    }
-}
-
-/**
- * One icon slot of [ActionBar]: a glyph on the app's 48 dp floor, the one word the removed label
- * carried, and the sentence those words used to be written out as.
- *
- * A `RowScope` extension because the slot claims an equal share of the line with `weight`, and
- * that share is what keeps the five actions one apart no matter how narrow the phone is.
- *
- * 48 dp and not [HudTouch.Button]'s 36: a labelled button may be small, because the label tells
- * you what it is. A glyph with a caption still cannot be small, because a finger does not read an
- * 11 px word before pressing — it reads the shape, and the word is only there to confirm after
- * that the shape was the right one. So the target stays the largest of the app's two floors, the
- * word sits under it in the ramp's tiny-label role ([HudeMetricUnit], the same 11 px/600/0.15em
- * that marks a metric's unit) and is painted in the glyph's own ink, so an action that is not
- * available reads unavailable in both channels. The sentence goes where a finger cannot read it —
- * into `contentDescription`, and into `onClickLabel`, which is what TalkBack reads as the action a
- * double-tap will take.
- *
- * The word and the whole slot are the press target: the caption is inside the pressed `Box`, so
- * tapping the word is tapping the action, and the target grows a label's height taller than the
- * 48 dp it had when the line was glyphs alone.
- */
-@Composable
-private fun RowScope.ActionSlot(
-    glyph: ImageVector,
-    caption: String,
-    description: String,
-    ink: Color,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier.weight(1f).heightIn(min = HudTouch.Min)
-            .hudPressable(
-                enabled = enabled,
-                role = Role.Button,
-                onClickLabel = description,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(
-                glyph,
-                // The caption names the action in one word; this is the sentence the word buttons
-                // used to print, and the only version a screen reader gets. Without a description
-                // on each, a screen reader reads this bar as "button, button, button, button,
-                // button" — the same complaint `uiautomator` wrote down about the page's switches.
-                contentDescription = description,
-                colorFilter = ColorFilter.tint(ink),
-                modifier = Modifier.size(22.dp),
-            )
-            Text(
-                caption,
-                style = HudeMetricUnit(),
-                color = ink,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
     }
 }
 
@@ -901,6 +840,10 @@ private fun RebootBar(
         HudButton(
             label = "RESTART NOW",
             style = HudButtonStyle.WARNING,
+            // The same mark the action line's RESTART wears, two lines above: one verb, one
+            // drawing, even when the page offers it twice — once as a standing action and once as
+            // the prompt a boot-only change leaves behind.
+            glyph = HudIcons.Power,
             onClick = {
                 scope.launch {
                     val result = store.action("reboot")

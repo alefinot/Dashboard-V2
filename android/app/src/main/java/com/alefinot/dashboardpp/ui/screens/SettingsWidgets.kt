@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ble.BleJson
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -36,6 +37,12 @@ import kotlinx.coroutines.launch
  * the one exception that lived here too — `firmwareUpdate` — until the card moved to App
  * Settings on 2026-11-09; the settings page is now only settings, and `FirmwareUpdateControl`
  * composes itself there.)
+ *
+ * Each one wears the mark its verb has in [HudIcons], beside the word rather than instead of it:
+ * these are single controls loose on a long card, not a fixed line of peers with room for a
+ * caption under the glyph, so they keep the word the header line keeps its caption. Two pairs of
+ * them share a mark: this page's restart is the reboot prompt's, and its commit is the same accept
+ * the vehicle editor's SAVE wears — which is the whole reason the marks exist.
  */
 @Composable
 internal fun WidgetControl(
@@ -74,6 +81,11 @@ internal fun WidgetControl(
  * Two presses, because the trip distance is the one number a driver may still want: the unit
  * does not ask, so the app does. The confirmation is cleared as soon as it is acted on, so
  * the button cannot be pressed a second time by accident afterwards.
+ *
+ * The two presses are drawn apart as well as worded apart. The first is a plain secondary button
+ * wearing the circular arrow; the second turns amber, the ink this app reserves for "armed — this
+ * one does it". Both presses carry the arrow, because both are the same act seen from either side
+ * of the finger.
  */
 @Composable
 private fun TripResetControl(
@@ -97,8 +109,11 @@ private fun TripResetControl(
         )
         HudButton(
             label = if (confirm == "trip.reset") "CONFIRM" else "RESET TRIP",
-            style = HudButtonStyle.WARNING,
+            // Amber only on the press that does it: the first press arms, and the ink is what says
+            // so without a word being added to the line.
+            style = if (confirm == "trip.reset") HudButtonStyle.WARNING else HudButtonStyle.SECONDARY,
             enabled = enabled,
+            glyph = HudIcons.Reset,
             onClick = {
                 if (confirm != "trip.reset") {
                     onConfirm("trip.reset")
@@ -141,8 +156,12 @@ private fun OdometerControl(
         )
         HudButton(
             label = "SET ODOMETER",
+            // Amber, as it was: this overwrites the one distance the unit cannot get back. The
+            // mark beside it is the accept the rest of the app wears for "commit what is in front
+            // of you", so the two channels agree that this press stores something.
             style = HudButtonStyle.WARNING,
             enabled = enabled && odoText.toDoubleOrNull() != null,
+            glyph = HudIcons.Check,
             onClick = {
                 scope.launch {
                     val km = odoText.toDoubleOrNull() ?: return@launch
@@ -198,6 +217,10 @@ private fun AmbientCalibrationControl(
                 label = "CAPTURE $which",
                 style = HudButtonStyle.SECONDARY,
                 enabled = enabled,
+                // Begin the one thing this card can begin: take the reading that is on the card
+                // now and store it as the point. Same mark the bench's RUN wears, for the same
+                // reason — a press that starts something on the unit and answers afterwards.
+                glyph = HudIcons.Play,
                 onClick = {
                     scope.launch {
                         val r = store.action("cal.ambient", BleJson.params("which" to which))
@@ -249,6 +272,10 @@ private fun NoiseBenchControl(
                 label = "RUN",
                 style = HudButtonStyle.SECONDARY,
                 enabled = enabled,
+                // The bench runs for ten seconds on the unit's side and answers nothing until it
+                // is asked, so this is the app's clearest "press once, then it is working" — which
+                // is what the triangle means everywhere else in the app.
+                glyph = HudIcons.Play,
                 onClick = {
                     scope.launch {
                         val start = store.action("noise", BleJson.params("start" to true))

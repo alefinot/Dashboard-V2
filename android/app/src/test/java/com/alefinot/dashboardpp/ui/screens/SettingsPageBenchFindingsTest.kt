@@ -1,5 +1,6 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import com.alefinot.dashboardpp.ui.codeOnly as strippedSource
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -36,6 +37,20 @@ class SettingsPageBenchFindingsTest {
         val f = File(root, name)
         assertTrue("missing $name", f.exists())
         return f.readText()
+    }
+
+    /**
+     * The shared components, with the comments stripped by the same scanner the icon-grammar
+     * guards use (`ui/SourceScan.kt`).
+     *
+     * The unit settings page's action slot moved into `HudActions.kt` on 2026-11-12, and a guard
+     * that reads a file has to read every file the same way — otherwise the two disagree about what
+     * a comment is, and a description remembered in prose starts satisfying a test about code.
+     */
+    private fun component(name: String): String {
+        val f = File("src/main/java/com/alefinot/dashboardpp/ui/components", name)
+        assertTrue("missing $name", f.exists())
+        return f.strippedSource()
     }
 
     /** Comment-free source, so a remembered description in a comment cannot satisfy a guard. */
@@ -192,13 +207,13 @@ class SettingsPageBenchFindingsTest {
     fun thePageDrawsItsFiveActionIconsUnderTheSearchBox() {
         val page = codeOnly("DashboardSettingsScreen.kt")
         val start = page.indexOf("private fun ActionBar(")
-        val end = page.indexOf("private fun RowScope.ActionSlot(")
+        val end = page.indexOf("private fun noteOfFlush(")
         assertTrue("the page has no action line of its own", start in 1 until end)
         val bar = page.substring(start, end)
 
         assertEquals(
-            "the action line is no longer exactly five slots",
-            5, Regex("ActionSlot\\(").findAll(bar).count(),
+            "the action line is no longer exactly five captioned actions",
+            5, Regex("HudCaptionedAction\\(").findAll(bar).count(),
         )
         // Where the line is drawn: after the search field, before the list. The header is the part
         // of the page that does not scroll, and five glyphs tapped by position are worth more
@@ -248,11 +263,16 @@ class SettingsPageBenchFindingsTest {
      * tap target is only the glyph and the word is decoration a finger misses; or it is painted a
      * fixed grey, so a dim glyph — an action that is not available — keeps a bright, available-
      * looking word under it, which is the one thing a caption must not do.
+     *
+     * The slot left this screen on 2026-11-12 and became the app's shared
+     * [HudCaptionedAction] — which is what these two failure modes are now prevented in, once, for
+     * every action line rather than once per page. The page still pins its own half: five of them,
+     * one line, in the header that does not scroll.
      */
     @Test
     fun everyCaptionIsPressedWithItsGlyphAndPaintedInItsInk() {
-        val slot = codeOnly("DashboardSettingsScreen.kt")
-            .let { it.substring(it.indexOf("private fun RowScope.ActionSlot(")) }
+        val slot = component("HudActions.kt")
+            .let { it.substring(it.indexOf("private fun CaptionedBody(")) }
         // The caption is drawn, in the ramp's tiny-label role, in the same ink the glyph is tinted
         // with, and the press modifier is on the Box that contains both.
         assertTrue(
@@ -272,12 +292,21 @@ class SettingsPageBenchFindingsTest {
                     "Text\\(\\s*caption",
             ).containsMatchIn(slot),
         )
+        assertTrue(
+            "the captioned action shrank below the app's 48 dp floor — a labelled button may be " +
+                "36 dp because the label says what it is, a glyph with a word under it may not",
+            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(slot),
+        )
     }
 
     /**
      * A glyph has no label, so the name has to live where a screen reader looks. `uiautomator`
      * wrote the same complaint about this page's switches on 2026-11-08: five unnamed boxes
      * read as "button, button, button, button, button".
+     *
+     * Split in two since the slot was promoted: what the *page* owes is five sentences and the
+     * amber that carries a count; what the *component* owes is that a sentence it is given reaches
+     * the node, the double-tap action and the finger.
      */
     @Test
     fun everyIconOnTheActionLineSaysWhatItDoesAndIsBigEnoughToHit() {
@@ -290,17 +319,6 @@ class SettingsPageBenchFindingsTest {
             "an action slot lost its spoken name",
             5, Regex("description = ").findAll(bar).count(),
         )
-        assertTrue(
-            "the slot no longer passes its name to the glyph, or to the action a double-tap takes",
-            Regex("contentDescription = description").containsMatchIn(bar) &&
-                Regex("onClickLabel = description").containsMatchIn(bar),
-        )
-        assertTrue(
-            "the glyph's target dropped below the app's 48 dp floor — a labelled button may be " +
-                "36 dp because the label says what it is, a lone glyph may not",
-            Regex("heightIn\\(min = HudTouch\\.Min\\)").containsMatchIn(bar) &&
-                Regex("hudPressable\\(").containsMatchIn(bar),
-        )
         // The count the old button spelled out ("SAVE 3") is now a colour, and only amber can
         // say it: a number painted back onto the glyph would put text on a line the maintainer
         // asked to have drawn.
@@ -309,6 +327,21 @@ class SettingsPageBenchFindingsTest {
             !Regex("\"SAVE \\$\\{").containsMatchIn(bar) &&
                 Regex("pending > 0 -> HudColors\\.Amber|pending > 0 && ready -> HudColors\\.Amber")
                     .containsMatchIn(bar),
+        )
+
+        // What the shared slot owes: the page's sentence reaches the glyph, the double-tap label
+        // and a box a finger can find.
+        val slot = component("HudActions.kt")
+            .let { it.substring(it.indexOf("private fun CaptionedBody(")) }
+        assertTrue(
+            "the slot no longer passes its name to the glyph, or to the action a double-tap takes",
+            Regex("description,\\s+colorFilter").containsMatchIn(slot) &&
+                Regex("onClickLabel = description").containsMatchIn(slot),
+        )
+        assertTrue(
+            "the glyph's target dropped below the app's 48 dp floor — a labelled button may be " +
+                "36 dp because the label says what it is, a lone glyph may not",
+            Regex("hudPressable\\(").containsMatchIn(slot),
         )
     }
 
