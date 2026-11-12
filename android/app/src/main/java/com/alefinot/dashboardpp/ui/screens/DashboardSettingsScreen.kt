@@ -534,6 +534,9 @@ fun DashboardSettingsScreen(
                 "before this can put a setup back.",
             confirmLabel = "FACTORY RESET",
             confirmStyle = HudButtonStyle.DANGER,
+            // Rule 7 holds inside the dialog too: what this confirm does is destroy, so it
+            // wears the bin and not the default accept mark.
+            confirmGlyph = HudIcons.Bin,
             onConfirm = {
                 factoryAsk = false
                 scope.launch {

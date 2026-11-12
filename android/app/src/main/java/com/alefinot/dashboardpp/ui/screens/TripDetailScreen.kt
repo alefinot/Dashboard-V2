@@ -33,6 +33,7 @@ import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.bucketMax
 import com.alefinot.dashboardpp.ui.components.hudDuration
@@ -221,6 +222,8 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             message = "Delete this trip? The CSV goes away.",
             confirmLabel = "DELETE TRIP",
             confirmStyle = HudButtonStyle.DANGER,
+            // Rule 7 holds inside the dialog too: destroy wears the bin.
+            confirmGlyph = HudIcons.Bin,
             onConfirm = {
                 confirmDelete = false
                 vm.delete(row)

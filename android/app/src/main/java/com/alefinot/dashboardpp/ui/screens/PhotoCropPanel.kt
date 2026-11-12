@@ -44,7 +44,9 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudEnter
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
+import com.alefinot.dashboardpp.ui.components.HudStepButton
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
@@ -95,7 +97,7 @@ import java.io.File
  * [PhotoCrop.rectFor] have always assumed: photo, chrome and maths share one measurement,
  * the box that `onSizeChanged` reports into [frame], so the guarantee from the earlier
  * bench pass stands: what the eye frames is what the maths asks the file for, to the pixel.
- * Pinch and drag work anywhere on the photo, and the ZOOM −/+ and RESET buttons put the
+ * Pinch and drag work anywhere on the photo, and the \u2212 / round-arrow / + steppers put the
  * same two numbers under a thumb for anyone whose fingers will not pinch.
  *
  * A tap on the scrim does nothing, and Back cancels: the plan is explicit that CANCEL keeps
@@ -181,7 +183,7 @@ fun PhotoCropPanel(
                         "Unreadable picture \u2014 card keeps its photo."
                     } else {
                         "The brackets are the square this card keeps. Drag the photo " +
-                            "inside them; pinch, tap ZOOM, or RESET to start over."
+                            "inside them; pinch, or step with \u2212 and + \u2014 the round arrow starts over."
                     },
                     color = HudColors.TextMuted,
                     style = HudeCfgHelp(),
@@ -292,19 +294,20 @@ fun PhotoCropPanel(
                 }
 
                 Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-                        HudButton("ZOOM -", style = HudButtonStyle.SECONDARY) { nudgeZoom(-1) }
-                    }
-                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-                        HudButton("RESET", style = HudButtonStyle.SECONDARY) {
+                // The zoom bar is steppers now, not three word buttons: `ZOOM -` and `ZOOM +`
+                // are the step marks every numeric row in the app already wears, and RESET is
+                // `view.reset` - the circular arrow every "put it back the way it came" draws.
+                // The a11y sentences move into the descriptions, where the glyph-only grammar
+                // requires them.
+                Box(Modifier.fillMaxWidth().heightIn(min = 44.dp), contentAlignment = Alignment.Center) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        HudStepButton(HudIcons.Minus, "Zoom out", true) { nudgeZoom(-1) }
+                        HudStepButton(HudIcons.Reset, "Reset the framing", true) {
                             zoom = 1f
                             offX = 0f
                             offY = 0f
                         }
-                    }
-                    Box(Modifier.weight(1f).heightIn(min = 44.dp)) {
-                        HudButton("ZOOM +", style = HudButtonStyle.SECONDARY) { nudgeZoom(1) }
+                        HudStepButton(HudIcons.Plus, "Zoom in", true) { nudgeZoom(1) }
                     }
                 }
 
@@ -314,6 +317,7 @@ fun PhotoCropPanel(
                         HudButton(
                             "USE THIS PHOTO",
                             style = HudButtonStyle.PRIMARY,
+                            glyph = HudIcons.Check,
                             enabled = !unreadable,
                         ) {
                             val img = full ?: return@HudButton
@@ -324,7 +328,12 @@ fun PhotoCropPanel(
                         }
                     }
                     Box(Modifier.weight(1f).heightIn(min = 48.dp)) {
-                        HudButton("CANCEL", style = HudButtonStyle.SECONDARY) { onCancel() }
+                        HudButton(
+                            "CANCEL",
+                            style = HudButtonStyle.SECONDARY,
+                            glyph = HudIcons.Close,
+                            onClick = onCancel,
+                        )
                     }
                 }
                 Spacer(Modifier.height(10.dp))

@@ -427,6 +427,7 @@ fun VehicleEditorScreen(
                                 "DELETE VEHICLE",
                                 modifier = Modifier.fillMaxWidth(),
                                 style = HudButtonStyle.DANGER,
+                                glyph = HudIcons.Bin,
                                 onClick = { confirming = true },
                             )
                         }
@@ -469,6 +470,10 @@ fun VehicleEditorScreen(
             confirmLabel = "DELETE ${draft.name.ifBlank { "THE CARD" }}",
             cancelLabel = "KEEP IT",
             confirmStyle = HudButtonStyle.DANGER,
+            // D3 keeps the words, rule 7 lends the marks: the confirm destroys, so it wears
+            // the bin rather than the default check; the cancel is a plain dismissal.
+            confirmGlyph = HudIcons.Bin,
+            cancelGlyph = HudIcons.Close,
         )
     }
 
@@ -580,12 +585,14 @@ private fun PhotoCard(
                     "CHOOSE PHOTO",
                     modifier = Modifier.fillMaxWidth(),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.File,
                     onClick = onGallery,
                 )
                 HudButton(
                     "TAKE PHOTO",
                     modifier = Modifier.fillMaxWidth(),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.Camera,
                     onClick = onCamera,
                 )
                 Text(
@@ -601,12 +608,14 @@ private fun PhotoCard(
                     "RE-FRAME",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.Frame,
                     onClick = onReframe,
                 )
                 HudButton(
                     "REMOVE",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.DANGER,
+                    glyph = HudIcons.Bin,
                     onClick = onRemove,
                 )
             }
@@ -694,12 +703,14 @@ private fun EditorFooter(
                     "SAVE",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.PRIMARY,
+                    glyph = HudIcons.Check,
                     onClick = onSave,
                 )
                 HudButton(
                     "CANCEL",
                     modifier = Modifier.weight(1f),
                     style = HudButtonStyle.SECONDARY,
+                    glyph = HudIcons.Close,
                     onClick = onCancel,
                 )
             }

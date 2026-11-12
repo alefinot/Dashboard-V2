@@ -56,6 +56,7 @@ import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
+import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
@@ -445,6 +446,8 @@ fun SettingsScreen(
             message = "Delete every recorded trip? A drive still being recorded is kept.",
             confirmLabel = "DELETE ALL",
             confirmStyle = HudButtonStyle.DANGER,
+            // Rule 7 holds inside the dialog too: destroy wears the bin.
+            confirmGlyph = HudIcons.Bin,
             onConfirm = {
                 trips.deleteAll()
                 storageLine = "All recorded trips removed."
