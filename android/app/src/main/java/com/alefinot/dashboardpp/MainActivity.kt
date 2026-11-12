@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.lifecycleScope
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.RecorderSettings
+import com.alefinot.dashboardpp.ui.components.ClearFocusWhenKeyboardCloses
 import com.alefinot.dashboardpp.ui.screens.DashboardRoot
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudTheme
@@ -59,6 +60,9 @@ class MainActivity : ComponentActivity() {
                 onDispose { vm.dispose() }
             }
             HudTheme {
+                // One rule for every text field in the app: Back closes the keyboard, and
+                // the field it was typing into lets go of focus at the same moment.
+                ClearFocusWhenKeyboardCloses()
                 DashboardRoot(this, vm)
             }
         }
