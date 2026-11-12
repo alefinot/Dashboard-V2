@@ -1,14 +1,11 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +19,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -41,12 +37,10 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInRoot
@@ -65,6 +59,8 @@ import com.alefinot.dashboardpp.trips.TripsEnabled
 import com.alefinot.dashboardpp.update.AppUpdate
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.ui.components.HudEnter
+import com.alefinot.dashboardpp.ui.components.HudGlyphAction
+import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.PageFade
 import com.alefinot.dashboardpp.ui.components.hudPressable
@@ -771,14 +767,21 @@ private fun BottomBar(
 }
 
 /**
- * One icon in the bar. Selected ones take the page's accent cyan and sit under the
- * travelling sheet; the rest are `--text-muted`, and dimmed ones `--text-dim`.
+ * One icon in the bar: the three states a slot can be in, mapped onto the app's one glyph control.
  *
- * `colored` is the exception path: paint the artwork as the theme drew it and let it
- * recede by alpha instead. Only the vehicle glyph takes it now. The gauge on the LIVE
- * slot is still the launcher's own geometry, but it is tinted like its neighbours - a
- * full-colour mark in a row of tinted ones reads as a different kind of control, and an
- * alpha-only dim is indistinguishable next to a selected cyan one.
+ * The bar used to draw its own glyph — its own tint animation, its own alpha dim, its own badge —
+ * while the settings row's reset and the unit page's action line each hand-rolled the same thing
+ * differently. [HudGlyphAction] is now that control, and this is only the translation from the
+ * slot's three words to the control's three arguments:
+ *
+ *  - `dim` (`--text-dim`) and unselected (`--text-muted`) are inks; selected takes the accent cyan.
+ *  - unselected slots recede to 62% so the selected one leads without moving; the selected slot is
+ *    full strength.
+ *  - `colored` is the exception path: paint the artwork as the theme drew it and let it recede by
+ *    alpha instead. Only the vehicle glyph takes it now. The gauge on the LIVE slot is still the
+ *    launcher's own geometry, but it is tinted like its neighbours — a full-colour mark in a row of
+ *    tinted ones reads as a different kind of control, and an alpha-only dim is indistinguishable
+ *    next to a selected cyan one.
  */
 @Composable
 private fun BarGlyph(
@@ -787,7 +790,7 @@ private fun BarGlyph(
     selected: Boolean,
     dim: Boolean = false,
     colored: Boolean = false,
-    size: Dp,
+    size: HudGlyphSize,
     box: Dp,
     /** A small amber mark on the slot's corner — the one thing the bar may shout about. */
     badge: Boolean = false,
@@ -795,46 +798,22 @@ private fun BarGlyph(
     onBounds: (Rect) -> Unit = {},
     onClick: () -> Unit,
 ) {
-    val ms = if (HudMotion.enabled) HudMotion.CONTROL_MS else 0
-    val tint by animateColorAsState(
-        when {
-            dim -> HudColors.TextDim
-            selected -> HudColors.Cyan
-            else -> HudColors.TextMuted
-        },
-        tween(ms, easing = HudMotion.Ease),
-        label = "glyphTint",
-    )
-    val fade by animateFloatAsState(
-        targetValue = if (selected) 1f else 0.62f,
-        tween(ms, easing = HudMotion.Ease),
-        label = "glyphFade",
-    )
-    Box(
-        Modifier
-            .size(box)
-            .clip(HudRadius.CardShape)
-            // Measured as the icon's own box, so the sheet that slides under it is
-            // that box and not the slot's whole weight.
-            .onGloballyPositioned { c -> onBounds(c.boundsInRoot()) }
-            .hudPressable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (colored) {
-            Image(icon, desc, modifier = Modifier.size(size).alpha(fade))
-        } else {
-            Image(icon, desc, colorFilter = ColorFilter.tint(tint), modifier = Modifier.size(size).alpha(fade))
-        }
-        if (badge) {
-            // Amber, not cyan: a selected slot is already cyan, and a mark that matches
-            // the selection cannot say "something here you have not looked at".
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(5.dp)
-                    .size(8.dp)
-                    .background(HudColors.Amber, CircleShape),
-            )
-        }
+    val ink = when {
+        dim -> HudColors.TextDim
+        selected -> HudColors.Cyan
+        else -> HudColors.TextMuted
     }
+    HudGlyphAction(
+        glyph = icon,
+        description = desc,
+        size = size,
+        box = box,
+        ink = ink,
+        enabled = enabled,
+        badge = badge,
+        emphasis = if (selected) 1f else 0.62f,
+        asDrawn = colored,
+        onBounds = onBounds,
+        onClick = onClick,
+    )
 }

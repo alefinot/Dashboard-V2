@@ -3,6 +3,7 @@ package com.alefinot.dashboardpp.ui.screens
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
 
 /**
@@ -50,24 +51,28 @@ object BarLayout {
     fun pageOf(tab: AppTab): Int = pages.indexOf(tab)
 
     /**
-     * How a slot is drawn: the centre is larger and heavier, and the rest are tinted
-     * rather than painted, so a dimmed slot (a trips list with no store behind it, an
-     * ESP slot with no device in it) reads as unusable instead of merely quieter.
+     * How a slot is drawn: the centre is larger and heavier, and the rest are tinted rather than
+     * painted, so a dimmed slot (a trips list with no store behind it, an ESP slot with no device in
+     * it) reads as unusable instead of merely quieter.
+     *
+     * [size] is one of the set's three steps, not a free number: the bar is where the icon language
+     * is read most often, and a fourth size between two of them is how a system of marks turns into
+     * a pile of them.
      */
     data class Glyph(
         val desc: String,
-        val size: Dp,
+        val size: HudGlyphSize,
         val box: Dp,
         val weight: Float,
         val colored: Boolean,
     )
 
     fun glyph(tab: AppTab): Glyph = when (tab) {
-        AppTab.VEHICLES -> Glyph("Vehicle", 30.dp, 52.dp, 1.4f, true)
-        AppTab.LIVE -> Glyph("Live", 22.dp, 48.dp, 1f, false)
-        AppTab.TRIPS -> Glyph("Trips", 22.dp, 48.dp, 1f, false)
-        AppTab.WEB -> Glyph("Dashboard settings", 22.dp, 48.dp, 1f, false)
-        AppTab.SETTINGS -> Glyph("App settings", 22.dp, 48.dp, 1f, false)
+        AppTab.VEHICLES -> Glyph("Vehicle", HudGlyphSize.Card, 52.dp, 1.4f, true)
+        AppTab.LIVE -> Glyph("Live", HudGlyphSize.Action, 48.dp, 1f, false)
+        AppTab.TRIPS -> Glyph("Trips", HudGlyphSize.Action, 48.dp, 1f, false)
+        AppTab.WEB -> Glyph("Dashboard settings", HudGlyphSize.Action, 48.dp, 1f, false)
+        AppTab.SETTINGS -> Glyph("App settings", HudGlyphSize.Action, 48.dp, 1f, false)
     }
 
     fun icon(tab: AppTab): ImageVector = when (tab) {

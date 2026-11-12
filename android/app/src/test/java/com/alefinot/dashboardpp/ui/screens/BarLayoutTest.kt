@@ -1,9 +1,13 @@
-package com.alefinot.dashboardpp.ui.screens
+﻿package com.alefinot.dashboardpp.ui.screens
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
+import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
-import kotlin.math.abs
+import com.alefinot.dashboardpp.ui.components.circle
+import com.alefinot.dashboardpp.ui.components.signedArea
+import com.alefinot.dashboardpp.ui.components.subpaths
+import com.alefinot.dashboardpp.ui.components.vertices
 import kotlin.math.hypot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,7 +24,7 @@ import org.junit.Test
  * app becomes invisible: the centre of the bar was a gauge, and the page it sat on was
  * four slots away.
  *
- * One list now, and these tests are what keep it that way — that the centre slot is the
+ * One list now, and these tests are what keep it that way â€” that the centre slot is the
  * vehicle page, that the app opens on it, and that every slot is a page.
  */
 class BarLayoutTest {
@@ -54,13 +58,16 @@ class BarLayoutTest {
     fun `the vehicle glyph takes the centre treatment and nothing else does`() {
         val car = BarLayout.glyph(AppTab.VEHICLES)
         assertEquals(1.4f, car.weight, 0f)
-        assertEquals(30.dp, car.size)
+        // The size is one of the set's three steps, not a number the bar invented.
+        assertEquals(HudGlyphSize.Card, car.size)
+        assertEquals(30.dp, car.size.dp)
         assertEquals(52.dp, car.box)
         assertTrue(car.colored)
         for (tab in BarLayout.pages.filter { it != AppTab.VEHICLES }) {
             val g = BarLayout.glyph(tab)
             assertEquals("$tab weight", 1f, g.weight, 0f)
-            assertEquals("$tab size", 22.dp, g.size)
+            assertEquals("$tab size", HudGlyphSize.Action, g.size)
+            assertEquals("$tab size", 22.dp, g.size.dp)
             assertEquals("$tab box", 48.dp, g.box)
             // `colored` means "paint the artwork as drawn and lose alpha instead", which
             // was the gauge's privilege while it sat in the centre. Tinted like its
@@ -225,7 +232,7 @@ class BarLayoutTest {
         }
         // They must overlap to read as one chain, yet stay two rings rather than one blob.
         val gap = on[2].centre.x - on[0].centre.x
-        assertTrue("the rings sit $gap apart and never touch — two discs, not a link", gap < 2f * on[0].radius)
+        assertTrue("the rings sit $gap apart and never touch â€” two discs, not a link", gap < 2f * on[0].radius)
         assertTrue("one ring reaches past the other's centre; it is a blob, not two links", gap > on[0].radius)
 
         val unlinked = subpaths(HudIcons.LinkOffData)
@@ -238,8 +245,8 @@ class BarLayoutTest {
 
     /**
      * The EDIT pencil (see [HudIcons.Edit]) is a solid silhouette. It carries no interior hole on
-     * purpose — at the card corner's ~18 dp a ferrule band and a lead dot are the mush the glyph set
-     * exists to avoid — so what is pinned is that it is one closed body, on the shared 24 grid,
+     * purpose â€” at the card corner's ~18 dp a ferrule band and a lead dot are the mush the glyph set
+     * exists to avoid â€” so what is pinned is that it is one closed body, on the shared 24 grid,
      * pointing to the lower-left.
      */
     @Test
@@ -257,75 +264,6 @@ class BarLayoutTest {
     }
 }
 
-// --- reading path data ---------------------------------------------------------------
-// These glyphs use absolute M/L/Q/C/A/Z only, which is all this reads. Deliberately not a
-// general SVG parser: it answers "how many contours, where are their vertices, which way do
-// they wind", and nothing else.
-
-private val COMMAND = Regex("([MLQCZ])([^MLQCZ]*)")
-
-/** One subpath per `M`: a contour, which is what a fill rule reads. */
-private fun subpaths(data: String): List<String> =
-    Regex("M[^M]*").findAll(data).map { it.value.trim() }.toList()
-
-/**
- * The vertices a fill sees, endpoint by endpoint. A curve contributes only its end point: a
- * control point is not on the outline, and counting it as a vertex makes a sampled arch
- * polygon cross itself - the quadratics that draw the wheel arches bulge outside the band.
- */
-private fun vertices(sub: String): List<Offset> {
-    val points = mutableListOf<Offset>()
-    for (command in COMMAND.findAll(sub)) {
-        val numbers = command.groupValues[2].trim()
-            .takeIf { it.isNotEmpty() }
-            ?.split(Regex("[,\\s]+"))
-            ?.map { it.toFloat() }
-            .orEmpty()
-        when (command.groupValues[1]) {
-            "M", "L" -> numbers.chunked(2) { points += Offset(it[0], it[1]) }
-            // Q takes four numbers, C six: the last two are the end point.
-            "Q", "C" -> if (numbers.size >= 4) {
-                points += Offset(numbers[numbers.size - 2], numbers[numbers.size - 1])
-            }
-        }
-    }
-    return points
-}
-
-/** Signed area, y growing down: positive is the direction a fill winds as ink here. */
-private fun signedArea(points: List<Offset>): Double =
-    0.5 * points.indices.sumOf { i ->
-        val a = points[i]
-        val b = points[(i + 1) % points.size]
-        a.x.toDouble() * b.y - b.x.toDouble() * a.y
-    }
-
-/** A circle drawn as two half arcs, and the direction it goes round in. */
-private data class Circle(val centre: Offset, val radius: Float, val sign: Double)
-
-private val ARCS = Regex(
-    """M\s*([-\d.]+),([-\d.]+)\s+A\s*([\d.]+),([-\d.]+)\s+0 1 ([01])\s+([-\d.]+),([-\d.]+)""" +
-        """\s+A\s*([\d.]+),([-\d.]+)\s+0 1 ([01])\s+([-\d.]+),([-\d.]+)\s*Z""",
-)
-
-private fun circle(sub: String): Circle {
-    val m = requireNotNull(ARCS.matchEntire(sub.trim())) {
-        "not a circle drawn as two half arcs: $sub"
-    }.groupValues
-    val start = Offset(m[1].toFloat(), m[2].toFloat())
-    val mid = Offset(m[6].toFloat(), m[7].toFloat())
-    val end = Offset(m[11].toFloat(), m[12].toFloat())
-    val radius = m[3].toFloat()
-    require(end == start && m[4] == m[3] && m[9] == m[3] && m[5] == m[10]) {
-        "not a closed pair of equal arcs: $sub"
-    }
-    // Two arcs between opposite ends of a diameter: the centre is the midpoint, and the
-    // distance between them is the diameter. Asserted, so the shape really is the circle the
-    // flags claim rather than something that happens to parse.
-    val centre = Offset((start.x + mid.x) / 2f, (start.y + mid.y) / 2f)
-    require(kotlin.math.abs(hypot(mid.x - start.x, mid.y - start.y) - 2f * radius) < 0.02f) {
-        "arcs are not semicircles of r$radius: $sub"
-    }
-    // sweep flag 1 = angle increasing in this y-down grid = the sign `signedArea` calls ink.
-    return Circle(centre, radius, if (m[5] == "1") 1.0 else -1.0)
-}
+// The path-data readers these tests share (subpaths, vertices, signedArea, circle) live in
+// ui/components/PathReading.kt, next to the glyph set they measure - the same winding rule is
+// asserted about marks that live nowhere near the bar.

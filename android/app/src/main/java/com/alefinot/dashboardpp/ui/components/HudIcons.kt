@@ -630,6 +630,279 @@ object HudIcons {
     /** The two short strokes that stand where the far link would be, read as a broken join. */
     internal val LinkOffBreak: String = "M18.0,9.3 L18.0,14.7 M21.2,10.6 L21.2,13.4"
 
+    // ─── The verb set: what an action is, drawn once ────────────────────────────
+    //
+    // These are the marks the app's ~45 word buttons collapse onto. They follow the same rule as
+    // everything above them, for the same reason: the set's smallest drawing size is now 18 dp (a
+    // settings row's reset, a card header), which is ~49 px on the bench phone, so one grid unit is
+    // ~2.05 px and the shared 1.9-unit stroke is ~3.9 px. At that size a mark with interior detail
+    // is a filled body with the detail cut out by counter-winding, and a mark that is only a line is
+    // stroked; a stroked outline with something inside it is still the shape that dies. None of the
+    // marks below is drawn inside a closed outline.
+    //
+    // `HudGlyphLedger` records which mark owns which meaning, and it is where the deliberate merges
+    // are written down — a file arriving is [ImportFile] whether it is a settings backup or a
+    // firmware image, and the circular arrow [Reset] means "back to where this came from" whether
+    // it is a row's default or a release list.
+
+    /**
+     * **CLOSE** — two crossed strokes, the shortest mark that means "put this away without doing
+     * anything".
+     *
+     * It carries `CLOSE`, `CANCEL` and `KEEP IT`: three words for one action, and the difference
+     * between them was never the verb — it was which screen the word sat on. Pure line, so the
+     * W stroke is enough; no box around it, because a stroked outline is the shape this file says
+     * dies small, and the pill or the dialog is already the container.
+     */
+    val Close: ImageVector by lazy {
+        stroked("Close", CloseData)
+    }
+
+    internal val CloseData: String = "M6,6 L18,18 M18,6 L6,18"
+
+    /**
+     * **CHECK** — accept the thing in front of you: commit a crop, save a city, take this option.
+     *
+     * One open polyline with the short leg deep, which is what keeps it from reading as a rotated
+     * [Close]. Also the mark a dropdown row wears when it is the current value (see
+     * [HudSelectMenu]), replacing the typed U+2713 that sat there: a mark that comes from the font
+     * is a mark this app cannot size, weight or centre, and the same page already lost its arrow to
+     * a codepoint the bench phone's font did not carry (see [Chevron]).
+     */
+    val Check: ImageVector by lazy {
+        stroked("Check", CheckData)
+    }
+
+    internal val CheckData: String = "M4.5,12.6 L9.9,18 L19.6,7.4"
+
+    /**
+     * **PLUS / MINUS** — one step, either way, on a settings stepper or a photo zoom.
+     *
+     * Drawn rather than typed, twice over: the steppers used the ASCII `+` and the U+2212 MINUS
+     * SIGN in a `Text`, the crop panel spelled its minus a plain hyphen, and a font is under no
+     * obligation to centre any of the three on the box it is given. Same length, same weight as
+     * [Close], so a stepper and a dismiss mark are visibly the same family.
+     */
+    val Plus: ImageVector by lazy {
+        stroked("Plus", PlusData)
+    }
+
+    val Minus: ImageVector by lazy {
+        stroked("Minus", MinusData)
+    }
+
+    internal val PlusData: String = "M12,5.5 L12,18.5 M5.5,12 L18.5,12"
+    internal val MinusData: String = "M5.5,12 L18.5,12"
+
+    /**
+     * **PLAY** — begin, or begin again: an OTA install, a self-test, a light capture.
+     *
+     * One solid triangle, no border, no plate behind it: a body is what survives 22 dp. The apex
+     * sits a little right of the vertical centre so the mark reads centred optically, which a
+     * mathematically-centred triangle does not.
+     */
+    val Play: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudPlay", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(PlayData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    internal val PlayData: String = "M7.6,4.4 L19.6,12 L7.6,19.6 Z"
+
+    /**
+     * **STOP** — end what is running. Pairs with [Play] on the same slot, so it is the same
+     * silhouette weight: a filled square, corners at the field's 6 px, sized to the triangle's own
+     * height so the control does not change size when the verb does.
+     */
+    val Stop: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudStop", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(StopData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    internal val StopData: String =
+        "M8.4,5.2 L15.6,5.2 A3.2,3.2 0 0 1 18.8,8.4 L18.8,15.6 A3.2,3.2 0 0 1 15.6,18.8 " +
+            "L8.4,18.8 A3.2,3.2 0 0 1 5.2,15.6 L5.2,8.4 A3.2,3.2 0 0 1 8.4,5.2 Z"
+
+    /**
+     * **FILE** — pick a file with a finger: the Storage Access Framework's own document shape.
+     *
+     * Deliberately not [ImportFile], which is a file arriving *into* this system: this mark opens a
+     * chooser rather than reading anything, and the two sit one row apart on the firmware card. The
+     * folded corner is a contour wound against the page, so the surface behind shows through it the
+     * way it does in [Pin] and [Chip] — never a lighter fill painted over the body.
+     */
+    val File: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudFile", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(FileData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    /** Page (clockwise) with its fold cut (counter-clockwise). */
+    internal val FileData: String =
+        "M6.2,2.6 L14.2,2.6 L19.8,8.2 L19.8,21.4 L6.2,21.4 Z " +
+            "M14.2,2.6 L14.2,8.2 L19.8,8.2 Z"
+
+    /**
+     * **CAMERA** — take a photograph now, as opposed to choosing one.
+     *
+     * Body and viewfinder bump are one silhouette; the lens is a counter-wound hole in it. No
+     * flash dot, no shutter button: interior detail is what this set refuses to draw at 18 dp.
+     */
+    val Camera: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudCamera", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(CameraData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    /** Body with the bump on top (clockwise), lens cut out (counter-clockwise). */
+    internal val CameraData: String =
+        "M4,8 L8,8 L9.6,5.6 L14.4,5.6 L16,8 L20,8 A2,2 0 0 1 22,10 L22,18 " +
+            "A2,2 0 0 1 20,20 L4,20 A2,2 0 0 1 2,18 L2,10 A2,2 0 0 1 4,8 Z " +
+            "M12,10.6 A3.4,3.4 0 1 0 12,17.4 A3.4,3.4 0 1 0 12,10.6 Z"
+
+    /**
+     * **FRAME** — the picture is picked, now say how it is cropped.
+     *
+     * Four corner brackets, which is the geometry the crop panel already paints over the photo
+     * itself (`PhotoCropPanel`'s viewfinder), so the button and the thing it does are the same
+     * drawing. Open at the sides on purpose: a closed rectangle around a crop mark would be the
+     * stroked-outline-with-something-inside case again.
+     */
+    val Frame: ImageVector by lazy {
+        stroked("Frame", FrameData)
+    }
+
+    internal val FrameData: String =
+        "M3.6,8.2 L3.6,3.6 L8.2,3.6 M15.8,3.6 L20.4,3.6 L20.4,8.2 " +
+            "M20.4,15.8 L20.4,20.4 L15.8,20.4 M8.2,20.4 L3.6,20.4 L3.6,15.8"
+
+    /**
+     * **FUEL** — the tank, on the card that reports it.
+     *
+     * The [Pin]'s construction turned the other way round: a body with a bore cut out of it, so
+     * the card shows through the middle instead of a lighter fill sitting on top of the drop.
+     */
+    val Droplet: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudDroplet", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(DropletData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    /** Teardrop to an apex at the top (clockwise) with the bore cut (counter-clockwise). */
+    internal val DropletData: String =
+        "M12,3.2 L17.7,12.1 A6.2,6.2 0 1 1 6.3,12.1 Z " +
+            "M12,12.4 A2.6,2.6 0 1 0 12,17.6 A2.6,2.6 0 1 0 12,12.4 Z"
+
+    /**
+     * **GNSS** — the sky, on the card that reports the fix.
+     *
+     * A dot with two arcs opening above it. It is not a satellite with solar panels: the panels hang
+     * off the body on a bar a couple of units long, which is ~4 px at a card header's 18 dp, and the
+     * body-plus-two-wings silhouette reads as a blob at the glance this card is built for. Here the
+     * daylight between the arcs is never narrower than the line that draws them, and that separation
+     * is asserted in `HudGlyphGeometryTest` rather than trusted. The arcs are strokes and the source
+     * point is a body, the same split as [Chip]'s pins and body.
+     */
+    val Signal: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudSignal", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(SignalArcs).toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W, strokeLineCap = StrokeCap.Round,
+        ).addPath(
+            PathParser().parsePathString(SignalDot).toNodes(), fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    /** Two arcs centred on the source point, and the point itself. */
+    internal val SignalArcs: String =
+        "M7.76,11.96 A6,6 0 0 1 16.24,11.96 M5.28,9.50 A9.5,9.5 0 0 1 18.72,9.50"
+    internal val SignalDot: String = "M12,13.9 A2.3,2.3 0 1 1 12,18.5 A2.3,2.3 0 1 1 12,13.9 Z"
+
+    /**
+     * **POWER IN** — the battery, and the volts the dash runs on.
+     *
+     * One solid polygon: a bolt is a silhouette, and a bolt with a highlight inside it is the mush
+     * this file keeps having to refuse. Distinct from [Power], which is the unit's restart: that
+     * one is a ring open at the top because it means "cycle", and this one means "supply".
+     */
+    val Bolt: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudBolt", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(BoltData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    /** Wound clockwise (ink), like every body in this set, so a detail can be cut out of it later. */
+    internal val BoltData: String =
+        "M13.5,2.5 L13,10.5 L17.5,10.5 L10.5,21.5 L11,13.5 L6.5,13.5 Z"
+
+    /**
+     * **RECORDING** — the trip logger is running.
+     *
+     * A bare filled disc. A dot inside an open ring is the mark everyone reaches for, and it is the
+     * exact shape this file says dies: a stroked outline with something inside it. So the disc is the
+     * state, the pill's word beside it is the noun, and the half a static dot cannot carry — that it
+     * is happening *now* — is carried by the pill breathing.
+     */
+    val Record: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudRecord", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(RecordData).toNodes(), fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    internal val RecordData: String = "M12,6.8 A5.2,5.2 0 1 1 12,17.2 A5.2,5.2 0 1 1 12,6.8 Z"
+
+    /**
+     * **WARN** — a reading went stale, a write was refused, the fix was lost.
+     *
+     * The triangle is a filled body and the exclamation is cut out of it by counter-winding — a
+     * 2.6-unit bar (~5 px at a header's 18 dp) over a 3.4-unit dot, with 2 units of daylight between
+     * them. The alternative this replaces is the obvious one, a stroked triangle with a stroked `!`
+     * inside it: four 1.9-unit lines, and the file's own rule says a stroke that closes an interior is
+     * how a mark turns into mush.
+     */
+    val Warn: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudWarn", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(PathParser().parsePathString(WarnData).toNodes(), fill = SolidColor(HudColors.Cyan))
+            .build()
+    }
+
+    /** Triangle (clockwise) with the bar and the dot cut out (counter-clockwise). */
+    internal val WarnData: String =
+        "M12,3.2 L21.3,20.2 L2.7,20.2 Z " +
+            "M10.7,8.4 L10.7,13.0 L13.3,13.0 L13.3,8.4 Z " +
+            "M12,15.0 A1.7,1.7 0 1 0 12,18.4 A1.7,1.7 0 1 0 12,15.0 Z"
+
+    /** The shared tail for the marks that are only a line: one stroked path, round ends. */
+    private fun stroked(name: String, data: String): ImageVector =
+        ImageVector.Builder(
+            name = "Hud$name", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(data).toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).build()
+
     /** A ring centred on (cx,cy): outer disc wound ink, inner hole wound the other way to open it. */
     private fun ring(cx: Float, cy: Float, outer: Float, inner: Float): String {
         val o = String.format(Locale.ROOT, "%.2f,%.2f", outer, outer)
