@@ -7,7 +7,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,8 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,10 +42,9 @@ import com.alefinot.dashboardpp.update.fileError
 import com.alefinot.dashboardpp.update.listError
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
-import com.alefinot.dashboardpp.ui.components.hudPressable
+import com.alefinot.dashboardpp.ui.components.HudSelectMenu
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
-import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
 
@@ -191,10 +188,11 @@ internal fun FirmwareUpdateControl(
         }
 
         chosen?.let { release ->
+            val upToDate = release.version == unitRunning
             Text(
-                releaseLine(release, unitRunning),
+                if (upToDate) "${release.title} - Up to date" else releaseLine(release),
                 style = HudeCfgNote(),
-                color = if (release.version == unitRunning) HudColors.Amber else HudColors.TextDim,
+                color = if (upToDate) HudColors.Green else HudColors.TextDim,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
         }
@@ -372,15 +370,12 @@ internal fun FirmwareUpdateControl(
 }
 
 /**
- * The version dropdown. The app has drawn option lists as chips everywhere a *setting*
- * picks one of three or four values; this is a release list — dozens of entries, one
- * long title each — and the maintainer asked for the menu by name on 2026-11-09, so
- * this is the one place the app opens a real dropdown.
+ * The version dropdown. The maintainer asked for the menu by name on 2026-11-09, and the
+ * firmware list now uses the same HUD select as the vehicle-type control: a field-shaped
+ * trigger and a three-row scrollable sheet rather than Material's default popup.
  *
- * The closed box is the page's `select` (the `--bg-input` fill, 6 dp radius, hairline);
- * the open list is `Sheet` — the one fill the old page reserved for option lists,
- * opaque on purpose. The row the unit is already running is said as such where it is
- * offered, not only in the line under the box.
+ * The row the unit is already running keeps its amber "on the unit" wording; the chosen
+ * row is marked with the shared cyan check.
  */
 @Composable
 private fun VersionMenu(
@@ -391,73 +386,32 @@ private fun VersionMenu(
     modifier: Modifier = Modifier,
     onPick: (FirmwareRelease) -> Unit,
 ) {
-    var open by remember { mutableStateOf(false) }
-    // The picker is a field: the same focus colours a text box gets while it is being
-    // edited, on the same 0.22 s, so opening it reads as the control becoming active.
-    val fill by animateColorAsState(
-        if (open) HudColors.FieldFocus else HudColors.Field,
-        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-        label = "menuFill",
-    )
-    val edge by animateColorAsState(
-        if (open) HudColors.Cyan else HudColors.Hairline,
-        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-        label = "menuEdge",
-    )
-    Box(modifier) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .hudPressable(enabled = releases.isNotEmpty()) { open = true }
-                .background(fill, HudRadius.FieldShape)
-                .border(1.dp, edge, HudRadius.FieldShape)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(
-                (chosen?.title ?: placeholder) + "  ▾",
-                color = HudColors.TextPrimary,
-                style = HudeCfgNote(),
-            )
-        }
-        DropdownMenu(
-            expanded = open && releases.isNotEmpty(),
-            onDismissRequest = { open = false },
-            containerColor = HudColors.Sheet,
-        ) {
-            releases.forEach { release ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            release.title + if (release.version == unitVersion) " · on the unit" else "",
-                            color = if (release.version == unitVersion) {
-                                HudColors.Amber
-                            } else {
-                                HudColors.TextPrimary
-                            },
-                            style = HudeCfgNote(),
-                        )
-                    },
-                    onClick = {
-                        open = false
-                        onPick(release)
-                    },
-                )
+    HudSelectMenu(
+        triggerLabel = chosen?.title ?: placeholder,
+        items = releases,
+        label = { release ->
+            release.title + if (release.version == unitVersion) " · on the unit" else ""
+        },
+        isSelected = { release -> release == chosen },
+        onPick = onPick,
+        modifier = modifier,
+        enabled = releases.isNotEmpty(),
+        menuModifier = Modifier.widthIn(min = 240.dp, max = 320.dp),
+        labelColor = { release ->
+            when {
+                release.version == unitVersion -> HudColors.Amber
+                release == chosen -> HudColors.Cyan
+                else -> HudColors.TextPrimary
             }
-        }
-    }
+        },
+        showsCheck = { release -> release == chosen },
+    )
 }
 
-/** The chosen release in one line, with the honest word for "this is already running". */
-private fun releaseLine(release: FirmwareRelease, unitVersion: String): String {
+/** The chosen release in one line, with its size. "Already on the unit" gets its own state line. */
+private fun releaseLine(release: FirmwareRelease): String {
     val size = if (release.size > 0) " · " + mb(release.size) else ""
-    val installed = if (unitVersion.isNotEmpty() && release.version == unitVersion) {
-        " · already on the unit"
-    } else {
-        ""
-    }
-    return "${release.title} ($size)$installed".replace("( · ", "(")
+    return "${release.title} ($size)".replace("( · ", "(")
 }
 
 /**

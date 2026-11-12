@@ -17,6 +17,7 @@ import org.junit.Test
 class VehicleTypeDropdownTest {
 
     private val app = File("src/main")
+    private val components = File(app, "java/com/alefinot/dashboardpp/ui/components")
     private val screens = File(app, "java/com/alefinot/dashboardpp/ui/screens")
     private val vehicles = File(app, "java/com/alefinot/dashboardpp/vehicles")
 
@@ -32,6 +33,7 @@ class VehicleTypeDropdownTest {
     }
 
     private val editor = code(screens, "VehicleEditorScreen.kt")
+    private val menu = code(components, "HudSelectMenu.kt")
     private val vehicle = code(vehicles, "Vehicle.kt")
 
     @Test
@@ -47,8 +49,8 @@ class VehicleTypeDropdownTest {
     }
 
     @Test
-    fun `the TYPE control opens a dropdown and no longer names enum buttons`() {
-        assertTrue("TYPE does not use a DropdownMenu", editor.contains("DropdownMenu("))
+    fun `the TYPE control opens the shared HUD select and no longer names enum buttons`() {
+        assertTrue("TYPE does not use the shared HUD select", editor.contains("HudSelectMenu("))
         assertTrue("TYPE no longer calls the editor's dropdown control", editor.contains("TypeDropdown("))
         // The old row labelled its buttons `option.name`; the menu labels them through
         // `label`, which is the field that turns E_BIKE into `E-BIKE`.
@@ -56,23 +58,23 @@ class VehicleTypeDropdownTest {
     }
 
     @Test
-    fun `the TYPE menu uses HUD rows and keeps a three-choice viewport`() {
-        assertFalse("the menu still uses Material menu rows", editor.contains("DropdownMenuItem("))
-        assertTrue("the menu rows are not HUD rows", editor.contains("TypeMenuRow("))
-        assertTrue("the menu rows do not disable Material's ripple", editor.contains("indication = null"))
+    fun `the shared HUD select keeps HUD rows and a three-choice viewport`() {
+        assertFalse("the menu still uses Material menu rows", menu.contains("DropdownMenuItem("))
+        assertTrue("the menu rows are not HUD rows", menu.contains("HudSelectMenuRow("))
+        assertTrue("the menu rows do not disable Material's ripple", menu.contains("indication = null"))
 
         assertTrue(
             "the menu is not capped at three visible rows",
-            Regex("private const val VehicleTypeMenuVisibleRows = 3(?s).*?" +
-                "private val VehicleTypeMenuMaxHeight = VehicleTypeMenuRowHeight \\* VehicleTypeMenuVisibleRows")
-                .containsMatchIn(editor),
+            Regex("private const val HudSelectMenuVisibleRows = 3(?s).*?" +
+                "private val HudSelectMenuMaxHeight = HudSelectMenuRowHeight \\* HudSelectMenuVisibleRows")
+                .containsMatchIn(menu),
         )
-        assertTrue("the menu viewport is not capped", editor.contains("heightIn(max = VehicleTypeMenuMaxHeight)"))
-        assertTrue("the menu is not scrollable", editor.contains("scrollState = menuScrollState"))
+        assertTrue("the menu viewport is not capped", menu.contains("heightIn(max = HudSelectMenuMaxHeight)"))
+        assertTrue("the menu is not scrollable", menu.contains("scrollState = menuScrollState"))
 
-        assertTrue("the menu does not use the HUD sheet", editor.contains("containerColor = HudColors.Sheet"))
-        assertTrue("the menu does not match field corners", editor.contains("shape = HudRadius.FieldShape"))
-        assertTrue("the menu has no HUD active edge", editor.contains("BorderStroke(1.dp, HudColors.HairlineActive)"))
+        assertTrue("the menu does not use the HUD sheet", menu.contains("containerColor = HudColors.Sheet"))
+        assertTrue("the menu does not match field corners", menu.contains("shape = HudRadius.FieldShape"))
+        assertTrue("the menu has no HUD active edge", menu.contains("BorderStroke(1.dp, HudColors.HairlineActive)"))
     }
 
     @Test

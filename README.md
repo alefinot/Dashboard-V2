@@ -944,7 +944,7 @@ Night mode — a fixed hour window that dropped the backlight to its own duty �
 
 ## Android Companion App
 
-The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.4`, `versionCode 120` (rule 24: every shared APK bumps `versionCode`).
+The companion app lives in `android/`: Kotlin + Jetpack Compose, Gradle (`gradlew.bat`), package `com.alefinot.dashboardpp`, `minSdk 26` (Android 8.0), compile/target SDK 35, JVM 17. It is a second product on the same ESP: it does not drive the display, it **pairs with the dashboard over Bluetooth LE**, holds a garage of vehicles, records the telemetry the unit pushes into a CSV trip log, configures the unit with the same page the unit itself shows, and shows what those drives did. Current build: `versionName 2.0.4`, `versionCode 123` (rule 24: every shared APK bumps `versionCode`).
 
 **One transport, on purpose.** The app reaches a unit over GATT and nowhere else. The HTTP client, the NSD/subnet discovery, the WebView that used to hold the unit's own page, the manual-IP panel, the BLE bench panel and the Wi-Fi / network-state permissions are all deleted (commits `1a10c71`, `6a15b33`, `7c34220`, `352429b`). The consequence is accepted and it is stated where a driver runs into it, on the vehicle's card: **firmware older than the BLE GATT server — 1.4.x and older — cannot be reached from the app at all.** Those units still have their own Web UI over Wi-Fi (that is the firmware they were flashed with — the build from this tree no longer includes it, see the note at the top of *Embedded Web UI & REST API Reference*), and they are flashed as before: wired `pio run -t upload`, or their own Web Portal at `http://192.168.4.1`. What changed is that the phone is no longer a second way in.
 
@@ -979,7 +979,7 @@ The edge is the point: clearing on "keyboard not visible" instead of "keyboard j
 `vehicles/Vehicle.kt` is one record with two halves on purpose. The user's words - `name`, `type`, `customType`, `plate`, `maker`, `model`, `year` (a `String`: "c. 1998" and "1998/99" are answers a number field would throw away), `notes`, `photoFile` - are never written by a connect. The app's evidence about a physical unit - `mac`, `bleAddress`, `lastConnectedAtMs`, `firmwareVersion` - is never typed. Keeping them in one record is what lets a card mean *this dashboard* instead of *whatever answered at this address*.
 
 - `id` is app-generated and stable across renames (`v1`, `v2`, ...: the next free name, `VehicleStore.nextIdName`). Trip files tag themselves with it, so renaming a vehicle does not rewrite recorded history.
-- `type` is the stable JSON category chosen from the editor's `TYPE` dropdown: `CAR`, `MOTORCYCLE`, `SCOOTER`, `VAN`, `TRUCK`, `BUS`, `CAMPER`, `BICYCLE`, `E_BIKE`, `BOAT`, `TRACTOR`, or `OTHER`. The menu is styled as a HUD option list and keeps three choices in view, with the rest reachable by scrolling. Its enum `name` is what `vehicles.json` stores; `label` is what the HUD draws, so `E_BIKE` reads as `E-BIKE`. `customType` carries the user's own vehicle type only while `type` is `OTHER`; the editor shows that free-text box conditionally, `vehicleTypeLabel` uses it for the header and card (uppercased to match the surrounding HUD text), and `mergeTypedFields` clears it whenever the saved selection returns to a preset. A `type` this build does not know still falls back to `OTHER`, and a record written before `customType` existed reads with the field empty.
+- `type` is the stable JSON category chosen from the editor's `TYPE` dropdown: `CAR`, `MOTORCYCLE`, `SCOOTER`, `VAN`, `TRUCK`, `BUS`, `CAMPER`, `BICYCLE`, `E_BIKE`, `BOAT`, `TRACTOR`, or `OTHER`. The menu is the shared `HudSelectMenu` (`ui/components/HudSelectMenu.kt`), the same field-shaped control, opaque sheet and flat rows used by the firmware release picker; three choices remain in view, and the rest are reachable by scrolling. Its enum `name` is what `vehicles.json` stores; `label` is what the HUD draws, so `E_BIKE` reads as `E-BIKE`. `customType` carries the user's own vehicle type only while `type` is `OTHER`; the editor shows that free-text box conditionally, `vehicleTypeLabel` uses it for the header and card (uppercased to match the surrounding HUD text), and `mergeTypedFields` clears it whenever the saved selection returns to a preset. A `type` this build does not know still falls back to `OTHER`, and a record written before `customType` existed reads with the field empty.
 - `photoFile` is a bare file name (`v1.jpg`) inside the garage's `vehicles/` directory, never an absolute path: the folder can change (a storage grant arriving, a restore, an app moved to adopted storage), and a persisted path would become a dead link. A missing JPEG reads as "no photo", and the record stays valid.
 - `bleAddress` is stored **exactly as Android reports it**, and is never derived from the eFuse MAC. The ESP32's Bluetooth address is not its base MAC, so deriving one invents an address that may belong to a different device. It is the phone's way back to a link, not an identity; `mac` stays the identity (see below).
 - The old `ips` list is gone. Records written before the change still decode (an unknown key is ignored, so an existing garage survives the upgrade), and the list is simply dropped the next time the record is written. One BLE address per card.
@@ -1730,12 +1730,17 @@ are **the Android app over Bluetooth** and **a USB cable with PlatformIO**:
    card on 2026-11-11; this half moved onto App Settings on 2026-11-09) takes its file from either of two doors and runs
    one pipeline from there:
 
-   - **The version dropdown** reads this project's GitHub releases on the phone
+   - **The version dropdown** is the shared `HudSelectMenu` (`ui/components/HudSelectMenu.kt`),
+     so its trigger and three-row option sheet match the vehicle-type menu rather than Material's
+     default popup. It reads this project's GitHub releases on the phone
      (`update/FirmwareReleases.kt` → `api.github.com`), offers the releases that actually
      carry an uploaded `firmware.bin` newest-first (drafts and assetless releases are never
-     offered), marks the one the unit is already running, and downloads that asset into the
-     app's cache — reused without a second fetch when its length matches what GitHub
-     advertises. This is the one place the app fetches a firmware file; it runs
+     offered), marks the row the unit is already running amber with `· on the unit`, checks the
+     chosen row cyan, and downloads that asset into the app's cache — reused without a second
+     fetch when its length matches what GitHub advertises. When the selected release matches the
+     version the unit reports, the status line under the menu is green and reads
+     `VX.X.X - Up to date`; a different release keeps its size line. This is the one place the
+     app fetches a firmware file; it runs
      **phone → GitHub**, and it was added at the maintainer's explicit request on 2026-11-09
      (`AGENTS.md` rule 5).
    - **CHOOSE FILE** reads a `.bin` the phone already holds, through Android's Storage
