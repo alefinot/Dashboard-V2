@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alefinot.dashboardpp.R
 import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ui.components.HudAccordion
@@ -169,6 +170,11 @@ fun PerfMonitorCard(
     HudAccordion(open = open, modifier = Modifier.padding(bottom = 14.dp)) {
         HudAccordionHeader(
             title = "Performance Monitor",
+            // The same 32 dp badge slot the groups use. This is the WebUI's own #perf-panel
+            // icon (lucide `activity`), generated from the presentation tree like the group
+            // badges, so the last card of the scroll looks like the four above it instead of
+            // starting its title against the sheet's left edge.
+            badge = R.drawable.ic_perf,
             // The other cards count their rows in this slot. A monitor has no rows to count, so the
             // chip says what the numbers are doing instead: reading now, polling now, or — behind a
             // closed header — how stale the figures it is holding are.

@@ -413,6 +413,13 @@ class UnitDiagTest {
         for (part in listOf("HudAccordion(", "HudAccordionHeader(", "HudAccordionBody(")) {
             assertTrue("the monitor is not built from the accordion's $part", screen.contains(part))
         }
+        // Same badge slot as the four groups. Without it the title starts against the sheet's
+        // left edge and the whole header is 12 dp shorter than every group above it - which is
+        // exactly what a different kind of dropdown looks like.
+        assertTrue(
+            "the monitor's header has no badge in the slot the groups use",
+            Regex("badge\\s*=\\s*R\\.drawable\\.ic_perf").containsMatchIn(screen),
+        )
     }
 
     /**

@@ -274,9 +274,9 @@ fun HudAccordionBody(
  * where the arrow should be. A vector has no font to depend on and can turn on the
  * page's own 0.3 s instead of swapping two characters.
  *
- * [badge] is null for rows that are not schema groups (the readings block, the
- * performance monitor): those have no firmware-supplied icon, and inventing one would
- * claim the app knows what the group is.
+ * [badge] is the drawable in the 32 dp slot. Null draws no slot at all, for a header that
+ * has no icon of its own; every row on the settings page has one today — the four schema
+ * groups, and the Performance Monitor's own `activity` badge.
  */
 @Composable
 fun HudAccordionHeader(
