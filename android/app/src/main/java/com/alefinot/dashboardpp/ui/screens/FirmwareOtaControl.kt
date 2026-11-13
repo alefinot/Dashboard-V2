@@ -7,11 +7,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -48,12 +45,9 @@ import com.alefinot.dashboardpp.update.FirmwareReleases
 import com.alefinot.dashboardpp.update.ReleaseList
 import com.alefinot.dashboardpp.update.fileError
 import com.alefinot.dashboardpp.update.listError
-import com.alefinot.dashboardpp.ui.components.HudButton
-import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudSelectMenu
 import com.alefinot.dashboardpp.ui.theme.HudColors
-import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import java.util.Locale
 
@@ -64,35 +58,37 @@ import java.util.Locale
  * unit rather than adjusting it, and it works (as a file fetcher) whether or not a
  * dashboard is linked. The settings page next door kept the settings.
  *
- * What this card is allowed to promise is bounded by what the unit can do, so it says
- * its rules out loud instead of hiding them behind a progress wheel:
+ * The card is two bars and a dropdown since 2026-11-13, at the maintainer's request —
+ * "merge all the firmware update features into 2 buttons". Each bar is one door a
+ * firmware file comes through, and each bar carries its file all the way:
  *
- *  - **which file it is about to send**, by size, by CRC-32, and by the version the
- *    image declares inside itself (`DPPVER=`, `src/config.cpp`). A build folder calls
- *    every image `firmware.bin` and so does every GitHub release, so the name is worth
- *    nothing and the marker is worth a lot — which is also what lets the card check a
- *    downloaded image against the release it came from.
- *  - **which version the unit is running now**, next to it, because "2.0.3 onto a unit
- *    already running 2.0.3" is a question worth asking before 1.5 MB goes over the
- *    air — and because a unit that answers `not_implemented` (a build from before the
- *    Bluetooth installer exists) has to be told as plainly as it can be.
- *  - **that a failed install changes nothing.** The image goes into the unit's spare
- *    flash slot and the unit only switches to it after its own checks pass, so every
- *    failure sentence this card can print ends the same way: the unit is still running
- *    what it was.
+ *  - the **release door** fetches the dropdown's version from GitHub (phone to GitHub
+ *    over HTTPS, `update/FirmwareReleases.kt`), then turns green and says INSTALL;
+ *  - the **file door** reads a `.bin` the phone already holds through the document
+ *    picker, then turns green and says INSTALL.
  *
- * The file arrives by one of two doors, and the card treats them as one: the dropdown
- * fetches a released image from GitHub (`update/FirmwareReleases.kt` — phone to GitHub
- * over HTTPS, and the only transport to the unit stays GATT), and CHOOSE FILE reads a
- * `.bin` the phone already holds. From the pick onward — probe, gate, transfer — both
- * doors run through [OtaController] unchanged.
+ * Pressing INSTALL runs the safety once — the same version as the unit's, no version
+ * marker, or a downloaded file whose own `DPPVER=` marker disagrees with the release it
+ * was fetched as (rule 3: that marker and the CRC are all an unsigned image can be
+ * checked by) — and the second press starts the flash. While bytes move, the bar *is*
+ * the progress: its fill is the fraction and its word carries the stats; a long press
+ * stops the install, and the spare-slot promise below the buttons says what that costs
+ * (nothing: the unit keeps running what it was).
  *
- * The transfer itself lives in [OtaController], not here — it outlives this composable,
- * and a progress bar that disappears when you scroll is a progress bar that makes
- * people press the button twice. The list fetch and the download live there for the
- * same reason; this file draws state and presses no clocks of its own
+ * Which bar is holding the file is read off the controller, not off a card-local guess:
+ * `FirmwareReleases` hands a downloaded file in under `"<asset> · <release>"`
+ * ([DOWNLOAD_TAG]), so the attribution survives leaving the screen and coming back.
+ * The transfer itself still lives in [OtaController] — it outlives this composable, and
+ * a progress bar that disappears when you scroll is a progress bar that makes people
+ * press the button twice. The list fetch and the download live there for the same
+ * reason; this file draws state and presses no clocks of its own
  * (`OtaStatusPollStaysQuietTest` keeps it that way).
  */
+
+/** What a downloaded file is handed to the controller as: `"<asset> · <release title>"`.
+ * A bar's held file is a download's iff its name starts with this. */
+private val DOWNLOAD_TAG = "${FirmwareReleases.ASSET_NAME} · "
+
 @Composable
 internal fun FirmwareUpdateControl(
     /** The version the unit reported over the link, null before it answers. */
@@ -106,18 +102,14 @@ internal fun FirmwareUpdateControl(
     val list by FirmwareReleases.list.collectAsState()
     val fileState by FirmwareReleases.file.collectAsState()
 
-    // The second press of START. Needed whenever the card cannot do the judging itself:
+    // The second press of INSTALL, for whenever the card cannot do the judging itself:
     // the same version as the unit's, no marker to compare, or a downloaded file whose
     // own marker disagrees with the release it was fetched as. One flag, cleared as soon
-    // as it is acted on, so the button cannot fire twice afterwards.
+    // as it is acted on, so the bar cannot fire twice afterwards.
     var armed by remember { mutableStateOf(false) }
 
     /** The dropdown's highlighted release — a choice, not yet a file. */
     var chosen by remember { mutableStateOf<FirmwareRelease?>(null) }
-
-    /** The release the current file was fetched as, null for a hand-picked file. The
-     * cross-check ("GitHub says V2.0.3, the file says it is 2.0.1") compares against this. */
-    var expected by remember { mutableStateOf<FirmwareRelease?>(null) }
 
     // Ask for the list the first time the card is drawn; the object's TTL decides
     // whether that call actually leaves the phone.
@@ -132,7 +124,7 @@ internal fun FirmwareUpdateControl(
     val unitRunning = unitVersion.orEmpty()
 
     // Whether the phone's battery manager is free to kill this app while it is in the
-    // background — the bench-measured way an install dies at 40 %: START, pocket the
+    // background — the bench-measured way an install dies at 40 %: INSTALL, pocket the
     // phone, and a power-managed Android trims the process mid-transfer (MIUI most of
     // all; the 2026-11-13 bench has the `has died: prev LAST` line to prove it). The
     // answer changes on a system page this card opens, so it is re-read on every resume
@@ -166,12 +158,87 @@ internal fun FirmwareUpdateControl(
             context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         armed = false
-        expected = null
         OtaController.pick(context, uri, pickedName(context, uri))
     }
 
+    // ── Whose file the card is holding, read off the controller's state ──────────────
+    val fetching = fileState as? FirmwareFileState.Downloading
+    val busy = OtaController.busy() || fetching != null
+    val staged = view.stage != OtaStage.Idle
+    val fromDownload = view.fileName.startsWith(DOWNLOAD_TAG)
+    val heldRelease = (fileState as? FirmwareFileState.Ready)?.release?.takeIf { fromDownload }
+    val downloadHolds = staged && fromDownload
+    val canStart = OtaController.canStart()
+    val needsLink = "the file is on the phone - installing needs the Bluetooth link"
+
+    fun clearCard() {
+        armed = false
+        FirmwareReleases.resetFile()
+        OtaController.reset()
+    }
+
+    /** End what is open on the unit (and say so), or hand back bytes not yet sent. */
+    fun discardHeld() {
+        armed = false
+        FirmwareReleases.resetFile()
+        OtaController.drop(context)
+    }
+
+    fun tapInstall() {
+        if (view.stage == OtaStage.Failed && !canStart) {
+            clearCard()
+            return
+        }
+        if (!linked) {
+            onNote(needsLink)
+            return
+        }
+        if (armed) {
+            armed = false
+            OtaController.start(context)
+            return
+        }
+        if (needsConfirmation(view, unitRunning, heldRelease)) {
+            armed = true
+            onNote(confirmReason(view, unitRunning, heldRelease))
+        } else {
+            OtaController.start(context)
+        }
+    }
+
+    /** The held bar's tap: whatever the stage means — stats are not a verb, INSTALL and CLEAR are. */
+    fun tapHeld() {
+        when (view.stage) {
+            OtaStage.Handshaking, OtaStage.Sending, OtaStage.Verifying ->
+                onNote("hold the bar down to stop the install")
+            OtaStage.Paused ->
+                if (linked) OtaController.start(context) else onNote(needsLink)
+            OtaStage.Ready, OtaStage.Failed -> tapInstall()
+            OtaStage.Installed -> clearCard()
+            else -> Unit
+        }
+    }
+
+    /** The held bar's long press: stop what is running, or clear what finished. */
+    fun longHeld() {
+        when (view.stage) {
+            OtaStage.Reading, OtaStage.Handshaking, OtaStage.Sending,
+            OtaStage.Verifying, OtaStage.Paused -> discardHeld()
+            else -> clearCard()
+        }
+    }
+
+    val heldUi = heldDoorUi(view, armed, canStart, linked, heldRelease?.title)
+    val heldLong = when (view.stage) {
+        OtaStage.Reading -> null
+        OtaStage.Handshaking, OtaStage.Sending, OtaStage.Verifying -> "stop the install"
+        OtaStage.Paused -> "give the file back and go back to waiting"
+        OtaStage.Ready -> "give the file back and go back to waiting"
+        else -> "put this card back to waiting"
+    }
+
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        // ── The GitHub section: pick a version, fetch it, and the file appears below ──
+        // ── The GitHub dropdown: which released version the first bar is about ────────
         val releases = (list as? ReleaseList.Ready)?.releases.orEmpty()
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -225,35 +292,52 @@ internal fun FirmwareUpdateControl(
             )
         }
 
-        // The fetch door is a full-width bar since 2026-11-13: the strip itself fills with the
-        // bytes as they land, so the percent is the control and not a second sentence somewhere
-        // under it.
+        // ── Door 1: a released version. Fetch it, then this same bar installs it ──────
         Spacer(Modifier.height(8.dp))
-        val downloading = fileState is FirmwareFileState.Downloading
-        val fetching = fileState as? FirmwareFileState.Downloading
         val fetchFrac = fetching?.let { updateFraction(it.release.size, it.got) }
-        val pick = chosen
-        UpdateFetchBar(
-            label = when {
-                fetching != null ->
-                    "downloading ${fetching.release.title} · ${updatePercent(fetchFrac ?: 0f)}"
-                pick != null -> "download ${pick.title}"
-                else -> "download"
-            },
-            description = pick?.let {
-                if (downloading) "fetching ${it.title} out of its GitHub release, into this phone"
-                else "fetch ${it.title} out of its GitHub release and hold it on this phone"
-            } ?: "pick a released version above first",
-            enabled = pick != null && !downloading && !OtaController.busy(),
-            progress = fetchFrac,
-            onClick = {
-                pick?.let {
-                    armed = false
-                    expected = it
-                    FirmwareReleases.fetch(context, it)
-                }
-            },
-        )
+        val pickRel = chosen
+        if (downloadHolds) {
+            UpdateDoorBar(
+                glyph = heldUi.glyph,
+                label = heldUi.label(heldRelease?.title ?: "the released file"),
+                description = heldUi.description,
+                ink = heldUi.ink,
+                enabled = heldUi.enabled,
+                progress = heldUi.progress,
+                wash = heldUi.wash,
+                longDescription = heldLong,
+                onLongPress = { longHeld() },
+                onClick = { tapHeld() },
+            )
+        } else {
+            UpdateDoorBar(
+                glyph = HudIcons.ImportFile,
+                label = when {
+                    fetching != null ->
+                        "downloading ${fetching.release.title} · ${updatePercent(fetchFrac ?: 0f)}"
+                    pickRel != null -> "download ${pickRel.title}"
+                    else -> "download"
+                },
+                description = when {
+                    fetching != null ->
+                        "fetching ${fetching.release.title} out of its GitHub release, into this phone"
+                    pickRel != null ->
+                        "fetch ${pickRel.title} out of its GitHub release and hold it on this phone" +
+                            if (staged) " - it replaces the file the other bar holds" else ""
+                    else -> "pick a released version above first"
+                },
+                ink = if (fetching != null) HudColors.Amber
+                else if (pickRel != null && !busy) HudColors.Cyan else HudColors.TextDim,
+                enabled = pickRel != null && !busy,
+                progress = fetchFrac,
+                onClick = {
+                    pickRel?.let {
+                        armed = false
+                        FirmwareReleases.fetch(context, it)
+                    }
+                },
+            )
+        }
         if (fetching != null) {
             Text(
                 "downloading ${fetching.release.title} · ${mb(fetching.got)} of " +
@@ -274,85 +358,37 @@ internal fun FirmwareUpdateControl(
             else -> Unit
         }
 
-        Spacer(Modifier.height(10.dp))
-
-        // ── The shared controls: whichever door the file came through ──
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        ) {
-            UpdateFileAction(
-                description = "use a firmware file this phone already holds, instead of a released one",
-                enabled = !OtaController.busy(),
+        // ── Door 2: a file this phone already holds. Pick it, then this bar installs it ──
+        Spacer(Modifier.height(8.dp))
+        if (view.stage != OtaStage.Idle && !fromDownload) {
+            UpdateDoorBar(
+                glyph = heldUi.glyph,
+                label = heldUi.label(view.fileName.take(24)),
+                description = heldUi.description,
+                ink = heldUi.ink,
+                enabled = heldUi.enabled,
+                progress = heldUi.progress,
+                wash = heldUi.wash,
+                longDescription = heldLong,
+                onLongPress = { longHeld() },
+                onClick = { tapHeld() },
+            )
+        } else {
+            UpdateDoorBar(
+                glyph = HudIcons.File,
+                label = "choose file",
+                description = "use a firmware file this phone already holds" +
+                    if (staged) " - it replaces the file the card is holding" else "",
+                ink = if (busy) HudColors.TextDim else HudColors.Cyan,
+                enabled = !busy,
                 onClick = {
                     armed = false
                     picker.launch(arrayOf("*/*"))
                 },
             )
-            when (view.stage) {
-                OtaStage.Paused -> UpdateBeginAction(
-                    caption = "RESUME",
-                    description = "continue the paused install from the offset the unit confirmed",
-                    enabled = linked,
-                ) { OtaController.start(context) }
-                OtaStage.Sending, OtaStage.Handshaking, OtaStage.Verifying, OtaStage.Reading ->
-                    UpdateBeginAction(
-                        caption = "WORKING",
-                        description = "the install is running; this waits for the unit",
-                        enabled = false,
-                        // The transfer's own fraction, in the mark's place — the same number the bar
-                        // and the sentence below carry, and the reason `WORKING…` never needed to be
-                        // spelled out with a character.
-                        progress = view.fraction(),
-                        onClick = {},
-                    )
-                else -> HudButton(
-                    label = if (armed) "CONFIRM FLASH" else "START",
-                    style = if (armed) HudButtonStyle.WARNING else HudButtonStyle.PRIMARY,
-                    // The risky verb of the app (D3): this one writes a device, so it keeps its word
-                    // next to the mark and is never reduced to a caption under one.
-                    glyph = HudIcons.Play,
-                    enabled = linked && OtaController.canStart(),
-                    onClick = {
-                        if (!armed) {
-                            // Ask once when the card cannot answer the only question that
-                            // matters: is this the right file for this unit?
-                            if (needsConfirmation(view, unitRunning, expected)) {
-                                armed = true
-                                onNote(confirmReason(view, unitRunning, expected))
-                            } else {
-                                OtaController.start(context)
-                            }
-                        } else {
-                            armed = false
-                            OtaController.start(context)
-                        }
-                    },
-                )
-            }
-            if (view.stage != OtaStage.Idle) {
-                UpdateStopAction(
-                    caption = if (OtaController.busy()) "STOP" else "CLEAR",
-                    description = if (OtaController.busy()) {
-                        "abort the install in progress; the unit keeps running the firmware it has now"
-                    } else {
-                        "put this card back to waiting for the next file"
-                    },
-                    enabled = true,
-                    onClick = {
-                        armed = false
-                        expected = null
-                        FirmwareReleases.resetFile()
-                        // After a successful install there is nothing to abort and nothing to
-                        // apologise for — the card just goes back to waiting for the next file.
-                        if (view.stage == OtaStage.Installed) OtaController.reset()
-                        else OtaController.drop(context)
-                    },
-                )
-            }
         }
 
+        // ── What the card is true about, beside the two bars ──────────────────────────
         if (!batteryExempt) {
             Spacer(Modifier.height(6.dp))
             Row(
@@ -374,16 +410,16 @@ internal fun FirmwareUpdateControl(
             }
         }
 
-        if (!linked && view.stage != OtaStage.Idle) {
+        if (!linked && staged) {
             Text(
-                "the file is on the phone — installing needs the Bluetooth link.",
+                needsLink + ".",
                 style = HudeCfgNote(),
                 color = HudColors.Amber,
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             )
         }
 
-        if (view.stage != OtaStage.Idle) {
+        if (staged) {
             Text(
                 summaryLine(view),
                 style = HudeCfgNote(),
@@ -405,7 +441,8 @@ internal fun FirmwareUpdateControl(
         if (view.stage == OtaStage.Sending || view.stage == OtaStage.Verifying ||
             view.stage == OtaStage.Paused || view.stage == OtaStage.Installed
         ) {
-            OtaBar(view.fraction(), if (view.stage == OtaStage.Installed) HudColors.Green else HudColors.Cyan)
+            // The held bar's fill *is* the transfer bar now; this line carries the rest of
+            // the numbers a bench or a driveway diagnosis reads.
             Text(
                 progressLine(view),
                 style = HudeCfgNote(),
@@ -421,7 +458,7 @@ internal fun FirmwareUpdateControl(
             view.stage == OtaStage.Verifying
         ) {
             Text(
-                "the phone is being kept awake for the install — do not close the app until the unit restarts.",
+                "the phone is being kept awake for the install - do not close the app until the unit restarts.",
                 style = HudeCfgNote(),
                 color = HudColors.Amber,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -444,13 +481,132 @@ internal fun FirmwareUpdateControl(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
             armed -> Text(
-                "press START again to flash anyway",
+                "press INSTALL again to flash anyway",
                 style = HudeCfgNote(),
                 color = HudColors.Amber,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
         }
     }
+}
+
+/**
+ * What the bar holding the staged file looks like right now — one `when` over the
+ * controller's stage, shared by both doors (only the title word differs).
+ *
+ * The ink is the state, in the card's existing language: amber while something waits or
+ * works, green when the file is ready to write or has been written, red only when the
+ * file itself was the problem. `wash` marks the two green moments, so the bar that
+ * "changed colour" is the bar a finger should press next.
+ */
+private class HeldDoorUi(
+    /** Fills the bar's own word; gets the staged file's title (`V2.0.3`, `dpp.bin`). */
+    val label: (String) -> String,
+    val description: String,
+    val ink: Color,
+    val enabled: Boolean,
+    val progress: Float?,
+    val glyph: ImageVector,
+    val wash: Color?,
+)
+
+private fun heldDoorUi(
+    view: OtaView,
+    armed: Boolean,
+    canStart: Boolean,
+    linked: Boolean,
+    heldTitle: String?,
+): HeldDoorUi = when (view.stage) {
+    OtaStage.Reading -> HeldDoorUi(
+        label = { "reading the file" },
+        description = "the phone is reading the file - nothing has reached the unit yet",
+        ink = HudColors.Amber,
+        enabled = false,
+        progress = null,
+        glyph = HudIcons.ImportFile,
+        wash = null,
+    )
+    OtaStage.Handshaking -> HeldDoorUi(
+        label = { "opening the unit's slot" },
+        description = "the unit is opening its spare flash slot; hold the bar down to stop",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = null,
+        glyph = HudIcons.Stop,
+        wash = null,
+    )
+    OtaStage.Sending -> HeldDoorUi(
+        label = { "sending ${view.percent()}% · ${rateText(view)}" },
+        description = "the image is on its way to the unit; hold the bar down to stop",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = view.fraction(),
+        glyph = HudIcons.Stop,
+        wash = null,
+    )
+    OtaStage.Verifying -> HeldDoorUi(
+        label = { "the unit is checking the image" },
+        description = "the unit is counting the bytes and checking its own gates; hold to stop",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = view.fraction(),
+        glyph = HudIcons.Stop,
+        wash = null,
+    )
+    OtaStage.Paused -> HeldDoorUi(
+        label = { if (linked) "resume ${view.percent()}%" else "paused · needs the link" },
+        description = "continue the install from the offset the unit confirmed",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = view.fraction(),
+        glyph = HudIcons.Play,
+        wash = null,
+    )
+    OtaStage.Installed -> HeldDoorUi(
+        label = { "installed · tap to clear" },
+        description = "the unit restarted into the new image; tap to put this card back to waiting",
+        ink = HudColors.Green,
+        enabled = true,
+        progress = 1f,
+        glyph = HudIcons.Check,
+        wash = HudColors.Green.copy(alpha = 0.12f),
+    )
+    OtaStage.Failed -> if (canStart) HeldDoorUi(
+        label = { "retry the flash" },
+        description = "the last attempt died in the air, not in the file - press again to send it again",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = view.fraction(),
+        glyph = HudIcons.Play,
+        wash = null,
+    ) else HeldDoorUi(
+        label = { if (view.error == "cancelled") "stopped · tap to clear" else "failed · tap to clear" },
+        description = "tap to put this card back to waiting; the unit is unchanged",
+        ink = if (view.error == "cancelled") HudColors.Amber else HudColors.Red,
+        enabled = true,
+        progress = null,
+        glyph = HudIcons.Close,
+        wash = null,
+    )
+    else -> if (armed) HeldDoorUi(
+        label = { "confirm flash" },
+        description = "the card could not prove this file is right for this unit - press again to flash it anyway",
+        ink = HudColors.Amber,
+        enabled = true,
+        progress = null,
+        glyph = HudIcons.Play,
+        wash = HudColors.Amber.copy(alpha = 0.14f),
+    ) else HeldDoorUi(
+        label = { title -> "install $title" },
+        description = "flash ${heldTitle?.plus(" into") ?: "this file into"} the unit's spare flash slot" +
+            " - a failed install leaves the running firmware untouched" +
+            if (!linked) " · INSTALL needs the Bluetooth link" else "",
+        ink = HudColors.Green,
+        enabled = true,
+        progress = null,
+        glyph = HudIcons.Play,
+        wash = HudColors.Green.copy(alpha = 0.12f),
+    )
 }
 
 /**
@@ -579,10 +735,14 @@ private fun progressLine(view: OtaView): String {
     val finished = view.stage == OtaStage.Installed || view.stage == OtaStage.Verifying
     val writeCount = if (finished) " · ${view.writes} writes" else ""
     return "$stage · ${view.percent()}% · ${mb(view.acked.toLong())} of ${mb(view.total.toLong())}" +
-        " · ${String.format(Locale.US, "%.1f", view.bytesPerSecond / 1024.0)} KB/s" +
+        " · ${rateText(view)}" +
         " · ${String.format(Locale.US, "%.1f", view.writesPerSecond)} writes/s" +
         " · ${String.format(Locale.US, "%.1f", view.elapsedSeconds)}s elapsed$writeCount$tail"
 }
+
+/** The install's rolling rate, the number the bar's own word carries mid-transfer. */
+private fun rateText(view: OtaView): String =
+    "${String.format(Locale.US, "%.1f", view.bytesPerSecond / 1024.0)} KB/s"
 
 private fun mb(bytes: Long): String =
     String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
@@ -603,29 +763,5 @@ private fun askBatteryExemption(context: Context) {
             .setData(Uri.parse("package:${context.packageName}"))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { context.startActivity(details) }
-    }
-}
-
-/** The transfer bar. The bar itself is real progress and never lags it; the colour it
- * lands on when the install completes is a state change, so that part eases. */
-@Composable
-private fun OtaBar(fraction: Float, fill: Color) {
-    val ink by animateColorAsState(
-        fill,
-        tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-        label = "otaBarInk",
-    )
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(10.dp)
-            .background(HudColors.CardInner),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(10.dp)
-                .background(ink),
-        )
     }
 }

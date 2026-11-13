@@ -1,10 +1,14 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -17,11 +21,13 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -44,16 +50,21 @@ import kotlin.math.roundToInt
  * The card held the same pair twice: `REFRESH` and `DOWNLOAD` on the FIRMWARE half, and `REFRESH` and
  * `DOWNLOAD` on the APP half, written out independently in two files with nothing shared between them.
  * Two of everything then had to be drawn, and the two copies were free to drift — which is exactly how
- * they ended up as two word buttons that happened to match. Both halves do three things and no more:
- * ask GitHub again, bring a released file onto this phone, and end or clear what is running. Those
- * three live here, and each card passes the sentence that says *which* list, *which* file.
+ * they ended up as two word buttons that happened to match. Each half does its own thing in one wide
+ * bar, and each card passes the sentence that says *which* list, *which* file.
  *
  * The fetch verb left the captioned-glyph line on 2026-11-13, at the maintainer's request: a download
  * deserves the whole width, because the bar that used to sit under it and the ring that used to sit in
  * the glyph were the same number drawn twice, small. [UpdateWideBar] is that shape — glyph and word
- * inside a full-width pressable bar that fills as the bytes land — and [UpdateFetchBar] is the fetch
- * slot wearing it. The reload glyph on the FIRMWARE half stays captioned and small: it lives in the
- * version dropdown's row, where a full-width bar cannot sit beside the field it reloads.
+ * inside a full-width pressable bar that fills as the bytes land. The reload glyph on the FIRMWARE
+ * half stays captioned and small: it lives in the version dropdown's row, where a full-width bar
+ * cannot sit beside the field it reloads.
+ *
+ * The firmware card merged into exactly two of these bars on 2026-11-13, at the maintainer's request
+ * ("the updates card is very messy"): one bar per door a firmware file comes through, and each bar
+ * *carries its file all the way* — fetch or pick, then INSTALL, then the live stats, then the clear.
+ * That is [UpdateDoorBar]: the wide bar with a second gesture — a long press answers the states where
+ * tapping would be the wrong verb (hold to stop an install in flight, hold to hand a staged file back).
  *
  * The captioned slots are [HudCaptionedAction], so the caption is inside the pressed box, in the
  * mark's own ink, and a description is not optional. The wide bar keeps the same rules: a mandatory
@@ -168,30 +179,126 @@ internal fun UpdateWideBar(
 }
 
 /**
- * Bring the released file onto this phone — [UpdateWideBar] wearing the `file.in` mark, the same mark
- * the settings line's `RESTORE` wears, because a file entering this system is one act whoever the
- * file is for.
+ * One firmware file's whole life on one bar — the shape the firmware card's two doors wear since
+ * 2026-11-13: the bar says what it holds and what pressing it now does (fetch it / choose it /
+ * INSTALL it / running with live stats / installed, clear to start over), in one ink per state,
+ * filled at the transferred fraction while bytes move.
  *
- * [progress] is the fraction already fetched: passing it is what turns the strip into the transfer —
- * an amber ink, a fill at that fraction, and the percent in the word beside the mark.
+ * It differs from [UpdateWideBar] by one gesture. A bar that carries a file all the way has states
+ * where *tapping* would be the wrong verb — mid-install a tap must not start a second transfer, and
+ * a staged file a person changed their mind about needs a way back out — so a long press answers
+ * those: hold to stop an install in flight, hold to hand a staged file back. Both gestures keep
+ * [HudCaptionedAction]'s rule that every affordance arrives with its sentence: [description] names
+ * the tap and [longDescription], when there is a second gesture, names the hold — TalkBack reads
+ * both, and `combinedClickable` puts them in its action menu.
+ *
+ * [wash] is the state that must be seen before it is read: a file that is staged and ready to
+ * install wears a faint fill of its own ink (green), so the bar that changed colour is unmistakable
+ * even at a glance across the card.
  */
 @Composable
-internal fun UpdateFetchBar(
+internal fun UpdateDoorBar(
+    glyph: ImageVector,
     label: String,
     description: String,
+    ink: Color,
     enabled: Boolean,
     progress: Float? = null,
+    wash: Color? = null,
+    longDescription: String? = null,
+    onLongPress: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-    UpdateWideBar(
-        glyph = HudIcons.ImportFile,
-        label = label,
-        description = description,
-        ink = if (progress != null) HudColors.Amber else updateInk(enabled, busy = false),
-        enabled = enabled,
-        progress = progress,
-        onClick = onClick,
+    val ms = if (HudMotion.enabled) HudMotion.CONTROL_MS else 0
+    val tint by animateColorAsState(ink, tween(ms, easing = HudMotion.Ease), label = "doorInk")
+    val shape = HudRadius.CardShape
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .updateDoorPress(
+                enabled = enabled,
+                tapLabel = description,
+                longLabel = longDescription,
+                onTap = onClick,
+                onLong = onLongPress,
+            )
+            .clip(shape)
+            .background(wash ?: HudColors.Field)
+            .border(1.dp, if (wash != null && enabled) ink.copy(alpha = 0.55f) else HudColors.Hairline, shape)
+            .height(HudTouch.Min),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (progress != null) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .background(tint.copy(alpha = 0.28f)),
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(HudSpace.Gap),
+            modifier = Modifier.padding(horizontal = 14.dp),
+        ) {
+            Image(
+                glyph,
+                contentDescription = null, // the word is the name; the sentences ride on the gestures
+                colorFilter = ColorFilter.tint(tint),
+                modifier = Modifier.size(HudGlyphSize.Row.dp),
+            )
+            Text(
+                label.uppercase(),
+                color = tint,
+                style = HudeButtonLabel(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * [hudPressable]'s press, widened to two gestures: tap answers [onTap], a hold answers [onLong] —
+ * one interaction source so the 0.97 scale is the same page motion every other control makes.
+ * Disabled means both, not just one: a state where neither gesture may act is the only state that
+ * takes [enabled] away.
+ */
+@Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun Modifier.updateDoorPress(
+    enabled: Boolean,
+    tapLabel: String,
+    longLabel: String?,
+    onTap: () -> Unit,
+    onLong: (() -> Unit)?,
+): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && HudMotion.enabled) 0.97f else 1f,
+        animationSpec = tween(
+            if (pressed) HudMotion.PRESS_MS else HudMotion.SHORT_MS,
+            easing = HudMotion.Standard,
+        ),
+        label = "doorPress",
     )
+    return this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .combinedClickable(
+            interactionSource = interaction,
+            indication = null,
+            enabled = enabled,
+            role = Role.Button,
+            onClickLabel = tapLabel,
+            onLongClickLabel = longLabel,
+            onClick = onTap,
+            onLongClick = onLong,
+        )
 }
 
 /**
@@ -218,8 +325,8 @@ internal fun UpdateReloadAction(
 
 /**
  * Begin, or continue, what the card offers — `action.start`, the filled triangle every "press once and
- * then it is working" in the app wears. The firmware card's `START` is a word button (D3); this is the
- * half of the family that is not a risky verb, like the trip card's `RUN`.
+ * then it is working" in the app wears. The firmware card's install moved onto its own [UpdateDoorBar]
+ * on 2026-11-13; what still wears this is the small yes-and-no row (the battery exemption's `ALLOW`).
  */
 @Composable
 internal fun UpdateBeginAction(
@@ -236,51 +343,6 @@ internal fun UpdateBeginAction(
         ink = updateInk(enabled, busy = progress != null),
         enabled = enabled,
         progress = progress,
-        onClick = onClick,
-    )
-}
-
-/**
- * The second door a firmware file comes through: the phone's own document picker — `action.file-choose`.
- * The caption is one word because the glyph is a page: the sentence, which has to say that this is
- * the door for a file the phone already holds, is the description.
- */
-@Composable
-internal fun UpdateFileAction(
-    description: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    HudCaptionedAction(
-        glyph = HudIcons.File,
-        caption = "FILE",
-        description = description,
-        ink = updateInk(enabled, busy = false),
-        enabled = enabled,
-        onClick = onClick,
-    )
-}
-
-/**
- * End what is running, or clear what it left behind — `action.stop`, the filled square.
- *
- * Amber rather than red on purpose: this stops a transfer, it destroys nothing. The unit keeps what it
- * has already written, and a paused install stays resumable, which is the sentence the description
- * tells and the red would contradict.
- */
-@Composable
-internal fun UpdateStopAction(
-    caption: String,
-    description: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    HudCaptionedAction(
-        glyph = HudIcons.Stop,
-        caption = caption,
-        description = description,
-        ink = if (enabled) HudColors.Amber else HudColors.TextDim,
-        enabled = enabled,
         onClick = onClick,
     )
 }
