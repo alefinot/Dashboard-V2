@@ -1852,6 +1852,14 @@ In Demo Mode:
 
 ## Changelog
 
+### V2.0.6 — the install path gets its field fixes (`versionCode` 142 → 143, `versionName` 2.0.5 → 2.0.6, firmware 2.0.5 → 2.0.6, released 2026-11-13)
+
+This release ships everything that landed after V2.0.5 — the four unreleased app batches it lists above (the search/action-line changes 137–139, the wheel mark 140, the wide progress bars 141, and the install fixes 142) — and its headline is why the phone stopped dying mid-install:
+
+- **Installs survive the phone and the unit.** The two failure modes behind the field report "the Bluetooth updates start, then fail or stall mid-transfer" are fixed at their roots and were each reproduced and then closed on the bench: the phone no longer runs 32 KiB un-ACKed against the unit's 8-slot ring (it paces at 6 negotiated chunks, `RING_PACE_FRAMES`, so the unit's `bad_frame ring full` abort cannot fire — see the App 2.0.5/142 entry), and a backgrounded install now survives MIUI's process trimming (the `OtaGuardService` foreground service + wake lock + battery-exemption row, same entry). Bench evidence from 2026-11-13: installs completing with the app backgrounded and the screen off, `ring high-water 3/7` through a 45 ms drain stall, ~46 s per full image.
+- **Firmware 2.0.6** carries no behavioural change over 2.0.5 — since v2.0.5 the firmware sources gained one comment correction (the ACK-window note in `src/bt_ota.cpp` now names the phone's pacing instead of the dead 32 KiB ceiling) plus this version bump. The release exists to align the compiled identity with the app that finally paces correctly against it. `pio run` green: RAM **73,388 B of 327,680 B (22.4 %)**, image **1,596,224 B — 84.0 %** of the 1.80 MB app slot, inside the build gate, tagged **`DPPVER=2.0.6`** at `0x244a4`.
+- **App 2.0.6/143**: `gradlew test` green, `assembleDebug` green; `config_schema.json` regenerated against firmware 2.0.6 (`gen_config_schema.py --check` green — the only delta is the `firmware` field). Verified on the bench Mi 9 Lite over ADB: installed with `adb install -r`, launched, garage renders with `Motosbu`, logcat free of FATAL/ANR. **Upgrading:** the BLE protocol, frame format and NVS keys are untouched — a 2.0.5 unit keeps its settings and pairing; a 2.0.5 phone updates in place.
+
 ### V2.0.5 — the settings page is rebuilt around glyphs, the app learns one icon vocabulary, and the dial loses its extras (`versionCode` 101 → 136, `versionName` 2.0.4 → 2.0.5, firmware 2.0.4 → 2.0.5)
 
 The largest app line since the BLE move: ~35 app commits and one icon-grammar program land on both products.
@@ -1875,12 +1883,12 @@ The largest app line since the BLE move: ~35 app commits and one icon-grammar pr
 - **A garage with an open door and a car inside it was drawn for the centre slot on 2026-11-13 and deleted the same day** at the maintainer's verdict; the wheel is the vehicle mark again, and the bar and the card share it as they did before that attempt. The floors `BarLayoutTest` pins are stated at the bar's 30 dp (one unit ~3.4 px on the bench phone): ≥ 4.5 px of tyre, ≥ 2.2 px of groove, ≥ 2.2 px of lip, ≥ 2.6 px per branch with ≥ 2.2 px of daylight between a pair's two branches at the lip — measured 5.5 / 2.7 / 2.7 / 3.0 / 3.3 px.
 - **Verified on the bench Mi 9 Lite** (`gradlew test`: 751 tests, 0 failures; `assembleDebug` green, `versionCode` 140): the bar's centre slot was read back at native pixels and shows tyre, groove, lip, the six doubles and the bored hub separately; the same drawing was photographed at 38 dp in the editor's empty photo well (draft-scoped REMOVE, then BACK, so the card's own photo was never touched), and a draft discard was confirmed by screenshot. On launch the app re-linked over BLE (`linked name=Motosbu … mtu=517`, `clock pushed ok`) and logcat stayed free of FATAL/ANR. The `OPEN VEHICLE PAGE` button's 18 dp was **not** photographed — that cover only draws when no unit is linked, and the bench phone holds its pairing — so what happens there is stated as arithmetic in `HudIcons`: ~2.0 px of window and ~1.8 px of branch, i.e. the twelve openings stop resolving one by one. `pio run` unchanged and green (no firmware source touched).
 
-### App 2.0.5/141 — the update actions became wide progress bars (`versionCode` 140 → 141, not released)
+### App 2.0.5/141 — the update actions became wide progress bars (`versionCode` 140 → 141, shipped in V2.0.6)
 
 - The fetch and install controls on the Updates card fill with their own bytes as wide progress
   bars instead of sitting next to a separate percent line (`79a1f395`).
 
-### App 2.0.5/142 — installs stop dying mid-transfer: the phone paces to the unit's ring, and survives being backgrounded (`versionCode` 141 → 142, not released)
+### App 2.0.5/142 — installs stop dying mid-transfer: the phone paces to the unit's ring, and survives being backgrounded (`versionCode` 141 → 142, shipped in V2.0.6)
 
 - **The pacing fix, from the bench.** The complaint was "the Bluetooth updates are not working again —
   they start, then fail or stall mid-transfer", and the bench caught one red-handed: the phone was

@@ -296,7 +296,7 @@ int TZ_DST_RULE = TZ_DST_RULE_EU;
 // One place the release version is written (AGENTS.md rule 3). The macro is what
 // the literals are built from - including the image marker below - and the array
 // is what the code compares and prints.
-#define FW_VERSION_STR "2.0.5"
+#define FW_VERSION_STR "2.0.6"
 const char FW_VERSION[] = FW_VERSION_STR;
 
 // Self-describing marker for the firmware image. Anything holding a .bin - the
