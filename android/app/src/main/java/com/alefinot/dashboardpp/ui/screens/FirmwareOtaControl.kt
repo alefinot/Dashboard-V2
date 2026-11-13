@@ -197,37 +197,43 @@ internal fun FirmwareUpdateControl(
             )
         }
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-        ) {
-            val downloading = fileState is FirmwareFileState.Downloading
-            val fetching = fileState as? FirmwareFileState.Downloading
-            UpdateFetchAction(
-                description = chosen?.let {
-                    if (downloading) "fetching ${it.title} out of its GitHub release, into this phone"
-                    else "fetch ${it.title} out of its GitHub release and hold it on this phone"
-                } ?: "pick a released version above first",
-                enabled = chosen != null && !downloading && !OtaController.busy(),
-                progress = fetching?.let { updateFraction(it.release.size, it.got) },
-                onClick = {
-                    chosen?.let {
-                        armed = false
-                        expected = it
-                        FirmwareReleases.fetch(context, it)
-                    }
-                },
+        // The fetch door is a full-width bar since 2026-11-13: the strip itself fills with the
+        // bytes as they land, so the percent is the control and not a second sentence somewhere
+        // under it.
+        Spacer(Modifier.height(8.dp))
+        val downloading = fileState is FirmwareFileState.Downloading
+        val fetching = fileState as? FirmwareFileState.Downloading
+        val fetchFrac = fetching?.let { updateFraction(it.release.size, it.got) }
+        val pick = chosen
+        UpdateFetchBar(
+            label = when {
+                fetching != null ->
+                    "downloading ${fetching.release.title} · ${updatePercent(fetchFrac ?: 0f)}"
+                pick != null -> "download ${pick.title}"
+                else -> "download"
+            },
+            description = pick?.let {
+                if (downloading) "fetching ${it.title} out of its GitHub release, into this phone"
+                else "fetch ${it.title} out of its GitHub release and hold it on this phone"
+            } ?: "pick a released version above first",
+            enabled = pick != null && !downloading && !OtaController.busy(),
+            progress = fetchFrac,
+            onClick = {
+                pick?.let {
+                    armed = false
+                    expected = it
+                    FirmwareReleases.fetch(context, it)
+                }
+            },
+        )
+        if (fetching != null) {
+            Text(
+                "downloading ${fetching.release.title} · ${mb(fetching.got)} of " +
+                    "${mb(fetching.release.size)}",
+                style = HudeCfgNote(),
+                color = HudColors.TextDim,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
-            if (downloading && fetching != null) {
-                Text(
-                    "downloading ${fetching.release.title} · ${mb(fetching.got)} of " +
-                        "${mb(fetching.release.size)}",
-                    style = HudeCfgNote(),
-                    color = HudColors.TextDim,
-                    modifier = Modifier.weight(1f),
-                )
-            }
         }
 
         when (val f = fileState) {

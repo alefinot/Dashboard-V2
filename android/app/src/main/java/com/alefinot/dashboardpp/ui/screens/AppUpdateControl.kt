@@ -1,10 +1,6 @@
 package com.alefinot.dashboardpp.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,8 +15,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -47,6 +43,14 @@ import java.util.Locale
  * `OtaController` — a progress bar that disappears when you scroll is a progress bar
  * that makes people press the button twice, and an updater that dies with the tab is an
  * update that starts twice.
+ *
+ * Since 2026-11-13 the half answers from one wide bar: **CHECK FOR UPDATES**. The bar keeps
+ * that identity in every idle state and changes *face* the moment the answer arrives — it is
+ * the ask (press to re-ask GitHub), the finding (highlighted **UPDATE AVAILABLE**, press to
+ * fetch), and the fetch itself (the strip fills at the percent on the phone). Re-checking is
+ * the same press as the old round REFRESH glyph; it is just the only word the bar had.
+ * Only the install stays its own action, because the system installer is a hand-off this
+ * app cannot press for the owner.
  *
  * What the card may promise is one sentence and true: the system installer replaces the app
  * in place and keeps its data, and a refused install — wrong signing key included — changes
@@ -84,92 +88,65 @@ internal fun AppUpdateControl(installed: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(statusLine(state, installed), style = HudeCfgNote(), color = statusColor(state))
 
-        val offer = offered(state)
-        if (offer != null) {
-            Spacer(Modifier.height(8.dp))
-            // One action line, drawn the way the firmware half draws its own: a mark with the one word
-            // under it, in the mark's ink. The two halves of this card used to spell the same two verbs
-            // out twice, in two files, with nothing shared.
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                when (state) {
-                    is AppUpdateState.ReadyToInstall -> {
-                        if (canInstall) {
-                            UpdateBeginAction(
-                                caption = "INSTALL",
-                                description = "hand ${offer.title} to the system installer; it asks " +
-                                    "first, and a refused install changes nothing on the phone",
-                                enabled = true,
-                            ) {
-                                AppUpdate.install(context, offer)?.let { installLine = appFileError(it) }
-                            }
-                        } else {
-                            // No dialog can grant a special access, so the primary button is
-                            // the jump to the page that can, and INSTALL waits for the return.
-                            // The word is the control here (D4): a cog can say "a settings panel",
-                            // it cannot say which permission, so the sentence stays and the mark
-                            // rides beside it — the same mark the app's own settings slot wears.
-                            HudButton(
-                                label = "ALLOW INSTALLS",
-                                style = HudButtonStyle.WARNING,
-                                glyph = HudIcons.Cog,
-                                onClick = { AppUpdate.openInstallGrant(context) },
-                            )
-                        }
-                    }
-                    is AppUpdateState.Downloading -> {
-                        val d = state as AppUpdateState.Downloading
-                        UpdateFetchAction(
-                            description = "the release is being fetched; this waits until the file " +
-                                "is on the phone",
-                            enabled = false,
-                            progress = updateFraction(d.release.size, d.got),
-                            onClick = {},
-                        )
-                    }
-                    else -> UpdateFetchAction(
-                        description = "fetch ${offer.title} and keep it on this phone until the " +
-                            "installer takes it",
-                        enabled = true,
-                    ) {
-                        AppUpdate.download(context, offer)
-                    }
-                }
-                UpdateReloadAction(
-                    description = "ask GitHub again whether a newer release of this app is out",
-                    enabled = state !is AppUpdateState.Checking &&
-                        state !is AppUpdateState.Downloading,
-                    onClick = { AppUpdate.check(context, force = true) },
-                )
-            }
-        } else if (state is AppUpdateState.UpToDate || state is AppUpdateState.FailedList) {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                UpdateReloadAction(
-                    description = "ask GitHub again whether a newer release of this app is out",
-                    enabled = state !is AppUpdateState.Checking,
-                    onClick = { AppUpdate.check(context, force = true) },
-                )
-            }
-        }
+        Spacer(Modifier.height(8.dp))
+        val d = state as? AppUpdateState.Downloading
+        // The one bar this half answers from: the ask, the finding, and the fetch that
+        // fills the strip itself while its percent rides in the word.
+        UpdateWideBar(
+            glyph = when {
+                d != null || state is AppUpdateState.Available -> HudIcons.ImportFile
+                else -> HudIcons.Reset
+            },
+            label = checkLabel(state),
+            description = checkDescription(state),
+            ink = checkInk(state),
+            enabled = checkEnabled(state),
+            progress = d?.let { updateFraction(it.release.size, it.got) },
+            highlight = state is AppUpdateState.Available,
+            onClick = {
+                val s = state
+                if (s is AppUpdateState.Available) AppUpdate.download(context, s.release)
+                else AppUpdate.check(context, force = true)
+            },
+        )
 
-        if (state is AppUpdateState.Downloading) {
-            val d = state as AppUpdateState.Downloading
-            Spacer(Modifier.height(8.dp))
-            UpdateBar(updateFraction(d.release.size, d.got))
+        if (d != null) {
             Text(
                 "downloaded ${mb(d.got)} of ${mb(d.release.size)}",
                 style = HudeCfgNote(),
                 color = HudColors.TextDim,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
+        }
+
+        when (val s = state) {
+            // The file is on the phone. The installer is a hand-off, so this half stops
+            // at the door: INSTALL (or, without the special access, the jump to the page
+            // that can grant it — the word is the control here (D4), since a cog cannot
+            // say which permission).
+            is AppUpdateState.ReadyToInstall -> {
+                Spacer(Modifier.height(8.dp))
+                if (canInstall) {
+                    UpdateWideBar(
+                        glyph = HudIcons.Play,
+                        label = "install ${s.release.title}",
+                        description = "hand ${s.release.title} to the system installer; it asks " +
+                            "first, and a refused install changes nothing on the phone",
+                        ink = HudColors.Cyan,
+                        enabled = true,
+                    ) {
+                        AppUpdate.install(context, s.release)?.let { installLine = appFileError(it) }
+                    }
+                } else {
+                    HudButton(
+                        label = "ALLOW INSTALLS",
+                        style = HudButtonStyle.WARNING,
+                        glyph = HudIcons.Cog,
+                        onClick = { AppUpdate.openInstallGrant(context) },
+                    )
+                }
+            }
+            else -> Unit
         }
 
         if (installLine.isNotEmpty()) {
@@ -189,6 +166,44 @@ internal fun AppUpdateControl(installed: String) {
             color = HudColors.TextDim,
         )
     }
+}
+
+/** The bar's word per state. Uppercased by the bar; it is one word or two, never a sentence. */
+private fun checkLabel(state: AppUpdateState): String = when (state) {
+    AppUpdateState.Idle, AppUpdateState.Checking -> "checking for updates"
+    is AppUpdateState.Available -> "update available · ${state.release.title}"
+    is AppUpdateState.Downloading -> "downloading ${state.release.title} · " +
+        updatePercent(updateFraction(state.release.size, state.got))
+    is AppUpdateState.ReadyToInstall -> "update downloaded"
+    else -> "check for updates"
+}
+
+/** Which ink the bar wears: amber is the app waiting on GitHub or on bytes, cyan is pressable. */
+private fun checkInk(state: AppUpdateState): Color = when (state) {
+    AppUpdateState.Idle, AppUpdateState.Checking -> HudColors.Amber
+    is AppUpdateState.Downloading -> HudColors.Amber
+    is AppUpdateState.FailedList -> HudColors.Amber
+    is AppUpdateState.ReadyToInstall -> HudColors.Green
+    else -> HudColors.Cyan
+}
+
+/** Pressable whenever pressing does something: re-ask, or take the release. */
+private fun checkEnabled(state: AppUpdateState): Boolean = when (state) {
+    is AppUpdateState.Available, is AppUpdateState.UpToDate,
+    is AppUpdateState.FailedList, is AppUpdateState.FailedFile -> true
+    else -> false
+}
+
+private fun checkDescription(state: AppUpdateState): String = when (state) {
+    is AppUpdateState.Available ->
+        "press to fetch ${state.release.title} onto this phone; INSTALL follows when the file is here"
+    is AppUpdateState.Downloading ->
+        "the release is being fetched; this waits until the file is on the phone"
+    is AppUpdateState.ReadyToInstall ->
+        "${state.release.title} is on the phone; INSTALL below hands it to the system installer"
+    AppUpdateState.Idle, AppUpdateState.Checking ->
+        "this is asking GitHub whether a newer release of this app is out"
+    else -> "ask GitHub again whether a newer release of this app is out"
 }
 
 /** The one line the card leads with, for every state. */
@@ -223,30 +238,5 @@ private fun releaseLine(release: FirmwareRelease, installed: String): String {
     return "${release.title} ($size) is out — this app is $installed"
 }
 
-private fun offered(state: AppUpdateState): FirmwareRelease? = when (state) {
-    is AppUpdateState.Available -> state.release
-    is AppUpdateState.Downloading -> state.release
-    is AppUpdateState.ReadyToInstall -> state.release
-    else -> null
-}
-
 private fun mb(bytes: Long): String =
     String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-
-/** The download bar. Real progress, no eased fill to lag behind it. */
-@Composable
-private fun UpdateBar(fraction: Float) {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(10.dp)
-            .background(HudColors.CardInner),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(10.dp)
-                .background(HudColors.Cyan),
-        )
-    }
-}
