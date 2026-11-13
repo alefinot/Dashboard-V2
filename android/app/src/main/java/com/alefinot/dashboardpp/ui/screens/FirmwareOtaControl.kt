@@ -177,6 +177,27 @@ internal fun FirmwareUpdateControl(
         OtaController.reset()
     }
 
+    // A successful update must not leave the card wearing its work clothes (maintainer,
+    // 2026-11-13: "the app is stuck on RESUME when an update is successful - the state
+    // of the button should reset"). The proof that the work is over is the link itself:
+    // once the unit answers with the very version the staged file declares, whatever
+    // the stage last said, the flash has landed and the unit rebooted into it - so the
+    // card hands its file back and returns to waiting by itself. A transfer that
+    // paused mid-image cannot end that way unless it completed, since a unit still in
+    // its install answers nothing but `ping` and `ota.*` until the window closes.
+    // `Ready` is excluded on purpose: a file merely staged has earned no assumption,
+    // and a same-version reflash stays a deliberate CONFIRM away, not a vanished file.
+    LaunchedEffect(unitVersion, view.stage, view.image?.versionTag) {
+        val tag = view.image?.versionTag
+        val attempted = when (view.stage) {
+            OtaStage.Paused, OtaStage.Failed, OtaStage.Installed -> true
+            else -> false
+        }
+        if (attempted && !OtaController.busy() && tag != null && tag == unitVersion) {
+            clearCard()
+        }
+    }
+
     /** End what is open on the unit (and say so), or hand back bytes not yet sent. */
     fun discardHeld() {
         armed = false
