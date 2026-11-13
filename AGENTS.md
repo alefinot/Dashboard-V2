@@ -224,6 +224,18 @@ When you are unsure about anything — ambiguous requirements, conflicting optio
   `adb pair <ip>:<pairing-port>` + `adb connect <ip>:<port>`; or, after one USB connection,
   `adb tcpip 5555` followed by `adb connect <phone-ip>:5555`.
 
+## 32. Update Process Backend — Change Only on the Maintainer's Explicit Order
+- **Never change the backend of the update process unless the maintainer tells you to, for that task.**
+  The backend is the machinery that moves and installs a firmware/APK image: on the unit,
+  `src/bt_ota.cpp` and the `ota.*` RPC methods; in the app, `ble/OtaController.kt`, `ble/OtaCore.kt`,
+  `ble/OtaFrames`/OTA write logic, `service/OtaGuardService.kt`, and the `update/` package
+  (`FirmwareReleases.kt`, `AppUpdate.kt`, downloaders). The card UI and its prose
+  (`ui/screens/FirmwareOtaControl.kt`, `AppUpdateControl.kt`) are not backend — they may change as
+  long as nothing below them does.
+- No opportunistic touches: do not retune pacing/windows/ACK logic, do not refactor, do not
+  "improve" an update path in passing. If a bug's honest fix appears to need a backend change,
+  **stop and ask** (rule 1) — the working install path is considered settled ground.
+
 ## Project Quick Reference
 - **Firmware:** ESP32 WROOM-32, PlatformIO project in repo root (`platformio.ini`, env `esp32dev`), Arduino framework, LovyanGFX 4.0" ILI9488 480×320 display.
 - **Build:** `pio run` (the pre-script compiles the VLW fonts into headers; the post-script repairs the upload layout and reports the image tag — run `pio run`, not a plain compile).
