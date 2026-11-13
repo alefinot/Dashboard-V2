@@ -844,6 +844,23 @@ void showGoodbyeScreen(bool isSleep) {
 volatile int otaProgressFillW = 0;
 volatile int otaProgressTarget = 0;
 
+// Vertical layout of the updating frame. Every value here is a TEXT-TOP
+// coordinate, not a baseline: loadVLWFont() selects the baseline_left datum and
+// the drawing idiom in this file is setCursor(y - y1) with getTextBounds'
+// y1 == -baseline, which lands the glyph box at y and puts the baseline below
+// it. So "185" is where `DO NOT TURN OFF THE DEVICE` starts, and the line ends
+// at 185 + the 16 px font's height - anything drawn at 198 is inside it. That
+// is exactly how the accepted-bytes line ended up scribbled across the warning
+// (and half erased by the band that was supposed to clear it), so the band is
+// now placed from the measured bottom of the warning, not from a guess.
+static const int OTA_TITLE_TOP = 120;  // 28 px "UPDATING..."
+static const int OTA_BAR_TOP = 160;    // 8 px streaming bar (frame 2 px out)
+static const int OTA_WARN_TOP = 185;   // 16 px "DO NOT TURN OFF THE DEVICE"
+// Where the counters band may start. Written by showUpdatingScreen() from the
+// measured line height of the warning; the initialiser is only a fallback for a
+// counters call that somehow arrives before the frame was drawn.
+static int otaCounterBandTop = OTA_WARN_TOP + 24;
+
 void showUpdatingScreen() {
   // Start the bar empty, but keep any target already set by the OTA task
   // (the upload flow sets otaProgressTarget = 258 once the flash completes; the
@@ -868,17 +885,21 @@ void showUpdatingScreen() {
   display.loadVLWFont("/Fonts/Conthrax_SemiBold_28px.vlw");
   display.setTextColor(TFT_WHITE);
   display.getTextBounds(title, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(DISPLAY_WIDTH / 2 - (w / 2) - x1, 120 - y1);
+  display.setCursor(DISPLAY_WIDTH / 2 - (w / 2) - x1, OTA_TITLE_TOP - y1);
   display.print(title);
 
   display.loadVLWFont("/Fonts/Conthrax_SemiBold_16px.vlw");
   display.setTextColor(TFT_WHITE);
   const char *msg = "DO NOT TURN OFF THE DEVICE";
   display.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(DISPLAY_WIDTH / 2 - (w / 2) - x1, 185 - y1);
+  display.setCursor(DISPLAY_WIDTH / 2 - (w / 2) - x1, OTA_WARN_TOP - y1);
   display.print(msg);
+  // Hand the counters their floor: the line under this one starts below the
+  // warning's measured box, whatever size the 16 px font turns out to be.
+  otaCounterBandTop = OTA_WARN_TOP + (int)h + 8;
   int barX = DISPLAY_WIDTH / 2 - (260 / 2);
-  drawAARoundRect(display, barX - 2, 160 - 2, 260 + 4, 8 + 4, 3, TFT_CYAN);
+  drawAARoundRect(display, barX - 2, OTA_BAR_TOP - 2, 260 + 4, 8 + 4, 3,
+                  TFT_CYAN);
   display.endWrite();
 
   fadeTarget = currentBrightnessTarget;
@@ -928,13 +949,20 @@ void drawOTAProgressCounters() {
   if (strcmp(lastLine, line) == 0) return;
   snprintf(lastLine, sizeof(lastLine), "%s", line);
 
-  const int bandY = 198, bandH = 13;  // under the bar (160) and the warning line (~185)
+  // The band starts below the warning line (see OTA_WARN_TOP) and is cleared
+  // and painted with the same metrics: measure with the built-in font selected,
+  // so the erase rectangle covers exactly the glyphs being replaced.
+  const int bandY = otaCounterBandTop;
+  const int bandH = 13;
   display.startWrite();
-  display.fillRect(DISPLAY_WIDTH / 2 - 132, bandY, 264, bandH, TFT_BLACK);
   display.setTextFont(1);
+  int16_t bx1, by1;
+  uint16_t bw, bh;
+  display.getTextBounds(line, 0, 0, &bx1, &by1, &bw, &bh);
+  if ((int)bh > bandH) bh = bandH;  // never clear further down than measured
+  display.fillRect(DISPLAY_WIDTH / 2 - 132, bandY, 264, bh, TFT_BLACK);
   display.setTextColor(otaQuietActive && silentMs > 8000 ? TFT_ORANGE : TFT_CYAN);
-  const int tw = (int)display.textWidth(line);
-  display.setCursor(DISPLAY_WIDTH / 2 - tw / 2, bandY);
+  display.setCursor(DISPLAY_WIDTH / 2 - (int)bw / 2 - bx1, bandY - by1);
   display.print(line);
   display.endWrite();
 }

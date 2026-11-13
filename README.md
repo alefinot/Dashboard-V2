@@ -1624,7 +1624,7 @@ progress bar was.
 
 | Frame | When | Says |
 |---|---|---|
-| **Updating** | the whole transfer | `UPDATING...` + `DO NOT TURN OFF THE DEVICE` + the streaming bar |
+| **Updating** | the whole transfer | `UPDATING...` + `DO NOT TURN OFF THE DEVICE` + the streaming bar, and under the warning the accepted-bytes line (`x / y`, `x / y - CHECKING`, or `WAITING FOR PHONE 12s`) |
 | **Done** | the reply is out, before the reboot (~1.2 s) | `UPDATE COMPLETE / REBOOTING` |
 | **Failed** | any refusal or stall, for 15 s | `UPDATE FAILED`, the reason sentence, `bytes x/y`, heap, RSSI, the reason code, and the recovery line |
 
