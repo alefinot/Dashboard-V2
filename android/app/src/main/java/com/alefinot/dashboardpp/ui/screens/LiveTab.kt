@@ -182,7 +182,7 @@ fun LiveTab(active: Boolean) {
 
 /**
  * The `.card` every Live panel is built from: the page's fill, hairline and 8 px corners,
- * and inside it the pairing every Dashboard++ Setup card wears - a cyan caps heading, a dim
+ * and inside it the pairing every Dashboard++ Settings card wears - a cyan caps heading, a dim
  * note to its right, a `--border-color` hairline under both, then the content.
  *
  * The settings cards use `.perf-card`'s denser fill; these are the wider `.card`, because

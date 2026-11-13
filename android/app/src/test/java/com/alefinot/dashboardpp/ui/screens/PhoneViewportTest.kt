@@ -214,18 +214,18 @@ class PhoneViewportTest {
     }
 
     /**
-     * The Dashboard++ Setup header cost 239 dp of a 748 dp scroll viewport before the first
+     * The Dashboard++ Settings header cost 239 dp of a 748 dp scroll viewport before the first
      * group appeared: title, identity pill, an Advanced Mode card of its own, a link line, the
      * search row, and a sync line. Measured on the bench phone after the first pass, that was
      * 171 dp; after the maintainer took the pill and the two note lines out on 2026-11-11 it is
-     * 133 dp — title, search row, the five action glyphs — and every group is on screen with room
-     * to spare.
+     * 133 dp — title, the five action glyphs and the search row — and every group is on screen
+     * with room to spare.
      *
      * What is pinned is the shape of that header, because every one of those lines came back once
      * already when a change needed somewhere to say a thing: the page draws no banner and no status
-     * or count line at rest, its header is title → search row → action glyphs in that order, and it
-     * carries no control (the Advanced Mode card is gone, so nothing can reappear there and take a
-     * line back).
+     * or count line at rest, its header is title → the five action glyphs → the search row in that
+     * order (the icons moved above the box on 2026-11-13), and it carries no control (the Advanced
+     * Mode card is gone, so nothing can reappear there and take a line back).
      */
     @Test
     fun theSetupHeaderSpendsItsChromeOnTheSettingsNotOnItself() {
@@ -262,15 +262,15 @@ class PhoneViewportTest {
                 "card removed on 2026-11-08 and the tab shows every row",
             page.contains("Advanced Mode"),
         )
-        // The three lines the header does own, in order: the page's name, then the search row,
-        // then the action glyphs. Everything else on the page is in the scroll below them.
-        val titleAt = page.indexOf("HudPageHeader(title = \"Dashboard++ Setup\")")
-        val searchAt = page.indexOf("HudInputStyle.SEARCH")
+        // The three lines the header does own, in order: the page's name, the five action glyphs,
+        // then the search row. Everything else on the page is in the scroll below them.
+        val titleAt = page.indexOf("HudPageHeader(title = \"Dashboard++ Settings\")")
         val actionsAt = page.indexOf("onFactoryReset = { factoryAsk = true }")
+        val searchAt = page.indexOf("HudInputStyle.SEARCH")
         val listAt = page.indexOf("LazyColumn(")
         assertTrue(
-            "the header's own lines are no longer title, search row, action glyphs, in that order",
-            titleAt in 1 until searchAt && searchAt < actionsAt && actionsAt < listAt,
+            "the header's own lines are no longer title, action glyphs, search row, in that order",
+            titleAt in 1 until actionsAt && actionsAt < searchAt && searchAt < listAt,
         )
     }
 

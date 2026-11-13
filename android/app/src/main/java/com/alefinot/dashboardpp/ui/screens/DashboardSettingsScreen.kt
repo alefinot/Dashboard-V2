@@ -222,7 +222,7 @@ fun DashboardSettingsScreen(
         }
     }
 
-    // `.sticky-top`: the page's own header — its title, its search box, the five action glyphs —
+    // `.sticky-top`: the page's own header — its title, the five action glyphs, its search box —
     // held above the scroll the way the page holds them above its 198 rows. `hudPage` is
     // `.main-content`: a 920 dp column with `margin: 0 auto`, which is the thing this
     // page never had - every control used to sit at the far edge of a 1920 px screen
@@ -240,10 +240,25 @@ fun DashboardSettingsScreen(
                 .padding(horizontal = HudPage.Gutter)
                 .padding(top = 6.dp, bottom = 4.dp),
         ) {
-            HudPageHeader(title = "Dashboard++ Setup")
-            // Three lines and nothing else: the page's name, its search box, and the five action
-            // glyphs with one word under each. The maintainer had the rest of the header's chrome
-            // taken out on 2026-11-11 —
+            HudPageHeader(title = "Dashboard++ Settings") {
+                // The five actions that belong to no row, drawn above the search box with one word
+                // under each. They moved up here on 2026-11-13: the maintainer wanted the action
+                // line in the top bar, spread across it the way the app's other headers share
+                // their width, with the search box below it where the next tap lands.
+                ActionBar(
+                    store = store,
+                    state = state,
+                    ready = ready,
+                    scope = scope,
+                    onNote = { note = it },
+                    onExport = { exportLauncher.launch("dashboardpp-settings.json") },
+                    onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                    restoring = restoring,
+                    onFactoryReset = { factoryAsk = true },
+                )
+            }
+            // The header's last line, and nothing else: the page's search box. The maintainer had
+            // the rest of the header's chrome taken out on 2026-11-11 —
             // the identity pill (`unit V2.0.4 · schema V2.0.4 · linked to Motosbu · MTU 517`),
             // which had already swallowed the separate link line to save one line, and the two
             // notes that used to sit under the icons (`read 182 keys (178 table rows) in 6 chunks`,
@@ -314,23 +329,8 @@ fun DashboardSettingsScreen(
                     )
                 }
             }
-            // The five actions that belong to no row, drawn on one line under the search box. The
-            // header is the part of the page that does not scroll, so these five hold one y — the
-            // note lines under them only appear when something has just happened, and they do not
-            // push the glyphs around any more.
-            ActionBar(
-                store = store,
-                state = state,
-                ready = ready,
-                scope = scope,
-                onNote = { note = it },
-                onExport = { exportLauncher.launch("dashboardpp-settings.json") },
-                onRestore = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
-                restoring = restoring,
-                onFactoryReset = { factoryAsk = true },
-            )
-            // Only what happened since the last look is drawn under the icon line, and only when
-            // something is actually there does that block need its own gap from the glyphs.
+            // Only what happened since the last look is drawn under the search row, and only when
+            // something is actually there does that block need its own gap from the row.
             if (
                 state.missingKeys.isNotEmpty() || state.rebootPending.isNotEmpty() ||
                 note.isNotEmpty() || state.error != null
@@ -413,11 +413,11 @@ fun DashboardSettingsScreen(
         val columns = SettingsLayout.columns(widthDp.coerceAtMost(HudPage.Width.value.toInt()))
             .coerceAtMost(2)
 
-        // The list is the only child that flexes. The header above it - title, search row and the
-        // five action glyphs - keeps its own height, and the list takes everything left, which is
-        // what stopped the action line being squeezed to zero pixels when it lived under a
-        // `fillMaxSize()` list at the foot of the page.
-        // Its own top padding is what keeps the first group clear of the icon line now that the
+        // The list is the only child that flexes. The header above it - title, the five action
+        // glyphs and the search row - keeps its own height, and the list takes everything left,
+        // which is what stopped the action line being squeezed to zero pixels when it lived under
+        // a `fillMaxSize()` list at the foot of the page.
+        // Its own top padding is what keeps the first group clear of the search row now that the
         // count line that used to sit between them is gone.
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().padding(horizontal = HudPage.Gutter),
@@ -689,7 +689,8 @@ private fun ReadingRow(spec: ConfigSchema.ExtraSpec, value: Any?) {
 
 /**
  * The five actions that belong to no card, drawn as five small icons with one word under each, on
- * one line, in the page's `.sticky-top` header directly under the search box.
+ * one line, in the page's `.sticky-top` header directly under the page's title and above its
+ * search box.
  *
  * They were words until 2026-11-11 — four in a two-by-two grid at the foot of the screen, and
  * Factory Reset as a full-width button at the end of the scroll. What came back when the captions
@@ -709,9 +710,11 @@ private fun ReadingRow(spec: ConfigSchema.ExtraSpec, value: Any?) {
  *
  * The line lives in the header, so it does not scroll: five glyphs the owner taps by position are
  * worth more at a fixed y than at the bottom of a page that grows and shrinks its own notes. It
- * was pinned at the foot until the maintainer moved it up on 2026-11-11; both places depend on the
- * same thing, that the list takes `weight(1f)` — in the old one, a `fillMaxSize()` list left the
- * bar zero pixels tall and none of these five actions could be pressed at all.
+ * was pinned at the foot until the maintainer moved it up on 2026-11-11, and moved again on
+ * 2026-11-13 to sit above the search box, in the top bar the other pages give their own header
+ * lines; both places depend on the same thing, that the list takes `weight(1f)` — in the old one,
+ * a `fillMaxSize()` list left the bar zero pixels tall and none of these five actions could be
+ * pressed at all.
  *
  * Factory Reset came up into the line with the rest, which is the one thing the unit's page did
  * deliberately and this page now does the other way: it kept that action on a third row of its
