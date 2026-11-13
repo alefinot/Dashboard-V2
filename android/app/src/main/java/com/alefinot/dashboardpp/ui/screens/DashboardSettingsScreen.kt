@@ -234,11 +234,16 @@ fun DashboardSettingsScreen(
     // firmware row that a config backup still writes back (see [ConfigStore]).
     val advanced = true
 
+    // The top inset is the other pages' 10 dp, not the 6 dp this page was compacted to on
+    // 2026-11-08: on 2026-11-13 the maintainer put the title next to Vehicles, Trips and App
+    // Settings and saw it sitting 11 px higher. The chrome savings that matter stay - the pill
+    // and the note lines are still gone - but the page's name now starts where every other
+    // page's name starts.
     Column(Modifier.hudPage()) {
         Column(
             Modifier.fillMaxWidth()
                 .padding(horizontal = HudPage.Gutter)
-                .padding(top = 6.dp, bottom = 4.dp),
+                .padding(top = 10.dp, bottom = 4.dp),
         ) {
             HudPageHeader(title = "Dashboard++ Settings") {
                 // The five actions that belong to no row, drawn above the search box with one word
