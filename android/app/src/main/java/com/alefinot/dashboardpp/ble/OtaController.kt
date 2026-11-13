@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.ble
 
 import android.content.Context
 import android.net.Uri
+import com.alefinot.dashboardpp.service.OtaGuardService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,14 +69,25 @@ object OtaController {
      * WRITE_TYPE_NO_RESPONSE means a completed write only says the phone's stack took the bytes, not
      * that the unit has them. Without a ceiling the phone buffers a couple of hundred kilobytes into
      * Android's outgoing queue in a few seconds, the card then reports a number far behind what is
-     * really on flash, and the first hiccup wedges a queue nobody can flush. Pacing against the
-     * unit's own ACK keeps the outstanding window small and the progress figure honest. It must stay
-     * above the unit's ACK cadence (`OTA_ACK_BYTES` in `src/bt_ota.cpp` — 4 KiB, one flash sector),
-     * or the two sides deadlock. It is not the unit's cushion either: that is the 16-slot handoff
-     * ring in `bt_ota.cpp` (measured using 2 of its 15 usable slots on a full install) plus the
-     * link's own write-completion pacing.
+     * really on flash, and the first hiccup wedges a queue nobody can flush.
+     *
+     * The window used to be a flat 32 KiB, and the bench killed that design on 2026-11-13: the
+     * unit's handoff ring is 8 slots of one chunk (7 usable), it drains in `btTask`'s pass between
+     * RPC services, and a single ~55 ms stall — one refused `snapshot` was enough — let the queued
+     * 32 KiB burst into the callback faster than the ring could empty. The unit said
+     * `install stopped (bad_frame) ... ring full (8 slots, high-water 7)` at 1.3 % of a 1.5 MB
+     * image. That is the field complaint "starts, then fails mid-transfer" on the wire.
+     *
+     * So the window is now `RING_PACE_FRAMES` chunks, computed from the chunk size the unit
+     * negotiated: strictly under the ring's 7-frame capacity, so even if a drain pass stalls for
+     * the whole air time of the window, the frames still un-ACKed physically cannot fill the ring,
+     * and the overflow abort becomes unreachable instead of lucky. `MAX_OUTSTANDING_BYTES` only
+     * stays as the sanity ceiling. The window must also stay above the unit's trimmed ACK cadence
+     * (`halfRing` in `src/bt_ota.cpp`, half the usable ring), or the two sides deadlock —
+     * `resumeWindowAndPacingMatchTheFirmware` checks the arithmetic against the firmware source.
      */
-    const val OUTSTANDING_BYTES = 32 * 1024
+    const val RING_PACE_FRAMES = 6
+    const val MAX_OUTSTANDING_BYTES = 32 * 1024
 
     /** Write attempts in a row before the transfer gives up and offers RESUME. */
     const val MAX_WRITE_FAILURES = 3
@@ -186,6 +198,10 @@ object OtaController {
         val data = bytes ?: return
         val img = image ?: return
         job = scope.launch { transfer(context, data, img) }
+        // Arm the kill-guard only after the job exists: the guard stands itself down when
+        // `busy()` reads false, and a hold() posted against the not-yet-started job would
+        // disarm it instantly. After the launch there is no such gap.
+        OtaGuardService.hold(context)
     }
 
     /**
@@ -303,6 +319,12 @@ object OtaController {
             tracker.apply(OtaEvent.BeginOk(chunk = chunk, off = nextOff))
             publish(tracker, img)
 
+            // The write ceiling, in bytes, from the chunk size this link negotiated: a fixed 32 KiB
+            // was 65 frames against a 7-frame ring, which is how the 2026-11-13 bench got its
+            // `bad_frame ring full` abort (see RING_PACE_FRAMES). Six frames keeps the phone one
+            // frame under the ring no matter what chunk the unit asked for.
+            var outstandingLimit = (RING_PACE_FRAMES * chunk).coerceAtMost(MAX_OUTSTANDING_BYTES)
+
             // Ask for the fast connection interval here, not back at connect time: an install is the
             // only thing this app does where the interval is the whole story, and holding it past the
             // chunk phase is what the field reports of links dropping under HIGH are about
@@ -323,9 +345,9 @@ object OtaController {
                 // on flash. Running further ahead than this buffers the image into the stack, makes
                 // the progress figure lag reality by a couple of hundred KB, and leaves a queue that
                 // cannot be flushed when the link hiccups.
-                if (nextOff - tracker.acked >= OUTSTANDING_BYTES) {
+                if (nextOff - tracker.acked >= outstandingLimit) {
                     val paceUntil = now() + STALL_SILENCE_MS
-                    while (nextOff - tracker.acked >= OUTSTANDING_BYTES && now() < paceUntil) {
+                    while (nextOff - tracker.acked >= outstandingLimit && now() < paceUntil) {
                         val ev = withTimeoutOrNull(400L) { events.receive() } ?: continue
                         if (tracker.apply(ev)) {
                             publish(tracker, img)
@@ -393,6 +415,7 @@ object OtaController {
                         val adopted = adoptBeginOkOffset(nextOff, event.off)
                         if (adopted != nextOff) {
                             chunk = event.chunk.coerceIn(1, OtaFrames.maxChunk(mtu))
+                            outstandingLimit = (RING_PACE_FRAMES * chunk).coerceAtMost(MAX_OUTSTANDING_BYTES)
                             nextOff = adopted.coerceIn(0, img.size)
                         }
                     }

@@ -1,7 +1,10 @@
 package com.alefinot.dashboardpp.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
@@ -18,9 +21,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.alefinot.dashboardpp.ble.OtaController
 import com.alefinot.dashboardpp.ble.OtaErrors
 import com.alefinot.dashboardpp.ble.OtaImage
@@ -122,6 +130,26 @@ internal fun FirmwareUpdateControl(
     }
 
     val unitRunning = unitVersion.orEmpty()
+
+    // Whether the phone's battery manager is free to kill this app while it is in the
+    // background — the bench-measured way an install dies at 40 %: START, pocket the
+    // phone, and a power-managed Android trims the process mid-transfer (MIUI most of
+    // all; the 2026-11-13 bench has the `has died: prev LAST` line to prove it). The
+    // answer changes on a system page this card opens, so it is re-read on every resume
+    // — the same trick the app-update card uses for the install-unknown-apps grant.
+    var grantTick by remember { mutableIntStateOf(0) }
+    val lifecycle = LocalLifecycleOwner.current
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) grantTick++
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    }
+    val batteryExempt = remember(grantTick) {
+        context.getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -325,6 +353,27 @@ internal fun FirmwareUpdateControl(
             }
         }
 
+        if (!batteryExempt) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "phone battery management can stop an install that goes to the background.",
+                    style = HudeCfgNote(),
+                    color = HudColors.Amber,
+                    modifier = Modifier.weight(1f),
+                )
+                UpdateBeginAction(
+                    caption = "ALLOW",
+                    description = "ask the phone to stop killing this app while it works in the background",
+                    enabled = true,
+                ) { askBatteryExemption(context) }
+            }
+        }
+
         if (!linked && view.stage != OtaStage.Idle) {
             Text(
                 "the file is on the phone — installing needs the Bluetooth link.",
@@ -361,6 +410,20 @@ internal fun FirmwareUpdateControl(
                 progressLine(view),
                 style = HudeCfgNote(),
                 color = HudColors.TextDim,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            )
+        }
+
+        // The honest cost of a 1.5 MB transfer: about a minute of airtime the app has to
+        // survive. `OtaGuardService` keeps the process and the CPU alive; the sentence is
+        // what keeps the person from being the one who ends it.
+        if (view.stage == OtaStage.Sending || view.stage == OtaStage.Handshaking ||
+            view.stage == OtaStage.Verifying
+        ) {
+            Text(
+                "the phone is being kept awake for the install — do not close the app until the unit restarts.",
+                style = HudeCfgNote(),
+                color = HudColors.Amber,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
         }
@@ -523,6 +586,25 @@ private fun progressLine(view: OtaView): String {
 
 private fun mb(bytes: Long): String =
     String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
+
+/**
+ * Opens the system page that exempts this app from background battery management
+ * (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, with a `package:` URI — the form Google
+ * recommends, and the one MIUI's app-battery-saver screen hooks into). Not every ROM will
+ * open that exact intent for a third-party app, so the fallback is the app's own details
+ * page, where the same restriction can be lifted by hand.
+ */
+private fun askBatteryExemption(context: Context) {
+    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+        .setData(Uri.parse("package:${context.packageName}"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (runCatching { context.startActivity(direct) }.isFailure) {
+        val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(details) }
+    }
+}
 
 /** The transfer bar. The bar itself is real progress and never lags it; the colour it
  * lands on when the install completes is a state change, so that part eases. */

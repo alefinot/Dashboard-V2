@@ -549,9 +549,12 @@ class OtaCoreTest {
      * `OTA_SILENCE_MS`, so this reads it out of `src/bt_ota.cpp` and compares: changing one side
      * without the other fails here rather than stranding a resumable install (on the bench on
      * 2026-11-02 the unit closed an install at 60 s while the phone still showed it as paused).
-     * The second half is the write ceiling against the unit's ACK cadence: if the phone ever waited
-     * for more unconfirmed bytes than the unit ever reports, a well-behaved transfer would wait
-     * forever on an ACK that is never sent.
+     * The second half is the pacing ceiling against the unit's handoff ring: the phone may never
+     * run more frames ahead of its ACKs than the ring can hold — the 32 KiB ceiling that predates
+     * this test was 65 frames against a 7-frame ring, and the bench got the resulting
+     * `bad_frame ring full` abort on 2026-11-13 — while still staying above the unit's ACK
+     * cadence (half the usable ring), or a well-behaved transfer would wait forever on an ACK
+     * that is never sent.
      */
     @Test
     fun resumeWindowAndPacingMatchTheFirmware() {
@@ -563,12 +566,18 @@ class OtaCoreTest {
         // The same promise, in words, in the sentence a driver reads.
         assertTrue(OtaErrors.explain("link_lost").contains("two minutes"))
 
-        val ack = Regex("""OTA_ACK_BYTES\s*=\s*(\d+)""").find(firmware)
-            ?: error("OTA_ACK_BYTES not found in src/bt_ota.cpp")
+        val ring = Regex("""OTA_RING_SLOTS\s*=\s*(\d+)""").find(firmware)
+            ?: error("OTA_RING_SLOTS not found in src/bt_ota.cpp")
+        val slots = ring.groupValues[1].toInt()
         assertTrue(
-            "the phone waits for ${OtaController.OUTSTANDING_BYTES} unconfirmed bytes, but the unit " +
-                "acks every ${ack.groupValues[1]} — the transfer would stall waiting for an ACK",
-            ack.groupValues[1].toInt() < OtaController.OUTSTANDING_BYTES,
+            "the phone paces at ${OtaController.RING_PACE_FRAMES} unacked frames, but the unit's ring " +
+                "holds ${slots - 1} — one stalled drain pass would overflow it",
+            OtaController.RING_PACE_FRAMES < slots - 1,
+        )
+        assertTrue(
+            "the unit acks every ${(slots - 1) / 2} frames at the smallest, the phone waits for " +
+                "${OtaController.RING_PACE_FRAMES} — the transfer would stall waiting for an ACK",
+            (slots - 1) / 2 <= OtaController.RING_PACE_FRAMES,
         )
     }
 

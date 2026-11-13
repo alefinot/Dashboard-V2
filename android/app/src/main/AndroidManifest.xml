@@ -150,6 +150,19 @@
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="false" />
 
+        <!-- The install guard (service/OtaGuardService.kt): a second, short-lived connectedDevice
+             foreground service armed by `OtaController.start()` for the ~minute an install needs
+             the process to stay resident. TripLogService already proves the FGS shape is accepted
+             on these devices; the bench showed a still-running FGS alone did not stop MIUI from
+             force-finishing the activity and trimming the process (`has died: prev LAST`), so this
+             guard adds a wake lock for the locked-screen case and pairs with the battery-
+             optimization exemption the firmware card now offers — together they are what keeps a
+             backgrounded install alive to its end. -->
+        <service
+            android:name=".service.OtaGuardService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <!-- Share-sheet access to exported CSV/GPX, read-only and per-URI. -->
         <provider
             android:name="androidx.core.content.FileProvider"

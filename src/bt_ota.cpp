@@ -457,12 +457,13 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_ringsOver = false;
 
   // The ACK window for this session, capped at half the usable handoff ring for
-  // the chunk size this link negotiated. Not flow control - the phone's allowance
-  // is 32 KB, far past this ring (see OTA_ACK_BYTES) - but honesty about flash:
-  // an ACK is a claim about what the unit has written, and the unit should not make
-  // a claim further ahead than what it has actually drained, or the resume token
-  // after a drop points at bytes that only ever lived in RAM. Said out loud when it
-  // bites, because it changes the progress granularity the phone sees.
+  // the chunk size this link negotiated. This is not the phone's pacing ceiling
+  // anymore (that is RING_PACE_FRAMES in OtaController.kt, 6 frames, under the
+  // ring's 7 usable slots); it is honesty about flash: an ACK is a claim about
+  // what the unit has written, and the unit should not make a claim further
+  // ahead than what it has actually drained, or the resume token after a drop
+  // points at bytes that only ever lived in RAM. Said out loud when it bites,
+  // because it changes the progress granularity the phone sees.
   s_ackBytes = OTA_ACK_BYTES;
   {
     uint32_t halfRing = (uint32_t)(OTA_RING_SLOTS - 1) * s_chunk / 2u;
