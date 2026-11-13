@@ -9,7 +9,7 @@ import kotlin.math.hypot
  * Compose 1.7.5 keeps a vector's paths to itself (`pathComponents` is gone and what replaced it is
  * not public API), so the winding that a fill actually obeys can only be read off the `String` the
  * glyph was built from — which is why the sets keep their outlines as `internal` data (`CogOutline`,
- * `WheelData`, `WarnData`, …) rather than only as a built `ImageVector`.
+ * `SportWheelData`, `WarnData`, …) rather than only as a built `ImageVector`.
  *
  * These deliberately do *not* form a general SVG parser. They answer three questions and nothing
  * else: how many contours is this, where are a contour's vertices, and which way does it wind.

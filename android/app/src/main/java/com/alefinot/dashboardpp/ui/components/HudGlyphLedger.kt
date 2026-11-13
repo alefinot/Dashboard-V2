@@ -31,7 +31,7 @@ object HudGlyphLedger {
         // ── Places. The bar, and the same mark on the page it opens. ──
         "nav.live" to HudIcons.Gauge,
         "nav.trips" to HudIcons.Pin,
-        "nav.vehicles" to HudIcons.Wheel,
+        "nav.vehicles" to HudIcons.SportWheel,
         "nav.unit-settings" to HudIcons.Chip,
         "nav.app-settings" to HudIcons.Cog,
 
@@ -75,7 +75,9 @@ object HudGlyphLedger {
         "readout.power" to HudIcons.Bolt,
         "readout.recording" to HudIcons.Record,
         "readout.stale" to HudIcons.Warn,
-        "vehicle.placeholder" to HudIcons.Wheel,
+        // The vehicle card's empty cover and the editor's empty well. Same mark as the bar's
+        // `nav.vehicles`, and `SHARED["SportWheel"]` is the reason that is not a collision.
+        "vehicle.placeholder" to HudIcons.SportWheel,
     )
 
     /**
@@ -92,12 +94,14 @@ object HudGlyphLedger {
             "before it was moved, a release list asked again, a trip counter zeroed. The circular " +
             "arrow never shares a screen with Power, which is the one restart it must not be " +
             "confused with, and that separation is deliberate (see HudIcons.Power).",
-        "Wheel" to "The bar's slot, the placeholder on a card with no photo and `go to the garage` " +
-            "all mean this app's subject, so they are one mark, not three.",
         "Gauge" to "The LIVE slot and the speed card are the same reading, and the launcher icon is " +
             "that reading (see HudIcons.Gauge).",
         "Pin" to "The TRIPS slot, a recorded trip and its distance are the same object in three " +
             "places — the map, the list and the card already draw one pin.",
+        "SportWheel" to "`the vehicle tab` and `a vehicle with no photo yet` are the same noun: this " +
+            "app's subject. The bar's centre slot, a card's empty cover, the editor's empty well and " +
+            "`OPEN VEHICLE PAGE` therefore draw one Ultraleggera rather than a tab mark and a " +
+            "placeholder mark that happen to look alike.",
     )
 
     /**

@@ -131,10 +131,10 @@ fun NotLinkedCover(
                 HudButton(
                     "OPEN VEHICLE PAGE",
                     style = HudButtonStyle.PRIMARY,
-                    // The bar's own wheel: the mark that means "vehicle" in the bar is the
-                    // mark on the door to the vehicle page, so the cover points at the tab
-                    // it is sending you to rather than only spelling it.
-                    glyph = HudIcons.Wheel,
+                    // The bar's own wheel: the mark that means "vehicle" in the bar is the mark on
+                    // the door to the vehicle page, so the cover points at the tab it is sending you
+                    // to rather than only spelling it.
+                    glyph = HudIcons.SportWheel,
                     onClick = onOpenVehicles,
                 )
             }

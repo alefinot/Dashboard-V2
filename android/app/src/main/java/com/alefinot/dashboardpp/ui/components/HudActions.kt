@@ -101,7 +101,7 @@ fun HudGlyphAction(
     badge: Boolean = false,
     /** An unselected slot recedes; 1f is "this is the one". */
     emphasis: Float = 1f,
-    /** Paint the artwork as drawn instead of tinting it — the bar's centre wheel. */
+    /** Paint the artwork as drawn instead of tinting it — the bar's centre mark. */
     asDrawn: Boolean = false,
     /** Where the pressed box landed, for the callers that park a layer on it. */
     onBounds: (Rect) -> Unit = {},

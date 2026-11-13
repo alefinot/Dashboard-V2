@@ -5,10 +5,12 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.circle
+import com.alefinot.dashboardpp.ui.components.contourPoints
 import com.alefinot.dashboardpp.ui.components.signedArea
 import com.alefinot.dashboardpp.ui.components.subpaths
 import com.alefinot.dashboardpp.ui.components.vertices
 import kotlin.math.hypot
+import kotlin.math.sin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,90 +89,110 @@ class BarLayoutTest {
     }
 
     @Test
-    fun `the wheel glyph is drawn on the same grid as the others`() {
-        // Same 24-unit viewport, same stroke language: a borrowed icon from another set
+    fun `the vehicle mark is drawn on the same grid as the others`() {
+        // Same 24-unit viewport, same language of filled bodies: a borrowed icon from another set
         // would be a second visual language in a bar that already has one.
-        assertEquals(24f, HudIcons.Wheel.viewportWidth, 0f)
-        assertEquals(24f, HudIcons.Wheel.viewportHeight, 0f)
+        assertEquals(24f, HudIcons.SportWheel.viewportWidth, 0f)
+        assertEquals(24f, HudIcons.SportWheel.viewportHeight, 0f)
     }
 
     /**
-     * The wheel obeys the same rule the hatchback it replaces was built to teach: at the bar's
-     * sizes - a 1.9-unit stroke is ~5 px, so every interior has to be wider than the line that
-     * would close it - a mark with interior detail is a *filled* body whose detail is opened by
-     * counter-winding, never a stroked outline. So the tyre is a disc with a smaller disc wound
-     * the other way cut out of it, the face is a disc drawn back inside that groove, and each
-     * spoke gap is a wedge wound against the face. NonZero only opens a contour that winds the
-     * other way, so what shows through the openings and the groove is the glass sheet the bar
-     * floats on - nothing is painted over it.
+     * The wheel the bar and the cards draw, after OZ's Ultraleggera: a thin low-profile tyre, a
+     * wide rim, and **six double spokes** that run out to the lip with the centre carved open. Two
+     * openings per pitch is the entire design — the daylight between two pairs, and a wedge inside
+     * each pair that starts out at the hub so the two branches keep one shared root and fork only
+     * as they reach the lip. Every one of the twelve is a contour wound against the face, so what
+     * shows through the spokes is the bar's glass sheet or the card's empty panel, never paint.
      *
-     * Checked on the path data rather than on the built `ImageVector` because Compose 1.7.5 keeps
-     * a vector's paths to itself (`pathComponents` is gone, and what replaced it is not public
-     * API), and the data is where the winding actually lives anyway.
+     * The floors are stated in pixels at the bar's 30 dp (one unit ~3.4 px on the bench phone),
+     * the size the mark is seen at most and the size a photo-less card cover draws it at; the
+     * editor's well is 38 dp, and the `OPEN VEHICLE PAGE` button's 18 dp is deliberately not
+     * floored here because a wheel's twelve openings are not what that size can resolve.
      */
     @Test
-    fun `the wheel is rings and spoke gaps cut out of a filled face`() {
-        val subs = subpaths(HudIcons.WheelData)
-        assertEquals("tyre outer, tyre inner, the wheel face, and five spoke gaps", 8, subs.size)
-        // The first three contours are the two-arc circles the `circle` reader parses; the rest
-        // are the spoke gaps, four chords each.
-        val rings = subs.take(3).map(::circle)
-        val gaps = subs.drop(3)
-        assertEquals("five spoke gaps", 5, gaps.size)
-        val (tyreOut, tyreIn, face) = rings
-        for (ring in rings) {
-            assertEquals("ring off-centre in x", 12f, ring.centre.x, 0.01f)
-            assertEquals("ring off-centre in y", 12f, ring.centre.y, 0.01f)
+    fun `the sport wheel is a thin tyre and six double spokes cut out of the rim`() {
+        val subs = subpaths(HudIcons.SportWheelData)
+        assertEquals("tyre outer, tyre inner, the rim face, six openings, six splits, the bore",
+            16, subs.size)
+
+        val rings = listOf(circle(subs[0]), circle(subs[1]), circle(subs[2]), circle(subs[15]))
+        for ((i, ring) in rings.withIndex()) {
+            assertEquals("ring $i off-centre in x", 12f, ring.centre.x, 0.01f)
+            assertEquals("ring $i off-centre in y", 12f, ring.centre.y, 0.01f)
+        }
+        val (tyre, tyreIn, lip, bore) = rings
+        assertTrue("the tyre's outer edge does not wind as ink ($tyre)", tyre.sign > 0.0)
+        assertTrue("the tyre's inner edge winds with it, so the tyre fills solid",
+            tyreIn.sign * tyre.sign < 0.0)
+        assertTrue("the rim face does not wind as ink, so the middle of the wheel is a hole",
+            lip.sign * tyre.sign > 0.0)
+        assertTrue("the centre bore winds with the face, so the hub has no bore",
+            bore.sign * lip.sign < 0.0)
+
+        // Twelve openings. A contour that winds *with* the face is filled by NonZero, and the
+        // wheel is a disc again — the one thing this glyph exists not to be.
+        val openings = subs.subList(3, 9).map { contourPoints(it) }
+        val splits = subs.subList(9, 15).map { contourPoints(it) }
+        for ((i, pts) in openings.withIndex()) {
+            assertEquals("opening $i is an arc-chord-arc-chord band", 4, pts.size)
+            assertTrue("opening $i winds with the face, so the wheel has no spokes",
+                signedArea(pts) < 0.0)
+        }
+        for ((i, pts) in splits.withIndex()) {
+            assertEquals("split $i is a wedge of daylight with its apex inboard", 3, pts.size)
+            assertTrue("split $i winds with the face, so the pair is one spoke, not a double",
+                signedArea(pts) < 0.0)
         }
 
-        // The tyre has to *be* a ring: its inner edge winds against its outer edge, and it is the
-        // groove between the tyre and the face that says "wheel" rather than "solid disc".
-        assertTrue("the tyre's outer edge does not wind as ink ($tyreOut)", tyreOut.sign > 0.0)
-        assertTrue("the tyre's inner edge winds with the outer, so the tyre fills solid",
-            tyreIn.sign * tyreOut.sign < 0.0)
-        assertTrue("the face does not wind as ink, so the middle of the wheel is a hole",
-            face.sign * tyreOut.sign > 0.0)
-        val tyreWidth = tyreOut.radius - tyreIn.radius
-        val groove = tyreIn.radius - face.radius
-        assertTrue("a $tyreWidth-unit tyre closes up at the bar's smallest size", tyreWidth >= 2f)
-        assertTrue("a $groove-unit groove between tyre and rim is not daylight at 30 dp",
-            groove >= 1.2f)
+        // Where the carving stops is what keeps the wheel a wheel: a continuous lip at the edge,
+        // a solid hub at the centre, and a wall of hub left around the bore.
+        val lipIn = openings.maxOf { pts -> pts.maxOf { rad(it) } }
+        val hub = openings.minOf { pts -> pts.minOf { rad(it) } }
+        assertTrue("the openings reach r=$lipIn on a face of r=${lip.radius}: the lip is cut " +
+            "through, and a wheel with a broken rim lip is a snowflake",
+            lipIn <= lip.radius - 0.05f)
+        assertTrue("the openings cut in to r=$hub, so there is no hub left", hub >= 2.0f)
+        assertTrue("a r$hub hub bored to r${bore.radius} has no wall at 30 dp",
+            hub - bore.radius >= 1.2f)
+        val root = splits.minOf { pts -> pts.minOf { rad(it) } }
+        assertTrue("the split starts at r=$root, inboard of the hub's edge (r$hub): the pair " +
+            "never shares a root, and six double spokes become twelve plain ones",
+            root > hub)
 
-        // Each spoke gap must wind against the face, or NonZero fills it and the wheel has no
-        // spokes - it is a disc again, the very thing this glyph exists to not be.
-        for ((i, area) in gaps.map { signedArea(vertices(it)) }.withIndex()) {
-            assertTrue("spoke gap $i winds with the face ($area), so it fills and the wheel is " +
-                "solid", area < 0.0)
-        }
+        val px = 82f / 24f   // the card cover's 30 dp on the bench phone
+        val tyreWidth = (tyre.radius - tyreIn.radius) * px
+        val groove = (tyreIn.radius - lip.radius) * px
+        val lipRing = (lip.radius - lipIn) * px
+        assertTrue("a ${tyreWidth}px tyre is not a low-profile sidewall — it is the old wheel",
+            tyreWidth >= 4.5f)
+        assertTrue("${groove}px of daylight between tyre and rim closes up at 30 dp: that band " +
+            "is what says 'wheel' rather than 'solid disc'", groove >= 2.2f)
+        assertTrue("${lipRing}px of rim lip closes up at 30 dp", lipRing >= 2.2f)
 
-        // Gaps live strictly inside the face: a hub stays solid at the centre, a rim lip stays at
-        // the edge, and nothing ever breaches the groove into the tyre.
-        val gapRadii = gaps.flatMap { vertices(it) }.map { hypot(it.x - 12f, it.y - 12f) }
-        val innermost = gapRadii.minOrNull()!!
-        val outermost = gapRadii.maxOrNull()!!
-        assertTrue("a spoke gap reaches to r=$innermost: the hub has been cut away",
-            innermost >= 2.5f)
-        assertTrue("a spoke gap reaches r=$outermost, into the rim lip or the tyre " +
-            "(the face is only r${face.radius})", outermost < face.radius - 0.05f)
+        // Six-fold, and the split runs up the middle of a pair rather than through the daylight
+        // beside it, which is the difference between a double spoke and a broken one.
+        val openCentres = openings.map { centre(it) }
+        val splitCentres = splits.map { centre(it) }
+        assertTrue("the six openings are not six-fold apart", closestToEach(openCentres) >= 55.0)
+        assertTrue("the six splits are not six-fold apart", closestToEach(splitCentres) >= 55.0)
+        val offset = openCentres.flatMap { a -> splitCentres.map { b -> apart(a, b) } }
+            .minOrNull() ?: error("the mark has no openings")
+        assertTrue("the split runs $offset degrees off the middle of its pair",
+            offset in 25.0..35.0)
 
-        // Five gaps, five-fold: their centroids sit ~72 degrees apart, so no two gaps merge and no
-        // spoke is pinched out at the hub.
-        val centroids = gaps.map {
-            val v = vertices(it)
-            val cx = v.map { p -> p.x }.average().toFloat()
-            val cy = v.map { p -> p.y }.average().toFloat()
-            Math.atan2((cy - 12f).toDouble(), (cx - 12f).toDouble())
-        }
-        val closest = centroids.flatMap { a ->
-            centroids.map { b ->
-                var d = Math.abs(a - b)
-                if (d > Math.PI) d = 2 * Math.PI - d
-                d
-            }
-        }.filter { it > 1e-6 }.minOrNull() ?: error("two spoke gaps share a centre")
-        val separation = Math.toDegrees(closest)
-        assertTrue("closest spoke gaps sit only $separation degrees apart; five-fold spacing " +
-            "is ~72", separation >= 55.0)
+        // The two branches of a pair, measured where they are thinnest-in-practice — at the lip.
+        // 60 degrees of pitch, the daylight's own span, and the split's span leave the rest: that
+        // is what the eye has to resolve, and it is why this is the tight number in the mark.
+        val narrowest = openings.zip(splits).map { (open, split) ->
+            val branchDeg = (60.0 - span(open) - span(split)) / 2.0
+            2.0 * lipIn * sin(Math.toRadians(branchDeg / 2.0))
+        }.minOrNull()!!
+        assertTrue("${"%.1f".format(narrowest * px)}px of branch at 30 dp: below this the pair's " +
+            "two spokes fuse into one and the wheel stops being an Ultraleggera",
+            narrowest * px >= 2.6f)
+        val window = 2.0 * lipIn * sin(Math.toRadians(span(splits.first()) / 2.0))
+        assertTrue("${window * px}px of daylight between a pair's branches at the lip",
+            window * px >= 2.2f)
     }
 
     /**
@@ -261,6 +283,49 @@ class BarLayoutTest {
         // The tip is the leftmost vertex, and it sits low: the pencil points to the lower-left.
         val tip = pts.minByOrNull { it.x }!!
         assertTrue("the pencil does not point to the lower-left ($tip)", tip.x < 6f && tip.y > 18f)
+    }
+
+    // ── reading the wheel's arcs ─────────────────────────────────────────────────────
+    // The wheel's twelve openings are arcs, not chords, so `vertices` cannot see them and the
+    // interesting numbers are angles and radii rather than coordinates. The old mark needed none
+    // of this: its spokes were four straight chords each.
+
+    /** How far a point sits from the grid's centre. */
+    private fun rad(p: Offset): Float = hypot(p.x - 12f, p.y - 12f)
+
+    /** Which way round the grid's centre a point is, in degrees, y growing down. */
+    private fun deg(p: Offset): Double =
+        Math.toDegrees(Math.atan2((p.y - 12f).toDouble(), (p.x - 12f).toDouble()))
+
+    /**
+     * Which way round the centre a whole contour sits. The vector mean, not the arithmetic one:
+     * the pair of spokes that straddles the ±180° line has points at 176.5° and -176.5°, and
+     * averaging those reads as if it sat at 0° — on the opposite side of the wheel.
+     */
+    private fun centre(pts: List<Offset>): Double {
+        val x = pts.sumOf { Math.cos(Math.toRadians(deg(it))) } / pts.size
+        val y = pts.sumOf { Math.sin(Math.toRadians(deg(it))) } / pts.size
+        return Math.toDegrees(Math.atan2(y, x))
+    }
+
+    /**
+     * The angle a contour covers — for these arc-and-chord bands, its width. Twice the widest
+     * reach of any point from the contour's own centre, measured the short way round, which is
+     * what keeps the pair across the ±180° line from being read as a 356° gap.
+     */
+    private fun span(pts: List<Offset>): Double = 2.0 * pts.maxOf { apart(deg(it), centre(pts)) }
+
+    /** The smallest angle between two of a set of centres, folded to ±180°: six-fold says ~60. */
+    private fun closestToEach(centres: List<Double>): Double =
+        centres.flatMap { a -> centres.map { b -> apart(a, b) } }
+            .filter { it > 1e-6 }
+            .minOrNull() ?: error("two features share a centre")
+
+    /** The angle between two directions round the grid, folded into 0..180°. */
+    private fun apart(a: Double, b: Double): Double {
+        var d = Math.abs(a - b) % 360.0
+        if (d > 180.0) d = 360.0 - d
+        return d
     }
 }
 

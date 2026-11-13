@@ -344,7 +344,7 @@ private fun cardPhoto(connection: ConnectionViewModel, vehicleId: String): Bitma
 }
 
 /**
- * The cover panel: photo, scan ring, or wheel glyph - one of the three, in that order.
+ * The cover panel: photo, scan ring, or placeholder glyph - one of the three, in that order.
  *
  * The panel is square because the picture is: the editor frames a stored photo 1:1, so a
  * square cover shows the whole framed square edge to edge instead of a cropped band of it.
@@ -383,7 +383,7 @@ private fun CardCover(
                 ScanRing(ringProgress, Modifier.size(28.dp))
             } else {
                 Icon(
-                    HudIcons.Wheel,
+                    HudIcons.SportWheel,
                     contentDescription = null,
                     tint = if (selected) HudColors.CyanDim else HudColors.TextDim,
                     modifier = Modifier.size(30.dp),
@@ -413,7 +413,9 @@ private fun CardCover(
  * but on the connected card green wins, because a live link outranks which card is picked.
  *
  * The cover shows the vehicle's photo when the card has one, and until then it is a placeholder
- * panel drawn with the bar's own wheel glyph so the shape means "vehicle" in both places — drawn dim
+ * panel drawn with the bar's own wheel ([HudIcons.SportWheel]) — the shape that means "vehicle" in
+ * the bar is the shape on an empty card, and the editor's photo well draws it again at a larger
+ * size. Drawn dim
  * on purpose: an empty frame that shows the glyph is honest about being empty, one that shows a
  * stock photo is not. The cover is square, so the whole 1:1 picture the editor framed shows with
  * nothing cropped away (see [CardCover]). While the app is hunting for **this** card's unit the

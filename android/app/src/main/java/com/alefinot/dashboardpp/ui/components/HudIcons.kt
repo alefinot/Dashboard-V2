@@ -30,7 +30,7 @@ import java.util.Locale
  * cog, the pin, the chip - while a mark that is only a line can be stroked at that weight -
  * the chevron, the reset arrow, the magnifier. What does not survive is a stroked outline
  * with something inside it: the stroke closes every interior, and both of the glyphs redrawn
- * on 2026-11-08 died that way. See [Wheel] and [Cog].
+ * on 2026-11-08 died that way. See [SportWheel] and [Cog].
  *
  * One icon is not *drawn* here from scratch: the live view's mark is the launcher's
  * own gauge (see [Gauge]), so the app's face is the thing the user taps to get back to
@@ -469,89 +469,106 @@ object HudIcons {
     }
 
     /**
-     * Vehicles: a car wheel — tyre, groove, rim, five spokes, hub.
+     * Vehicles: the app's subject, drawn as OZ's Ultraleggera wheel.
      *
-     * The maintainer asked to swap the hot hatchback for a wheel on 2026-11-08. The hatch it
-     * replaces had earned its keep as an argument for the one rule this set obeys (see the file
-     * header): a mark with interior detail is a filled body whose detail is *cut* out by
-     * counter-winding, never a stroked outline. A wheel obeys the same rule with no exceptions —
-     * every ring here is a filled disc with the next disc wound the other way cut out of it, and
-     * every spoke gap is a wedge wound against the wheel face, so the glass sheet the bar floats
-     * on shows through the openings rather than being painted over.
+     * One mark owns all four vehicle places — the bar's centre slot, a card cover that has no photo,
+     * the editor's empty photo well, and the `OPEN VEHICLE PAGE` button — exactly as one mark owned
+     * them before 2026-11-13. What changed is the drawing: the old mark was a chunky five-spoke
+     * alloy, and the request was for a thin low-profile tyre, a wide rim, and six double spokes
+     * running out to the lip with the centre carved open. That is OZ Racing's own description of the
+     * Ultraleggera; this is an original drawing of that geometry on this set's 24-unit grid, not a
+     * traced product image, and it carries no OZ mark or lettering.
      *
-     * Sized to survive the bar's centre slot, 30 dp on the bench phone (~82 px, one unit ~3.4 px):
-     *  - the tyre is a 2.5-unit ring, the widest thing in the mark, so it is read first;
-     *  - a 1.5-unit groove separates the tyre from the rim — that one band of daylight is what
-     *    says "wheel" and not "solid disc", and it is the analogue of the arch gap the car used;
-     *  - five openings, 38° of a 72° pitch, are the negative space; the 34° of ink between them
-     *    are the spokes. Spokes are wedges, so they thicken outward and stay clear of the 2 px
-     *    mush floor even at the hub, where they are at their narrowest.
+     * A garage with an open door and a car inside it was drawn for the centre slot the same day and
+     * deleted the same day at the maintainer's verdict — the wheel is the app's vehicle mark. The
+     * card's "no photo yet" square keeps drawing it, and `SHARED["SportWheel"]` records why the bar
+     * and that square are the same word rather than two.
      *
-     * Built by a loop for the same reason [gearOutline] is: the tyre/rim radii and the spoke
-     * count stay numbers somebody can change instead of forty magic coordinates. The rings are
-     * two semicircle arcs (the form the tests read with `circle`); the spokes are chords.
+     * The language is the set's one rule — every ring is a filled disc with the next disc wound the
+     * other way cut out of it, and every opening is a band of daylight wound against the face, so
+     * what shows through the spokes is the bar's glass sheet or the card's empty panel and not a
+     * rectangle of paint. Twelve openings per revolution is the design: 40° of daylight between the
+     * pairs, and a 7° wedge inside each pair that stops short of the hub, so the two branches keep
+     * one shared root and only split as they reach the lip.
      *
-     * The same mark is the placeholder on a vehicle card that has no photo (see
-     * [VehicleScreen] and [VehicleEditorScreen]), so "a vehicle" means one shape in the bar and
-     * on the card.
+     * The floors are stated at the bar's 30 dp, the size the mark is seen at most and the size the
+     * card cover draws it at too. One unit is ~3.4 px on the bench phone, and the mark reads as
+     * 5.5 px of tyre, 2.7 px of daylight between tyre and rim, 2.7 px of lip, 3.0 px branches with a
+     * 3.3 px window between them, and a 15 px hub bored with a 5.5 px centre hole. The branches are
+     * the tight thing in it — thinner than the old mark's spokes was the request — and
+     * [BarLayoutTest] holds the line where they still read. The editor's well is 38 dp and roomier
+     * again. At the button's 18 dp the arithmetic says the window falls to ~2.0 px and a branch to
+     * ~1.8 px, so the twelve openings stop resolving one by one and the mark reads as a thin tyre
+     * ring around a bored hub — which is what the old chunky mark did there, and why 18 dp is not
+     * what this drawing is sized for.
      */
-    val Wheel: ImageVector by lazy {
+    val SportWheel: ImageVector by lazy {
         ImageVector.Builder(
-            name = "HudWheel", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            name = "HudSportWheel", defaultWidth = VB.dp, defaultHeight = VB.dp,
             viewportWidth = VB, viewportHeight = VB,
         ).addPath(
-            // One path: tyre ring, then the face inside it, then the spoke gaps cut against the
-            // face — NonZero reads the winding of every subpath against the others.
-            PathParser().parsePathString(WheelData).toNodes(),
+            // One path: tyre ring, then the face inside the groove, then the twelve openings and
+            // the bore, every one of them wound against what it cuts.
+            PathParser().parsePathString(SportWheelData).toNodes(),
             fill = SolidColor(HudColors.Cyan),
         ).build()
     }
 
     /**
-     * The wheel's geometry — tyre ring, wheel face, five spoke gaps — as the single string
-     * [Wheel] fills. Kept as a string for the same reason as [CogOutline]: the test can then
-     * count the rings and the openings and check that every cut winds against what it cuts,
-     * which is the whole design, without reaching into Compose's vector internals.
+     * The Ultraleggera's geometry as the single string [SportWheel] fills — kept as a string for
+     * the same reason as [CogOutline], so the test can count the rings, count the twelve openings
+     * and check that every cut winds against the face.
      */
-    internal val WheelData: String = wheelOutline(
-        tyre = 11.0f, tyreIn = 8.5f, face = 7.0f,
-        spokes = 5, hub = 2.9f, lip = 5.8f, openingHalfDeg = 19f,
+    internal val SportWheelData: String = ultraleggeraOutline(
+        tyre = 11.0f, tyreIn = 9.4f, lip = 8.6f, lipIn = 7.8f,
+        pairs = 6, hub = 2.2f, pairDeg = 20.0, splitDeg = 7.0, splitRoot = 4.0f, bore = 0.8f,
     )
 
     /**
-     * A wheel as one path. The tyre is a disc with a smaller disc cut out of it; the face is a
-     * disc drawn inside that cut; each spoke gap is a wedge wound the other way so NonZero
-     * opens it. Rings are two semicircle arcs (sweep 1 winds ink, sweep 0 winds a cut); gaps are
-     * four chords traced clockwise in this y-down grid so they subtract from the face.
+     * A six-double-spoke wheel as one path. The tyre is a disc with a smaller disc cut out of it
+     * — a thin one, because a low-profile sidewall is what makes the rim look large — and the face
+     * is a disc drawn back inside that groove, out to the lip. Above the hub it is opened at every
+     * pitch by [opening12], the daylight between two pairs, and each remaining pair is then split
+     * by a wedge of daylight that starts at [splitRoot] rather than at the hub: that shared root
+     * is what turns six spokes into six *pairs*, and a wedge is the shape the real wheel's split
+     * is. Rings are two semicircle arcs, as in [disc12]; the openings are arcs and chords.
      *
      * `Locale.ROOT` is load-bearing, exactly as in [gearOutline]: `%.2f` follows the default
      * locale, and on a locale that writes `1,23` the path parser would see a comma where a
      * coordinate belongs.
      */
-    private fun wheelOutline(
+    private fun ultraleggeraOutline(
         tyre: Float,
         tyreIn: Float,
-        face: Float,
-        spokes: Int,
-        hub: Float,
         lip: Float,
-        openingHalfDeg: Float,
+        lipIn: Float,
+        pairs: Int,
+        hub: Float,
+        pairDeg: Double,
+        splitDeg: Double,
+        splitRoot: Float,
+        bore: Float,
     ): String {
         val sb = StringBuilder()
         sb.append(disc12(tyre, ink = true))     // outer tyre edge — ink
-        sb.append(disc12(tyreIn, ink = false))  // inner tyre edge — cut → the tyre is a ring
-        sb.append(disc12(face, ink = true))     // the wheel face fills back inside the groove
-        val step = 360.0 / spokes
-        for (i in 0 until spokes) {
-            val centre = i * step + step / 2.0   // a gap sits between two spokes
-            val a = centre - openingHalfDeg
-            val b = centre + openingHalfDeg
-            // inner@start, inner@end, outer@end, outer@start: clockwise here, so a cut.
-            sb.append("M").append(polar12(a, hub)).append(" L")
-                .append(polar12(b, hub)).append(" L")
-                .append(polar12(b, lip)).append(" L")
-                .append(polar12(a, lip)).append(" Z ")
+        sb.append(disc12(tyreIn, ink = false))  // inner tyre edge — cut → the tyre is a thin ring
+        sb.append(disc12(lip, ink = true))      // the face: lip and spokes, carved open below
+        val pitch = 360.0 / pairs
+        for (i in 0 until pairs) {
+            // The daylight between two pairs, and a pair keeps `pairDeg` of the pitch to itself.
+            sb.append(opening12(i * pitch + pairDeg / 2.0, (i + 1) * pitch - pairDeg / 2.0,
+                hub, lipIn))
         }
+        for (i in 0 until pairs) {
+            // The split inside a pair. Outer edge first, then the far outer edge, then back to the
+            // apex: that order is a cut, and the mirror of it would fill and lose the "double".
+            val centre = i * pitch
+            val half = splitDeg / 2.0
+            sb.append("M").append(polar12(centre, splitRoot)).append(" L")
+                .append(polar12(centre + half, lipIn)).append(" L")
+                .append(polar12(centre - half, lipIn)).append(" Z ")
+        }
+        sb.append(disc12(bore, ink = false))    // the centre bore
         return sb.toString()
     }
 
@@ -931,5 +948,18 @@ object HudIcons {
             Locale.ROOT, "%.2f,%.2f",
             12.0 + radius * Math.cos(a), 12.0 + radius * Math.sin(a),
         )
+    }
+
+    /**
+     * A band of daylight between two spokes: from `rIn` to `rOut`, spanning `from`..`to` degrees.
+     * The inner arc runs with the angle and the outer arc runs back against it, which is the way
+     * round a cut has to go in this y-down grid, so a fill rule opens the face it sits in instead
+     * of painting over it. Both arcs are under 180°, hence the 0 large-arc flag.
+     */
+    private fun opening12(from: Double, to: Double, rIn: Float, rOut: Float): String {
+        val ri = String.format(Locale.ROOT, "%.2f,%.2f", rIn, rIn)
+        val ro = String.format(Locale.ROOT, "%.2f,%.2f", rOut, rOut)
+        return "M" + polar12(from, rIn) + " A$ri 0 0 1 " + polar12(to, rIn) +
+            " L" + polar12(to, rOut) + " A$ro 0 0 0 " + polar12(from, rOut) + " Z "
     }
 }

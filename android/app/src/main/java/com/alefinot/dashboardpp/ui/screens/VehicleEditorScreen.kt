@@ -337,7 +337,7 @@ fun VehicleEditorScreen(
                             }
                         },
                         onRemove = {
-                            // Draft-scoped since 2026-11-10: the well shows the wheel glyph and
+                            // Draft-scoped since 2026-11-10: the well shows the placeholder glyph and
                             // the files stay exactly where they are until SAVE says otherwise.
                             photoEdit = PhotoEdit.Remove
                             photoNote = null
@@ -555,7 +555,7 @@ private fun EditorCard(
 
 /**
  * The photo card: the well beside its two doors, then — only for a card that already has a
- * picture — re-frame and remove on their own row. The well keeps the garage cover's square
+ * picture — re-frame and remove on their own row. The well keeps the card cover's square
  * and its wheel glyph, because the card the user is editing will show this picture at 76 dp
  * under the same corners; the buttons are in a column to its right so the photo, not a row of
  * labels, is what the eye lands on, and re-frame comes before remove because it is the kinder
@@ -628,8 +628,8 @@ private fun PhotoCard(
 }
 
 /**
- * The well itself: the card's picture, or the bar's wheel glyph until it has one. The glyph
- * is the same honesty the garage cover keeps — an empty square that shows nothing looks
+ * The well itself: the card's picture, or the bar's wheel glyph until it has one. The
+ * glyph is the same honesty the card cover keeps — an empty square that shows nothing looks
  * broken, and one that shows the glyph says "vehicle, no photo yet".
  */
 @Composable
@@ -651,7 +651,7 @@ private fun PhotoWell(preview: Bitmap?) {
             )
         } else {
             Icon(
-                HudIcons.Wheel,
+                HudIcons.SportWheel,
                 contentDescription = null,
                 tint = HudColors.TextDim,
                 modifier = Modifier.size(38.dp),

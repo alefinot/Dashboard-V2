@@ -85,7 +85,8 @@ class HudGlyphGeometryTest {
         val declared = Regex("""internal val (\w+): String""").findAll(iconsSource())
             .map { it.groupValues[1] }.toSet()
         val measuredByTheBar = setOf(
-            "CogOutline", "WheelData", "EditData", "LinkOnData", "LinkOffData", "LinkOffBreak",
+            "CogOutline", "SportWheelData", "EditData", "LinkOnData",
+            "LinkOffData", "LinkOffBreak",
         )
         assertEquals("an outline exists that nothing measures", declared, data.keys + measuredByTheBar)
     }
