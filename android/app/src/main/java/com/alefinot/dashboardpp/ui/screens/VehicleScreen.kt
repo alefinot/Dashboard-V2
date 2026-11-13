@@ -306,6 +306,11 @@ fun VehicleScreen(
             scanWhy = scanWhy,
             radioMissing = radioMissing,
             retry = findIsRetrySearch,
+            // The search this card starts is the only attempt whose progress belongs here
+            // instead of on a vehicle card. The standalone sweep is read first: while it is
+            // listening, it is the newest thing this card has to say.
+            search = addVehicleSearchLine(connection.addSearch.value)
+                ?: addVehicleSearchLine(state),
             onPair = { connection.pairWith(it) },
         )
     }
@@ -692,6 +697,10 @@ private fun NoticeCard(
  * unit's own name is on its screen and in this list - so the way in is a sweep and a tap,
  * and the pairing happens here [plan §4].
  *
+ * The sweep's own progress lives here too ([search]), not on a vehicle card: pressing
+ * SEARCH asks about the air around the phone, and a card rewriting its status to "looking
+ * for a dashboard" would be answering a question about itself that nobody asked.
+ *
  * A tap is not decoration: it pins that unit to the front of the ladder ([Found] goes to
  * [ConnectionViewModel.pairWith]), which is what makes two dashboards in range, or a
  * neighbour's, an actual choice instead of a race between signal strengths.
@@ -703,6 +712,7 @@ private fun AddVehicleCard(
     scanWhy: String?,
     radioMissing: Boolean,
     retry: Boolean,
+    search: CardStatusLine?,
     onPair: (Found) -> Unit,
 ) {
     Column(
@@ -724,6 +734,20 @@ private fun AddVehicleCard(
             glyph = if (retry) HudIcons.Reset else HudIcons.Search,
         ) { onSearch() }
         Spacer(Modifier.height(10.dp))
+
+        // The wait, and the answer when there is no wait left. Both belong to the button
+        // above: a failed sweep is only duplicated by `scanWhy` when the radio itself was
+        // the reason, so that case keeps the one line that names the phone's own problem.
+        if (search != null && (search.tone == CardTone.LIVE || scanWhy == null)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (search.tone == CardTone.LIVE) {
+                    ScanRing(0f, Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(search.text, color = statusColor(search.tone), style = HudeCfgNote())
+            }
+            Spacer(Modifier.height(10.dp))
+        }
 
         // A sweep that could not run, or found nothing, has to say which. Silence here is
         // what made the old network hunt untrustworthy: an empty list and a blocked radio

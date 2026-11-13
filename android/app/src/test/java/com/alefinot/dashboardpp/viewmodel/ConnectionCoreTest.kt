@@ -105,6 +105,24 @@ class ConnectionCoreTest {
     }
 
     @Test
+    fun `a discovery reach has the same radio reach as a card press`() {
+        // DISCOVER is the mode of a reach started from the ADD VEHICLE card. The standalone
+        // sweep never enters this function - it works on the radio alone - but a row the
+        // user taps does, and once it is reaching, the radio may do what a card press may
+        // do: sweep when a spent pairing leaves it nowhere else to go.
+        assertEquals(
+            NextAction.Scan,
+            decide(emptyList(), null, mode = ConnectMode.DISCOVER).next,
+        )
+        val cards = listOf(card("a", ble = PAIR_A))
+        val spent = decide(
+            cards, "a", tried = listOf(PAIR_A),
+            outcome = LinkOutcome.Fail(PAIR_A), mode = ConnectMode.DISCOVER,
+        )
+        assertEquals(NextAction.Scan, spent.next)
+    }
+
+    @Test
     fun `a selection that no longer exists is idle, not a crash`() {
         // A card deleted from under an in-flight attempt. The view model re-reads the
         // list every step, so the core has to answer this rather than assume its

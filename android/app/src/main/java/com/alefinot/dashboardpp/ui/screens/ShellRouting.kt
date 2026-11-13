@@ -76,9 +76,13 @@ fun ConnectionUiState.Connecting.stageLine(): String = when (stage) {
         // A retry at a press: the line says what it relies on, which is also why it is
         // fast. There is no sweep in this mode, and the line must not promise one.
         ConnectMode.PROBE -> "Dialing the pairing again…"
-        // Nothing remembered answered (or nothing is remembered), so the radio is about to
-        // be swept - the slow one, and the one the user asked for by pressing SEARCH.
+        // A card press whose remembered pairing did not answer: the radio is about to be
+        // swept for a unit this phone has never met. The wait belongs to that card.
         ConnectMode.SEARCH -> "Looking for a Dashboard++…"
+        // The ADD VEHICLE card's button: the same sweep, but the question is about the
+        // air around the phone rather than a vehicle already in the garage, so the line
+        // says "new" and the page keeps it under the button that asked.
+        ConnectMode.DISCOVER -> "Looking for a new Dashboard++…"
     }
 }
 

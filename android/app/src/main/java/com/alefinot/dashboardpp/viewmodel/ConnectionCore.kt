@@ -18,10 +18,24 @@ enum class ConnectMode {
     PROBE,
 
     /**
-     * The user asked to *find* a dashboard (ADD VEHICLE → SEARCH): dial what the card
-     * remembers, then let the radio sweep for units advertising the dashboard service.
+     * A reach the user started by pressing a **vehicle card**: dial that card's pairing,
+     * then let the radio sweep for units advertising the dashboard service if it was the
+     * pairing that failed.
      */
     SEARCH,
+
+    /**
+     * The user's hand on the **ADD VEHICLE card**: a radio sweep, or a reach for a row that
+     * sweep turned up.
+     *
+     * The radio work is the same as [SEARCH]; the difference is who owns the answer. A
+     * search started from the ADD VEHICLE card is a question about the air around the
+     * phone, not about any vehicle card, so its progress is reported under the button that
+     * started it instead of changing the selected card's status line. The standalone sweep
+     * ([ConnectionViewModel.rescan]) never touches the link at all; only a row the user
+     * taps does.
+     */
+    DISCOVER,
 }
 
 /** One dashboard on the advertising list, as the BLE scan reported it. */
@@ -125,8 +139,8 @@ data class CoreResult(
  *  - **Discovery is a radio sweep, and it is the user's decision.** A network sweep was
  *    cheap to hide in a retry; a BLE scan needs a permission, an on radio, and fifteen
  *    seconds of the phone listening for a stranger's advertisement. So only [ConnectMode.SEARCH]
- *    ever scans, and a card that has never been paired says so instead of quietly
- *    starting a sweep.
+ *    (a press on a card) and [ConnectMode.DISCOVER] (the ADD VEHICLE card's button) ever
+ *    scan, and a card that has never been paired says so instead of quietly starting a sweep.
  *  - **Identity is the only cross-phone truth.** A MAC says "this unit"; a pairing says
  *    "this phone's link to something". The rules below therefore always prefer the MAC,
  *    and refuse to guess a vehicle from a pairing when more than one card could own it.
@@ -158,6 +172,14 @@ object ConnectionCore {
 
     /** The line for a pairing that was dialed and did not answer. */
     const val NO_ANSWER = "did not answer \u2014 check power and range"
+
+    /**
+     * The line for the ADD VEHICLE card's sweep when it ran cleanly and heard no dashboard.
+     *
+     * It is a search result, not a connection failure: nothing was reached for, so there is
+     * no vehicle to blame and no link to mourn.
+     */
+    const val NO_DASHBOARD_FOUND = "No dashboard found."
 
     private const val UNCLAIMED = "A dashboard answered that no vehicle card knows."
     private const val AMBIGUOUS =
@@ -303,8 +325,10 @@ object ConnectionCore {
             )
         }
 
-        // 3. Only a search the user asked for may sweep the radio, and only once.
-        if (mode == ConnectMode.SEARCH) {
+        // 3. Only a search the user asked for may sweep the radio, and only once. The
+        //    two doors that ask for one are a card press (SEARCH) and the ADD VEHICLE
+        //    card's button (DISCOVER); neither may be started on a timer.
+        if (mode == ConnectMode.SEARCH || mode == ConnectMode.DISCOVER) {
             val nextFound = found
                 .filter { it.address != pinned?.address }
                 .sortedByDescending { it.rssi }

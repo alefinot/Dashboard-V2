@@ -95,6 +95,9 @@ class ConnectionViewModel(
     /** The attempt the core is driving right now, if any. */
     private var ladder: Job? = null
 
+    /** The ADD VEHICLE card's radio sweep, if one is listening. */
+    private var discovery: Job? = null
+
     /** The retry the reconnect ladder scheduled, if any. One at a time, always replaced. */
     private var retry: Job? = null
 
@@ -158,6 +161,18 @@ class ConnectionViewModel(
 
     /** Why the last sweep could not run, in words — never a stack trace, never a code. */
     val scanError = mutableStateOf<String?>(null)
+
+    /**
+     * The ADD VEHICLE card's own search, when one is running or has just heard nothing.
+     *
+     * It is deliberately **not** [uiState]. A search is a question about the air around the
+     * phone, not a change to the link: a unit that is connected stays connected and its card
+     * goes on saying CONNECTED while the radio listens. Only the card that asked for the
+     * search reads this value, which is what confines "looking for a dashboard" to the
+     * button that started it. The only search that publishes a [ConnectMode.DISCOVER] state
+     * to [uiState] is [pairWith], because choosing a unit really does reach for the radio.
+     */
+    val addSearch = mutableStateOf<ConnectionUiState?>(null)
 
     /** Whether the phone's radio is on, as last heard from the system. */
     val adapterOn = mutableStateOf(false)
@@ -331,19 +346,45 @@ class ConnectionViewModel(
     }
 
     /**
-     * ADD VEHICLE -> SEARCH: dial what the selected card remembers, then sweep the radio.
+     * ADD VEHICLE -> SEARCH: listen for dashboards the phone has never met.
      *
-     * This is the only path that ever scans, and it exists because the user pressed a
-     * button. A BLE sweep costs a runtime permission, an on radio, and the phone
+     * This is the only path that scans on its own initiative, and it exists because the user
+     * pressed a button. A BLE sweep costs a runtime permission, an on radio, and the phone
      * listening for advertisements from units it has never met - none of which belongs
      * behind a launch or a reconnect timer.
+     *
+     * It **does not touch the link**. The old shape of this call was a connection attempt
+     * in disguise: it dialed the selected card first, which tore down a healthy session and
+     * made that card report the search. A search is not a reach for a vehicle, so it only
+     * sweeps, publishes what it heard, and hands the answer to [addSearch] - the ADD VEHICLE
+     * card draws the wait and the result there while every vehicle card keeps its own state.
+     * Tapping a found row is what reaches, and that goes through [pairWith].
      */
     fun rescan() {
-        attempts = 0
-        gaveUp = false
-        rearm?.cancel()
-        bondNote.value = null
-        startAttempt(ConnectMode.SEARCH)
+        discovery?.cancel()
+        // A pairing from this card that already failed is the previous answer; a new search
+        // replaces it rather than standing beside it.
+        val previous = uiState.value
+        if (previous is ConnectionUiState.Failed && previous.mode == ConnectMode.DISCOVER) {
+            uiState.value = ConnectionUiState.Idle(null)
+        }
+        unclaimed.value = null
+        scanError.value = null
+        scanResults.value = emptyList()
+        addSearch.value = ConnectionUiState.Connecting(ConnectMode.DISCOVER, AttemptStage.SCAN)
+        discovery = scope.launch {
+            val found = sweep()
+            if (!currentCoroutineContext().isActive) return@launch
+            addSearch.value = if (found.isEmpty()) {
+                ConnectionUiState.Failed(
+                    scanError.value ?: ConnectionCore.NO_DASHBOARD_FOUND,
+                    ConnectMode.DISCOVER,
+                )
+            } else {
+                // The rows are the answer; a line over them would repeat their heading.
+                null
+            }
+        }
     }
 
     /**
@@ -359,11 +400,16 @@ class ConnectionViewModel(
      * for fifteen seconds to re-derive it would be a second ask the user did not make.
      */
     fun pairWith(found: Found) {
+        // The sweep has done its job: the row just pressed is its result. Keep the list on
+        // screen (it is what the user is choosing from), hand the wait to the attempt, and
+        // let [uiState] carry a real reach from here on.
+        discovery?.cancel()
+        addSearch.value = null
         attempts = 0
         gaveUp = false
         rearm?.cancel()
         bondNote.value = null
-        startAttempt(ConnectMode.SEARCH, pinned = found, preScanned = scanResults.value)
+        startAttempt(ConnectMode.DISCOVER, pinned = found, preScanned = scanResults.value)
     }
 
     /**
@@ -420,6 +466,10 @@ class ConnectionViewModel(
         ladder?.cancel()
         retry?.cancel()
         rearm?.cancel()
+        // The user has chosen a vehicle, so the ADD VEHICLE search is no longer what they
+        // are looking at: stop the sweep and let that card go back to its rows-free state.
+        discovery?.cancel()
+        addSearch.value = null
         scope.launch {
             vehicles.select(vehicleId)
             selectedVehicleId.value = vehicleId
@@ -925,13 +975,15 @@ class ConnectionViewModel(
                     return
                 }
                 is NextAction.Failed -> {
-                    uiState.value = ConnectionUiState.Failed(n.reason)
+                    uiState.value = ConnectionUiState.Failed(n.reason, mode)
                     // A search that ended in failure has to let the radio go. The unit
                     // serves one peer at a time, so a phone sitting on a link it never
                     // uses keeps every other phone out of the unit - and since the unit
                     // now holds pairing back for 10 s after a drop, holding on is what
                     // makes a hand-over between two phones impossible.
-                    if (mode == ConnectMode.SEARCH && link.state.value != BleLinkState.Idle) {
+                    if ((mode == ConnectMode.SEARCH || mode == ConnectMode.DISCOVER) &&
+                        link.state.value != BleLinkState.Idle
+                    ) {
                         link.disconnect()
                     }
                     // This is the give-up the bench actually hits (2026-11-05): the attempt

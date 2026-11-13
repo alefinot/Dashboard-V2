@@ -2,6 +2,7 @@ package com.alefinot.dashboardpp.ui.screens
 
 import com.alefinot.dashboardpp.vehicles.Vehicle
 import com.alefinot.dashboardpp.vehicles.VehicleType
+import com.alefinot.dashboardpp.viewmodel.AttemptStage
 import com.alefinot.dashboardpp.viewmodel.ConnectMode
 import com.alefinot.dashboardpp.viewmodel.ConnectionUiState
 import org.junit.Assert.assertEquals
@@ -232,6 +233,47 @@ class VehicleCardLinesTest {
         assertEquals(CardTone.DIM, never.tone)
     }
 
+    /**
+     * The ADD VEHICLE card's SEARCH is a question about the air around the phone, not about
+     * a vehicle. Only a row the user taps from its result list actually dials; while the
+     * card is looking, or after it fails, every vehicle card keeps saying what it last knew
+     * - and the progress belongs under the button that started it.
+     */
+    @Test
+    fun `the add vehicle search reports on the add vehicle card, never on a vehicle card`() {
+        val v = Vehicle(id = "v1", bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = now - day)
+        val searching = ConnectionUiState.Connecting(ConnectMode.DISCOVER, AttemptStage.DIAL, "v1")
+        assertEquals("LAST SEEN YESTERDAY", cardStatusLine(v, searching, now).text)
+        assertFalse(showScanRing(searching))
+        assertEquals(searching.stageLine(), addVehicleSearchLine(searching)?.text)
+        assertEquals(CardTone.LIVE, addVehicleSearchLine(searching)?.tone)
+
+        val failed = ConnectionUiState.Failed(
+            "No dashboard answered and none was found.",
+            ConnectMode.DISCOVER,
+        )
+        assertEquals("LAST SEEN YESTERDAY", cardStatusLine(v, failed, now).text)
+        assertEquals(failed.reason, addVehicleSearchLine(failed)?.text)
+        assertEquals(CardTone.BAD, addVehicleSearchLine(failed)?.tone)
+    }
+
+    /**
+     * The other side of the same rule: a reach the user made by pressing a **vehicle card**
+     * is that card's story, and the ADD VEHICLE card stays out of it.
+     */
+    @Test
+    fun `a card press is still that card's story`() {
+        val v = Vehicle(id = "v1", bleAddress = "AA:BB:CC:DD:EE:01", lastConnectedAtMs = now - day)
+        val reaching = ConnectionUiState.Connecting(ConnectMode.SEARCH, AttemptStage.SCAN, "v1")
+        assertEquals(reaching.stageLine().uppercase(), cardStatusLine(v, reaching, now).text)
+        assertTrue(showScanRing(reaching))
+        assertNull(addVehicleSearchLine(reaching))
+
+        val failed = ConnectionUiState.Failed("Motosbu did not answer", ConnectMode.SEARCH)
+        assertEquals("Motosbu did not answer", cardStatusLine(v, failed, now).text)
+        assertNull(addVehicleSearchLine(failed))
+    }
+
     @Test
     fun `only the card that owns a session may offer to end it`() {
         val a = Vehicle(id = "a", name = "Corolla", bleAddress = "AA:BB:CC:DD:EE:01")
@@ -256,6 +298,8 @@ class VehicleCardLinesTest {
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.SILENT)))
         assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.PROBE)))
         assertTrue(showScanRing(ConnectionUiState.Connecting(ConnectMode.SEARCH)))
+        // The ADD VEHICLE card's search draws its own progress there; the garage stays still.
+        assertFalse(showScanRing(ConnectionUiState.Connecting(ConnectMode.DISCOVER)))
         assertFalse(showScanRing(ConnectionUiState.Connected("3C:71:0A:00:00:50", "n", "1.4.6", null, "a")))
         assertFalse(showScanRing(null))
     }

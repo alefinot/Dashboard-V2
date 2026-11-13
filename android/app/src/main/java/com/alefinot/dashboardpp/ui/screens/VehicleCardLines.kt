@@ -161,6 +161,10 @@ private const val DAY_MS = 24L * 60 * 60 * 1000
  *    that decides whether trips, GNSS and the rest are available on this unit.
  * 3. otherwise the card falls back to [lastSeenLine], which is a derived statement about
  *    time and must never cover a measurement.
+ *
+ * A [ConnectMode.DISCOVER] attempt is the one exception to rule 1: it was started from the
+ * ADD VEHICLE card, so its progress and its failure belong to that card (see
+ * [addVehicleSearchLine]) and must not rewrite what a vehicle card says about itself.
  */
 fun cardStatusLine(v: Vehicle, state: ConnectionUiState?, nowMs: Long): CardStatusLine = when (state) {
     is ConnectionUiState.Connected ->
@@ -170,9 +174,12 @@ fun cardStatusLine(v: Vehicle, state: ConnectionUiState?, nowMs: Long): CardStat
         )
 
     is ConnectionUiState.Connecting ->
-        CardStatusLine(state.stageLine().uppercase(), CardTone.LIVE)
+        if (state.mode == ConnectMode.DISCOVER) fallback(v, nowMs)
+        else CardStatusLine(state.stageLine().uppercase(), CardTone.LIVE)
 
-    is ConnectionUiState.Failed -> CardStatusLine(state.reason, CardTone.BAD)
+    is ConnectionUiState.Failed ->
+        if (state.mode == ConnectMode.DISCOVER) fallback(v, nowMs)
+        else CardStatusLine(state.reason, CardTone.BAD)
 
     is ConnectionUiState.Idle ->
         state.reason?.takeIf { it.isNotBlank() }
@@ -180,6 +187,37 @@ fun cardStatusLine(v: Vehicle, state: ConnectionUiState?, nowMs: Long): CardStat
             ?: fallback(v, nowMs)
 
     null -> fallback(v, nowMs)
+}
+
+/**
+ * The line the **ADD VEHICLE card** carries while, or just after, it runs its own search.
+ *
+ * The search belongs to the card that started it. A [ConnectMode.DISCOVER] attempt may dial
+ * the selected vehicle's pairing on the way and still fail to find anything new, so the
+ * card's own status would be a half-true answer to a question nobody asked it. The button's
+ * card says how the wait is going ([CardTone.LIVE]) and, once it is spent, why it found
+ * nothing ([CardTone.BAD]); everything else is somebody else's line.
+ *
+ * A card press ([ConnectMode.SEARCH]) and the unattended modes are deliberately absent: a
+ * reach the user made from a vehicle card is that card's story, and a silent reconnect must
+ * not draw attention at all.
+ */
+fun addVehicleSearchLine(state: ConnectionUiState?): CardStatusLine? = when (state) {
+    is ConnectionUiState.Connecting ->
+        if (state.mode == ConnectMode.DISCOVER) {
+            CardStatusLine(state.stageLine(), CardTone.LIVE)
+        } else {
+            null
+        }
+
+    is ConnectionUiState.Failed ->
+        if (state.mode == ConnectMode.DISCOVER) {
+            CardStatusLine(state.reason, CardTone.BAD)
+        } else {
+            null
+        }
+
+    else -> null
 }
 
 /**
@@ -217,10 +255,12 @@ fun connectedCard(v: Vehicle, state: ConnectionUiState?): Boolean =
 
 /**
  * Whether the card should show a search ring: true only for a ladder the user asked for
- * with their hand. A [ConnectMode.SILENT] reconnect must never put motion in front of the
- * garage (the page is the home screen, and a cold start is the most common thing a user
- * ever watches), and [ConnectMode.PROBE] is a two-address attempt that finishes in about a
- * second — a ring that fast is a flicker, not progress.
+ * with their hand on **that card**. A [ConnectMode.SILENT] reconnect must never put motion
+ * in front of the garage (the page is the home screen, and a cold start is the most common
+ * thing a user ever watches), [ConnectMode.PROBE] is a two-address attempt that finishes
+ * in about a second — a ring that fast is a flicker, not progress — and
+ * [ConnectMode.DISCOVER] is the ADD VEHICLE card's own search, whose progress is drawn
+ * there rather than over a vehicle that is not being looked for.
  */
 fun showScanRing(state: ConnectionUiState?): Boolean =
     state is ConnectionUiState.Connecting && state.mode == ConnectMode.SEARCH

@@ -13,7 +13,9 @@ sealed interface ConnectionUiState {
      * An attempt is running. [mode] says how far it is going, which is what tells the
      * page whether to show a scan ring: a [ConnectMode.SILENT] reconnect must not put
      * any screen in front of the garage, while a search the user asked for shows its
-     * progress inside the card. [stage] says where in the attempt we are, because the
+     * progress inside the card that asked for it — the vehicle card for a
+     * [ConnectMode.SEARCH], the ADD VEHICLE card for a [ConnectMode.DISCOVER].
+     * [stage] says where in the attempt we are, because the
      * honest line under a card changes mid-attempt: dialing a pairing the phone already
      * holds, sweeping the radio for units we have never met, and being mid-pairing with
      * the code showing on the dashboard are three different things to tell the user.
@@ -49,8 +51,13 @@ sealed interface ConnectionUiState {
      * it absorbs what used to be three separate screens (`NoWifi`,
      * `ManualEntryNeeded`, `ConnectionLost`), all of which are now a line under the
      * card that was being reached for, with the rest of the app still on screen.
+     *
+     * [mode] is the attempt that failed, when the failure came from one. It is what lets
+     * the page tell a failed reach for a vehicle (a line under that card) from a failed
+     * ADD VEHICLE search (a line under the button that started it). Null for failures
+     * that are not an attempt's — a give-up by the reconnect ladder, a dropped link.
      */
-    data class Failed(val reason: String) : ConnectionUiState
+    data class Failed(val reason: String, val mode: ConnectMode? = null) : ConnectionUiState
 }
 
 /** Where in an attempt a [ConnectionUiState.Connecting] is. */
