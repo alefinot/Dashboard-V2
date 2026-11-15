@@ -167,4 +167,107 @@ class TripRecorderTest {
         assertEquals(null, SessionCodec.decode("10.0.0.5", ""))
         assertEquals(null, SessionCodec.decode("10.0.0.5", "garbage|nope"))
     }
+
+    // ---- the live route the maps draw (live route plan §1) ---------------------
+    //
+    // Every fixture here carries `fix = 1`: a position without a fix is not a
+    // position, and the recorder is allowed to forget it (Snapshot.hasPosition).
+
+    @Test
+    fun liveTrackFollowsTheOpenTrip() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
+        val pts = recorder.liveTrackPoints()
+        assertEquals(2, pts.size)
+        assertEquals(45.6201, pts.last().lat, 1e-9)
+        assertEquals(9.2801, pts.last().lon, 1e-9)
+    }
+
+    @Test
+    fun liveTrackIgnoresSamplesWithoutAFix() {
+        // 0,0 is the unit declining a position, not a place in the Gulf of Guinea.
+        recorder.onSnapshot("10.0.0.5", snap(up = 100))
+        assertTrue(recorder.liveTrackPoints().isEmpty())
+        // And a box full of coordinates with `fix` still 0 is the same decline.
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.62, lon = 9.28, fix = 0))
+        assertTrue(recorder.liveTrackPoints().isEmpty())
+    }
+
+    @Test
+    fun aSealedTripHasNoLiveTrack() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += TripPolicy.SEAL_AFTER_MS + 1_000L
+        assertEquals(TripEvent.SEALED, recorder.onTick())
+        assertTrue(recorder.liveTrackPoints().isEmpty())
+    }
+
+    @Test
+    fun reopeningSeedsTheLiveTrackFromTheFile() {
+        recorder.onSnapshot(
+            "10.0.0.5",
+            snap(up = 500, spd = 20.0, max = 40.0, lat = 45.62, lon = 9.28, fix = 1),
+        )
+        now += 1_000L
+        recorder.onSnapshot(
+            "10.0.0.5",
+            snap(up = 501, spd = 21.0, max = 41.0, lat = 45.621, lon = 9.281, fix = 1),
+        )
+        now += TripPolicy.SEAL_AFTER_MS + 5_000L
+        assertEquals(TripEvent.SEALED, recorder.onTick())
+        // Same boot comes back: the map on return must show the whole drive, not
+        // just the minute after the gap - the file holds the rest, so seed from it.
+        now += 600_000L
+        assertEquals(
+            TripEvent.REOPENED,
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(up = 1112, spd = 30.0, max = 41.0, lat = 45.622, lon = 9.282, fix = 1),
+            ),
+        )
+        val pts = recorder.liveTrackPoints()
+        assertEquals(3, pts.size)
+        assertEquals(45.62, pts.first().lat, 1e-9)
+        assertEquals(45.622, pts.last().lat, 1e-9)
+    }
+
+    @Test
+    fun aRebootSplitStartsAFreshLiveTrack() {
+        recorder.onSnapshot(
+            "10.0.0.5",
+            snap(up = 500, spd = 20.0, max = 40.0, lat = 45.62, lon = 9.28, fix = 1),
+        )
+        now += 1_000L
+        assertEquals(
+            TripEvent.SEALED_THEN_OPENED,
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(up = 12, spd = 5.0, max = 5.0, lat = 45.70, lon = 9.20, fix = 1),
+            ),
+        )
+        // Two devices' histories do not merge into one route (same rule as the files).
+        val pts = recorder.liveTrackPoints()
+        assertEquals(1, pts.size)
+        assertEquals(45.70, pts.first().lat, 1e-9)
+    }
+
+    @Test
+    fun theLiveTrackStaysBoundedOverAlongDrive() {
+        for (i in 0 until 600) {
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(
+                    up = 100L + i, spd = 40.0, max = 40.0,
+                    lat = 45.6 + i * 1e-5, lon = 9.2 + i * 1e-5, fix = 1,
+                ),
+            )
+            now += 1_000L
+        }
+        val pts = recorder.liveTrackPoints()
+        // TrackPreview's invariant: halve at the cap, then append - so never more
+        // than one point over it, whatever the drive's length.
+        assertTrue("live track grew to ${pts.size}", pts.size <= 257)
+        assertEquals(45.6 + 599 * 1e-5, pts.last().lat, 1e-9)
+    }
 }

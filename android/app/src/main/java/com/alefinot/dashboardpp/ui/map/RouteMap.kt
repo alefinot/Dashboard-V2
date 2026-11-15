@@ -227,12 +227,36 @@ private class MapHolder {
 
     /**
      * A dot with its name beside it, drawn in code rather than loaded from a
-     * resource: a filled disc with a dark ring (legible on light and dark
-     * basemaps, consistent with the HUD palette) and a permanent label. A
-     * Marker's title only appears in an info window that a tap opens, so it
-     * cannot answer "which end is this?" while the map is just looked at.
+     * resource: see [MapMarkers], which the live route map draws its dots from too.
      */
-    private fun labelledMarker(view: MapView, point: GeoPoint, color: Int, label: String): Marker {
+    private fun labelledMarker(view: MapView, point: GeoPoint, color: Int, label: String): Marker =
+        MapMarkers.labelled(view, point, color, label)
+
+    fun release() {
+        map?.run {
+            detachListener(this)
+            onPause()
+            onDetach()
+        }
+        map = null
+        track = emptyList()
+        fitted = null
+    }
+}
+
+/**
+ * The map package's own marker art: a filled disc with a dark ring (legible on
+ * light and dark basemaps, consistent with the HUD palette) and a permanent
+ * label. A Marker's title only appears in an info window that a tap opens, so it
+ * cannot answer "which end is this?" while the map is just looked at.
+ *
+ * Drawn in code, not loaded from a resource, and shared by the detail map's
+ * START/END dots and the live map's LIVE/START dots so the two can never drift
+ * apart in size or ink. An empty label draws just the dot — what the small row
+ * map can actually show.
+ */
+internal object MapMarkers {
+    fun labelled(view: MapView, point: GeoPoint, color: Int, label: String): Marker {
         val icon = dotWithLabel(view.context, view.resources.displayMetrics.density, color, label)
         val marker = Marker(view, view.context)
         marker.setPosition(point)
@@ -287,16 +311,5 @@ private class MapHolder {
             anchorU = dotCx / width,
             anchorV = cy / height,
         )
-    }
-
-    fun release() {
-        map?.run {
-            detachListener(this)
-            onPause()
-            onDetach()
-        }
-        map = null
-        track = emptyList()
-        fitted = null
     }
 }

@@ -199,7 +199,12 @@ class TripLogService : Service() {
                 }
                 recorder?.onTick()?.let { ev ->
                     if (ev == TripEvent.SEALED) {
-                        TripRuntime.update { it.copy(recording = false, tripPath = null, summary = null) }
+                        TripRuntime.update {
+                            it.copy(
+                                recording = false, tripPath = null, summary = null,
+                                liveTrack = emptyList(),
+                            )
+                        }
                         persistSession()
                     }
                 }
@@ -239,6 +244,7 @@ class TripLogService : Service() {
             it.copy(
                 snapshot = s,
                 summary = summary,
+                liveTrack = rec.liveTrackPoints(),
                 lastOkMs = now,
                 recording = rec.isRecording,
                 tripPath = rec.openTrip?.path,

@@ -51,6 +51,7 @@ import com.alefinot.dashboardpp.ui.components.ScanRing
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.RouteSketch
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -352,31 +353,42 @@ private fun LiveTripRow(state: TripRuntimeState) {
             .background(HudColors.Green.copy(alpha = 0.08f), HudRadius.CardShape)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Column {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // `#msg`'s own 13px, at the weight the page gives a line it wants
-                // read first (`.cfg-warn`, `.card h4`).
-                Text("RECORDING", color = HudColors.Green, style = HudeSectionTitle(0f))
-                Spacer(Modifier.width(10.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    // `#msg`'s own 13px, at the weight the page gives a line it wants
+                    // read first (`.cfg-warn`, `.card h4`).
+                    Text("RECORDING", color = HudColors.Green, style = HudeSectionTitle(0f))
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        summary?.let { formatDuration(it.durationMs) } ?: "0:00:00",
+                        color = HudColors.TextPrimary,
+                        style = HudePerfValue(),
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    summary?.let { formatDuration(it.durationMs) } ?: "0:00:00",
-                    color = HudColors.TextPrimary,
-                    style = HudePerfValue(),
+                    buildString {
+                        append(fmtOrDash(summary?.distanceKm, 2))
+                        append(" km · ")
+                        append(snap?.let { it.spd.toInt().toString() } ?: "—")
+                        append(" km/h · ")
+                        append(fmtOrDash(summary?.fuelUsedL, 2))
+                        append(" L")
+                    },
+                    color = HudColors.TextMuted,
+                    style = HudeCfgHelp(),
                 )
             }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                buildString {
-                    append(fmtOrDash(summary?.distanceKm, 2))
-                    append(" km · ")
-                    append(snap?.let { it.spd.toInt().toString() } ?: "—")
-                    append(" km/h · ")
-                    append(fmtOrDash(summary?.fuelUsedL, 2))
-                    append(" L")
-                },
-                color = HudColors.TextMuted,
-                style = HudeCfgHelp(),
-            )
+            // The drive's shape, drawing itself as the recorder appends it (live route
+            // plan §4) - so the live row looks like the card this drive becomes. The
+            // same size as the sealed card's sketch; dots without labels, because a
+            // 72 dp map has no margin to spend on words. Before the first fix there
+            // is no shape, and the numbers stand alone (live route plan §4).
+            if (state.liveTrack.isNotEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                LiveRouteMap(state.liveTrack, Modifier.size(72.dp), showLabels = false)
+            }
         }
     }
 }

@@ -161,6 +161,42 @@ class LivePageReadoutsTest {
         )
     }
 
+    /**
+     * The open drive draws its route while it is being made (live route plan, 2026-11-15):
+     * the Live card and the Trips RECORDING row both render the live map, and both only
+     * while a trip file is open - a map outside `recording` would fetch a basemap for a
+     * drive that does not exist. The map itself follows the newest position; it must
+     * never frame the point set, which on a growing track means a zoom-punch on every
+     * metre the drive makes.
+     */
+    @Test
+    fun theRecordingTripDrawsItsRouteLive() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the THIS TRIP card stopped drawing the live route",
+            Regex("LiveRouteMap\\(state\\.liveTrack").containsMatchIn(page),
+        )
+        assertTrue(
+            "the live map escaped the recording gate: with no file open there is no route, " +
+                "and a bare map is tiles bought for nothing",
+            Regex("if \\(state\\.recording\\)[\\s\\S]{0,600}?LiveRouteMap\\(state\\.liveTrack").containsMatchIn(page),
+        )
+        val row = codeOnly("TripsTab.kt")
+        assertTrue(
+            "the RECORDING row stopped drawing the live route - the live drive should look " +
+                "like the card it becomes",
+            Regex("LiveRouteMap\\(state\\.liveTrack").containsMatchIn(row),
+        )
+        val map = File("src/main/java/com/alefinot/dashboardpp/ui/map/LiveRouteMap.kt")
+        assertTrue("missing LiveRouteMap.kt", map.exists())
+        val mapCode = codeOnly("../map/LiveRouteMap.kt")
+        assertTrue(
+            "the live map grew a fit: framing a point set that gains a point every second " +
+                "zoom-punches the view; the camera follows instead",
+            !Regex("zoomToBoundingBox").containsMatchIn(mapCode),
+        )
+    }
+
     @Test
     fun theRoundGaugeSurvivedTheRedesign() {
         // The maintainer asked for the gauge to stay when the card stack was approved: it is

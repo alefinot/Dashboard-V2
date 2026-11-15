@@ -60,6 +60,18 @@ class TripRecorder(
     private var session: SessionRecord? = initialSession
 
     /**
+     * The open trip's shape so far, for the live route maps (live route plan §1).
+     *
+     * The recorder already holds every position it appends, and the maps otherwise had
+     * no way to see the drive before its file was scanned - so the shape lives here,
+     * next to the totals, and travels through [TripRuntimeState] like the totals do.
+     * It runs [TrackPreview] doubled: at zoom 15 the follow map shows a few hundred
+     * metres across, and the stored preview's 128 points are a whole drive stretched
+     * over a card, too coarse for a line being watched as it is drawn.
+     */
+    private var liveTrack = TrackPreview(LIVE_TRACK_POINTS)
+
+    /**
      * The `#vehicle=` line for the next file this recorder creates ("" = no tag).
      *
      * The app - not the recorder - decides who a trip belongs to: the recorder is
@@ -114,6 +126,14 @@ class TripRecorder(
     /** Running summary of the open trip, straight from RAM (no file re-read). */
     fun summary(): TripSummary? = accumulator.summary()
 
+    /**
+     * The open trip's shape for the live maps; empty when nothing is open. A sealed
+     * trip's shape stays in RAM until the next trip replaces it, but a closed trip is
+     * nobody's live map, so the open-trip guard is the gate.
+     */
+    fun liveTrackPoints(): List<TrackPoint> =
+        if (openTrip == null) emptyList() else liveTrack.points()
+
     fun sessionRecord(): SessionRecord? = session
 
     /** Feed one successful snapshot; returns what happened for logging. */
@@ -148,6 +168,7 @@ class TripRecorder(
                 val path = pathFor(now)
                 writer.create(path, tag)
                 accumulator = TripAccumulator()
+                liveTrack = TrackPreview(LIVE_TRACK_POINTS)
                 openTrip = TripRef(path, now)
                 opened = true
             }
@@ -158,6 +179,7 @@ class TripRecorder(
         lastSnapshot = s
         val sample = TripSample(now, s)
         accumulator.add(sample)
+        if (s.hasPosition) liveTrack.add(s.lat, s.lon)
         writer.append(trip.path, TripFormat.line(sample))
         session = SessionRecord(
             ip = ip,
@@ -226,12 +248,19 @@ class TripRecorder(
 
     /**
      * Re-opened files already hold samples; the running summary has to start from
-     * them or the "Recording…" row would show only the part after the gap.
+     * them or the "Recording…" row would show only the part after the gap. The live
+     * route is seeded from the same pass for the same reason - the map on return
+     * shows the whole drive, not the last minute of it.
      */
     private fun seedAccumulator(path: String) {
         accumulator = TripAccumulator()
+        liveTrack = TrackPreview(LIVE_TRACK_POINTS)
         writer.readDataLines(path).forEach { line ->
-            TripFormat.parseLine(line)?.let { accumulator.add(it) }
+            TripFormat.parseLine(line)?.let {
+                accumulator.add(it)
+                val s = it.snapshot
+                if (s.hasPosition) liveTrack.add(s.lat, s.lon)
+            }
         }
     }
 
@@ -254,6 +283,9 @@ class TripRecorder(
     companion object {
         /** Guard against float noise when comparing the ESP's session peak. */
         private const val MAX_SPEED_EPS = 0.15
+
+        /** See [liveTrack]: double the stored preview's 128, for the follow maps. */
+        private const val LIVE_TRACK_POINTS = 256
     }
 }
 

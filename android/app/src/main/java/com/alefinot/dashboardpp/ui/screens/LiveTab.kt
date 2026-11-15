@@ -50,6 +50,7 @@ import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
@@ -81,6 +82,14 @@ private val GaugeBox = 132.dp
  * real second without recomposing the card for every frame the display draws.
  */
 private const val TRIP_CLOCK_TICK_MS = 250L
+
+/**
+ * The height of the live route map inside the THIS TRIP card (live route plan §4).
+ * Chosen so the card still answers the four figures at a glance first: the strip
+ * keeps its full height and the map is the second thing the eye reaches. It also
+ * holds while no position exists yet, so the page cannot jump when the fix lands.
+ */
+private val LiveMapBox = 150.dp
 
 /**
  * The native live view: the same data the unit's deleted web page rendered, drawn
@@ -472,6 +481,9 @@ private fun TraceOr(
  * than borrowing the 1 Hz frame: a stopwatch that stops when the link goes quiet - or that only
  * moves when the minute rolls over - is not a stopwatch. The tick is scoped to this card, so
  * the other four are not redrawn for it.
+ *
+ * While the file is open the card also carries the live route map: the drive's shape,
+ * drawing itself as the recorder appends it (live route plan §4).
  */
 @Composable
 private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
@@ -518,6 +530,28 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
             // for the better part of a minute at demo speed and reads as a dead card.
             Figure("ODO", fmt(s.odo, 1), "km"),
         )
+        // The drive's route, drawn while it is being made (live route plan §4): the
+        // same tile map the sealed drive gets a detail page for, following the newest
+        // position. Only a recording gets one - with no file open there is no route
+        // to draw, and an idle map is tiles bought for nothing. The space is held
+        // before the first fix so the page does not jump when the fix lands.
+        if (state.recording) {
+            Spacer(Modifier.height(6.dp))
+            if (state.liveTrack.isEmpty()) {
+                Box(
+                    Modifier.fillMaxWidth().height(LiveMapBox),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        "The route map opens at the first position.",
+                        style = HudeCfgNote(),
+                        color = HudColors.TextDim,
+                    )
+                }
+            } else {
+                LiveRouteMap(state.liveTrack, Modifier.fillMaxWidth().height(LiveMapBox))
+            }
+        }
     }
 }
 

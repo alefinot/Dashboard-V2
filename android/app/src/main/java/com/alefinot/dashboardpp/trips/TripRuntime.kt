@@ -32,6 +32,12 @@ data class TripRuntimeState(
     val snapshot: Snapshot? = null,
     /** Running summary of the open trip; null until the first sample lands. */
     val summary: TripSummary? = null,
+    /**
+     * The open trip's route so far, decimated for drawing (live route plan §2).
+     * Empty when nothing is recording - the live maps exist exactly as long as the
+     * trip file they are drawing does.
+     */
+    val liveTrack: List<TrackPoint> = emptyList(),
     val lastOkMs: Long = 0L,
     val lastError: String? = null,
 ) {
