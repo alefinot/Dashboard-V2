@@ -48,6 +48,7 @@ import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudStateChip
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.Sparkline
+import com.alefinot.dashboardpp.ui.components.flow
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
@@ -279,12 +280,22 @@ private fun LiveCard(
     }
 }
 
-/** One label / figure pair in a card's strip. */
+/**
+ * One label / figure pair in a card's strip.
+ *
+ * A figure is either a word (a state, a clock, a declined "—") or a number that
+ * [flows][com.alefinot.dashboardpp.ui.components.flow] - the numeric form carries the raw
+ * reading so the glide happens inside the number's own little composable, and a card's
+ * sparkline or gauge is never dragged into frame-rate recomposition by it.
+ */
 private data class Figure(
     val label: String,
     val value: String,
     val unit: String = "",
     val color: Color = HudColors.TextPrimary,
+    /** Not null for a flowing number; [value] is then unused. */
+    val num: Double? = null,
+    val places: Int = 1,
 )
 
 /**
@@ -315,10 +326,28 @@ private fun Strip(vararg figures: Figure) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(1.dp))
-                FigureText(f.value, f.unit, f.color)
+                if (f.num != null) {
+                    FlowFigureText(f.num, f.places, f.unit, f.color)
+                } else {
+                    FigureText(f.value, f.unit, f.color)
+                }
             }
         }
     }
+}
+
+/** The numeric face of [FigureText]: the reading glides, and only this text moves. */
+@Composable
+private fun FlowFigureText(
+    num: Double,
+    places: Int,
+    unit: String,
+    color: Color,
+    size: Int = 17,
+    modifier: Modifier = Modifier,
+    align: TextAlign = TextAlign.Start,
+) {
+    FigureText(fmt(flow(num), places), unit, color, size, modifier, align)
 }
 
 /** A mono figure with its unit in dim ink at a size that does not compete with it. */
@@ -366,6 +395,12 @@ private fun SpeedCard(s: Snapshot, trends: LiveTrends, step: Int) {
         title = "SPEED",
         step = step,
         mark = HudGlyphLedger.mark("readout.speed"),
+        // The peak is raw on purpose. It is not a reading, it is a record - the largest
+        // figure the window has ever held - and records arrive in steps. It is also the
+        // one place on this page where the glide would cost more than it buys: this line
+        // is built in the card's own body, so smoothing it recomposes the card sixty times
+        // a second, and the card's body holds the speed trace, whose fresh list would
+        // redraw the sparkline at frame rate for a caption nobody reads.
         meta = if (peak == null) {
             "${trends.windowLabel()} · collecting"
         } else {
@@ -385,18 +420,23 @@ private fun SpeedCard(s: Snapshot, trends: LiveTrends, step: Int) {
                 accent = if (s.spd > 0.0) HudColors.Cyan else HudColors.CyanDim,
             )
             Column(Modifier.weight(1f).padding(start = HudSpace.Tile)) {
-                SideFigure("AVG", fmt(s.avg, 1), "km/h")
-                SideFigure("MAX", fmt(s.max, 1), "km/h")
-                SideFigure(
-                    "TIMER",
-                    if (s.tmrSt == 0) "READY" else fmt(s.tmrS, 2),
-                    if (s.tmrSt == 0) "" else "s",
-                    color = when (s.tmrSt) {
-                        1 -> HudColors.Amber
-                        2 -> HudColors.Green
-                        else -> HudColors.TextPrimary
-                    },
-                )
+                SideNum("AVG", s.avg, 1, "km/h")
+                SideNum("MAX", s.max, 1, "km/h")
+                if (s.tmrSt == 0) {
+                    SideFigure("TIMER", "READY", "")
+                } else {
+                    SideNum(
+                        "TIMER",
+                        s.tmrS,
+                        2,
+                        "s",
+                        color = when (s.tmrSt) {
+                            1 -> HudColors.Amber
+                            2 -> HudColors.Green
+                            else -> HudColors.TextPrimary
+                        },
+                    )
+                }
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -425,6 +465,32 @@ private fun SideFigure(
         Spacer(Modifier.width(HudSpace.Gap))
         FigureText(
             value,
+            unit,
+            color,
+            modifier = Modifier.weight(1f),
+            align = TextAlign.End,
+        )
+    }
+}
+
+/** The flowing-number sibling of [SideFigure]: the glide lives inside this row, alone. */
+@Composable
+private fun SideNum(
+    label: String,
+    num: Double,
+    places: Int,
+    unit: String = "",
+    color: Color = HudColors.TextPrimary,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Text(label, style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 10.sp)
+        Spacer(Modifier.width(HudSpace.Gap))
+        FlowFigureText(
+            num,
+            places,
             unit,
             color,
             modifier = Modifier.weight(1f),
@@ -514,7 +580,7 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
         },
     ) {
         Strip(
-            Figure("DIST", fmt(s.trpKm, 2), "km"),
+            Figure("DIST", "", "km", num = s.trpKm, places = 2),
             Figure(
                 "TIME",
                 if (state.recording && elapsedMs >= 0L) {
@@ -525,10 +591,10 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
                     "—"
                 },
             ),
-            Figure("AVG", fmt(s.avg, 1), "km/h"),
+            Figure("AVG", "", "km/h", num = s.avg, places = 1),
             // One decimal, because the unit sends two: a whole-kilometre figure sits still
             // for the better part of a minute at demo speed and reads as a dead card.
-            Figure("ODO", fmt(s.odo, 1), "km"),
+            Figure("ODO", "", "km", num = s.odo, places = 1),
         )
         // The drive's route, drawn while it is being made (live route plan §4): the
         // same tile map the sealed drive gets a detail page for, following the newest
@@ -580,8 +646,10 @@ private fun PowerCard(s: Snapshot, trends: LiveTrends, step: Int) {
             domain = 10.0..16.0,
             mark = 11.5,
             line = HudColors.Green,
-            figure = fmt(s.volts, 2),
+            num = s.volts,
+            places = 2,
             unit = "V",
+            // The colour decides on the truth, not on the gliding display figure.
             color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
             everyMs = trends.everyMs,
         )
@@ -592,7 +660,8 @@ private fun PowerCard(s: Snapshot, trends: LiveTrends, step: Int) {
             domain = 0.0..130.0,
             mark = 105.0,
             line = HudColors.Amber,
-            figure = fmt(s.temp, 1),
+            num = s.temp,
+            places = 1,
             unit = "°C",
             color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
             everyMs = trends.everyMs,
@@ -609,7 +678,8 @@ private fun TrendRow(
     domain: ClosedFloatingPointRange<Double>,
     mark: Double,
     line: Color,
-    figure: String,
+    num: Double,
+    places: Int,
     unit: String,
     color: Color,
     everyMs: Long,
@@ -634,7 +704,7 @@ private fun TrendRow(
             )
         }
         Spacer(Modifier.width(HudSpace.Gap))
-        FigureText(figure, unit, color, size = 16, align = TextAlign.End)
+        FlowFigureText(num, places, unit, color, size = 16, align = TextAlign.End)
     }
 }
 
@@ -648,7 +718,6 @@ private fun TrendRow(
  */
 @Composable
 private fun FuelCard(s: Snapshot, step: Int) {
-    val fraction = (s.fuelPct.coerceIn(0, 100)) / 100f
     val barColor = when {
         s.fuelSt != 1 -> HudColors.TextDim
         s.fuelPct <= 10 -> HudColors.Red
@@ -659,27 +728,27 @@ private fun FuelCard(s: Snapshot, step: Int) {
         title = "FUEL",
         step = step,
         mark = HudGlyphLedger.mark("readout.fuel"),
+        // The caption is raw, and that is the rule, not an oversight: a card's caption is
+        // built in the card's own body, so gliding it recomposes the body sixty times a
+        // second - and every body on this page holds something expensive (the speed trace,
+        // this card's strip and bar). The figures are the numbers; the note above them is
+        // a note. The speed card's peak steps for the same reason plus one: a record is
+        // not a reading, it is the largest figure the window ever held.
         meta = "${fmt(s.trpL, 2)} L used · ${if (s.akml > 0.0) fmt(s.akml, 1) else "—"} km/L avg",
     ) {
         Spacer(Modifier.height(HudSpace.Gap))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .background(HudColors.Track, HudRadius.PillShape),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(fraction)
-                    .fillMaxHeight()
-                    .background(barColor, HudRadius.PillShape),
-            )
-        }
+        FlowBar(s.fuelPct.toDouble(), barColor)
         Spacer(Modifier.height(6.dp))
         Strip(
-            Figure("LEVEL", "${s.fuelPct}", "%", color = barColor),
-            Figure("TANK", fmt(s.fuelL, 2), "L"),
-            Figure("INST", if (s.ikml > 0.0) fmt(s.ikml, 1) else "—", "km/L"),
+            Figure("LEVEL", "", "%", num = s.fuelPct.toDouble(), places = 0, color = barColor),
+            Figure("TANK", "", "L", num = s.fuelL, places = 2),
+            Figure(
+                "INST",
+                if (s.ikml > 0.0) "" else "—",
+                "km/L",
+                num = s.ikml.takeIf { it > 0.0 },
+                places = 1,
+            ),
             Figure(
                 "INPUT",
                 fuelStateLabel(s.fuelSt),
@@ -707,6 +776,35 @@ private fun FuelCard(s: Snapshot, step: Int) {
 }
 
 /**
+ * The tank as a pill, and the only part of the fuel card that moves between frames.
+ *
+ * The sender's 1 % jump is real, but a bar that snaps a whole percentage across the card
+ * reads as broken even when the jump is honest - so the fraction it paints is glided
+ * here, inside the one Box that needs it, rather than in the card's body. A [flow] call
+ * in a card's body is a card that recomposes sixty times a second: the figures beside
+ * this bar would rebuild themselves for a bar's motion, and the map two cards up the
+ * page would run its update lambda with them. Bench-measured, that cost was the whole
+ * frame budget on the bench phone.
+ */
+@Composable
+private fun FlowBar(percent: Double, color: Color) {
+    val fraction = (flow(percent).coerceIn(0.0, 100.0) / 100.0).toFloat()
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .background(HudColors.Track, HudRadius.PillShape),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction)
+                .fillMaxHeight()
+                .background(color, HudRadius.PillShape),
+        )
+    }
+}
+
+/**
  * The GNSS fix, and the position it produced.
  *
  * HDOP and altitude arrive as -1 when the fix did not carry them, which is the firmware
@@ -730,9 +828,19 @@ private fun GnssCard(s: Snapshot, step: Int) {
                 if (s.fix == 1) "3D" else "NO",
                 color = if (s.fix == 1) HudColors.Green else HudColors.Amber,
             ),
+            // SATS and FIX stay steps - they are counts and states, and they change in
+            // steps honestly. HDOP and altitude are the continuous kind, and both keep
+            // the em dash for a declined value rather than gliding through one: `num`
+            // null is the dash, and the glide then lives in the figure's own leaf.
             Figure("SATS", s.sats.toString(), color = if (s.fix == 1) HudColors.Green else HudColors.Amber),
-            Figure("HDOP", if (s.hdop >= 0) fmt(s.hdop, 1) else "—"),
-            Figure("ALT", if (s.alt >= 0) fmt(s.alt, 0) else "—", if (s.alt >= 0) "m" else ""),
+            Figure("HDOP", "—", num = if (s.hdop >= 0) s.hdop else null, places = 1),
+            Figure(
+                "ALT",
+                "—",
+                if (s.alt >= 0) "m" else "",
+                num = if (s.alt >= 0) s.alt.toDouble() else null,
+                places = 0,
+            ),
         )
     }
 }

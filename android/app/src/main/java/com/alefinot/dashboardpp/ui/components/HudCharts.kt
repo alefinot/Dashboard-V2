@@ -1,7 +1,6 @@
 package com.alefinot.dashboardpp.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -23,7 +22,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.theme.HudColors
-import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeMetric
 import com.alefinot.dashboardpp.ui.theme.HudeMetricUnit
 import com.alefinot.dashboardpp.ui.theme.HudePerfValue
@@ -191,19 +189,21 @@ fun HudGauge(
     accent: Color = HudColors.Cyan,
 ) {
     val clamped = max(0.0, min(value, fullScale))
-    // A new figure arrives once a second. The arc and the number travel to it on
-    // the page's own strong ease-out instead of jumping (HudMotion.GAUGE_MS): the
-    // page has no gauge to copy, so the duration is ours, chosen so the movement
-    // settles before the next sample. Both animations are value-triggered - with no
-    // new sample the gauge holds still and costs no frames.
+    // A new figure arrives once a second, so the gauge glides for exactly that long and at
+    // exactly one speed - the same rule as every other live figure on the page
+    // (ui/components/HudFlow.kt), and the same gate: off the pager's screen it snaps, and
+    // costs no frames. The old ease-out burst (HudMotion.GAUGE_MS) settled in 300 ms and
+    // then sat still for 700, which the maintainer's "no steps" complaint reads as a pulse;
+    // a needle that travels the whole second in pace with the numbers around it does not.
+    // Both animations are value-triggered - with no new sample the gauge holds still.
     val fraction by animateFloatAsState(
         (clamped / fullScale).toFloat().coerceIn(0f, 1f),
-        tween(HudMotion.GAUGE_MS, easing = HudMotion.Standard),
+        flowSpec(),
         label = "gaugeSweep",
     )
     val shownValue by animateFloatAsState(
         clamped.toFloat(),
-        tween(HudMotion.GAUGE_MS, easing = HudMotion.Standard),
+        flowSpec(),
         label = "gaugeFigure",
     )
     Box(modifier) {

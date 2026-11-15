@@ -197,6 +197,89 @@ class LivePageReadoutsTest {
         )
     }
 
+    /**
+     * The unit answers once a second, and the page used to format each frame as it landed -
+     * so every figure teleported once a second, and the page read as broken even when every
+     * jump was honest. The continuous readings now travel through one sample period
+     * (ui/components/HudFlow.kt): linearly, between two real samples, never outside them,
+     * late by at most a second. The discrete readings - satellite count, fix state, the fuel
+     * sender's health - stay steps, because a count gliding through 9.4 is not smoothness,
+     * it is fiction.
+     */
+    @Test
+    fun theLiveFiguresFlowInsteadOfStepping() {
+        val flow = File("src/main/java/com/alefinot/dashboardpp/ui/components/HudFlow.kt")
+        assertTrue("missing HudFlow.kt", flow.exists())
+        val glide = flow.readText()
+        assertTrue(
+            "flow() stopped being a constant-speed glide - the steady pace is what makes a wall " +
+                "of 1 Hz figures read as flowing instead of as a pulse with dead air between beats",
+            Regex("tween\\(FLOW_MS,\\s*easing = LinearEasing").containsMatchIn(glide),
+        )
+        val page = codeOnly("LiveTab.kt")
+        // No continuous *figure* may reach fmt() raw any more; it has to pass through flow().
+        val raw = listOf(
+            "avg", "max", "odo", "volts", "temp", "trpKm", "fuelL",
+            "ikml", "tmrS", "hdop", "alt",
+        ).filter { Regex("fmt\\(s\\.$it\\b").containsMatchIn(page) }
+        assertTrue("these Live-page figures are back on raw 1 Hz steps: $raw", raw.isEmpty())
+        // A caption is a different animal, and the rule is worth writing down because the
+        // obvious edit breaks it: a card's caption is built in the card's body, so a glide
+        // there recomposes the whole body - trace, strip, bar and the live map beside it -
+        // at frame rate to smooth one line of small dim text. Bench-measured, that was the
+        // Live page's entire frame budget. So the figures flow, the notes step.
+        val captionFlow = page.lines().filter { it.contains("flow(") && it.contains('"') }
+        assertTrue(
+            "a caption started gliding again: $captionFlow - move the reading into a leaf " +
+                "that paints it, the way FlowBar and FlowFigureText do, or leave the note a step",
+            captionFlow.isEmpty(),
+        )
+        assertTrue(
+            "a discrete reading started gliding - the satellite count and the fix state change " +
+                "in steps honestly, and the page must keep saying so",
+            !Regex("flow\\(s\\.(sats|fix)\\b").containsMatchIn(page),
+        )
+        val row = codeOnly("TripsTab.kt")
+        assertTrue(
+            "the RECORDING row's numbers stepped again while the card they mirror flows",
+            Regex("flow\\(summary\\?\\.distanceKm").containsMatchIn(row),
+        )
+        assertTrue(
+            "the recording row's glide moved back into the row's body, which paints a map: it " +
+                "has to live in the leaf that draws the line (TripFlowLine)",
+            Regex("TripFlowLine\\(state\\)").containsMatchIn(row),
+        )
+        val charts = codeOnly("../components/HudCharts.kt")
+        assertTrue(
+            "the gauge went back to a short burst of its own while every figure around it glides " +
+                "for a whole second: a needle that settles and then rests is a pulse, and \"the " +
+                "data moves in steps\" is the complaint this answers",
+            Regex("flowSpec\\(\\)").containsMatchIn(charts) &&
+                !Regex("tween\\(HudMotion\\.GAUGE_MS").containsMatchIn(charts),
+        )
+        // The pager keeps its neighbours composed, so an ungated glide animates pages
+        // nobody is looking at. Measured on the bench phone: a build with the glide and
+        // no gate rendered the idle App Settings page at sixty frames a second.
+        assertTrue(
+            "the glide stopped being gated on the page being in view - off screen it has to " +
+                "snap, or the pager's hidden pages spend the drive animating for nobody",
+            Regex("LocalEnterActive\\.current").containsMatchIn(flow.readText()) &&
+                Regex("else snap\\(\\)").containsMatchIn(flow.readText()),
+        )
+        val mapCode = codeOnly("../map/LiveRouteMap.kt")
+        assertTrue(
+            "the live map stopped gliding: the dot and the camera have to travel the segment " +
+                "between two fixes frame by frame, or a drive is a slideshow at one frame a second",
+            Regex("postOnAnimation").containsMatchIn(mapCode) &&
+                Regex("SystemClock\\.uptimeMillis").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the map's camera is being animated by osmdroid again - with the holder's own ticker " +
+                "pointing it every frame, a transition of the library's is two authorities and a stutter",
+            !Regex("animateTo|setMapCenter").containsMatchIn(mapCode),
+        )
+    }
+
     @Test
     fun theRoundGaugeSurvivedTheRedesign() {
         // The maintainer asked for the gauge to stay when the card stack was approved: it is

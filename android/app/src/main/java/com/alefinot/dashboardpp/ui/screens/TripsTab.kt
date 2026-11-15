@@ -50,6 +50,7 @@ import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.ScanRing
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
+import com.alefinot.dashboardpp.ui.components.flow
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.RouteSketch
@@ -337,7 +338,6 @@ private fun TripList(
 /** The open trip, straight from the recorder's running totals. */
 @Composable
 private fun LiveTripRow(state: TripRuntimeState) {
-    val snap = state.snapshot
     val summary = state.summary
     // No page rule for a live recording row, so it borrows the page's status
     // language: `#msg` plus `.msg-success` -- emerald hairline at 30%, emerald at
@@ -367,18 +367,7 @@ private fun LiveTripRow(state: TripRuntimeState) {
                     )
                 }
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    buildString {
-                        append(fmtOrDash(summary?.distanceKm, 2))
-                        append(" km · ")
-                        append(snap?.let { it.spd.toInt().toString() } ?: "—")
-                        append(" km/h · ")
-                        append(fmtOrDash(summary?.fuelUsedL, 2))
-                        append(" L")
-                    },
-                    color = HudColors.TextMuted,
-                    style = HudeCfgHelp(),
-                )
+                TripFlowLine(state)
             }
             // The drive's shape, drawing itself as the recorder appends it (live route
             // plan §4) - so the live row looks like the card this drive becomes. The
@@ -391,6 +380,34 @@ private fun LiveTripRow(state: TripRuntimeState) {
             }
         }
     }
+}
+
+/**
+ * The recording row's live line: distance, speed, fuel, gliding.
+ *
+ * A leaf on purpose, exactly as the Live page's figures are ([com.alefinot.dashboardpp.ui.components.flow]):
+ * this row carries the drive's 72 dp map, and a glide in the row's body would run that
+ * map's update lambda sixty times a second to smooth a line of small muted text.
+ */
+@Composable
+private fun TripFlowLine(state: TripRuntimeState) {
+    val summary = state.summary
+    val snap = state.snapshot
+    val km = flow(summary?.distanceKm ?: 0.0)
+    val kmh = flow(snap?.spd ?: 0.0)
+    val litres = flow(summary?.fuelUsedL ?: 0.0)
+    Text(
+        buildString {
+            append(hudNum(km, 2))
+            append(" km · ")
+            append(kmh.toInt().toString())
+            append(" km/h · ")
+            append(hudNum(litres, 2))
+            append(" L")
+        },
+        color = HudColors.TextMuted,
+        style = HudeCfgHelp(),
+    )
 }
 
 @Composable
