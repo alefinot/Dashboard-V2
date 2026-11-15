@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,6 +46,7 @@ import com.alefinot.dashboardpp.ui.components.HudGlyphLedger
 import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudStateChip
+import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
@@ -58,6 +60,7 @@ import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
+import kotlinx.coroutines.delay
 
 /**
  * The gauge's box, square. The page's own gauge filled a `#live-display` panel; the
@@ -69,6 +72,15 @@ import com.alefinot.dashboardpp.ui.theme.hudCard
  * shorter side), so the smaller circle is not a thinner drawing, only a smaller one.
  */
 private val GaugeBox = 132.dp
+
+/**
+ * How often the trip card reads its own clock while a recording is open.
+ *
+ * The unit pushes a frame a second, and the elapsed figure must not be the only thing on the
+ * page that dies with the link: four reads a second keeps the seconds flipping close to the
+ * real second without recomposing the card for every frame the display draws.
+ */
+private const val TRIP_CLOCK_TICK_MS = 250L
 
 /**
  * The native live view: the same data the unit's deleted web page rendered, drawn
@@ -456,12 +468,25 @@ private fun TraceOr(
  * The run this phone is recording.
  *
  * TIME is the app's clock, not the unit's: the recorder opened the file at `tripStartMs`, so
- * that is the only honest start of an elapsed figure, and it keeps running while a stale
- * frame holds every other column still.
+ * that is the only honest start of an elapsed figure. The card keeps that clock itself rather
+ * than borrowing the 1 Hz frame: a stopwatch that stops when the link goes quiet - or that only
+ * moves when the minute rolls over - is not a stopwatch. The tick is scoped to this card, so
+ * the other four are not redrawn for it.
  */
 @Composable
 private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
-    val elapsedMs = System.currentTimeMillis() - state.tripStartMs
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    // Ticks while the page can be seen and a file is open. Off-screen pages stay composed in
+    // this pager, and a hidden card has nothing to keep current for anybody.
+    val inView = LocalEnterActive.current
+    LaunchedEffect(state.recording, state.tripStartMs, inView) {
+        if (!state.recording || state.tripStartMs <= 0L || !inView) return@LaunchedEffect
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(TRIP_CLOCK_TICK_MS)
+        }
+    }
+    val elapsedMs = nowMs - state.tripStartMs
     LiveCard(
         title = "THIS TRIP",
         step = step,
@@ -481,14 +506,17 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
             Figure(
                 "TIME",
                 if (state.recording && elapsedMs >= 0L) {
-                    val total = elapsedMs / 60_000L
-                    String.format(java.util.Locale.US, "%d:%02d", total / 60L, total % 60L)
+                    // Seconds, like the note above: the figure used to drop them, so a card
+                    // that ticked every second still looked frozen for a minute at a time.
+                    hudDuration(elapsedMs)
                 } else {
                     "—"
                 },
             ),
             Figure("AVG", fmt(s.avg, 1), "km/h"),
-            Figure("ODO", fmt(s.odo, 0), "km"),
+            // One decimal, because the unit sends two: a whole-kilometre figure sits still
+            // for the better part of a minute at demo speed and reads as a dead card.
+            Figure("ODO", fmt(s.odo, 1), "km"),
         )
     }
 }

@@ -128,6 +128,39 @@ class LivePageReadoutsTest {
         )
     }
 
+    /**
+     * THIS TRIP's elapsed figure is the app's clock, and it has to keep running between the
+     * unit's one-frame-a-second updates. The card used to read `System.currentTimeMillis()`
+     * once per composition and print hours and minutes, so a link that went quiet froze it
+     * and a healthy link still showed the same value for sixty seconds at a time - a
+     * stopwatch that only moves on the minute is indistinguishable from a stuck one.
+     */
+    @Test
+    fun theTripCardClockTicksBetweenFrames() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the trip card is back on the frame clock: its elapsed figure must read the card's " +
+                "own ticking clock (nowMs), not System.currentTimeMillis() at composition time",
+            Regex("""val elapsedMs = nowMs - state\.tripStartMs""").containsMatchIn(page),
+        )
+        assertTrue(
+            "the trip card stopped ticking between frames - the elapsed figure would freeze " +
+                "whenever the link goes quiet, which is exactly when it is the only live number",
+            Regex("""delay\(TRIP_CLOCK_TICK_MS\)""").containsMatchIn(page),
+        )
+        assertTrue(
+            "the clock no longer follows the pager's viewport flag: every page stays composed " +
+                "in this pager, so a card nobody can see would tick four times a second for " +
+                "nobody and redraw itself all the way through a ride",
+            Regex("""LaunchedEffect\(state\.recording, state\.tripStartMs, inView\)""").containsMatchIn(page),
+        )
+        assertTrue(
+            "the TIME figure and its meta note no longer share the H:MM:SS format; without " +
+                "seconds the card sits on one value for a minute",
+            Regex("""hudDuration\(elapsedMs\)""").findAll(page).count() >= 2,
+        )
+    }
+
     @Test
     fun theRoundGaugeSurvivedTheRedesign() {
         // The maintainer asked for the gauge to stay when the card stack was approved: it is
