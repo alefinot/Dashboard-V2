@@ -941,139 +941,22 @@
         240,
         160
        ],
-       "section": "Viewport Center"
-      },
-      {
-       "key": "SHOW_GHOST_DIGITS",
-       "kind": "bool",
-       "default": 1,
-       "label": "Show Ghost Digits",
-       "section": "Ghost Digits"
-      },
-      {
-       "key": "GHOST_COLOR_STR",
-       "kind": "color",
-       "default": "#474747",
-       "label": "Ghost Digit Color",
-       "maxLength": 8,
-       "section": "Ghost Digits"
-      },
-      {
-       "key": "SHOW_FPS_COUNTER_DEFAULT",
-       "kind": "bool",
-       "default": 0,
-       "label": "Visible",
-       "section": "FPS Counter"
-      },
-      {
-       "key": "OFFSET_BIG_FPS_X",
-       "keyY": "OFFSET_BIG_FPS_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        -9,
-        -7
-       ],
-       "section": "FPS Counter"
-      },
-      {
-       "key": "SHOW_ELEMENT_SIGNATURE",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Signature"
-      },
-      {
-       "key": "OFFSET_BIG_SIGNATURE_X",
-       "keyY": "OFFSET_BIG_SIGNATURE_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        0,
-        -75
-       ],
-       "section": "Signature"
-      },
-      {
-       "key": "SHOW_ELEMENT_TMR",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Acceleration Timer"
-      },
-      {
-       "key": "TMR_INT_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Acceleration Timer",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "TMR_DEC_DIGITS",
-       "kind": "int",
-       "default": 2,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Acceleration Timer",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_BIG_TMR_X",
-       "keyY": "OFFSET_BIG_TMR_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        -53,
-        -46
-       ],
-       "section": "Acceleration Timer"
-      },
-      {
-       "key": "SHOW_ELEMENT_SPEED_SOURCE",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Speed Source Icon"
-      },
-      {
-       "key": "OFFSET_HALL_ICON_X",
-       "keyY": "OFFSET_HALL_ICON_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        0,
-        -100
-       ],
-       "section": "Speed Source Icon"
+       "section": "Viewport Center",
+       "element": {
+        "id": "center",
+        "label": "Viewport Center"
+       }
       },
       {
        "key": "SHOW_ELEMENT_SPEED",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Main Speed Number"
+       "section": "Main Speed Number",
+       "element": {
+        "id": "speed",
+        "label": "Main Speed Number"
+       }
       },
       {
        "key": "SPEED_DIGITS",
@@ -1083,6 +966,10 @@
        "min": 1,
        "max": 4,
        "section": "Main Speed Number",
+       "element": {
+        "id": "speed",
+        "label": "Main Speed Number"
+       },
        "uiMin": 1,
        "uiMax": 4
       },
@@ -1099,14 +986,22 @@
         0,
         -3
        ],
-       "section": "Main Speed Number"
+       "section": "Main Speed Number",
+       "element": {
+        "id": "speed",
+        "label": "Main Speed Number"
+       }
       },
       {
        "key": "SHOW_ELEMENT_SPEED_UNIT",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Speed Unit"
+       "section": "Speed Unit",
+       "element": {
+        "id": "speedUnit",
+        "label": "Speed Unit"
+       }
       },
       {
        "key": "OFFSET_BIG_SPEED_UNIT_X",
@@ -1121,40 +1016,26 @@
         106,
         56
        ],
-       "section": "Speed Unit"
+       "section": "Speed Unit",
+       "element": {
+        "id": "speedUnit",
+        "label": "Speed Unit"
+       }
       },
       {
-       "key": "SHOW_ELEMENT_AVG_SPEED",
+       "key": "SHOW_ELEMENT_SPEED_SOURCE",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Average Speed"
+       "section": "Speed Source Icon",
+       "element": {
+        "id": "speedSource",
+        "label": "Speed Source Icon"
+       }
       },
       {
-       "key": "AVG_SPEED_INT_DIGITS",
-       "kind": "int",
-       "default": 2,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Average Speed",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "AVG_SPEED_DEC_DIGITS",
-       "kind": "int",
-       "default": 0,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Average Speed",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_AVG_SPEED_X",
-       "keyY": "OFFSET_AVG_SPEED_Y",
+       "key": "OFFSET_HALL_ICON_X",
+       "keyY": "OFFSET_HALL_ICON_Y",
        "kind": "xy",
        "label": "Position",
        "min": -4096,
@@ -1162,43 +1043,29 @@
        "minY": -4096,
        "maxY": 4096,
        "default": [
-        -163,
-        -25
+        0,
+        -100
        ],
-       "section": "Average Speed"
+       "section": "Speed Source Icon",
+       "element": {
+        "id": "speedSource",
+        "label": "Speed Source Icon"
+       }
       },
       {
-       "key": "SHOW_ELEMENT_MAX_SPEED",
+       "key": "SHOW_ELEMENT_TIME",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Max Speed"
+       "section": "Clock",
+       "element": {
+        "id": "clock",
+        "label": "Clock"
+       }
       },
       {
-       "key": "MAX_SPEED_INT_DIGITS",
-       "kind": "int",
-       "default": 3,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Max Speed",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "MAX_SPEED_DEC_DIGITS",
-       "kind": "int",
-       "default": 0,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Max Speed",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_MAX_SPEED_X",
-       "keyY": "OFFSET_MAX_SPEED_Y",
+       "key": "OFFSET_BIG_TIME_X",
+       "keyY": "OFFSET_BIG_TIME_Y",
        "kind": "xy",
        "label": "Position",
        "min": -4096,
@@ -1206,17 +1073,55 @@
        "minY": -4096,
        "maxY": 4096,
        "default": [
-        -60,
-        -25
+        107,
+        -91
        ],
-       "section": "Max Speed"
+       "section": "Clock",
+       "element": {
+        "id": "clock",
+        "label": "Clock"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_DATE",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Date",
+       "element": {
+        "id": "date",
+        "label": "Date"
+       }
+      },
+      {
+       "key": "OFFSET_BIG_DATE_X",
+       "keyY": "OFFSET_BIG_DATE_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -131,
+        -91
+       ],
+       "section": "Date",
+       "element": {
+        "id": "date",
+        "label": "Date"
+       }
       },
       {
        "key": "SHOW_ELEMENT_ODO",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Odometer"
+       "section": "Odometer",
+       "element": {
+        "id": "odo",
+        "label": "Odometer"
+       }
       },
       {
        "key": "ODO_INT_DIGITS",
@@ -1226,6 +1131,10 @@
        "min": 1,
        "max": 14,
        "section": "Odometer",
+       "element": {
+        "id": "odo",
+        "label": "Odometer"
+       },
        "uiMin": 1,
        "uiMax": 14
       },
@@ -1237,6 +1146,10 @@
        "min": 0,
        "max": 4,
        "section": "Odometer",
+       "element": {
+        "id": "odo",
+        "label": "Odometer"
+       },
        "uiMin": 0,
        "uiMax": 4
       },
@@ -1253,234 +1166,22 @@
         22,
         126
        ],
-       "section": "Odometer"
-      },
-      {
-       "key": "SHOW_ELEMENT_AVG_KML",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Average KML"
-      },
-      {
-       "key": "AVG_INT_DIGITS",
-       "kind": "int",
-       "default": 2,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Average KML",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "AVG_DEC_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Average KML",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_AVG_KML_X",
-       "keyY": "OFFSET_AVG_KML_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        160,
-        -25
-       ],
-       "section": "Average KML"
-      },
-      {
-       "key": "SHOW_ELEMENT_INST_KML",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Instant KML"
-      },
-      {
-       "key": "INST_INT_DIGITS",
-       "kind": "int",
-       "default": 2,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Instant KML",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "INST_DEC_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Instant KML",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_INST_KML_X",
-       "keyY": "OFFSET_INST_KML_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        60,
-        -25
-       ],
-       "section": "Instant KML"
-      },
-      {
-       "key": "SHOW_ELEMENT_FUEL_LTRS",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Fuel LTRS"
-      },
-      {
-       "key": "FUEL_INT_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Fuel LTRS",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "FUEL_DEC_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Fuel LTRS",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_FUEL_LTRS_X",
-       "keyY": "OFFSET_FUEL_LTRS_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        132,
-        123
-       ],
-       "section": "Fuel LTRS"
-      },
-      {
-       "key": "SHOW_ELEMENT_BAT",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Battery"
-      },
-      {
-       "key": "BAT_INT_DIGITS",
-       "kind": "int",
-       "default": 2,
-       "label": "Integer Digits",
-       "min": 1,
-       "max": 14,
-       "section": "Battery",
-       "uiMin": 1,
-       "uiMax": 14
-      },
-      {
-       "key": "BAT_DEC_DIGITS",
-       "kind": "int",
-       "default": 1,
-       "label": "Decimal Digits",
-       "min": 0,
-       "max": 4,
-       "section": "Battery",
-       "uiMin": 0,
-       "uiMax": 4
-      },
-      {
-       "key": "OFFSET_BIG_BAT_X",
-       "keyY": "OFFSET_BIG_BAT_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        -112,
-        123
-       ],
-       "section": "Battery"
-      },
-      {
-       "key": "SHOW_ELEMENT_TIME",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Clock"
-      },
-      {
-       "key": "OFFSET_BIG_TIME_X",
-       "keyY": "OFFSET_BIG_TIME_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        107,
-        -91
-       ],
-       "section": "Clock"
-      },
-      {
-       "key": "SHOW_ELEMENT_DATE",
-       "kind": "bool",
-       "default": 1,
-       "label": "Visible",
-       "section": "Date"
-      },
-      {
-       "key": "OFFSET_BIG_DATE_X",
-       "keyY": "OFFSET_BIG_DATE_Y",
-       "kind": "xy",
-       "label": "Position",
-       "min": -4096,
-       "max": 4096,
-       "minY": -4096,
-       "maxY": 4096,
-       "default": [
-        -131,
-        -91
-       ],
-       "section": "Date"
+       "section": "Odometer",
+       "element": {
+        "id": "odo",
+        "label": "Odometer"
+       }
       },
       {
        "key": "SHOW_ELEMENT_SAT",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Satellites"
+       "section": "Satellites",
+       "element": {
+        "id": "sat",
+        "label": "Satellites"
+       }
       },
       {
        "key": "SAT_DIGITS",
@@ -1490,6 +1191,10 @@
        "min": 1,
        "max": 3,
        "section": "Satellites",
+       "element": {
+        "id": "sat",
+        "label": "Satellites"
+       },
        "uiMin": 1,
        "uiMax": 3
       },
@@ -1506,14 +1211,525 @@
         179,
         -114
        ],
-       "section": "Satellites"
+       "section": "Satellites",
+       "element": {
+        "id": "sat",
+        "label": "Satellites"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_TMR",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Acceleration Timer",
+       "element": {
+        "id": "tmr",
+        "label": "Acceleration Timer"
+       }
+      },
+      {
+       "key": "TMR_INT_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Acceleration Timer",
+       "element": {
+        "id": "tmr",
+        "label": "Acceleration Timer"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "TMR_DEC_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Acceleration Timer",
+       "element": {
+        "id": "tmr",
+        "label": "Acceleration Timer"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_TMR_X",
+       "keyY": "OFFSET_BIG_TMR_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -53,
+        -46
+       ],
+       "section": "Acceleration Timer",
+       "element": {
+        "id": "tmr",
+        "label": "Acceleration Timer"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_BAT",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Battery",
+       "element": {
+        "id": "bat",
+        "label": "Battery"
+       }
+      },
+      {
+       "key": "BAT_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Battery",
+       "element": {
+        "id": "bat",
+        "label": "Battery"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "BAT_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Battery",
+       "element": {
+        "id": "bat",
+        "label": "Battery"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_BIG_BAT_X",
+       "keyY": "OFFSET_BIG_BAT_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -112,
+        123
+       ],
+       "section": "Battery",
+       "element": {
+        "id": "bat",
+        "label": "Battery"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_AVG_SPEED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Average Speed",
+       "element": {
+        "id": "avgSpeed",
+        "label": "Average Speed"
+       }
+      },
+      {
+       "key": "AVG_SPEED_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Average Speed",
+       "element": {
+        "id": "avgSpeed",
+        "label": "Average Speed"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "AVG_SPEED_DEC_DIGITS",
+       "kind": "int",
+       "default": 0,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Average Speed",
+       "element": {
+        "id": "avgSpeed",
+        "label": "Average Speed"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_AVG_SPEED_X",
+       "keyY": "OFFSET_AVG_SPEED_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -163,
+        -25
+       ],
+       "section": "Average Speed",
+       "element": {
+        "id": "avgSpeed",
+        "label": "Average Speed"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_MAX_SPEED",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Max Speed",
+       "element": {
+        "id": "maxSpeed",
+        "label": "Max Speed"
+       }
+      },
+      {
+       "key": "MAX_SPEED_INT_DIGITS",
+       "kind": "int",
+       "default": 3,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Max Speed",
+       "element": {
+        "id": "maxSpeed",
+        "label": "Max Speed"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "MAX_SPEED_DEC_DIGITS",
+       "kind": "int",
+       "default": 0,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Max Speed",
+       "element": {
+        "id": "maxSpeed",
+        "label": "Max Speed"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_MAX_SPEED_X",
+       "keyY": "OFFSET_MAX_SPEED_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -60,
+        -25
+       ],
+       "section": "Max Speed",
+       "element": {
+        "id": "maxSpeed",
+        "label": "Max Speed"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_AVG_KML",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Average KML",
+       "element": {
+        "id": "avgKml",
+        "label": "Average KML"
+       }
+      },
+      {
+       "key": "AVG_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Average KML",
+       "element": {
+        "id": "avgKml",
+        "label": "Average KML"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "AVG_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Average KML",
+       "element": {
+        "id": "avgKml",
+        "label": "Average KML"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_AVG_KML_X",
+       "keyY": "OFFSET_AVG_KML_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        160,
+        -25
+       ],
+       "section": "Average KML",
+       "element": {
+        "id": "avgKml",
+        "label": "Average KML"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_INST_KML",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Instant KML",
+       "element": {
+        "id": "instKml",
+        "label": "Instant KML"
+       }
+      },
+      {
+       "key": "INST_INT_DIGITS",
+       "kind": "int",
+       "default": 2,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Instant KML",
+       "element": {
+        "id": "instKml",
+        "label": "Instant KML"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "INST_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Instant KML",
+       "element": {
+        "id": "instKml",
+        "label": "Instant KML"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_INST_KML_X",
+       "keyY": "OFFSET_INST_KML_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        60,
+        -25
+       ],
+       "section": "Instant KML",
+       "element": {
+        "id": "instKml",
+        "label": "Instant KML"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_FUEL_LTRS",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Fuel LTRS",
+       "element": {
+        "id": "fuelLtrs",
+        "label": "Fuel LTRS"
+       }
+      },
+      {
+       "key": "FUEL_INT_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Integer Digits",
+       "min": 1,
+       "max": 14,
+       "section": "Fuel LTRS",
+       "element": {
+        "id": "fuelLtrs",
+        "label": "Fuel LTRS"
+       },
+       "uiMin": 1,
+       "uiMax": 14
+      },
+      {
+       "key": "FUEL_DEC_DIGITS",
+       "kind": "int",
+       "default": 1,
+       "label": "Decimal Digits",
+       "min": 0,
+       "max": 4,
+       "section": "Fuel LTRS",
+       "element": {
+        "id": "fuelLtrs",
+        "label": "Fuel LTRS"
+       },
+       "uiMin": 0,
+       "uiMax": 4
+      },
+      {
+       "key": "OFFSET_FUEL_LTRS_X",
+       "keyY": "OFFSET_FUEL_LTRS_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        132,
+        123
+       ],
+       "section": "Fuel LTRS",
+       "element": {
+        "id": "fuelLtrs",
+        "label": "Fuel LTRS"
+       }
+      },
+      {
+       "key": "SHOW_ELEMENT_SIGNATURE",
+       "kind": "bool",
+       "default": 1,
+       "label": "Visible",
+       "section": "Signature",
+       "element": {
+        "id": "signature",
+        "label": "Signature"
+       }
+      },
+      {
+       "key": "OFFSET_BIG_SIGNATURE_X",
+       "keyY": "OFFSET_BIG_SIGNATURE_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        0,
+        -75
+       ],
+       "section": "Signature",
+       "element": {
+        "id": "signature",
+        "label": "Signature"
+       }
+      },
+      {
+       "key": "SHOW_FPS_COUNTER_DEFAULT",
+       "kind": "bool",
+       "default": 0,
+       "label": "Visible",
+       "section": "FPS Counter",
+       "element": {
+        "id": "fps",
+        "label": "FPS Counter"
+       }
+      },
+      {
+       "key": "OFFSET_BIG_FPS_X",
+       "keyY": "OFFSET_BIG_FPS_Y",
+       "kind": "xy",
+       "label": "Position",
+       "min": -4096,
+       "max": 4096,
+       "minY": -4096,
+       "maxY": 4096,
+       "default": [
+        -9,
+        -7
+       ],
+       "section": "FPS Counter",
+       "element": {
+        "id": "fps",
+        "label": "FPS Counter"
+       }
+      },
+      {
+       "key": "SHOW_GHOST_DIGITS",
+       "kind": "bool",
+       "default": 1,
+       "label": "Show Ghost Digits",
+       "section": "Ghost Digits",
+       "element": {
+        "id": "ghost",
+        "label": "Ghost Digits"
+       }
+      },
+      {
+       "key": "GHOST_COLOR_STR",
+       "kind": "color",
+       "default": "#474747",
+       "label": "Ghost Digit Color",
+       "maxLength": 8,
+       "section": "Ghost Digits",
+       "element": {
+        "id": "ghost",
+        "label": "Ghost Digits"
+       }
       },
       {
        "key": "SHOW_ELEMENT_BLE",
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Bluetooth Icon"
+       "section": "Bluetooth Icon",
+       "element": {
+        "id": "ble",
+        "label": "Bluetooth Icon"
+       }
       },
       {
        "key": "OFFSET_BLE_ICON_X",
@@ -1528,7 +1744,11 @@
         204,
         -108
        ],
-       "section": "Bluetooth Icon"
+       "section": "Bluetooth Icon",
+       "element": {
+        "id": "ble",
+        "label": "Bluetooth Icon"
+       }
       }
      ]
     },
@@ -1539,7 +1759,11 @@
        "key": "SHOW_ELEMENT_WEATHER",
        "kind": "bool",
        "default": 1,
-       "label": "Show Weather Widget on Dashboard"
+       "label": "Show Weather Widget on Dashboard",
+       "element": {
+        "id": "weather",
+        "label": "Weather Widget"
+       }
       },
       {
        "key": "OFFSET_WEATHER_X",
@@ -1553,7 +1777,11 @@
        "default": [
         0,
         146
-       ]
+       ],
+       "element": {
+        "id": "weather",
+        "label": "Weather Widget"
+       }
       },
       {
        "key": "WEATHER_WIDTH",
@@ -1564,6 +1792,10 @@
        "max": 480,
        "unit": "px",
        "section": "Widget Size",
+       "element": {
+        "id": "weather",
+        "label": "Weather Widget"
+       },
        "slider": true,
        "uiMin": 160,
        "uiMax": 480,
@@ -1578,6 +1810,10 @@
        "max": 120,
        "unit": "px",
        "section": "Widget Size",
+       "element": {
+        "id": "weather",
+        "label": "Weather Widget"
+       },
        "slider": true,
        "uiMin": 20,
        "uiMax": 120,
@@ -1588,7 +1824,11 @@
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Left Bar (Engine Temp)"
+       "section": "Left Bar (Engine Temp)",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "SIDEBAR_LEFT_X",
@@ -1603,7 +1843,11 @@
         10,
         95
        ],
-       "section": "Left Bar (Engine Temp)"
+       "section": "Left Bar (Engine Temp)",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "TEMP_BAR_MIN",
@@ -1614,6 +1858,10 @@
        "max": 300,
        "unit": "°C",
        "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       },
        "unitType": "temp"
       },
       {
@@ -1622,7 +1870,11 @@
        "default": "#00ff00",
        "label": "Color fade point 1",
        "maxLength": 8,
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "TEMP_WARN_LOW",
@@ -1632,7 +1884,11 @@
        "min": -40,
        "max": 300,
        "unit": "°C",
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "COLOR_TEMP_WARN",
@@ -1640,7 +1896,11 @@
        "default": "#ffff00",
        "label": "Color fade point 2",
        "maxLength": 8,
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "TEMP_WARN_YEL",
@@ -1650,7 +1910,11 @@
        "min": -40,
        "max": 300,
        "unit": "°C",
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "COLOR_TEMP_CRIT",
@@ -1658,7 +1922,11 @@
        "default": "#ff0000",
        "label": "Color fade point 3",
        "maxLength": 8,
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "TEMP_WARN_RED",
@@ -1668,7 +1936,11 @@
        "min": -40,
        "max": 300,
        "unit": "°C",
-       "section": "Engine Temperature Color Ramp"
+       "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
       },
       {
        "key": "TEMP_BAR_MAX",
@@ -1679,6 +1951,10 @@
        "max": 300,
        "unit": "°C",
        "section": "Engine Temperature Color Ramp",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       },
        "unitType": "temp"
       },
       {
@@ -1686,7 +1962,11 @@
        "kind": "bool",
        "default": 1,
        "label": "Visible",
-       "section": "Right Bar (Fuel)"
+       "section": "Right Bar (Fuel)",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "SIDEBAR_RIGHT_X",
@@ -1701,7 +1981,11 @@
         462,
         95
        ],
-       "section": "Right Bar (Fuel)"
+       "section": "Right Bar (Fuel)",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "COLOR_FUEL_NORM",
@@ -1709,7 +1993,11 @@
        "default": "#00ff00",
        "label": "Full (color at 100%)",
        "maxLength": 8,
-       "section": "Fuel Level Color Ramp"
+       "section": "Fuel Level Color Ramp",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "COLOR_FUEL_WARN",
@@ -1717,7 +2005,11 @@
        "default": "#ffff00",
        "label": "Color fade point 1",
        "maxLength": 8,
-       "section": "Fuel Level Color Ramp"
+       "section": "Fuel Level Color Ramp",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "FUEL_WARN_YEL",
@@ -1727,7 +2019,11 @@
        "min": 0,
        "max": 100,
        "unit": "%",
-       "section": "Fuel Level Color Ramp"
+       "section": "Fuel Level Color Ramp",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "COLOR_FUEL_CRIT",
@@ -1735,7 +2031,11 @@
        "default": "#ff0000",
        "label": "Color fade point 2",
        "maxLength": 8,
-       "section": "Fuel Level Color Ramp"
+       "section": "Fuel Level Color Ramp",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "FUEL_WARN_RED",
@@ -1745,7 +2045,11 @@
        "min": 0,
        "max": 100,
        "unit": "%",
-       "section": "Fuel Level Color Ramp"
+       "section": "Fuel Level Color Ramp",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
       },
       {
        "key": "SIDEBAR_BAR_WIDTH",
@@ -1755,7 +2059,11 @@
        "min": 1,
        "max": 2048,
        "unit": "px",
-       "section": "Bar Dimensions"
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "bars",
+        "label": "Bar Dimensions (both bars)"
+       }
       },
       {
        "key": "SIDEBAR_BAR_HEIGHT",
@@ -1765,7 +2073,11 @@
        "min": 1,
        "max": 2048,
        "unit": "px",
-       "section": "Bar Dimensions"
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "bars",
+        "label": "Bar Dimensions (both bars)"
+       }
       }
      ]
     }

@@ -383,6 +383,7 @@ def build(rows, groups_js):
         }
         card = None
         section = None
+        element = None
         for it in g.get("items", []):
             if not isinstance(it, dict):
                 continue
@@ -397,6 +398,16 @@ def build(rows, groups_js):
                     card["widget"] = WIDGET_BY_CARD[title]
                 group["cards"].append(card)
                 section = None
+                element = None
+                continue
+            if typ == "element_header":
+                # One screen element of the UI Layout group. The rows under it are
+                # stamped so the app can draw a list of elements whose sheets carry
+                # everything that belongs to one thing on the unit's screen; inside
+                # a sheet the sections stay as sub-headings, which is what they
+                # already were.
+                label = it.get("label", "")
+                element = {"id": it.get("id") or slug(label), "label": label}
                 continue
             if typ in ("subtitle", "section_header"):
                 if typ == "subtitle" and card is None:
@@ -412,21 +423,21 @@ def build(rows, groups_js):
                 group["cards"].append(card)
 
             if typ == "xy":
-                pair = _mk_pair(table, it, section, labelled)
+                pair = _mk_pair(table, it, section, labelled, element)
                 if pair:
                     card["items"].append(pair)
                 continue
             if typ == "threshold-row":
-                _emit_threshold(table, it, card, section, labelled)
+                _emit_threshold(table, it, card, section, labelled, element)
                 continue
             if typ == "touch-table":
-                _emit_touch_table(table, it, card, section, labelled)
+                _emit_touch_table(table, it, card, section, labelled, element)
                 continue
 
             key = it.get("id")
             if not key or key in hidden or key == ADVANCE_KEY:
                 continue
-            item = _mk_item(table, it, key, section, labelled)
+            item = _mk_item(table, it, key, section, labelled, element=element)
             if item:
                 card["items"].append(item)
 
@@ -498,7 +509,17 @@ def _base(table, key, labelled, generated=False):
     return item, row
 
 
-def _mk_item(table, ui, key, section, labelled, generated=False):
+def _stamp_element(item, element):
+    """Carry the UI Layout element this row belongs to, when it is under one.
+
+    Additive on purpose: the asset stays schemaVersion 1, and a build of the app
+    that predates the field simply ignores it and keeps drawing the flat cards.
+    """
+    if element:
+        item["element"] = dict(element)
+
+
+def _mk_item(table, ui, key, section, labelled, generated=False, element=None):
     item, row = _base(table, key, labelled, generated)
     item["label"] = ui.get("label") or item["label"] or generated_label(key)
     if not ui.get("label"):
@@ -509,6 +530,7 @@ def _mk_item(table, ui, key, section, labelled, generated=False):
         item["advanced"] = True
     if section:
         item["section"] = section
+    _stamp_element(item, element)
     if key in REBOOT_KEYS:
         item["reboot"] = True
 
@@ -544,7 +566,7 @@ def _mk_item(table, ui, key, section, labelled, generated=False):
     return item
 
 
-def _mk_pair(table, ui, section, labelled):
+def _mk_pair(table, ui, section, labelled, element=None):
     ix, iy = ui.get("idX"), ui.get("idY")
     if not ix or not iy:
         return None
@@ -562,10 +584,11 @@ def _mk_pair(table, ui, section, labelled):
     }
     if section:
         item["section"] = section
+    _stamp_element(item, element)
     return item
 
 
-def _emit_threshold(table, ui, card, section, labelled):
+def _emit_threshold(table, ui, card, section, labelled, element=None):
     color, value = ui.get("colorId"), ui.get("valueId")
     label = ui.get("label", "Threshold")
     if color:
@@ -574,6 +597,7 @@ def _emit_threshold(table, ui, card, section, labelled):
         item["kind"] = "color"
         if section:
             item["section"] = section
+        _stamp_element(item, element)
         card["items"].append(item)
     if value:
         item, _ = _base(table, value, labelled)
@@ -581,10 +605,11 @@ def _emit_threshold(table, ui, card, section, labelled):
         item["unit"] = ui.get("unit", item.get("unit"))
         if section:
             item["section"] = section
+        _stamp_element(item, element)
         card["items"].append(item)
 
 
-def _emit_touch_table(table, ui, card, section, labelled):
+def _emit_touch_table(table, ui, card, section, labelled, element=None):
     count = ui.get("pointCount")
     array = ui.get("arrayId")
     if count:
@@ -593,6 +618,7 @@ def _emit_touch_table(table, ui, card, section, labelled):
         item["widget"] = "pointCount"
         if section:
             item["section"] = section
+        _stamp_element(item, element)
         card["items"].append(item)
     card["items"].append({
         "key": array or "fuelCalOhms", "kind": "fuelTable",
@@ -601,7 +627,7 @@ def _emit_touch_table(table, ui, card, section, labelled):
     })
     for sub in ui.get("rows", []):
         if isinstance(sub, dict) and sub.get("id"):
-            item = _mk_item(table, sub, sub["id"], section, labelled)
+            item = _mk_item(table, sub, sub["id"], section, labelled, element=element)
             if item:
                 card["items"].append(item)
 

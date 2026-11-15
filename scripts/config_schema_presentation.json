@@ -654,6 +654,11 @@
       },
       "items": [
         {
+          "type": "element_header",
+          "id": "center",
+          "label": "Viewport Center"
+        },
+        {
           "type": "section_header",
           "label": "Viewport Center"
         },
@@ -664,85 +669,9 @@
           "label": "Position"
         },
         {
-          "type": "section_header",
-          "label": "Ghost Digits"
-        },
-        {
-          "id": "SHOW_GHOST_DIGITS",
-          "label": "Show Ghost Digits"
-        },
-        {
-          "id": "GHOST_COLOR_STR",
-          "label": "Ghost Digit Color",
-          "type": "color"
-        },
-        {
-          "type": "section_header",
-          "label": "FPS Counter"
-        },
-        {
-          "id": "SHOW_FPS_COUNTER_DEFAULT",
-          "label": "Visible"
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_BIG_FPS_X",
-          "idY": "OFFSET_BIG_FPS_Y",
-          "label": "Position"
-        },
-        {
-          "type": "section_header",
-          "label": "Signature"
-        },
-        {
-          "id": "SHOW_ELEMENT_SIGNATURE",
-          "label": "Visible"
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_BIG_SIGNATURE_X",
-          "idY": "OFFSET_BIG_SIGNATURE_Y",
-          "label": "Position"
-        },
-        {
-          "type": "section_header",
-          "label": "Acceleration Timer"
-        },
-        {
-          "id": "SHOW_ELEMENT_TMR",
-          "label": "Visible"
-        },
-        {
-          "id": "TMR_INT_DIGITS",
-          "label": "Integer Digits",
-          "min": 1,
-          "max": 14
-        },
-        {
-          "id": "TMR_DEC_DIGITS",
-          "label": "Decimal Digits",
-          "min": 0,
-          "max": 4
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_BIG_TMR_X",
-          "idY": "OFFSET_BIG_TMR_Y",
-          "label": "Position"
-        },
-        {
-          "type": "section_header",
-          "label": "Speed Source Icon"
-        },
-        {
-          "id": "SHOW_ELEMENT_SPEED_SOURCE",
-          "label": "Visible"
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_HALL_ICON_X",
-          "idY": "OFFSET_HALL_ICON_Y",
-          "label": "Position"
+          "type": "element_header",
+          "id": "speed",
+          "label": "Main Speed Number"
         },
         {
           "type": "section_header",
@@ -765,6 +694,11 @@
           "label": "Position"
         },
         {
+          "type": "element_header",
+          "id": "speedUnit",
+          "label": "Speed Unit"
+        },
+        {
           "type": "section_header",
           "label": "Speed Unit"
         },
@@ -779,56 +713,66 @@
           "label": "Position"
         },
         {
-          "type": "section_header",
-          "label": "Average Speed"
-        },
-        {
-          "id": "SHOW_ELEMENT_AVG_SPEED",
-          "label": "Visible"
-        },
-        {
-          "id": "AVG_SPEED_INT_DIGITS",
-          "label": "Integer Digits",
-          "min": 1,
-          "max": 14
-        },
-        {
-          "id": "AVG_SPEED_DEC_DIGITS",
-          "label": "Decimal Digits",
-          "min": 0,
-          "max": 4
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_AVG_SPEED_X",
-          "idY": "OFFSET_AVG_SPEED_Y",
-          "label": "Position"
+          "type": "element_header",
+          "id": "speedSource",
+          "label": "Speed Source Icon"
         },
         {
           "type": "section_header",
-          "label": "Max Speed"
+          "label": "Speed Source Icon"
         },
         {
-          "id": "SHOW_ELEMENT_MAX_SPEED",
+          "id": "SHOW_ELEMENT_SPEED_SOURCE",
           "label": "Visible"
         },
         {
-          "id": "MAX_SPEED_INT_DIGITS",
-          "label": "Integer Digits",
-          "min": 1,
-          "max": 14
+          "type": "xy",
+          "idX": "OFFSET_HALL_ICON_X",
+          "idY": "OFFSET_HALL_ICON_Y",
+          "label": "Position"
         },
         {
-          "id": "MAX_SPEED_DEC_DIGITS",
-          "label": "Decimal Digits",
-          "min": 0,
-          "max": 4
+          "type": "element_header",
+          "id": "clock",
+          "label": "Clock"
+        },
+        {
+          "type": "section_header",
+          "label": "Clock"
+        },
+        {
+          "id": "SHOW_ELEMENT_TIME",
+          "label": "Visible"
         },
         {
           "type": "xy",
-          "idX": "OFFSET_MAX_SPEED_X",
-          "idY": "OFFSET_MAX_SPEED_Y",
+          "idX": "OFFSET_BIG_TIME_X",
+          "idY": "OFFSET_BIG_TIME_Y",
           "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "date",
+          "label": "Date"
+        },
+        {
+          "type": "section_header",
+          "label": "Date"
+        },
+        {
+          "id": "SHOW_ELEMENT_DATE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_DATE_X",
+          "idY": "OFFSET_BIG_DATE_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "odo",
+          "label": "Odometer"
         },
         {
           "type": "section_header",
@@ -857,82 +801,65 @@
           "label": "Position"
         },
         {
-          "type": "section_header",
-          "label": "Average KML"
+          "type": "element_header",
+          "id": "sat",
+          "label": "Satellites"
         },
         {
-          "id": "SHOW_ELEMENT_AVG_KML",
+          "type": "section_header",
+          "label": "Satellites"
+        },
+        {
+          "id": "SHOW_ELEMENT_SAT",
           "label": "Visible"
         },
         {
-          "id": "AVG_INT_DIGITS",
+          "id": "SAT_DIGITS",
+          "label": "Digits",
+          "min": 1,
+          "max": 3
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SAT_X",
+          "idY": "OFFSET_BIG_SAT_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "tmr",
+          "label": "Acceleration Timer"
+        },
+        {
+          "type": "section_header",
+          "label": "Acceleration Timer"
+        },
+        {
+          "id": "SHOW_ELEMENT_TMR",
+          "label": "Visible"
+        },
+        {
+          "id": "TMR_INT_DIGITS",
           "label": "Integer Digits",
           "min": 1,
           "max": 14
         },
         {
-          "id": "AVG_DEC_DIGITS",
+          "id": "TMR_DEC_DIGITS",
           "label": "Decimal Digits",
           "min": 0,
           "max": 4
         },
         {
           "type": "xy",
-          "idX": "OFFSET_AVG_KML_X",
-          "idY": "OFFSET_AVG_KML_Y",
+          "idX": "OFFSET_BIG_TMR_X",
+          "idY": "OFFSET_BIG_TMR_Y",
           "label": "Position"
         },
         {
-          "type": "section_header",
-          "label": "Instant KML"
-        },
-        {
-          "id": "SHOW_ELEMENT_INST_KML",
-          "label": "Visible"
-        },
-        {
-          "id": "INST_INT_DIGITS",
-          "label": "Integer Digits",
-          "min": 1,
-          "max": 14
-        },
-        {
-          "id": "INST_DEC_DIGITS",
-          "label": "Decimal Digits",
-          "min": 0,
-          "max": 4
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_INST_KML_X",
-          "idY": "OFFSET_INST_KML_Y",
-          "label": "Position"
-        },
-        {
-          "type": "section_header",
-          "label": "Fuel LTRS"
-        },
-        {
-          "id": "SHOW_ELEMENT_FUEL_LTRS",
-          "label": "Visible"
-        },
-        {
-          "id": "FUEL_INT_DIGITS",
-          "label": "Integer Digits",
-          "min": 1,
-          "max": 14
-        },
-        {
-          "id": "FUEL_DEC_DIGITS",
-          "label": "Decimal Digits",
-          "min": 0,
-          "max": 4
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_FUEL_LTRS_X",
-          "idY": "OFFSET_FUEL_LTRS_Y",
-          "label": "Position"
+          "type": "element_header",
+          "id": "bat",
+          "label": "Battery"
         },
         {
           "type": "section_header",
@@ -961,52 +888,220 @@
           "label": "Position"
         },
         {
-          "type": "section_header",
-          "label": "Clock"
-        },
-        {
-          "id": "SHOW_ELEMENT_TIME",
-          "label": "Visible"
-        },
-        {
-          "type": "xy",
-          "idX": "OFFSET_BIG_TIME_X",
-          "idY": "OFFSET_BIG_TIME_Y",
-          "label": "Position"
+          "type": "element_header",
+          "id": "avgSpeed",
+          "label": "Average Speed"
         },
         {
           "type": "section_header",
-          "label": "Date"
+          "label": "Average Speed"
         },
         {
-          "id": "SHOW_ELEMENT_DATE",
+          "id": "SHOW_ELEMENT_AVG_SPEED",
           "label": "Visible"
         },
         {
-          "type": "xy",
-          "idX": "OFFSET_BIG_DATE_X",
-          "idY": "OFFSET_BIG_DATE_Y",
-          "label": "Position"
-        },
-        {
-          "type": "section_header",
-          "label": "Satellites"
-        },
-        {
-          "id": "SHOW_ELEMENT_SAT",
-          "label": "Visible"
-        },
-        {
-          "id": "SAT_DIGITS",
-          "label": "Digits",
+          "id": "AVG_SPEED_INT_DIGITS",
+          "label": "Integer Digits",
           "min": 1,
-          "max": 3
+          "max": 14
+        },
+        {
+          "id": "AVG_SPEED_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
         },
         {
           "type": "xy",
-          "idX": "OFFSET_BIG_SAT_X",
-          "idY": "OFFSET_BIG_SAT_Y",
+          "idX": "OFFSET_AVG_SPEED_X",
+          "idY": "OFFSET_AVG_SPEED_Y",
           "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "maxSpeed",
+          "label": "Max Speed"
+        },
+        {
+          "type": "section_header",
+          "label": "Max Speed"
+        },
+        {
+          "id": "SHOW_ELEMENT_MAX_SPEED",
+          "label": "Visible"
+        },
+        {
+          "id": "MAX_SPEED_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "MAX_SPEED_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_MAX_SPEED_X",
+          "idY": "OFFSET_MAX_SPEED_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "avgKml",
+          "label": "Average KML"
+        },
+        {
+          "type": "section_header",
+          "label": "Average KML"
+        },
+        {
+          "id": "SHOW_ELEMENT_AVG_KML",
+          "label": "Visible"
+        },
+        {
+          "id": "AVG_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "AVG_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_AVG_KML_X",
+          "idY": "OFFSET_AVG_KML_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "instKml",
+          "label": "Instant KML"
+        },
+        {
+          "type": "section_header",
+          "label": "Instant KML"
+        },
+        {
+          "id": "SHOW_ELEMENT_INST_KML",
+          "label": "Visible"
+        },
+        {
+          "id": "INST_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "INST_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_INST_KML_X",
+          "idY": "OFFSET_INST_KML_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "fuelLtrs",
+          "label": "Fuel LTRS"
+        },
+        {
+          "type": "section_header",
+          "label": "Fuel LTRS"
+        },
+        {
+          "id": "SHOW_ELEMENT_FUEL_LTRS",
+          "label": "Visible"
+        },
+        {
+          "id": "FUEL_INT_DIGITS",
+          "label": "Integer Digits",
+          "min": 1,
+          "max": 14
+        },
+        {
+          "id": "FUEL_DEC_DIGITS",
+          "label": "Decimal Digits",
+          "min": 0,
+          "max": 4
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_FUEL_LTRS_X",
+          "idY": "OFFSET_FUEL_LTRS_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "signature",
+          "label": "Signature"
+        },
+        {
+          "type": "section_header",
+          "label": "Signature"
+        },
+        {
+          "id": "SHOW_ELEMENT_SIGNATURE",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_SIGNATURE_X",
+          "idY": "OFFSET_BIG_SIGNATURE_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "fps",
+          "label": "FPS Counter"
+        },
+        {
+          "type": "section_header",
+          "label": "FPS Counter"
+        },
+        {
+          "id": "SHOW_FPS_COUNTER_DEFAULT",
+          "label": "Visible"
+        },
+        {
+          "type": "xy",
+          "idX": "OFFSET_BIG_FPS_X",
+          "idY": "OFFSET_BIG_FPS_Y",
+          "label": "Position"
+        },
+        {
+          "type": "element_header",
+          "id": "ghost",
+          "label": "Ghost Digits"
+        },
+        {
+          "type": "section_header",
+          "label": "Ghost Digits"
+        },
+        {
+          "id": "SHOW_GHOST_DIGITS",
+          "label": "Show Ghost Digits"
+        },
+        {
+          "id": "GHOST_COLOR_STR",
+          "label": "Ghost Digit Color",
+          "type": "color"
+        },
+        {
+          "type": "element_header",
+          "id": "ble",
+          "label": "Bluetooth Icon"
         },
         {
           "type": "section_header",
@@ -1024,6 +1119,11 @@
         },
         {
           "type": "card_header",
+          "label": "Weather Widget"
+        },
+        {
+          "type": "element_header",
+          "id": "weather",
           "label": "Weather Widget"
         },
         {
@@ -1057,6 +1157,11 @@
           "max": 120,
           "step": 1,
           "unit": "px"
+        },
+        {
+          "type": "element_header",
+          "id": "barLeft",
+          "label": "Left Bar (Engine Temp)"
         },
         {
           "type": "section_header",
@@ -1108,6 +1213,11 @@
           "unit": "\u00b0C"
         },
         {
+          "type": "element_header",
+          "id": "barRight",
+          "label": "Right Bar (Fuel)"
+        },
+        {
           "type": "section_header",
           "label": "Right Bar (Fuel)"
         },
@@ -1143,6 +1253,11 @@
           "colorId": "COLOR_FUEL_CRIT",
           "valueId": "FUEL_WARN_RED",
           "unit": "%"
+        },
+        {
+          "type": "element_header",
+          "id": "bars",
+          "label": "Bar Dimensions (both bars)"
         },
         {
           "type": "section_header",
