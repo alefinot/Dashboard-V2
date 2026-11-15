@@ -97,6 +97,17 @@ data class SchemaItem(
     val reboot: Boolean = false,
     /** A sub-heading inside a card, from the page's `section:` grouping. */
     val section: String? = null,
+    /**
+     * The UI Layout screen element this row belongs to - one thing drawn on the unit's
+     * display (the clock, the fuel bar, the weather widget), named by the presentation
+     * tree and stamped by the generator onto every row under an `element_header`.
+     * Null everywhere the unit's page never spoke in elements; the app draws an
+     * element-driven group as a list of these instead of its flat cards, so a group
+     * stays drawable in the old shape simply by not naming any element.
+     */
+    val elementId: String? = null,
+    /** The element's human name, carried alongside [elementId]. */
+    val elementLabel: String? = null,
     /** For a fuel table row: the int row holding the point count. */
     val countKey: String? = null,
     /** The id of the live readout the old page showed next to a table. Carried, unused yet. */
@@ -314,6 +325,7 @@ data class ConfigSchema(
             val defaultX = if (isPair) (defaults as? List<*>)?.getOrNull(0) else defaults
             val defaultY = if (isPair) (defaults as? List<*>)?.getOrNull(1) else null
             val control = controlFor(kind, options, ConfigJson.bool(m, "slider") == true)
+            val element = m["element"] as? Map<*, *>
             return SchemaItem(
                 key = key,
                 kind = kind,
@@ -336,6 +348,8 @@ data class ConfigSchema(
                 advanced = ConfigJson.bool(m, "advanced") == true,
                 reboot = ConfigJson.bool(m, "reboot") == true,
                 section = ConfigJson.str(m, "section"),
+                elementId = element?.let { ConfigJson.str(it, "id") },
+                elementLabel = element?.let { ConfigJson.str(it, "label") },
                 countKey = ConfigJson.str(m, "countKey"),
                 liveId = ConfigJson.str(m, "liveId"),
                 defaultValue = defaultX,

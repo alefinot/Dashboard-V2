@@ -286,6 +286,44 @@ class ConfigStoreTest {
         assertEquals(60L, (row.value as Number).toLong())
     }
 
+    /**
+     * The position sheet's reset. The unit keeps a position as two keys and resets one
+     * at a time; the row is one thing, so pressing its reset must send *both* — a Y the
+     * unit still remembers is not reset, whatever the phone is drawing.
+     */
+    @Test
+    fun aPositionRowResetsBothAxesAtTheUnit() = runBlocking {
+        val pos = SchemaItem(
+            key = "OFFSET_BIG_TIME_X",
+            keyY = "OFFSET_BIG_TIME_Y",
+            kind = ValueKind.XY,
+            control = RowControl.PAIR,
+            label = "Position",
+            min = -4096.0,
+            max = 4096.0,
+            minY = -4096.0,
+            maxY = 4096.0,
+            defaultValue = 240,
+            defaultY = 160,
+        )
+        val store = store(pos, debounceMs = 10)
+        store.sync()
+        store.edit(pos, 120, -40)
+        delay(200)
+        assertEquals(120L, (store.state.value.rows.getValue("OFFSET_BIG_TIME_X").value as Number).toLong())
+        gateway.resets.clear()
+        store.reset(pos)
+        assertEquals(
+            "both axes go back at the unit, not just X",
+            listOf("OFFSET_BIG_TIME_X", "OFFSET_BIG_TIME_Y"),
+            gateway.resets,
+        )
+        val row = store.state.value.rows.getValue("OFFSET_BIG_TIME_X")
+        assertEquals(RowStatus.SYNCED, row.status)
+        assertEquals(240L, (row.value as Number).toLong())
+        assertEquals(160L, (row.yValue as Number).toLong())
+    }
+
     @Test
     fun aKeyTheUnitDoesNotKnowIsReportedNotSwallowed() = runBlocking {
         val item = int("SPEED_MAX", def = 60)

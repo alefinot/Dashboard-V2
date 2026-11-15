@@ -539,11 +539,27 @@ class ConfigStore(
         _state.update { it.copy(pending = pendingKeys().size) }
     }
 
-    /** One key back to its compiled default — with `config.reset`, not by typing. */
+    /**
+     * One key back to its compiled default — with `config.reset`, not by typing.
+     *
+     * An `xy` pair asks for **both** halves. The unit stores the two axes as two keys and
+     * resets one at a time, so a reset that only sent the X key left the phone showing
+     * both axes at their defaults while the unit kept the old Y — a pair that looked
+     * restored until the next read proved it was not.
+     */
     fun reset(item: SchemaItem) {
         timers.remove(item.key)?.cancel()
         scope.launch {
-            when (gateway.reset(item.key)) {
+            val x = gateway.reset(item.key)
+            val y = item.keyY?.let { gateway.reset(it) } ?: ResetOutcome.APPLIED
+            when (
+                when {
+                    x == ResetOutcome.APPLIED && y == ResetOutcome.APPLIED -> ResetOutcome.APPLIED
+                    x == ResetOutcome.UNKNOWN_KEY || y == ResetOutcome.UNKNOWN_KEY ->
+                        ResetOutcome.UNKNOWN_KEY
+                    else -> ResetOutcome.FAILED
+                }
+            ) {
                 ResetOutcome.APPLIED -> {
                     values[item.key] = item.defaultValue
                     item.defaultValue?.let { confirmed[item.key] = it }

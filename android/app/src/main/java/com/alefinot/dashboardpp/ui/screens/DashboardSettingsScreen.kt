@@ -49,6 +49,10 @@ import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
+import com.alefinot.dashboardpp.ui.screens.settings.LayoutElement
+import com.alefinot.dashboardpp.ui.screens.settings.LayoutElementList
+import com.alefinot.dashboardpp.ui.screens.settings.LayoutElementSheet
+import com.alefinot.dashboardpp.ui.screens.settings.LayoutElements
 import com.alefinot.dashboardpp.ui.screens.settings.PerfMonitorCard
 import com.alefinot.dashboardpp.ui.screens.settings.RenderBlock
 import com.alefinot.dashboardpp.ui.screens.settings.RenderReading
@@ -148,6 +152,8 @@ fun DashboardSettingsScreen(
     var restoring by remember { mutableStateOf(false) }
     /** The bin in the action line was tapped; the confirm box is up. */
     var factoryAsk by remember { mutableStateOf(false) }
+    /** The UI Layout element whose sheet is open; null when no sheet is up. */
+    var layoutSheet by remember { mutableStateOf<LayoutElement?>(null) }
 
     // A note about something that happened on the link — a restart the app asked for, a
     // restore — goes stale the moment the link changes. On the bench the page spent the rest
@@ -434,13 +440,19 @@ fun DashboardSettingsScreen(
                 // 12 dp sheet, the way the unit's page draws them. Only the open group is
                 // built, so a 78-row group costs what opening it costs and nothing more.
                 item(key = "group-${group.id}") {
+                    // The UI Layout group speaks in screen elements, and draws that way:
+                    // one row per thing on the unit's display instead of the card wall
+                    // (see LayoutElementControls). Every other group keeps the page's
+                    // card grid untouched.
+                    val asElements = LayoutElements.isElementGroup(group)
                     // The group's cards, packed the way the page's grid packs them: a card
                     // takes one track of the row, and a card that is the only one in its row
                     // fills the width - which is what `auto-fit` does with a track nobody
                     // else claims. A block whose control needs the room keeps a row of its
                     // own (see SettingsLayout.pack).
                     val blocks =
-                        SettingsLayout.blocksFor(group, state, query, advanced)
+                        if (asElements) emptyList() else
+                            SettingsLayout.blocksFor(group, state, query, advanced)
                     HudAccordion(open = groupOpen, modifier = Modifier.padding(bottom = 14.dp)) {
                         HudAccordionHeader(
                             title = group.title,
@@ -457,32 +469,50 @@ fun DashboardSettingsScreen(
                             },
                         )
                         HudAccordionBody(open = groupOpen) {
-                            Column(
-                                Modifier.fillMaxWidth().padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                for (rowOfCards in SettingsLayout.pack(blocks, columns)) {
-                                    Row(
-                                        Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        rowOfCards.forEach { block ->
-                                            CardBlock(
-                                                block = block,
-                                                modifier = Modifier.weight(1f),
-                                                state = state,
-                                                schema = schema,
-                                                enabled = unitEnabled,
-                                                store = store,
-                                                scope = scope,
-                                                confirm = confirm,
-                                                onConfirm = { confirm = it },
-                                                onNote = { note = it },
-                                                odoText = odoText,
-                                                onOdo = { odoText = it },
-                                                noiseLine = noiseLine,
-                                                onNoise = { noiseLine = it },
-                                            )
+                            if (asElements) {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    LayoutElementList(
+                                        elements = LayoutElements.elementsOf(group),
+                                        state = state,
+                                        store = store,
+                                        query = query,
+                                        searching = searching,
+                                        advanced = advanced,
+                                        enabled = unitEnabled,
+                                        onOpen = { layoutSheet = it },
+                                    )
+                                }
+                            } else {
+                                Column(
+                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    for (rowOfCards in SettingsLayout.pack(blocks, columns)) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            rowOfCards.forEach { block ->
+                                                CardBlock(
+                                                    block = block,
+                                                    modifier = Modifier.weight(1f),
+                                                    state = state,
+                                                    schema = schema,
+                                                    enabled = unitEnabled,
+                                                    store = store,
+                                                    scope = scope,
+                                                    confirm = confirm,
+                                                    onConfirm = { confirm = it },
+                                                    onNote = { note = it },
+                                                    odoText = odoText,
+                                                    onOdo = { odoText = it },
+                                                    noiseLine = noiseLine,
+                                                    onNoise = { noiseLine = it },
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -554,6 +584,23 @@ fun DashboardSettingsScreen(
                 }
             },
             onDismiss = { factoryAsk = false },
+        )
+    }
+
+    // The open element sheet, composed last so its scrim sits over the whole page the
+    // way the factory-reset ask does. It reads the live store state, so a value written
+    // from the sheet is already correct on the list row behind it when the sheet closes.
+    // (`unitEnabled` itself lives inside the page column's lambda; this is the same gate.)
+    val sheet = layoutSheet
+    if (sheet != null && schema != null) {
+        LayoutElementSheet(
+            element = sheet,
+            store = store,
+            state = state,
+            imperial = state.imperial,
+            unitSwap = schema.imperial,
+            enabled = ready && state.sync is SyncPhase.Ready,
+            onDismiss = { layoutSheet = null },
         )
     }
 }
