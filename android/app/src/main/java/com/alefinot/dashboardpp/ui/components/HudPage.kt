@@ -266,8 +266,13 @@ fun HudAccordionBody(
 }
 
 /**
- * `summary`: the 32 px cyan icon badge, the 14 px/700 title, the count, and the circular
- * chevron - the four things the page's group rows are made of.
+ * `summary`: the 32 px cyan icon badge, the 14 px/700 title, and the circular
+ * chevron - the three things the page's group rows are made of.
+ *
+ * A dim note used to ride beside the chevron - `18 of 18` on the schema groups, the
+ * status chip on the monitor - and the maintainer had every one of them taken out on
+ * 2026-11-15; the parameter and the slot went with them so no header can grow one
+ * back. What the bands say now is their name, and nothing else.
  *
  * The chevron is drawn, not typed. It used to be a `"▾"`/`"▸"` character, and this
  * device's sans font has no glyph for either: the row rendered a boxed question mark
@@ -283,7 +288,6 @@ fun HudAccordionHeader(
     title: String,
     modifier: Modifier = Modifier,
     badge: Int? = null,
-    meta: String? = null,
     open: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -351,9 +355,6 @@ fun HudAccordionHeader(
             color = titleColor,
             modifier = Modifier.weight(1f),
         )
-        if (meta != null) {
-            Text(meta, style = HudeCfgNote(), color = HudColors.TextDim)
-        }
         Box(
             Modifier
                 .size(18.dp)

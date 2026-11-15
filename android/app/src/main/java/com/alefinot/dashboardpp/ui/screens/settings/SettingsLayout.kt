@@ -216,25 +216,6 @@ object SettingsLayout {
         group.cards.any { cardShown(it, query, advanced) }
 
     /**
-     * What a group header says on its right: "18 of 18" while browsing, "4 of 18" under a
-     * query.
-     *
-     * A card with no rows of its own - the firmware installer - matches on its title and
-     * nothing else, so counting rows would print "0 of 18" above a group whose open card is
-     * exactly what the query asked for. It is counted as one card instead: the row count is
-     * a claim about settings, and an install is not a setting.
-     */
-    fun groupMeta(group: SchemaGroup, query: String, advanced: Boolean): String {
-        val total = group.cards.sumOf { it.items.size }
-        if (total == 0) return "no settings"
-        val cards = group.cards.filter { cardShown(it, query, advanced) }
-        val hits = cards.sumOf { rowsOf(it, query, advanced).size }
-        val actions = cards.count { it.items.isEmpty() }
-        if (actions > 0 && hits == 0) return if (actions == 1) "1 card" else "$actions cards"
-        return "$hits of $total"
-    }
-
-    /**
      * The line above the accordion under a query: what the box found.
      *
      * Rows and title-only cards are named separately, and the row total is left out as soon

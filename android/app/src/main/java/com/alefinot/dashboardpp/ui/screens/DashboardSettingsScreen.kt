@@ -105,7 +105,7 @@ import kotlinx.coroutines.launch
  *    schema, and the bar says which of the unit's keys the read covered.
  *  - **Search and advanced mode.** The two things a 198-row form needs that a card stack does
  *    not: find a row, and reveal the rows the average owner should not touch.
- *  - **The groups.** Icons, titles and counts, from the same grouping the unit page uses,
+ *  - **The groups.** Icons and titles, from the same grouping the unit page uses,
  *    because that grouping is what its `configMap` says the settings are. Cards flow in
  *    columns inside a group the way the unit page's grid flows them.
  *  - **The sticky bar at the bottom.** Write what is waiting, restart the unit, get the config
@@ -445,7 +445,6 @@ fun DashboardSettingsScreen(
                         HudAccordionHeader(
                             title = group.title,
                             badge = groupIcon(group.icon),
-                            meta = SettingsLayout.groupMeta(group, query, advanced),
                             open = groupOpen,
                             onClick = {
                                 if (searching) {

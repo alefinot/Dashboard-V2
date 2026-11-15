@@ -420,29 +420,21 @@ class SettingsLayoutTest {
     }
 
     /**
-     * The counts say what the box found. A card with no rows of its own (a widget card) is not
-     * a setting and is not counted as one, but a group whose only hit is that card must not
-     * read "0 of 18" above it either - the card the query named is open right there.
+     * The summary line says what the box found. A card with no rows of its own (a widget card)
+     * is not a setting and is not counted as one, but a group whose only hit is that card must
+     * not be reported as zero settings either - the card the query named is a real answer.
+     * (The group headers themselves stopped printing their counts - "18 of 18" and friends -
+     * on 2026-11-15, when the maintainer had every header chip out; the search rule they
+     * followed is still this one.)
      */
     @Test
-    fun theCountsSayWhatTheQueryFound() {
+    fun theSearchSummarySaysWhatTheQueryFound() {
         val g = SchemaGroup(
             "sys", "System & General",
             listOf(
                 SchemaCard("General", listOf(row("ADV_MODE"))),
                 SchemaCard("Bench", emptyList(), widget = "noiseBench"),
             ),
-        )
-        assertEquals(
-            "browsing lost the group's row count",
-            "1 of 1",
-            SettingsLayout.groupMeta(g, "", true),
-        )
-        assertEquals("1 of 1", SettingsLayout.groupMeta(g, "adv", true))
-        assertEquals(
-            "a title-only card was counted as zero settings",
-            "1 card",
-            SettingsLayout.groupMeta(g, "bench", true),
         )
         assertEquals(
             "the summary counted a rowless card as a row, or counted a whole group instead of its hits",

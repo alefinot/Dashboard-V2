@@ -117,7 +117,6 @@ fun PerfMonitorCard(
     var health by remember { mutableStateOf<HealthReadout?>(null) }
     var error by remember { mutableStateOf("") }
     var lastRead by remember { mutableStateOf("") }
-    var reading by remember { mutableStateOf(false) }
 
     /**
      * One round of reads: `perf` for everything the panel draws, and `health` for the one figure
@@ -127,29 +126,25 @@ fun PerfMonitorCard(
      * current for as long as the card stayed open.
      */
     suspend fun read() {
-        reading = true
-        try {
-            val perfCall = store.action("perf")
-            val parsed = if (perfCall.ok) UnitDiag.perf(perfCall.fields) else null
-            if (parsed != null) perf = parsed
-            val healthCall = store.action("health")
-            if (healthCall.ok) health = UnitDiag.health(healthCall.fields) ?: health
-            error = when {
-                !perfCall.ok && !healthCall.ok ->
-                    "the unit did not answer: ${perfCall.error ?: healthCall.error}"
-                // An ok reply with nothing in it is its own failure: the unit said yes and sent no
-                // numbers, and drawing that as a page full of dashes would blame the unit later.
-                perfCall.ok && parsed == null -> "perf answered, but sent no fields"
-                !perfCall.ok -> "perf refused: ${perfCall.error}"
-                !healthCall.ok -> "health refused: ${healthCall.error}"
-                else -> ""
-            }
-            lastRead = clock()
-        } finally {
-            // A cancelled round leaves the card anyway; a round that threw must not leave the
-            // header stuck saying "reading…" over numbers that stopped moving.
-            reading = false
+        val perfCall = store.action("perf")
+        val parsed = if (perfCall.ok) UnitDiag.perf(perfCall.fields) else null
+        if (parsed != null) perf = parsed
+        val healthCall = store.action("health")
+        if (healthCall.ok) health = UnitDiag.health(healthCall.fields) ?: health
+        error = when {
+            !perfCall.ok && !healthCall.ok ->
+                "the unit did not answer: ${perfCall.error ?: healthCall.error}"
+            // An ok reply with nothing in it is its own failure: the unit said yes and sent no
+            // numbers, and drawing that as a page full of dashes would blame the unit later.
+            perfCall.ok && parsed == null -> "perf answered, but sent no fields"
+            !perfCall.ok -> "perf refused: ${perfCall.error}"
+            !healthCall.ok -> "health refused: ${healthCall.error}"
+            else -> ""
         }
+        lastRead = clock()
+        // A `reading` flag used to wrap this round so the header chip could say "reading…"
+        // and could not be left saying it over frozen numbers; the chip came out of the
+        // header bands on 2026-11-15 and the flag had no other reader, so it went too.
     }
 
     // One effect drives everything, keyed on the card being open: opening it reads once and then
@@ -175,15 +170,10 @@ fun PerfMonitorCard(
             // badges, so the last card of the scroll looks like the four above it instead of
             // starting its title against the sheet's left edge.
             badge = R.drawable.ic_perf,
-            // The other cards count their rows in this slot. A monitor has no rows to count, so the
-            // chip says what the numbers are doing instead: reading now, polling now, or — behind a
-            // closed header — how stale the figures it is holding are.
-            meta = when {
-                open && reading -> "reading…"
-                open -> "polling every $PollEveryLabel"
-                lastRead.isEmpty() -> null
-                else -> "last read $lastRead"
-            },
+            // A status chip (`reading…`, `last read 14:22:03`) used to ride beside the
+            // chevron here, where the schema groups wore their counts; the maintainer had
+            // every one of those header texts out on 2026-11-15. The freshness itself is
+            // not lost - the open card prints *last read* in its own body.
             open = open,
             onClick = onToggle,
         )

@@ -226,7 +226,6 @@ fun SettingsScreen(
         GroupCard(
             title = "Updates",
             badge = R.drawable.ic_app_updates,
-            meta = "firmware · app",
             open = openGroup == "updates",
             onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "updates") },
         ) {
@@ -277,7 +276,6 @@ fun SettingsScreen(
         GroupCard(
             title = "Trips & Storage",
             badge = R.drawable.ic_app_trips,
-            meta = "recording · storage",
             open = openGroup == "trips",
             onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "trips") },
         ) {
@@ -372,7 +370,6 @@ fun SettingsScreen(
         GroupCard(
             title = "Weather Feed",
             badge = R.drawable.ic_app_weather,
-            meta = "push · city",
             open = openGroup == "weather",
             onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "weather") },
         ) {
@@ -642,7 +639,6 @@ private fun openStorageGrantScreen(context: Context) {
 private fun GroupCard(
     title: String,
     badge: Int,
-    meta: String,
     open: Boolean,
     onToggle: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
@@ -651,7 +647,6 @@ private fun GroupCard(
         HudAccordionHeader(
             title = title,
             badge = badge,
-            meta = meta,
             open = open,
             onClick = onToggle,
         )
