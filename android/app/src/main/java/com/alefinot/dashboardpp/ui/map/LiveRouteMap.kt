@@ -70,9 +70,11 @@ fun LiveRouteMap(
     modifier: Modifier = Modifier,
     /** Labels beside the dots; too wide for the 72 dp row map, useful on the card. */
     showLabels: Boolean = true,
+    /** osmdroid's own +/− control; a thumbnail the size of the row map cannot spend on it. */
+    showZoomButtons: Boolean = true,
 ) {
     OsmdroidSetup.ensure(LocalContext.current)
-    val holder = remember { LiveMapHolder(showLabels) }
+    val holder = remember { LiveMapHolder(showLabels, showZoomButtons) }
     val geo = remember(points) { points.map { GeoPoint(it.lat, it.lon) } }
     // The pager keeps its neighbours composed, and a map nobody can look at has no
     // business taking a frame callback away from the page that is on screen - the same
@@ -125,7 +127,10 @@ fun LiveRouteMap(
  * when it began, and how long it may take. Everything the Runnable touches per
  * frame is reused, because it runs at frame rate for the whole drive.
  */
-private class LiveMapHolder(private val showLabels: Boolean) {
+private class LiveMapHolder(
+    private val showLabels: Boolean,
+    private val showZoomButtons: Boolean,
+) {
     private var map: MapView? = null
     private var track: List<GeoPoint> = emptyList()
     private var line: Polyline? = null
@@ -303,6 +308,10 @@ private class LiveMapHolder(private val showLabels: Boolean) {
         }
         view.setTileSource(TileSourceFactory.MAPNIK)
         view.setMultiTouchControls(true)
+        // osmdroid's +/− control is sized for a full-screen map; on a 72 dp thumbnail it
+        // paints two slabs over the drive itself. Hiding it costs nothing: pinch and
+        // double-tap stay enabled above, and the camera is the follow's to begin with.
+        if (!showZoomButtons) view.setBuiltInZoomControls(false)
         // Tiles are a bonus, never a dependency - same rule as the detail map.
         view.setUseDataConnection(true)
         view.setTilesScaledToDpi(true)

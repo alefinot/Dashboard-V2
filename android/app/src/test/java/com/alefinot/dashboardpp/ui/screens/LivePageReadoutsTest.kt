@@ -185,7 +185,17 @@ class LivePageReadoutsTest {
         assertTrue(
             "the RECORDING row stopped drawing the live route - the live drive should look " +
                 "like the card it becomes",
-            Regex("LiveRouteMap\\(state\\.liveTrack").containsMatchIn(row),
+            Regex("LiveRouteMap\\(\\s*state\\.liveTrack").containsMatchIn(row),
+        )
+        assertTrue(
+            "the row map drifted back to the right of the numbers: the sketch belongs on the " +
+                "left, the corner the sealed card this drive becomes wears it in",
+            row.indexOf("state.liveTrack") < row.indexOf("Text(\"RECORDING\""),
+        )
+        assertTrue(
+            "osmdroid's +/− slabs grew back on the 72 dp thumbnail, where they cover more of " +
+                "the drive than the drive does (pinch-zoom stays; it is the control that goes)",
+            Regex("showZoomButtons\\s*=\\s*false").containsMatchIn(row),
         )
         val map = File("src/main/java/com/alefinot/dashboardpp/ui/map/LiveRouteMap.kt")
         assertTrue("missing LiveRouteMap.kt", map.exists())
@@ -194,6 +204,12 @@ class LivePageReadoutsTest {
             "the live map grew a fit: framing a point set that gains a point every second " +
                 "zoom-punches the view; the camera follows instead",
             !Regex("zoomToBoundingBox").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the hidden-zoom rule lost its gate: the hiding belongs to the thumbnail caller, " +
+                "the Live page's card map is big enough to keep its control",
+            Regex("if \\(!showZoomButtons\\)\\s*view\\.setBuiltInZoomControls\\(false\\)")
+                .containsMatchIn(mapCode),
         )
     }
 

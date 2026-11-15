@@ -354,6 +354,23 @@ private fun LiveTripRow(state: TripRuntimeState) {
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            // The drive's shape, drawing itself as the recorder appends it (live route
+            // plan §4) - on the LEFT, the corner the sealed card this drive becomes
+            // wears its sketch in, so the row reads as the card from the first glance.
+            // The same 72 dp as that sketch; dots without labels, because a 72 dp map
+            // has no margin to spend on words - and without osmdroid's +/− control,
+            // because on a thumbnail that size it is two slabs over the drive, not a
+            // control. Before the first fix there is no shape, and the numbers stand
+            // alone (live route plan §4).
+            if (state.liveTrack.isNotEmpty()) {
+                LiveRouteMap(
+                    state.liveTrack,
+                    Modifier.size(72.dp),
+                    showLabels = false,
+                    showZoomButtons = false,
+                )
+                Spacer(Modifier.width(12.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     // `#msg`'s own 13px, at the weight the page gives a line it wants
@@ -368,15 +385,6 @@ private fun LiveTripRow(state: TripRuntimeState) {
                 }
                 Spacer(Modifier.height(6.dp))
                 TripFlowLine(state)
-            }
-            // The drive's shape, drawing itself as the recorder appends it (live route
-            // plan §4) - so the live row looks like the card this drive becomes. The
-            // same size as the sealed card's sketch; dots without labels, because a
-            // 72 dp map has no margin to spend on words. Before the first fix there
-            // is no shape, and the numbers stand alone (live route plan §4).
-            if (state.liveTrack.isNotEmpty()) {
-                Spacer(Modifier.width(12.dp))
-                LiveRouteMap(state.liveTrack, Modifier.size(72.dp), showLabels = false)
             }
         }
     }
