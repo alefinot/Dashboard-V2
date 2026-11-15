@@ -289,6 +289,14 @@ object SessionCodec {
     }
 }
 
+/**
+ * What one pass over a trip file yields: the headline numbers the list shows,
+ * and the bounded route shape its card draws. They travel together because a
+ * file is read once; asking for the summary and the preview separately would
+ * parse every sample twice.
+ */
+data class TripScan(val summary: TripSummary?, val track: List<TrackPoint>)
+
 /** Reading sealed (or still-open) trip files back into memory. */
 object TripReader {
     fun samples(path: String): List<TripSample> {
@@ -302,22 +310,28 @@ object TripReader {
     }
 
     /**
-     * Summary of a file on disk. A malformed or truncated last line is skipped —
-     * a crash mid-write costs that one sample, not the trip.
+     * Summary and preview in one pass. A malformed or truncated last line is
+     * skipped — a crash mid-write costs that one sample, not the trip.
      */
-    fun summarize(path: String): TripSummary? {
+    fun scan(path: String): TripScan {
         val acc = TripAccumulator()
+        val preview = TrackPreview()
         var any = false
         forEachLine(path) { line ->
             if (!TripFormat.skippable(line)) {
                 TripFormat.parseLine(line)?.let {
                     acc.add(it)
                     any = true
+                    val s = it.snapshot
+                    if (s.hasPosition) preview.add(s.lat, s.lon)
                 }
             }
         }
-        return if (any) acc.summary() else null
+        return TripScan(if (any) acc.summary() else null, preview.points())
     }
+
+    /** Summary of a file on disk; see [scan] for the one-pass rule. */
+    fun summarize(path: String): TripSummary? = scan(path).summary
 
     private fun forEachLine(path: String, block: (String) -> Unit) {
         val f = File(path)

@@ -1,9 +1,15 @@
 package com.alefinot.dashboardpp.ui.map
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
-import android.graphics.drawable.GradientDrawable
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.view.ViewTreeObserver
+import kotlin.math.ceil
+import kotlin.math.max
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -162,19 +168,27 @@ private class MapHolder {
 
         val density = view.resources.displayMetrics.density
         val line = Polyline()
-        line.getPoints().addAll(track)
-        line.setColor(HudColors.Cyan.toArgb())
-        line.setWidth(5f * density)
-        line.getPaint().setStrokeCap(android.graphics.Paint.Cap.ROUND)
-        line.getPaint().setStrokeJoin(android.graphics.Paint.Join.ROUND)
+        // Points must arrive through setPoints(): in osmdroid 6.1.20 the older
+        // getPoints() accessor is deprecated and hands back a *copy* of the
+        // ring's list, so adding to it draws nothing at all - which is exactly
+        // what the trip map did (two markers, no route) until this was found.
+        line.setPoints(track)
+        val paint = line.getOutlinePaint()
+        paint.color = HudColors.Cyan.toArgb()
+        paint.strokeWidth = 5f * density
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
         manager.add(line)
 
         if (track.size >= 2) {
-            manager.add(endMarker(view, track.first(), HudColors.Green.toArgb(), "Trip start"))
-            manager.add(endMarker(view, track.last(), HudColors.Amber.toArgb(), "Trip end"))
+            manager.add(labelledMarker(view, track.first(), HudColors.Green.toArgb(), "START"))
+            manager.add(labelledMarker(view, track.last(), HudColors.Red.toArgb(), "END"))
         } else {
-            manager.add(endMarker(view, track.first(), HudColors.Green.toArgb(), "Position"))
+            manager.add(labelledMarker(view, track.first(), HudColors.Cyan.toArgb(), "POSITION"))
         }
+        // Overlay swaps do not invalidate the view by themselves; without this
+        // a re-fitted track waits for the next pan to appear.
+        view.invalidate()
     }
 
     private fun fit(view: MapView) {
@@ -211,28 +225,68 @@ private class MapHolder {
         return h
     }
 
-    private fun endMarker(view: MapView, point: GeoPoint, color: Int, title: String): Marker {
+    /**
+     * A dot with its name beside it, drawn in code rather than loaded from a
+     * resource: a filled disc with a dark ring (legible on light and dark
+     * basemaps, consistent with the HUD palette) and a permanent label. A
+     * Marker's title only appears in an info window that a tap opens, so it
+     * cannot answer "which end is this?" while the map is just looked at.
+     */
+    private fun labelledMarker(view: MapView, point: GeoPoint, color: Int, label: String): Marker {
+        val icon = dotWithLabel(view.context, view.resources.displayMetrics.density, color, label)
         val marker = Marker(view, view.context)
         marker.setPosition(point)
-        marker.setTitle(title)
-        marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-        marker.setIcon(dot(view.resources.displayMetrics.density, color))
+        marker.setTitle(label)
+        marker.setAnchor(icon.anchorU, icon.anchorV)
+        marker.setIcon(icon.drawable)
         return marker
     }
 
-    /**
-     * Marker drawn in code rather than loaded from a drawable resource: a filled
-     * disc with a dark ring, which is both legible on light and dark basemaps and
-     * consistent with the HUD palette.
-     */
-    private fun dot(density: Float, color: Int): GradientDrawable {
-        val size = (18f * density).toInt()
-        return GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(color)
-            setStroke((2f * density).toInt(), AndroidColor.BLACK)
-            setSize(size, size)
+    private class MarkerIcon(
+        val drawable: BitmapDrawable,
+        /** Fraction of the bitmap that sits on the coordinate: the dot's centre. */
+        val anchorU: Float,
+        val anchorV: Float,
+    )
+
+    private fun dotWithLabel(context: Context, density: Float, color: Int, label: String): MarkerIcon {
+        val pad = 3f * density
+        val dot = 14f * density
+        val gap = 5f * density
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            textSize = 10f * density
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+            letterSpacing = 0.08f
+            // Dark halo so the label survives the pale parts of a raster basemap.
+            setShadowLayer(3f * density, 0f, 0f, AndroidColor.BLACK)
         }
+        val metrics = text.fontMetrics
+        val textHeight = metrics.descent - metrics.ascent
+        val width = ceil(pad * 2 + dot + gap + text.measureText(label)).toInt()
+        val height = ceil(pad * 2 + max(dot, textHeight)).toInt()
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val cy = height / 2f
+        val dotCx = pad + dot / 2f
+        canvas.drawCircle(dotCx, cy, dot / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color })
+        canvas.drawCircle(
+            dotCx, cy, dot / 2f,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                this.color = AndroidColor.BLACK
+                style = Paint.Style.STROKE
+                strokeWidth = 2f * density
+            },
+        )
+        val baseline = cy - (metrics.ascent + metrics.descent) / 2f
+        canvas.drawText(label, pad + dot + gap, baseline, text)
+
+        return MarkerIcon(
+            BitmapDrawable(context.resources, bitmap),
+            anchorU = dotCx / width,
+            anchorV = cy / height,
+        )
     }
 
     fun release() {

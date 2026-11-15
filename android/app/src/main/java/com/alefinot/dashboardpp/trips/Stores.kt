@@ -37,16 +37,37 @@ data class CachedSummary(
 )
 
 /**
- * Cache of per-trip summaries (trip recording plan §4): opening the Trips tab
- * must not re-parse every CSV, so a sealed trip is summarised once and reused
- * until its mtime or size changes. Trips still being written are never cached.
+ * Cache of per-trip summaries and route previews (trip recording plan §4):
+ * opening the Trips tab must not re-parse every CSV, so a sealed trip is
+ * summarised once and reused until its mtime or size changes. Trips still being
+ * written are never cached.
+ *
+ * The preview keeps its own key (`trk:`) rather than becoming a fifth field of
+ * the summary row: that row's encoding predates it, rows already on phones must
+ * keep decoding exactly as they do, and a missing preview key is a clean
+ * "not scanned yet" answer with no format version to bump.
  */
 class TripIndex(context: Context) {
     private val store = context.applicationContext.tripIndexStore
 
-    private fun key(path: String) = "idx:$path"
+    private fun key(path: String) = INDEX_PREFIX + path
 
-    suspend fun put(path: String, mtime: Long, size: Long, summary: TripSummary, tag: TripTag? = null) {
+    private fun previewKey(path: String) = PREVIEW_PREFIX + path
+
+    /**
+     * One file's cache rows: its summary and, when the scan had one, its route
+     * shape. Both keys land in a single `edit` on purpose — a backfill over a
+     * full folder writes hundreds of rows, and two edits per row would rewrite
+     * the whole preferences file twice as often.
+     */
+    suspend fun put(
+        path: String,
+        mtime: Long,
+        size: Long,
+        summary: TripSummary,
+        tag: TripTag? = null,
+        preview: List<TrackPoint>? = null,
+    ) {
         // The tag comes before the summary code, not after it: that code is itself a
         // `;`-joined string, so it has to stay the last field for `limit = 4` to keep
         // it whole. A row written before tags existed has three fields and decodes
@@ -54,6 +75,9 @@ class TripIndex(context: Context) {
         store.edit {
             it[stringPreferencesKey(key(path))] =
                 "$mtime;$size;${tag?.raw() ?: NO_TAG};${TripSummaryCodec.encode(summary)}"
+            if (preview != null) {
+                it[stringPreferencesKey(previewKey(path))] = TrackPreviewCodec.encode(preview)
+            }
         }
     }
 
@@ -63,13 +87,13 @@ class TripIndex(context: Context) {
             .map { prefs ->
                 val out = HashMap<String, CachedSummary>()
                 for ((k, v) in prefs.asMap()) {
-                    if (k.name.startsWith("idx:") && v is String) {
+                    if (k.name.startsWith(INDEX_PREFIX) && v is String) {
                         val parts = v.split(";", limit = 4)
                         val legacy = parts.size == 3
                         if (parts.size != 3 && parts.size != 4) continue
                         val summary =
                             TripSummaryCodec.decode(if (legacy) parts[2] else parts[3]) ?: continue
-                        out[k.name.removePrefix("idx:")] = CachedSummary(
+                        out[k.name.removePrefix(INDEX_PREFIX)] = CachedSummary(
                             mtime = parts[0].toLongOrNull() ?: continue,
                             size = parts[1].toLongOrNull() ?: continue,
                             summary = summary,
@@ -81,11 +105,32 @@ class TripIndex(context: Context) {
                 out
             }
 
-    /** Drop cache rows for files that no longer exist. */
+    /** Every preview the cache holds, by file path; absent paths were never scanned. */
+    fun cachedPreviews(): Flow<Map<String, List<TrackPoint>>> =
+        store.data
+            .catch { emit(emptyPreferences()) }
+            .map { prefs ->
+                val out = HashMap<String, List<TrackPoint>>()
+                for ((k, v) in prefs.asMap()) {
+                    if (k.name.startsWith(PREVIEW_PREFIX) && v is String) {
+                        val points = TrackPreviewCodec.decode(v) ?: continue
+                        out[k.name.removePrefix(PREVIEW_PREFIX)] = points
+                    }
+                }
+                out
+            }
+
+    /** Drop cache rows (summaries and previews) for files that no longer exist. */
     suspend fun retain(livePaths: Set<String>) {
         store.edit { prefs ->
-            val stale = prefs.asMap().keys
-                .filter { it.name.startsWith("idx:") && it.name.removePrefix("idx:") !in livePaths }
+            val stale = prefs.asMap().keys.filter { key ->
+                val path = when {
+                    key.name.startsWith(INDEX_PREFIX) -> key.name.removePrefix(INDEX_PREFIX)
+                    key.name.startsWith(PREVIEW_PREFIX) -> key.name.removePrefix(PREVIEW_PREFIX)
+                    else -> return@filter false
+                }
+                path !in livePaths
+            }
             stale.forEach { prefs.remove(it) }
         }
     }
@@ -102,6 +147,10 @@ class TripIndex(context: Context) {
     }
 
     companion object {
+        /** Key prefixes: one cache row per file per kind, under one DataStore. */
+        private const val INDEX_PREFIX = "idx:"
+        private const val PREVIEW_PREFIX = "trk:"
+
         /** The marker for "this file was opened and has no tag line". */
         private const val NO_TAG = "-"
 

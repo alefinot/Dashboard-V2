@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.CachedSummary
 import com.alefinot.dashboardpp.trips.RecorderSettings
+import com.alefinot.dashboardpp.trips.TrackPoint
 import com.alefinot.dashboardpp.trips.TripExport
 import com.alefinot.dashboardpp.trips.TripFormat
 import com.alefinot.dashboardpp.trips.TripIndex
@@ -18,7 +19,9 @@ import com.alefinot.dashboardpp.vehicles.VehicleStore
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -31,6 +34,12 @@ data class TripRow(
     val startMs: Long,
     val sizeBytes: Long,
     val summary: TripSummary?,
+    /**
+     * The drive's shape for the card's square, from the summary cache. Null
+     * means "not scanned yet" — an empty list is the answer "this file has no
+     * GPS route", and the two are not the same thing.
+     */
+    val preview: List<TrackPoint>? = null,
     /** Who the file says the drive belongs to, from its `#vehicle=` line. */
     val vehicleId: String? = null,
     /**
@@ -182,6 +191,13 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 emptyMap()
             }
+            // Route shapes ride the same pass: a card whose preview is missing is
+            // scanned in the background below, exactly like a missing summary.
+            val previews = try {
+                index.cachedPreviews().first()
+            } catch (e: Exception) {
+                emptyMap()
+            }
             // Live names, resolved by id: the tag in the file only carries the name
             // the card had at the time, so a rename shows up everywhere at once and
             // a deleted card falls back to that copy instead of disappearing.
@@ -206,6 +222,7 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
                     TripStore.startMsOf(f.name) ?: f.lastModified(),
                     f.length(),
                     if (fresh) hit!!.summary else null,
+                    preview = previews[f.absolutePath],
                     vehicleId = tag?.vehicleId,
                     vehicleName = tag?.let { names[it.vehicleId] ?: it.name.ifBlank { null } },
                     eff = tag?.eff?.takeIf { it.isNotBlank() && it != TripFormat.UNKNOWN_EFF },
@@ -233,10 +250,11 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             _elsewhere.value = counts.elsewhere
             index.retain(files.map { it.absolutePath }.toSet())
             _busy.value = false
-            // Any file whose summary is missing gets summarised in the
-            // background and pushed back into the list, so the tab paints
-            // instantly and fills in the numbers a moment later.
-            rows.filter { it.summary == null }.forEach { row -> summarise(row) }
+            // Any file whose summary or route shape is missing gets scanned in
+            // the background and pushed back into the list, so the tab paints
+            // instantly and fills in the numbers and the card's square a moment
+            // later. A drive recorded before previews existed is scanned once.
+            backfill(rows.filter { it.summary == null || it.preview == null })
         }
     }
 
@@ -341,23 +359,50 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
             countsFor(files, writingTo).elsewhere
     }
 
-    private fun summarise(row: TripRow) {
-        scope.launch(Dispatchers.IO) {
-            val summary = TripReader.summarize(row.file.absolutePath) ?: return@launch
-            try {
-                index.put(
-                    row.file.absolutePath,
-                    row.file.lastModified(),
-                    row.file.length(),
-                    summary,
-                    TripTagReader.read(row.file),
-                )
-            } catch (e: Exception) {
-                // The cache is an optimisation; failing it costs only the re-read.
+    /**
+     * The one background scan pass in flight. A refresh cannot start a second:
+     * the pass reads whole CSV files, and a phone with a full folder of drives
+     * has a hundred and seventy of them.
+     */
+    private var backfill: Job? = null
+
+    /**
+     * Scan the rows whose cache is incomplete, **one file at a time**.
+     *
+     * This used to launch a coroutine per row, which on a real device meant
+     * 175 CSV files open at once and their samples allocated together: the
+     * allocator went to 1 M objects / 50 MB, every thread stalled in a blocking
+     * GC and MIUI killed the app before it ever painted. Serially, the same
+     * folder costs a second or two in the background and the cards fill in as
+     * each row lands.
+     */
+    private fun backfill(rows: List<TripRow>) {
+        if (rows.isEmpty() || backfill?.isActive == true) return
+        backfill = scope.launch(Dispatchers.IO) {
+            for (row in rows) {
+                if (!isActive) return@launch
+                scanRow(row)
             }
-            _rows.value = _rows.value.map {
-                if (it.file == row.file) it.copy(summary = summary) else it
-            }
+        }
+    }
+
+    private suspend fun scanRow(row: TripRow) {
+        val scan = TripReader.scan(row.file.absolutePath)
+        val summary = scan.summary ?: return
+        try {
+            index.put(
+                row.file.absolutePath,
+                row.file.lastModified(),
+                row.file.length(),
+                summary,
+                TripTagReader.read(row.file),
+                preview = scan.track,
+            )
+        } catch (e: Exception) {
+            // The cache is an optimisation; failing it costs only the re-read.
+        }
+        _rows.value = _rows.value.map {
+            if (it.file == row.file) it.copy(summary = summary, preview = scan.track) else it
         }
     }
 

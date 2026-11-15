@@ -51,6 +51,7 @@ import com.alefinot.dashboardpp.ui.components.ScanRing
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.map.RouteSketch
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
@@ -404,32 +405,46 @@ private fun TripCard(row: TripRow, onOpen: (TripRow) -> Unit, reveal: Float = 1f
                 Spacer(Modifier.weight(1f))
                 VehicleBadge(row)
             }
-            Spacer(Modifier.height(6.dp))
-            val s = row.summary
-            if (s == null) {
-                // The summary has not arrived from the file yet. A `…` is a word doing a
-                // spinner's job - the grammar's own words - so the row shows the app's
-                // waiting ring instead: nothing to count yet, so it turns rather than fills.
-                ScanRing(0f, Modifier.size(16.dp))
-            } else {
-                Text(
-                    "${fmtOrDash(s.distanceKm, 2)} km · ${formatDuration(s.durationMs)}",
-                    color = HudColors.Cyan,
-                    style = HudeTable(),
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    buildString {
-                        append("max ").append(fmtOrDash(s.maxSpeed, 0)).append(" km/h")
-                        append(" · ").append(fmtOrDash(s.fuelUsedL, 2)).append(" L")
-                        append(" · ").append(s.fixPct).append("% fix")
-                        if (s.gaps > 0) {
-                            append(" · ").append(s.gaps).append(" gaps")
-                        }
-                    },
-                    color = HudColors.TextMuted,
-                    style = HudeCfgHelp(),
-                )
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                // The drive's shape, left of its numbers. Drawn only once the
+                // background scan has an answer with at least two positions: a
+                // one-point "route" is a dot, which the card's text already
+                // describes better. No placeholder - the numbers are the card
+                // until the shape arrives a moment later.
+                val route = row.preview
+                if (route != null && route.size >= 2) {
+                    RouteSketch(route, Modifier.size(72.dp))
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    val s = row.summary
+                    if (s == null) {
+                        // The summary has not arrived from the file yet. A `…` is a word doing a
+                        // spinner's job - the grammar's own words - so the row shows the app's
+                        // waiting ring instead: nothing to count yet, so it turns rather than fills.
+                        ScanRing(0f, Modifier.size(16.dp))
+                    } else {
+                        Text(
+                            "${fmtOrDash(s.distanceKm, 2)} km · ${formatDuration(s.durationMs)}",
+                            color = HudColors.Cyan,
+                            style = HudeTable(),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            buildString {
+                                append("max ").append(fmtOrDash(s.maxSpeed, 0)).append(" km/h")
+                                append(" · ").append(fmtOrDash(s.fuelUsedL, 2)).append(" L")
+                                append(" · ").append(s.fixPct).append("% fix")
+                                if (s.gaps > 0) {
+                                    append(" · ").append(s.gaps).append(" gaps")
+                                }
+                            },
+                            color = HudColors.TextMuted,
+                            style = HudeCfgHelp(),
+                        )
+                    }
+                }
             }
         }
     }
