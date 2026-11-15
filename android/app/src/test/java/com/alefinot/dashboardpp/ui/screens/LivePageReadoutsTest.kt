@@ -211,6 +211,13 @@ class LivePageReadoutsTest {
             Regex("if \\(!showZoomButtons\\)\\s*view\\.setBuiltInZoomControls\\(false\\)")
                 .containsMatchIn(mapCode),
         )
+        val dots = codeOnly("../map/RouteMap.kt")
+        assertTrue(
+            "a map dot started popping osmdroid's title callout again (showInfoWindow on tap): " +
+                "the word beside the dot is drawn into its bitmap, and on the live maps a tap " +
+                "IS the resume-follow gesture - the bubble is noise from aiming at the car",
+            Regex("setOnMarkerClickListener").containsMatchIn(dots),
+        )
     }
 
     /**

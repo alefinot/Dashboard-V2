@@ -248,7 +248,8 @@ private class MapHolder {
  * The map package's own marker art: a filled disc with a dark ring (legible on
  * light and dark basemaps, consistent with the HUD palette) and a permanent
  * label. A Marker's title only appears in an info window that a tap opens, so it
- * cannot answer "which end is this?" while the map is just looked at.
+ * cannot answer "which end is this?" while the map is just looked at - and the
+ * dots therefore swallow that tap outright, so osmdroid never opens the window.
  *
  * Drawn in code, not loaded from a resource, and shared by the detail map's
  * START/END dots and the live map's LIVE/START dots so the two can never drift
@@ -263,6 +264,13 @@ internal object MapMarkers {
         marker.setTitle(label)
         marker.setAnchor(icon.anchorU, icon.anchorV)
         marker.setIcon(icon.drawable)
+        // Swallow the dot's tap. osmdroid's default marker-click handler is
+        // showInfoWindow(): the grey title callout popping out of the dot - a callout this
+        // app never asked for, because the word beside the dot is *drawn into the bitmap*,
+        // permanent and read at a glance. On the live maps it is worse than useless: a tap
+        // is the resume-follow gesture, so every re-center aimed near the car popped one.
+        // Returning true means "handled, do nothing".
+        marker.setOnMarkerClickListener { _, _ -> true }
         return marker
     }
 
