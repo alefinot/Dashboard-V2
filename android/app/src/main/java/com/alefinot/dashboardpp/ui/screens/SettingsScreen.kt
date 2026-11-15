@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,6 +42,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alefinot.dashboardpp.R
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.service.TripLogService
@@ -52,6 +54,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.alefinot.dashboardpp.trips.TripRuntime
+import com.alefinot.dashboardpp.ui.components.HudAccordion
+import com.alefinot.dashboardpp.ui.components.HudAccordionBody
+import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
@@ -63,6 +68,7 @@ import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudRadius
@@ -97,6 +103,14 @@ import com.alefinot.dashboardpp.weather.WeatherStatus
  * that describe a device go quiet - the unit's name and the firmware. The vehicle page is
  * where a device is forgotten now: a card is a vehicle, not an address, and deleting
  * one needs the name on the screen to confirm it.
+ *
+ * Since 2026-11-15 the page is organised like the dashboard settings page next door:
+ * the three blocks below the identity cards - Updates, Trips & Storage, Weather Feed -
+ * are `details` accordions with badges and chevrons, and [SettingsLayout.tapOpen]'s
+ * rule applies: one open at a time, tapping the open header closes it. That rule is
+ * the whole reason the settings page reads well on a phone, and it earns the same
+ * keep here - three full cards stacked made this page a long scroll to reach the one
+ * switch the owner came for.
  */
 @Composable
 fun SettingsScreen(
@@ -130,6 +144,13 @@ fun SettingsScreen(
     // once the store has answered instead of starting out empty and staying that way.
     var cityEdit by remember { mutableStateOf<String?>(null) }
     var weatherLine by remember { mutableStateOf("") }
+    // Hoisted out of the Updates body on 2026-11-15: an accordion body is only composed
+    // while its group is open, so a note that lives inside one is wiped every time the
+    // owner opens the group next door. The lines that report what a press did belong to
+    // the page, not to the fold they happen to be printed under.
+    var firmwareLine by remember { mutableStateOf("") }
+    /** The one group this page holds open — the dashboard settings' tap rule. */
+    var openGroup by remember { mutableStateOf<String?>(null) }
     val appVersion = remember {
         try {
             val app = context.applicationContext
@@ -210,19 +231,19 @@ fun SettingsScreen(
         Spacer(Modifier.height(12.dp))
 
         // ── Updates ──────────────────────────────────────────────────────
-        // One card, two targets: the unit's firmware and this app's own APK. They
+        // One dropdown, two targets: the unit's firmware and this app's own APK. They
         // merged on 2026-11-11 because they answer one question - *what is newer than
         // what I am running, and how does it get in?* - and every half kept its own
         // honesty sentence: the spare-slot promise above the firmware buttons, the
         // in-place-and-keeps-data promise above the app ones. A failed press on either
         // half changes nothing on either device.
-        var firmwareLine by remember { mutableStateOf("") }
-        Column(
-            Modifier.fillMaxWidth().hudCard()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+        GroupCard(
+            title = "Updates",
+            badge = R.drawable.ic_app_updates,
+            meta = "firmware · app",
+            open = openGroup == "updates",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "updates") },
         ) {
-            CardHead("Updates")
-            Spacer(Modifier.height(10.dp))
             Text("FIRMWARE", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(6.dp))
             Text(
@@ -257,10 +278,9 @@ fun SettingsScreen(
             )
             AppUpdateControl(installed = appVersion)
         }
-        Spacer(Modifier.height(12.dp))
 
         // ── Trips & Storage ──────────────────────────────────────────────
-        // One card, because the three questions are one story: is the drive being
+        // One dropdown, because the three questions are one story: is the drive being
         // recorded, where does it go, and what is already in there. They used to be
         // three cards - the switches, the folder, and the actions over the files - and
         // the folder answer, the one that decides whether a drive can be found in a
@@ -268,12 +288,13 @@ fun SettingsScreen(
         // The page's switches live in cards with the sentence that explains them, not on
         // bare rows whose label is at the left edge of the screen and whose switch is at the
         // right one. `label { color: var(--accent-cyan) }` is still the page's own colour.
-        Column(
-            Modifier.fillMaxWidth().hudCard()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+        GroupCard(
+            title = "Trips & Storage",
+            badge = R.drawable.ic_app_trips,
+            meta = "recording · storage",
+            open = openGroup == "trips",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "trips") },
         ) {
-            CardHead("Trips & Storage")
-            Spacer(Modifier.height(10.dp))
             ToggleRow(
                 label = "AUTO-START ON CONNECT",
                 on = recordingEnabled,
@@ -360,15 +381,15 @@ fun SettingsScreen(
                 Text(storageLine, color = HudColors.TextMuted, style = HudeCfgLive())
             }
         }
-        Spacer(Modifier.height(12.dp))
 
         // ── Weather feed ─────────────────────────────────────────────────
-        Column(
-            Modifier.fillMaxWidth().hudCard()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+        GroupCard(
+            title = "Weather Feed",
+            badge = R.drawable.ic_app_weather,
+            meta = "push · city",
+            open = openGroup == "weather",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "weather") },
         ) {
-            CardHead("Weather Feed")
-            Spacer(Modifier.height(10.dp))
             ToggleRow(
                 label = "PUSH WEATHER",
                 on = weatherOn,
@@ -428,9 +449,8 @@ fun SettingsScreen(
                 style = HudeCfgNote(),
             )
         }
-        Spacer(Modifier.height(12.dp))
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             "Dashboard++ by @ale.finot",
             color = HudColors.Cyan,
@@ -616,6 +636,41 @@ private fun openStorageGrantScreen(context: Context) {
             return
         } catch (e: ActivityNotFoundException) {
             continue
+        }
+    }
+}
+
+/**
+ * One dropdown group of the App Settings page — the same `details` sheet the dashboard
+ * settings page groups its rows with: [HudAccordion] with a [HudAccordionHeader] band
+ * and a [HudAccordionBody]. The badge is drawn into `ic_app_*.xml` by the same script
+ * that draws the schema groups' badges, `scripts/icons_to_drawables.py`, so a badge
+ * here and its sibling on the unit's page cannot drift apart.
+ *
+ * The caller owns the open state; the page passes [SettingsLayout.tapOpen]'s rule —
+ * one group open at a time, tapping the open header closes it — as `onToggle`. The
+ * body is only composed while its group is open, which is why every line of feedback
+ * a group prints is remembered above the groups, on the page itself.
+ */
+@Composable
+private fun GroupCard(
+    title: String,
+    badge: Int,
+    meta: String,
+    open: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    HudAccordion(open = open, modifier = Modifier.padding(bottom = 12.dp)) {
+        HudAccordionHeader(
+            title = title,
+            badge = badge,
+            meta = meta,
+            open = open,
+            onClick = onToggle,
+        )
+        HudAccordionBody(open = open) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), content = content)
         }
     }
 }
