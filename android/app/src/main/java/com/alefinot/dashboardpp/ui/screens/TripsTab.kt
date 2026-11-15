@@ -358,16 +358,18 @@ private fun LiveTripRow(state: TripRuntimeState) {
             // plan §4) - on the LEFT, the corner the sealed card this drive becomes
             // wears its sketch in, so the row reads as the card from the first glance.
             // The same 72 dp as that sketch; dots without labels, because a 72 dp map
-            // has no margin to spend on words - and without osmdroid's +/− control,
-            // because on a thumbnail that size it is two slabs over the drive, not a
-            // control. Before the first fix there is no shape, and the numbers stand
-            // alone (live route plan §4).
+            // has no margin to spend on words - and show-only (`interactive = false`):
+            // a status picture, not a second map, so it never pans, zooms or shows the
+            // +/− slabs, and it refuses every touch at its own door, leaving the
+            // gesture to the page. Note the row is a fixed header ABOVE the trip list -
+            // a drag anywhere on it scrolls no list, map or text alike. Before the
+            // first fix there is no shape, and the numbers stand alone (live route §4).
             if (state.liveTrack.isNotEmpty()) {
                 LiveRouteMap(
                     state.liveTrack,
                     Modifier.size(72.dp),
                     showLabels = false,
-                    showZoomButtons = false,
+                    interactive = false,
                 )
                 Spacer(Modifier.width(12.dp))
             }

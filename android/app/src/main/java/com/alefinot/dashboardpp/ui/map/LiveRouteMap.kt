@@ -59,6 +59,10 @@ import kotlin.math.sqrt
  * purpose, because a camera re-pointed sixty times a second can never be *found*
  * somewhere else - the finger would be fighting it frame by frame.
  *
+ * The Trips row's 72 dp thumbnail opts out of the whole gesture surface
+ * (`interactive = false`): it is a status picture of the drive that takes no touch at
+ * all — every gesture that starts on it belongs to the page, not to the map.
+ *
  * Degradation is the detail map's, unchanged: no tiles and the vector route plus
  * the dots still render - the route is our recorded data, not the tile server's.
  * And it is built only while a trip file is open, so an idle app never fetches a
@@ -70,11 +74,15 @@ fun LiveRouteMap(
     modifier: Modifier = Modifier,
     /** Labels beside the dots; too wide for the 72 dp row map, useful on the card. */
     showLabels: Boolean = true,
-    /** osmdroid's own +/− control; a thumbnail the size of the row map cannot spend on it. */
-    showZoomButtons: Boolean = true,
+    /**
+     * False makes the map a picture of the drive: no pan, no pinch or double-tap zoom,
+     * no +/− control — the view refuses every touch at its dispatch door, so the
+     * gesture belongs to the page and the map never even sees it.
+     */
+    interactive: Boolean = true,
 ) {
     OsmdroidSetup.ensure(LocalContext.current)
-    val holder = remember { LiveMapHolder(showLabels, showZoomButtons) }
+    val holder = remember { LiveMapHolder(showLabels, interactive) }
     val geo = remember(points) { points.map { GeoPoint(it.lat, it.lon) } }
     // The pager keeps its neighbours composed, and a map nobody can look at has no
     // business taking a frame callback away from the page that is on screen - the same
@@ -129,7 +137,7 @@ fun LiveRouteMap(
  */
 private class LiveMapHolder(
     private val showLabels: Boolean,
-    private val showZoomButtons: Boolean,
+    private val interactive: Boolean,
 ) {
     private var map: MapView? = null
     private var track: List<GeoPoint> = emptyList()
@@ -258,9 +266,10 @@ private class LiveMapHolder(
         // A drag is a drag past this much travel; anything less, and the finger meant a tap.
         val slopPx = 12f * context.resources.displayMetrics.density
         val holder = this
-        // The subclass exists for three jobs, all at the ViewGroup level where this
-        // view owns its slot's touches (Compose modifiers see nothing - the bench
-        // proved a pill and an interop filter both dead, 2026-11-15):
+        // The subclass exists for three jobs, plus the show-only door below - all of
+        // them at the ViewGroup level, the one place that reliably owns the slot's
+        // touches (a Compose pill painted over an interactive map receives nothing,
+        // bench, 2026-11-15):
         // 1. while a finger is down on the map, the scrolling page underneath must
         //    not steal the drag - osmdroid itself never asks for that, and both
         //    surfaces this draws on sit inside a scroller;
@@ -273,6 +282,28 @@ private class LiveMapHolder(
             private var downX = 0f
             private var downY = 0f
             private var tapCandidate = false
+
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                if (!holder.interactive) {
+                    // A show-only map refuses the touch at the door: the thumbnail is
+                    // a status picture, and a picture must not hold a gesture it will
+                    // not spend - neither the pager nor the list ever owes it one.
+                    // (The row turned out to be a fixed header ABOVE the trip list, so
+                    // drags on it scroll nothing anyway; the refusal is what makes the
+                    // inertness real, whatever the row ever sits in.)
+                    //
+                    // It belongs HERE, not in onTouchEvent below: Compose's interop
+                    // asks `view.dispatchTouchEvent(...)`, and osmdroid answers yes by
+                    // itself inside that override - its dispatch feeds the overlays,
+                    // the multitouch detector and its GestureDetector directly and
+                    // never consults `super.onTouchEvent`, so a guard there would
+                    // never run (shipped 6.1.20 bytecode, 2026-11-15). Refused at this
+                    // door, the view logs prove the gesture then reaches Compose's
+                    // hit path unconsumed and the map never sees another event.
+                    return false
+                }
+                return super.dispatchTouchEvent(event)
+            }
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 when (event.actionMasked) {
@@ -307,11 +338,16 @@ private class LiveMapHolder(
             }
         }
         view.setTileSource(TileSourceFactory.MAPNIK)
-        view.setMultiTouchControls(true)
-        // osmdroid's +/− control is sized for a full-screen map; on a 72 dp thumbnail it
-        // paints two slabs over the drive itself. Hiding it costs nothing: pinch and
-        // double-tap stay enabled above, and the camera is the follow's to begin with.
-        if (!showZoomButtons) view.setBuiltInZoomControls(false)
+        if (interactive) {
+            view.setMultiTouchControls(true)
+        } else {
+            // Show-only: no pinch or double-tap zoom from the gesture detector, no +/−
+            // control (on a thumbnail it paints two slabs over the drive anyway), and
+            // dispatchTouchEvent above refuses the touch so the page keeps the gesture.
+            // The camera is the follow's alone.
+            view.setMultiTouchControls(false)
+            view.setBuiltInZoomControls(false)
+        }
         // Tiles are a bonus, never a dependency - same rule as the detail map.
         view.setUseDataConnection(true)
         view.setTilesScaledToDpi(true)

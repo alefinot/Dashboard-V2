@@ -193,9 +193,10 @@ class LivePageReadoutsTest {
             row.indexOf("state.liveTrack") < row.indexOf("Text(\"RECORDING\""),
         )
         assertTrue(
-            "osmdroid's +/− slabs grew back on the 72 dp thumbnail, where they cover more of " +
-                "the drive than the drive does (pinch-zoom stays; it is the control that goes)",
-            Regex("showZoomButtons\\s*=\\s*false").containsMatchIn(row),
+            "the row map started swallowing gestures again: the thumbnail is a status " +
+                "picture, not a second map - it must never pan, zoom or eat the list's " +
+                "scroll that starts on it",
+            Regex("interactive\\s*=\\s*false").containsMatchIn(row),
         )
         val map = File("src/main/java/com/alefinot/dashboardpp/ui/map/LiveRouteMap.kt")
         assertTrue("missing LiveRouteMap.kt", map.exists())
@@ -206,10 +207,15 @@ class LivePageReadoutsTest {
             !Regex("zoomToBoundingBox").containsMatchIn(mapCode),
         )
         assertTrue(
-            "the hidden-zoom rule lost its gate: the hiding belongs to the thumbnail caller, " +
-                "the Live page's card map is big enough to keep its control",
-            Regex("if \\(!showZoomButtons\\)\\s*view\\.setBuiltInZoomControls\\(false\\)")
-                .containsMatchIn(mapCode),
+            "the show-only rule lost its teeth: the map must refuse the touch at " +
+                "dispatchTouchEvent (osmdroid answers Compose's dispatch itself and never " +
+                "consults onTouchEvent - refusing there alone keeps the page's scroller " +
+                "deaf to the drag), and keep the gesture detector and the +/− control off",
+            Regex(
+                "override fun dispatchTouchEvent[^{]*\\{\\s*if \\(!holder\\.interactive\\)"
+            ).containsMatchIn(mapCode) &&
+                Regex("setMultiTouchControls\\(false\\)").containsMatchIn(mapCode) &&
+                Regex("setBuiltInZoomControls\\(false\\)").containsMatchIn(mapCode),
         )
         val dots = codeOnly("../map/RouteMap.kt")
         assertTrue(
