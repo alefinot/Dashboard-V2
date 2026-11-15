@@ -177,7 +177,7 @@ fun LiveTab(active: Boolean) {
             // headings, exactly as the page lets its headings do the talking.
             // `pageFadeIn` per card, one stagger step apart: the stack arrives inside a
             // single page entrance.
-            SpeedCard(snapshot, trends, step = 1)
+            SpeedCard(snapshot, step = 1)
             TripCard(state, snapshot, step = 2)
             PowerCard(snapshot, trends, step = 3)
             FuelCard(snapshot, step = 4)
@@ -379,33 +379,24 @@ private fun FigureText(
 // ─── The cards ─────────────────────────────────────────────────────────────────
 
 /**
- * Speed, and the five minutes that led to it.
+ * Speed.
  *
  * The round gauge stayed, because it is the one element here that answers "how fast am I
  * going" without being read - the question a phone at the handlebars exists to answer - and
  * the figures it cannot carry (AVG, MAX, the acceleration timer) sit beside it rather than
- * under it, so the row costs the gauge's height and nothing else. The trace runs under both
- * because a trace only reads at the width of the card.
+ * under it, so the row costs the gauge's height and nothing else. A five-minute speed trace
+ * used to run under the row, with a `window · peak · pts` caption to match; the maintainer
+ * asked for the graph out on 2026-11-15, and the card stopped sampling for it — the card's
+ * caption spoke of the trace's window and point count, so it went with the trace rather than
+ * stay a sentence about a graph that is no longer there. Volts and temp keep their windows:
+ * POWER's trend rows still draw them.
  */
 @Composable
-private fun SpeedCard(s: Snapshot, trends: LiveTrends, step: Int) {
-    val trace = trends.values("spd")
-    val peak = trace.maxOrNull()
+private fun SpeedCard(s: Snapshot, step: Int) {
     LiveCard(
         title = "SPEED",
         step = step,
         mark = HudGlyphLedger.mark("readout.speed"),
-        // The peak is raw on purpose. It is not a reading, it is a record - the largest
-        // figure the window has ever held - and records arrive in steps. It is also the
-        // one place on this page where the glide would cost more than it buys: this line
-        // is built in the card's own body, so smoothing it recomposes the card sixty times
-        // a second, and the card's body holds the speed trace, whose fresh list would
-        // redraw the sparkline at frame rate for a caption nobody reads.
-        meta = if (peak == null) {
-            "${trends.windowLabel()} · collecting"
-        } else {
-            "${trends.windowLabel()} · peak ${fmt(peak, 0)} · ${trace.size} pts"
-        },
     ) {
         Row(
             Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -439,13 +430,6 @@ private fun SpeedCard(s: Snapshot, trends: LiveTrends, step: Int) {
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        TraceOr(
-            values = trace,
-            height = 44.dp,
-            color = HudColors.Cyan,
-            empty = "one point lands every ${trends.everyMs / 1000L} s - the trace starts at two",
-        )
     }
 }
 
@@ -862,8 +846,10 @@ private fun GnssCard(s: Snapshot, step: Int) {
  */
 class LiveTrends(val cap: Int = 60, val everyMs: Long = 5_000L) {
 
+    // `spd` was the third entry until 2026-11-15: the SPEED card's five-minute trace came
+    // out at the maintainer's request and the page had no other speed-history reader, so
+    // keeping the window would have been a queue that only grew and never drew.
     private val extractors: Map<String, (Snapshot) -> Double> = linkedMapOf(
-        "spd" to { it.spd },
         "volts" to { it.volts },
         "temp" to { it.temp },
     )

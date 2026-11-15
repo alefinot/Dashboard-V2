@@ -33,27 +33,28 @@ class LiveTrendsTest {
         // One hundred 1 Hz frames, i.e. the clock reads 0..99 s: a point lands at 0, 5, 10 … 95,
         // which is twenty. Anything denser is a trace that draws the same reading four times.
         assertEquals(20, stored)
-        assertEquals(20, trends.values("spd").size)
+        assertEquals(20, trends.values("volts").size)
     }
 
     @Test
     fun theWindowKeepsItsCapAndDropsTheOldestPoint() {
         val trends = LiveTrends(cap = 60, everyMs = 5_000L)
         for (i in 0 until 400) sample(trends, i)
-        val spd = trends.values("spd")
-        assertEquals("the window grew past its cap", 60, spd.size)
+        val volts = trends.values("volts")
+        assertEquals("the window grew past its cap", 60, volts.size)
         // The clock reaches 399 s, so 80 points were taken (0, 5 … 395) and the cap kept the
         // last 60 of them: the oldest survivor was taken at 395 - 59×5 = 100 s.
-        assertEquals(100.0, spd.first(), 0.001)
-        assertEquals(395.0, spd.last(), 0.001)
-        assertTrue("the trace must run oldest to newest so its right edge is now", spd.first() < spd.last())
+        assertEquals(12.0 + 100 / 100.0, volts.first(), 0.001)
+        assertEquals(12.0 + 395 / 100.0, volts.last(), 0.001)
+        assertTrue("the trace must run oldest to newest so its right edge is now", volts.first() < volts.last())
     }
 
     @Test
     fun everyTracedFigureGetsItsPoint() {
+        // The two figures that still have a trace to feed: `spd` came out with the SPEED
+        // card's graph on 2026-11-15, so a third window would only fill in silence.
         val trends = LiveTrends()
         sample(trends, 0)
-        assertEquals(listOf(0.0), trends.values("spd"))
         assertEquals(12.0, trends.values("volts").first(), 0.001)
         assertEquals(80.0, trends.values("temp").first(), 0.001)
     }
@@ -63,11 +64,12 @@ class LiveTrendsTest {
         val trends = LiveTrends()
         sample(trends, 0, key = "AA:AA:AA:AA:AA:AA")
         sample(trends, 5, key = "AA:AA:AA:AA:AA:AA")
-        assertEquals(2, trends.values("spd").size)
+        assertEquals(2, trends.values("volts").size)
         sample(trends, 10, key = "BB:BB:BB:BB:BB:BB")
         // The previous unit's warm-up is not this unit's history: showing it is how a cold
         // engine gets drawn with a hot five minutes behind it.
-        assertEquals(listOf(10.0), trends.values("spd"))
+        assertEquals(1, trends.values("volts").size)
+        assertEquals(12.0 + 10 / 100.0, trends.values("volts").first(), 0.001)
     }
 
     @Test
@@ -84,10 +86,10 @@ class LiveTrendsTest {
     fun anUnsampledFrameChangesNothing() {
         val trends = LiveTrends()
         sample(trends, 0)
-        val before = trends.values("spd")
+        val before = trends.values("volts")
         assertFalse(sample(trends, 1))
         assertFalse(sample(trends, 4))
-        assertEquals(before, trends.values("spd"))
+        assertEquals(before, trends.values("volts"))
         assertTrue(sample(trends, 5))
     }
 }
