@@ -521,7 +521,6 @@ fun AppShell(
                                     version = conn?.version,
                                     connected = connected,
                                     trips = trips,
-                                    tripsAvailable = tripsAvailable,
                                 )
                             }
                         }

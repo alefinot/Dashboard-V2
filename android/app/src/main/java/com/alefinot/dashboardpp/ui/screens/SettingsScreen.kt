@@ -10,7 +10,6 @@ import android.os.StatFs
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,7 +52,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
@@ -71,14 +69,11 @@ import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
-import com.alefinot.dashboardpp.ui.theme.HudRadius
-import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgLive
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
 import com.alefinot.dashboardpp.ui.theme.HudeHeading
 import com.alefinot.dashboardpp.ui.theme.HudePerfLabel
-import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
@@ -120,10 +115,8 @@ fun SettingsScreen(
     /** True while a Bluetooth link is up — the firmware card installs only over one. */
     connected: Boolean,
     trips: TripsViewModel,
-    tripsAvailable: Boolean,
 ) {
     val context = LocalContext.current
-    val recording by TripRuntime.state.collectAsStateWithLifecycle()
     var storageLine by remember { mutableStateOf("") }
     var showConfirmClear by remember { mutableStateOf(false) }
     val settings = remember { RecorderSettings(context) }
@@ -212,13 +205,6 @@ fun SettingsScreen(
             )
         }
         Spacer(Modifier.height(16.dp))
-
-        // ── Trip recording ───────────────────────────────────────────────
-        RecordingCard(
-            recording = recording.recording,
-            needsUpdate = !tripsAvailable,
-        )
-        Spacer(Modifier.height(12.dp))
 
         // What the app is talking to, as three cards across the page's grid. They were one
         // card with three stacked label/value pairs, which put the value under the label it
@@ -711,50 +697,6 @@ private fun ToggleRow(
             Text(label, color = HudColors.Cyan, style = HudeFormLabel())
         }
         HudToggle(on = on, label = toggleLabel, onToggle = onToggle)
-    }
-}
-
-/**
- * Recording status, and the reason when it is not running. "Needs update" is for
- * firmware with no /api/snapshot endpoint: the app found the device on
- * /api/live, so the honest message is that the firmware is too old, not that the
- * device is missing.
- */
-@Composable
-private fun RecordingCard(
-    recording: Boolean,
-    needsUpdate: Boolean,
-) {
-    val (status, color) = when {
-        needsUpdate -> "NEEDS FIRMWARE UPDATE" to HudColors.Amber
-        recording -> "RECORDING NOW" to HudColors.Green
-        else -> "NOT RECORDING" to HudColors.TextDim
-    }
-    // The page's status strip (`#msg` plus its `.msg-*` variants): 8px radius, a
-    // hairline in the status colour at 30%, that colour at 8% as the fill over the
-    // status strip's own `rgba(15,23,42,.6)`, and the status colour in the label.
-    Box(
-        Modifier.fillMaxWidth()
-            .hudCard(
-                fill = HudColors.Msg,
-                borderColor = color.copy(alpha = 0.3f),
-            )
-            .background(color.copy(alpha = 0.08f), HudRadius.CardShape)
-            .padding(12.dp),
-    ) {
-        Column {
-            Text(status, color = color, style = HudeSectionTitle())
-            Spacer(Modifier.height(6.dp))
-            Text(
-                when {
-                    needsUpdate -> "Needs firmware V1.4.6 or newer."
-                    recording -> "Following the unit's stream."
-                    else -> "Waiting for samples."
-                },
-                color = HudColors.TextMuted,
-                style = HudeCfgHelp(),
-            )
-        }
     }
 }
 
