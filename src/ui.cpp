@@ -613,12 +613,17 @@ void updateBigDisplay(const SensorSnapshot &snap) {
     drawBadge(label, OFFSET_HALL_ICON_X, OFFSET_HALL_ICON_Y, color, srcBadgeW);
   }
 
-  // Phone link indicator: 0 = radio idle, 1 = advertising, 2 = phone connected.
-  // Polled at 1 Hz because the BLE callbacks run on the stack's own task and the
-  // display must not touch the GATT state directly.
+  // Phone link indicator: 0 = radio idle, 1 = advertising (pairing), 2 = phone
+  // connected. The link state is polled at 1 Hz because the BLE callbacks run on
+  // the stack's own task and the display must not touch the GATT state directly.
+  // The icon is off when idle, blinks while pairing, and holds steady when a
+  // phone is linked - always white. The blink phase is derived from millis(), so
+  // it animates at the frame cadence (<= DISPLAY_REFRESH_MS) without touching BLE.
+  static constexpr unsigned long BLE_BLINK_HALF_MS = 500;
   static int lastBleState = -1;
   static int cachedBleState = -1;
   static unsigned long lastBlePoll = 0;
+  static bool lastBleVisible = false;
   unsigned long bleNow = millis();
   if (cachedBleState < 0 || bleNow - lastBlePoll >= 1000) {
     lastBlePoll = bleNow;
@@ -626,16 +631,24 @@ void updateBigDisplay(const SensorSnapshot &snap) {
   }
   int currentBleState = (cachedBleState < 0) ? 0 : cachedBleState;
 
+  // Off when idle, blinking while pairing, solid once a phone is linked.
+  bool bleVisible = false;
+  if (currentBleState == 1) {
+    bleVisible = ((bleNow / BLE_BLINK_HALF_MS) % 2) == 0;
+  } else if (currentBleState == 2) {
+    bleVisible = true;
+  }
+
   if (SHOW_ELEMENT_BLE &&
-      (currentBleState != lastBleState || forceDraw)) {
+      (currentBleState != lastBleState || bleVisible != lastBleVisible || forceDraw)) {
     lastBleState = currentBleState;
+    lastBleVisible = bleVisible;
     int bleX = BIG_CENTER_X + OFFSET_BLE_ICON_X;
     int bleY = BIG_CENTER_Y + OFFSET_BLE_ICON_Y;
-    display.fillRect(bleX, bleY - 3, 21, 18, TFT_BLACK);
-    if (currentBleState == 1) {
-      drawBleIcon(bleX, bleY, TFT_WHITE, false);
-    } else if (currentBleState == 2) {
-      drawBleIcon(bleX, bleY, TFT_WHITE, true);
+    display.fillRect(bleX, bleY - 3, 21, 18, TFT_BLACK);  // erase for every phase
+    if (bleVisible) {
+      // Linked shows the thickened rune; pairing the plain one.
+      drawBleIcon(bleX, bleY, TFT_WHITE, currentBleState == 2);
     }
     drawDebugBox(display, bleX, bleY - 3, 21, 18);
   }
