@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
-import com.alefinot.dashboardpp.ui.components.HudCaptionedAction
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
@@ -48,9 +47,12 @@ import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
+import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudTouch
+import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -147,19 +149,33 @@ fun SettingsRow(
                 } else {
                     // The point's READ action, drawn between the setting's name and its value:
                     // it stores the card's live ambient reading into this row (`cal.ambient`).
-                    // It says READ in words, not just a mark, because the maintainer asked the
-                    // button to be labelled; the `action.start` triangle is the same mark the
-                    // full-width Capture buttons wore — a press that starts on the unit, answers.
+                    // A rounded rectangle around one word — no glyph — as the maintainer asked.
                     onCapture?.let { act ->
-                        HudCaptionedAction(
-                            glyph = HudIcons.Play,
-                            caption = "READ",
-                            description = captureDescription
-                                ?: "read the current value into ${item.label}",
-                            ink = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                            enabled = enabled,
-                            onClick = act,
-                        )
+                        Box(
+                            Modifier
+                                .heightIn(min = HudTouch.Button)
+                                .clip(RoundedCornerShape(HudRadius.Field))
+                                .border(
+                                    1.dp,
+                                    if (enabled) HudColors.Cyan else HudColors.TextDim,
+                                    RoundedCornerShape(HudRadius.Field),
+                                )
+                                .hudPressable(
+                                    enabled = enabled,
+                                    role = Role.Button,
+                                    onClickLabel = captureDescription
+                                        ?: "read the current value into ${item.label}",
+                                    onClick = act,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "READ",
+                                style = HudeButtonLabel(),
+                                color = if (enabled) HudColors.Cyan else HudColors.TextDim,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                        }
                     }
                     Control(item, box, view, imperial, enabled, !stacked, root) { x, y ->
                         onEdit(x, y)
