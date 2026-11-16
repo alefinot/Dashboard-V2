@@ -269,12 +269,25 @@ private fun Control(
 ) {
     val lead = if (wide) 12.dp else 0.dp
     when (item.control) {
-        RowControl.TOGGLE -> HudToggle(
-            on = box as? Boolean ?: false,
-            modifier = Modifier.padding(start = lead),
-            label = item.label,
-            onToggle = { if (enabled) onEdit(it, null) },
-        )
+        RowControl.TOGGLE -> Box(
+            // The switch is drawn inside the page's value column and centred in it, so its
+            // knob sits on the same vertical line as every bare figure on the page
+            // (maintainer's order, 2026-11-16). It used to draw at its own 48 dp, which
+            // parked its centre 22 dp right of the numbers beside it: the row read as two
+            // columns, one for switches and one for values. Centring it in the slot costs
+            // nothing — the 48 dp press target is untouched — and both controls now end at
+            // the reset glyph the same way. It takes no `lead` padding for the same reason
+            // [NumberControl] does not: the slot is the position, and any indent inside it
+            // moves the figure off the line the page is built on.
+            modifier = Modifier.width(SettingsValueSlot),
+            contentAlignment = Alignment.Center,
+        ) {
+            HudToggle(
+                on = box as? Boolean ?: false,
+                label = item.label,
+                onToggle = { if (enabled) onEdit(it, null) },
+            )
+        }
         RowControl.SELECT -> SelectControl(item, box, enabled, wide) { onEdit(it, null) }
         RowControl.SLIDER -> SliderControl(item, box, imperial, enabled, wide, root) {
             onEdit(it, null)
