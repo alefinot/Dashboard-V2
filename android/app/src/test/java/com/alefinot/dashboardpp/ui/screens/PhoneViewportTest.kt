@@ -311,16 +311,19 @@ class PhoneViewportTest {
             exempt != null,
         )
         val body = exempt!!.groupValues[1]
-        for (needs in listOf("SELECT", "SLIDER", "PAIR", "FUEL_TABLE")) {
+        for (needs in listOf("SELECT", "SLIDER", "PAIR", "FUEL_TABLE", "TEXT")) {
             assertTrue("RowControl.$needs must get a line of its own", body.contains("RowControl.$needs"))
         }
-        for (beside in listOf("NUMBER", "TEXT", "SECRET", "TOGGLE", "SWATCH")) {
+        for (beside in listOf("NUMBER", "SECRET", "TOGGLE", "SWATCH")) {
             assertFalse(
                 "RowControl.$beside is in the exemption set: that is a value box (or a toggle) " +
                     "sent below its setting's name, and the maintainer asked for it on the line",
                 body.contains("RowControl.$beside"),
             )
         }
+        // TEXT joined the set on 2026-11-16, on the maintainer's order to fix the Custom
+        // Signatures card: a string is not a figure, and beside a long label a phone row leaves
+        // it (and the label) about a third of the card each. See SettingsRow's NeedsItsOwnLine.
         assertTrue(
             "the starving pattern is back — an unweighted fillMaxWidth control in the row beside " +
                 "a weight(1f) label leaves the label zero width (that is how a picker drew its " +

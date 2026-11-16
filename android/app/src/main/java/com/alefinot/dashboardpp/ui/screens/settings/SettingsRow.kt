@@ -105,7 +105,7 @@ fun SettingsRow(
         // 322 dp row is unusable, and an X/Y pair simply falls off the edge (both measured on the
         // bench, same day). See [NeedsItsOwnLine].
         val stacked = readOnlyHint == null && maxWidth < WideFormRow &&
-            (item.control in NeedsItsOwnLine || isLongText(item))
+            item.control in NeedsItsOwnLine
 
         Column(Modifier.padding(vertical = 4.dp)) {
             @Composable
@@ -178,7 +178,7 @@ fun SettingsRow(
                     // still set the row's height. Weighted, each gives up the glyph's ~34 dp and
                     // the reset keeps the 48 dp target every other row's reset has.
                     val fills = item.control == RowControl.SLIDER || item.control == RowControl.SELECT ||
-                        isLongText(item)
+                        item.control == RowControl.TEXT
                     Trailing(if (fills) Modifier.weight(1f) else Modifier)
                 }
             } else {
@@ -226,32 +226,36 @@ private val WideFormRow = 480.dp
  * - [RowControl.PAIR] is an X and a Y with their reserved widths, and the pair reads as one
  *   control or not at all. It wants the line to itself so the two axes break together.
  * - [RowControl.FUEL_TABLE] is a comma list of up to twenty ohm values plus an apply button.
+ * - [RowControl.TEXT] is a string, not a figure. Beside its label the row reserves the field
+ *   230 dp of the phone's ~317 dp card and gives the setting's own name what is left, which
+ *   wraps `Badge Line 1 (e.g., '0-50')` over five lines and shows a third of a 45-character
+ *   watermark (both measured on the bench Mi 9 Lite, 2026-11-16, maintainer: "fix the custom
+ *   signatures card"). A string gets the line under its name and all of its width.
  */
 private val NeedsItsOwnLine = setOf(
     RowControl.SELECT,
     RowControl.SLIDER,
     RowControl.PAIR,
     RowControl.FUEL_TABLE,
+    RowControl.TEXT,
 )
 
 /**
- * The firmware band, in characters, above which a text value stops being a figure and becomes
- * a string - and so takes its setting's whole line rather than the 230 dp at its end.
+ * The firmware band, in characters, above which a string is drawn at the page's small value band
+ * instead of the big one. The shape is the same either way (see [NeedsItsOwnLine]); this only
+ * decides whether it fits the card's width on one line.
  *
- * The three rows of the **Custom Signatures** card are why this exists (maintainer, 2026-11-16:
- * "fix the custom signatures card"). `DASHBOARD_SIGNATURE` holds a 96-byte watermark, the two
- * others 48 bytes each, and a 45-character `<<<<<<    Dashboard++ by @ale.finot    >>>>>>` drawn
- * at the bare value's 17 px beside its label measured about 380 dp: it showed roughly a third of
- * the string, and the label it shared the line with was crushed to a three-word sliver
- * (`Main / Dashboard / Watermark`) - both measured on the bench phone the same day. The two
- * accel badge lines (16) stay on the label's line, because `0-50` is a value like any other.
+ * `DASHBOARD_SIGNATURE` holds 96 bytes and ships a 45-character `<<<<<<    Dashboard++ by
+ * @ale.finot    >>>>>>`, which measures about 380 dp at the bare value's 17 px - wider than the
+ * card. At the small band it is about 290 dp and reads whole. The two accel badge lines (16 bytes,
+ * `0-50`, `km/h`) keep the big band, because four characters are a value like any other.
  *
  * The threshold is the firmware's own field size rather than the value's length on purpose: a row
- * that changes shape as it is typed into is a row that moves under the finger.
+ * that changes size as it is typed into is a row that moves under the finger.
  */
 private const val LongTextChars = 32
 
-/** A text row whose firmware buffer is too wide to sit beside its name. */
+/** A string too wide for the page's value band - the small band is the one that fits it. */
 private fun isLongText(item: SchemaItem): Boolean =
     item.control == RowControl.TEXT && item.maxLength >= LongTextChars
 
@@ -328,32 +332,26 @@ private fun Control(
             textAlign = TextAlign.End,
             placeholder = "stored — type to replace",
         )
-        RowControl.TEXT -> {
-            // A string the firmware can hold forty-odd of is not a figure. It takes its
-            // setting's own line at the page's small band, start-aligned, so what is stored can
-            // be read and edited whole — see [LongTextChars] for the measurement that decided it.
-            val longText = isLongText(item)
-            HudInput(
-                value = box?.toString() ?: "",
-                onValueChange = { if (enabled) onEdit(it, null) },
-                // Stacked, the field owns the line the caller weighted for it; in the wide shape
-                // it is capped the way the page's other wide controls are, so it can never
-                // starve the `weight(1f)` label beside it.
-                modifier = if (longText) {
-                    root
-                        .then(if (wide) Modifier.widthIn(max = 420.dp) else Modifier.fillMaxWidth())
-                        .padding(start = lead)
-                } else {
-                    Modifier.width(230.dp).padding(start = lead)
-                },
-                style = HudInputStyle.BARE,
-                // A number ends against the reset glyph because it is a quantity; a string starts
-                // at the left because its first words are what says what it is.
-                textAlign = if (longText) TextAlign.Start else TextAlign.End,
-                textSize = if (longText) 13.sp else TextUnit.Unspecified,
-                placeholder = if (longText) "empty — tap to type" else "",
-            )
-        }
+        RowControl.TEXT -> HudInput(
+            // A string, not a figure: the line under its name and all of its width, read from the
+            // left, at the band the firmware's own buffer needs. See [NeedsItsOwnLine] for the
+            // measurement and [LongTextChars] for the band.
+            value = box?.toString() ?: "",
+            onValueChange = { if (enabled) onEdit(it, null) },
+            // Stacked, the field owns the line the caller weighted for it; in the wide shape it is
+            // capped the way the page's other wide controls are, so it can never starve the
+            // `weight(1f)` label beside it.
+            modifier = root
+                .then(if (wide) Modifier.widthIn(max = 420.dp) else Modifier.fillMaxWidth())
+                .padding(start = lead),
+            style = HudInputStyle.BARE,
+            // A number ends against the reset glyph because it is a quantity; a string starts at
+            // the left because its first words are what says what it is.
+            textAlign = TextAlign.Start,
+            textSize = if (isLongText(item)) 13.sp else TextUnit.Unspecified,
+            // A bare field with nothing in it is otherwise an invisible target.
+            placeholder = "empty — tap to type",
+        )
         RowControl.NUMBER -> NumberControl(item, box) { onEdit(it, null) }
     }
 }
