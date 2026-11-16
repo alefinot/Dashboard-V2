@@ -84,15 +84,13 @@ object StorageCopy {
             "In the app's own folder. Press ALLOW STORAGE."
     }
 
-    /** The line under the Trips header: what the cards underneath are, and where they are. */
-    fun tripsNote(shared: Boolean, path: AppRoot.GrantPath, sharedLabel: String, tripsDir: String): String {
-        val head = "One file per ESP power session \u00b7 "
-        return if (shared) {
-            head + "CSV in $sharedLabel/$tripsDir"
+    /** The line under the Trips header: where the cards underneath are. */
+    fun tripsNote(shared: Boolean, path: AppRoot.GrantPath, sharedLabel: String, tripsDir: String): String =
+        if (shared) {
+            "CSV in $sharedLabel/$tripsDir"
         } else {
-            head + "app-private folder"
+            "app-private folder"
         }
-    }
 
     /**
      * The sentence on a trip's detail page, where the owner is standing next to the file.
