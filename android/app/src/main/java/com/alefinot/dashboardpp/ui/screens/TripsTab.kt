@@ -38,7 +38,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudBanner
@@ -91,7 +90,6 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
     val runtime by TripRuntime.state.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val storage by vm.storageBytes.collectAsStateWithLifecycle()
-    val sharedStorage by vm.shared.collectAsStateWithLifecycle()
     val elsewhere by vm.elsewhere.collectAsStateWithLifecycle()
     var refreshKey by remember { mutableStateOf(0) }
 
@@ -130,21 +128,9 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
                     "${visible.size} of ${StorageCopy.drives(rows.size)}  ·  ${formatBytes(storage)}"
                 },
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                // Where the cards underneath came from. The folder is named because it is the
-                // place a user goes to open a drive in a spreadsheet or pull one off over USB —
-                // and the words are StorageCopy's, because on Android 10 there is no storage
-                // switch to point at, so the sentence must not promise one.
-                StorageCopy.tripsNote(
-                    sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
-                    AppRoot.sharedRootLabel(), AppRoot.TRIPS,
-                ),
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // The old line under the pill ("CSV in Documents/Dashboard++/trips") is gone — the
+            // owner asked for the whole sentence off the header. The card's own Storage half
+            // still names the folder and the trip detail page still names each file's folder.
             // Drives the recorder did not write here. A permission change moves where the app
             // writes, never where the drives are, so this line is what keeps the count in the
             // line above and the folder it names from contradicting each other.
