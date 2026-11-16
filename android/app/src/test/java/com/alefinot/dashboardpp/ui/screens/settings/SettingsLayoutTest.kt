@@ -257,11 +257,11 @@ class SettingsLayoutTest {
     }
 
     /**
-     * The ambient light reading is drawn on the Auto Brightness card, above the capture marks on
+     * The ambient light reading is drawn on the Auto Brightness card, above the READ buttons on
      * its Dark and Bright value rows that store it — the only place the page shows it.
      *
      * `cal.ambient` takes no number the owner typed: it stores whatever the sensor says at the
-     * instant a point's mark is pressed, which is why the firmware writes `ambientLightValue`
+     * instant a point's READ button is pressed, which is why the firmware writes `ambientLightValue`
      * straight into the point's row. A number that is the input to a control belongs beside that
      * control, which is why the capture moved onto the value rows it fills on 2026-11-16. Two
      * rules keep the move honest: an absent reading draws nothing (a card that invents a zero is
@@ -282,7 +282,7 @@ class SettingsLayoutTest {
         ).first { it.card.title == "Auto brightness" }.body
 
         assertEquals(
-            "the reading is drawn first on the card, above the rows whose capture marks store it",
+            "the reading is drawn first on the card, above the rows whose READ buttons store it",
             listOf("ambientLightValue", "ambientCalibrate", "ENABLE_AUTO_BRIGHTNESS"),
             read.map {
                 when (it) {

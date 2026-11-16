@@ -38,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
-import com.alefinot.dashboardpp.ui.components.HudGlyphAction
+import com.alefinot.dashboardpp.ui.components.HudCaptionedAction
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
@@ -87,11 +87,10 @@ fun SettingsRow(
      */
     readOnlyHint: String? = null,
     /**
-     * A small capture mark drawn on the row's trailing edge, beside the reset glyph. The
-     * calibration cards use it for a point the owner does not type but captures from the unit
-     * — the dark and bright ambient-light points, whose `cal.ambient` mark moved onto the value
-     * rows on 2026-11-16 so the button sits with the number it fills. Null on every row that is
-     * not one of those points.
+     * A small capture action drawn on the row between its label and its value. The calibration
+     * cards use it for a point the owner does not type but reads from the unit — the dark and
+     * bright ambient-light points, whose `cal.ambient` action sits on the value row it fills and
+     * is labelled READ. Null on every row that is not one of those points.
      */
     onCapture: (() -> Unit)? = null,
     /** The sentence [onCapture] is known by; required when [onCapture] is set. */
@@ -146,23 +145,24 @@ fun SettingsRow(
                         modifier = Modifier.padding(start = 12.dp),
                     )
                 } else {
-                    Control(item, box, view, imperial, enabled, !stacked, root) { x, y ->
-                        onEdit(x, y)
-                    }
-                    // The card's own capture mark, hugging the value it fills. It wears the same
-                    // `action.start` triangle the two full-width Capture buttons wore before they
-                    // moved onto the value rows on 2026-11-16 — a press that starts something on
-                    // the unit and answers afterwards.
+                    // The point's READ action, drawn between the setting's name and its value:
+                    // it stores the card's live ambient reading into this row (`cal.ambient`).
+                    // It says READ in words, not just a mark, because the maintainer asked the
+                    // button to be labelled; the `action.start` triangle is the same mark the
+                    // full-width Capture buttons wore — a press that starts on the unit, answers.
                     onCapture?.let { act ->
-                        HudGlyphAction(
+                        HudCaptionedAction(
                             glyph = HudIcons.Play,
+                            caption = "READ",
                             description = captureDescription
-                                ?: "capture the current reading into ${item.label}",
+                                ?: "read the current value into ${item.label}",
+                            ink = if (enabled) HudColors.Cyan else HudColors.TextDim,
                             enabled = enabled,
-                            box = HudTouch.Button,
-                            modifier = Modifier.padding(start = 2.dp),
                             onClick = act,
                         )
+                    }
+                    Control(item, box, view, imperial, enabled, !stacked, root) { x, y ->
+                        onEdit(x, y)
                     }
                     // The unit's own `config.reset`, one key at a time — the WebUI's reset
                     // button. Typing a default back in by hand would be a guess; this asks

@@ -184,16 +184,16 @@ private fun OdometerControl(
 /**
  * The one line the Auto Brightness card carries above its rows.
  *
- * What used to be two full-width Capture buttons is now a small capture mark drawn on the value
- * row it fills (`SettingsRow.onCapture`, wired from `CardBlock`), so a point's button sits with
- * the number it sets. That left this widget with nothing to press — the live reading the marks
- * store is drawn above by `SettingsLayout.CARD_READINGS`, and the press itself is the row's
- * mark — so all that is left to say is what the marks do.
+ * What used to be two full-width Capture buttons is now a READ action drawn on the value row it
+ * fills (`SettingsRow.onCapture`, wired from `CardBlock`), sitting between the point's name and
+ * its number. That left this widget with nothing to press — the live reading the READ buttons
+ * store is drawn above by `SettingsLayout.CARD_READINGS`, and the press itself is on the row —
+ * so all that is left to say is what they do.
  */
 @Composable
 private fun AmbientCalibrationControl() {
     Text(
-        "the capture mark on the Dark and Bright value rows stores the reading above as that point",
+        "the READ button on the Dark and Bright value rows stores the reading above as that point",
         style = HudeCfgHelp(),
         color = HudColors.TextDim,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
