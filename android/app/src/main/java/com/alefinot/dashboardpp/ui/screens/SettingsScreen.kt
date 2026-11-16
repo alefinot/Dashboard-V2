@@ -196,15 +196,11 @@ fun SettingsScreen(
             .padding(horizontal = HudPage.Gutter)
             .padding(top = 10.dp, bottom = 24.dp),
     ) {
-        // `.header`: the page's h2 in its gradient, centred, over an `.ip-banner` pill that
-        // says what this page is about in one line. The old heading was a left-aligned
-        // "APP SETTINGS" and the switches it introduced sat at the opposite edge of a
-        // 1920 px screen from their labels.
-        HudPageHeader(title = "App Settings") {
-            HudBanner(
-                "app $appVersion  ·  " + (unit ?: "no dashboard linked"),
-            )
-        }
+        // The page's h2 in its gradient, centred. The `.ip-banner` pill that used to sit under
+        // it ("app 1.2.0 · <unit name>") is gone — the same two facts already stand in the
+        // UNIT / FIRMWARE / APP cards a hand's width below, and the owner asked for the
+        // duplicate off the header.
+        HudPageHeader(title = "App Settings")
         Spacer(Modifier.height(16.dp))
 
         // What the app is talking to, as three cards across the page's grid. They were one
