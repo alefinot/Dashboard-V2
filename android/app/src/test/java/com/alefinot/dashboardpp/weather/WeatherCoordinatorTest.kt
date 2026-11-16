@@ -502,6 +502,75 @@ class WeatherCoordinatorTest {
         assertTrue(unit.times.isEmpty())
     }
 
+    // ---- the place language the owner chose -----------------------------------------
+
+    @Test
+    fun `the place language reaches the name the unit is fed`() = runBlocking {
+        // The card's PLACE LANGUAGE row is not decoration: this is the path that puts a word
+        // on the dashboard. Nominatim translates, so asking in Italian is what makes the unit
+        // read `Roma` where asking in English reads `Rome`.
+        unit.fix = snapshotAt(41.89193, 12.51133)
+        store.language = "it"
+        http.reverseBody = """{"address":{"city":"Roma"}}"""
+
+        feed.wake("tick", unitKey)
+
+        assertEquals(1, http.reverses.size)
+        assertTrue(http.reverses[0], http.reverses[0].contains("accept-language=it"))
+        assertEquals("Roma", unit.pushes.single().city)
+    }
+
+    @Test
+    fun `a city search is asked in the chosen language and keeps its candidates`() = runBlocking {
+        // The card's SAVE CITY goes through this call, and the language is the one thing that
+        // decides whether `Roma` can be found at all: in English the gazetteer prefix-matches
+        // the country first, in Italian it returns Rome, Lazio, Italia. The country row is
+        // then filtered out, which is the bug this whole path replaced.
+        store.language = "it"
+        http.searchBody = """{"results":[
+            |{"id":3169070,"name":"Roma","latitude":41.89193,"longitude":12.51133,
+            | "feature_code":"PPLC","country":"Italia","admin1":"Lazio","population":2318895},
+            |{"id":798549,"name":"Romania","latitude":46.0,"longitude":25.0,
+            | "feature_code":"PCLI","country":"Romania","population":19020271}]}""".trimMargin()
+
+        val found = feed.searchCity("Roma")
+
+        assertEquals(1, http.searches.size)
+        assertTrue(http.searches[0], http.searches[0].contains("language=it"))
+        assertEquals(listOf("Roma"), found.map { it.name })
+        assertEquals(3169070L, found[0].id)
+    }
+
+    @Test
+    fun `a saved city is re-read in the new language by its id`() = runBlocking {
+        // Changing the language must not leave the card reading Monachium while the panel is
+        // being fed Monaco di Baviera, and the owner should not have to retype and re-pick a
+        // town they already saved to change the spelling of its name.
+        // Body captured live from v1/get?id=2867714&language=it.
+        http.getBody = """{"id":2867714,"name":"Monaco di Baviera","latitude":48.13743,
+            |"longitude":11.57549,"elevation":524.0,"feature_code":"PPLA","country_code":"DE",
+            |"population":1505005,"country":"Germania","admin1":"Baviera"}""".trimMargin()
+        val saved = Place("München", "Bayern", "Deutschland", 48.13743, 11.57549, id = 2867714L)
+
+        val renamed = feed.renamePlace(saved, "it")
+
+        assertEquals("Monaco di Baviera", renamed?.name)
+        assertEquals("Germania", renamed?.country)
+        assertEquals(2867714L, renamed?.id)
+        assertTrue(http.urls.last(), http.urls.last().contains("id=2867714"))
+    }
+
+    @Test
+    fun `a city saved without an id is left alone`() = runBlocking {
+        // Rows written by an app that stored no gazetteer id cannot be re-read, and the
+        // honest answer is "nothing happened" rather than a search for a name that might now
+        // mean a different town.
+        assertNull(
+            feed.renamePlace(Place("Munich", "Bavaria", "Germany", 48.13743, 11.57549), "it"),
+        )
+        assertTrue(http.urls.isEmpty())
+    }
+
     // ---- a unit that came up between two fetches ------------------------------------------
 
     @Test
@@ -631,6 +700,7 @@ class WeatherCoordinatorTest {
     private class FakeStore(
         var enabled: Boolean = true,
         var city: CityFallback = CityFallback(null, null),
+        var language: String = "en",
     ) : WeatherStore {
         val rows = mutableMapOf<String, WeatherCache>()
 
@@ -642,6 +712,7 @@ class WeatherCoordinatorTest {
             return enabled
         }
         override suspend fun cityNow(): CityFallback = city
+        override suspend fun languageNow(): String = language
         override suspend fun cacheFor(unitKey: String): WeatherCache? = rows[unitKey]
         override suspend fun saveCache(unitKey: String, cache: WeatherCache) {
             rows[unitKey] = cache
@@ -656,8 +727,12 @@ class WeatherCoordinatorTest {
         var reverseBody: String? = null
         var searchBody: String? = null
 
+        /** The `v1/get?id=` answer: one place at the root, not a `results` array. */
+        var getBody: String? = null
+
         val forecasts: List<String> get() = urls.filter { it.startsWith(OpenMeteo.HOST) }
         val reverses: List<String> get() = urls.filter { it.startsWith(PlaceNames.REVERSE_URL) }
+        val searches: List<String> get() = urls.filter { it.startsWith(PlaceNames.SEARCH_URL) }
 
         override suspend fun get(url: String): String? {
             urls += url
@@ -665,6 +740,7 @@ class WeatherCoordinatorTest {
             return when {
                 url.startsWith(OpenMeteo.HOST) -> openMeteoBody
                 url.startsWith(PlaceNames.SEARCH_URL) -> searchBody
+                url.startsWith(PlaceNames.GET_URL) -> getBody
                 url.startsWith(PlaceNames.REVERSE_URL) -> reverseBody
                 else -> null
             }

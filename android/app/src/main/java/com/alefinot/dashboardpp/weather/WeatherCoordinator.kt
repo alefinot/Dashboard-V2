@@ -51,6 +51,9 @@ interface WeatherStore {
 
     suspend fun cityNow(): CityFallback
 
+    /** The place-name language to ask the providers in, as a [PlaceLanguages] tag. */
+    suspend fun languageNow(): String
+
     suspend fun cacheFor(unitKey: String): WeatherCache?
 
     suspend fun saveCache(unitKey: String, cache: WeatherCache)
@@ -225,8 +228,29 @@ class WeatherCoordinator(
      * Look a typed city up for the settings card, so the only thing a screen has to call
      * is this coordinator. The card lives in `ui/screens`, where no network client belongs
      * — that is the rule the Web page used to enforce by not existing.
+     *
+     * It answers with **what the query could mean**, in the language the owner chose, and
+     * stores nothing: this used to return one `Place` — `results[0]` — and on the bench that
+     * stored the country Romania for the typed word `Roma`. The card now puts the rows in
+     * front of the owner and saves the one they tap.
      */
-    suspend fun resolveCity(name: String): Place? = withContext(io) { names.geocodeCity(name) }
+    suspend fun searchCity(query: String): List<Place> =
+        withContext(io) { names.searchCandidates(query, store.languageNow()) }
+
+    /**
+     * Re-read a saved place in a new language, by the gazetteer id stored with it, so
+     * changing **PLACE LANGUAGE** re-names the fallback city instead of leaving the card
+     * reading `Monachium` while the panel is fed `Monaco di Baviera`.
+     *
+     * Null means there is nothing to re-name: the row was saved before ids were stored, or
+     * the provider is unreachable. The caller keeps the old name in that case — a stale
+     * name in the right language's place is better than an empty field, and the next
+     * SAVE CITY fixes it.
+     */
+    suspend fun renamePlace(place: Place, language: String): Place? = withContext(io) {
+        val id = place.id ?: return@withContext null
+        names.placeById(id, language)
+    }
 
     private suspend fun pass(
         unitKey: String,
@@ -368,7 +392,11 @@ class WeatherCoordinator(
 
         // 6. Two labels, because the card and the unit need different things: the card
         // can wrap and show accents, the unit has a 47-byte field and ASCII-only fonts.
-        val forCard = pos.labelHint ?: names.label(pos.lat, pos.lon, city.typed)
+        // The reverse lookup runs in the owner's chosen place language, which is what puts
+        // `Roma` rather than `Rome` on the panel — and the one thing this does not translate
+        // is `city.typed`, which is the owner's own spelling and stays as they wrote it.
+        val language = store.languageNow()
+        val forCard = pos.labelHint ?: names.label(pos.lat, pos.lon, city.typed, language)
         val forUnit = PlaceNames.panelLabel(forCard) ?: PlaceNames.coordinateLabel(pos.lat, pos.lon)
 
         val url = OpenMeteo.url(pos.lat, pos.lon)
@@ -440,7 +468,7 @@ class WeatherCoordinator(
      */
     private fun missingPositionNote(onlySource: PositionSource?): String = when (onlySource) {
         PositionSource.CITY ->
-            "No fallback city saved \u2014 type one above and press SAVE CITY."
+            "No fallback city to push \u2014 save one above, then pick a match from the list."
         PositionSource.FIX ->
             "The unit has no GPS fix to ask about \u2014 PUSH NOW uses the fallback city instead."
         else -> "No position \u2014 add a city or wait for a GNSS fix."

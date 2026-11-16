@@ -10,6 +10,11 @@ import java.util.Locale
  * settings card, which has to show *which* Munich it picked: "Munich" resolves to a
  * city of 1.5 million in Bavaria, a village of 202 in North Dakota, and a landing in
  * Grenada, and the provider orders them by population, not by where the car is.
+ *
+ * [featureCode] is the place *type* (GeoNames: `PPLC` a capital, `PPL` a populated place,
+ * `PCLI` a country) and it is the reason the card can offer settlements instead of offering
+ * Romania as a spelling of Roma. [id] is the gazetteer's own key, kept so a saved city can
+ * be re-named in another language by key rather than by re-typing and re-guessing it.
  */
 data class Place(
     val name: String,
@@ -17,7 +22,26 @@ data class Place(
     val country: String?,
     val lat: Double,
     val lon: Double,
-)
+    val id: Long? = null,
+    val featureCode: String? = null,
+    /**
+     * Inhabitants, when the gazetteer knows them. It is on the card because a search for
+     * `Roma` answers with two rows both reading "Roma, Veneto, Italy" — 33 people and 13 —
+     * and without the number the owner is being asked to choose between two identical
+     * labels. Null for a row the gazetteer has no count for, including every non-settlement.
+     */
+    val population: Long? = null,
+) {
+    /**
+     * A place people live, as opposed to a country (`PCLI`), a mountain (`MT`) or a body
+     * of water (`H*`) — the kinds the gazetteer mixes into the same result list. `PPL` is a
+     * populated place and `PPLC` / `PPLA` / `PPLA2` … are its administrative ranks; a row
+     * that carries no type at all is treated as a settlement, because rejecting a place for
+     * a missing field is how a picker ends up empty for a name that does exist.
+     */
+    val isSettlement: Boolean
+        get() = featureCode == null || featureCode.startsWith("PPL")
+}
 
 /**
  * The app's half of "what name goes in the unit's weather card".
@@ -34,7 +58,10 @@ data class Place(
  * The label is then folded to what the panel can draw. That is not decoration: both
  * `fonts/Conthrax_SemiBold_16px.vlw` and `28px.vlw` carry exactly 95 glyphs, U+0020
  * through U+007E (their own headers say so), so "München" or a degree sign would render
- * as gaps. `accept-language=en` gets most of the way there at the provider ("Munich"),
+ * as gaps. The **language the providers are asked in** (`language=` on the search,
+ * `accept-language=` on the reverse) gets most of the way there — `de` hands back
+ * `München`, `pl` hands back `Monachium`, and every language the app offers answers in
+ * Latin letters, which is the whole rule for that list (see [PlaceLanguages]) —
  * [panelLabel] catches the rest, and a name with no Latin form at all ("Москва") is
  * dropped rather than mangled.
  *
@@ -49,23 +76,42 @@ class PlaceNames(
     private var lastReverseAtMs: Long? = null
 
     /**
-     * Typed city → place, or null when the owner typed something no gazetteer knows.
-     * The provider omits the `results` key entirely for a no-match answer, which is
-     * why [parseSearch] returns an empty list rather than failing.
+     * Typed city → the places it could mean, for the card to choose between.
+     *
+     * The app used to answer this question for the owner by taking `results[0]`, and on the
+     * bench that stored **Romania** for the typed word `Roma`: the gazetteer indexes
+     * countries too, and its matcher takes three-or-more characters as a *prefix*, so
+     * "Roma" matches "Romania" (population 19 M) before anything else does. Returning the
+     * candidates is the fix; [settlementFirst] is what keeps a country out of the list.
+     *
+     * Empty means the gazetteer has no answer, which is also what a no-match body looks
+     * like (the provider omits `results` entirely).
      */
-    suspend fun geocodeCity(name: String): Place? {
-        val query = name.trim()
-        if (query.isEmpty()) return null
-        val body = http.get(searchUrl(query)) ?: return null
-        return parseSearch(body).firstOrNull()
+    suspend fun searchCandidates(query: String, language: String, count: Int = CANDIDATE_COUNT): List<Place> {
+        val name = query.trim()
+        if (name.isEmpty()) return emptyList()
+        val body = http.get(searchUrl(name, language, count)) ?: return emptyList()
+        val all = parseSearch(body)
+        return settlementFirst(all).take(count)
+    }
+
+    /**
+     * One saved place, re-read in another language by its gazetteer id — so changing the
+     * place language renames the fallback city instead of leaving the card reading
+     * `Monachium` while the panel is being fed `Monaco di Baviera`. Null when the place is
+     * gone, the provider is unreachable, or the saved row has no id to ask by.
+     */
+    suspend fun placeById(id: Long, language: String): Place? {
+        val body = http.get(getUrl(id, language)) ?: return null
+        return parsePlace(body)
     }
 
     /**
      * Coordinate → city name, or null: refused locally inside Nominatim's one-second
      * window, answered without a usable address block, or unreachable.
      */
-    suspend fun reverseName(lat: Double, lon: Double): String? {
-        val url = reverseUrl(lat, lon) ?: return null
+    suspend fun reverseName(lat: Double, lon: Double, language: String): String? {
+        val url = reverseUrl(lat, lon, language) ?: return null
         val last = lastReverseAtMs
         if (last != null && nowMs() - last < MIN_REVERSE_INTERVAL_MS) return null
         lastReverseAtMs = nowMs()
@@ -77,8 +123,8 @@ class PlaceNames(
      * the city the owner typed, else the coordinates. The result is always drawable by
      * the panel and always at most [LABEL_MAX_BYTES] bytes.
      */
-    suspend fun label(lat: Double, lon: Double, typedCity: String?): String =
-        reverseName(lat, lon)
+    suspend fun label(lat: Double, lon: Double, typedCity: String?, language: String): String =
+        reverseName(lat, lon, language)
             ?: panelLabel(typedCity)
             ?: coordinateLabel(lat, lon)
 
@@ -86,6 +132,16 @@ class PlaceNames(
 
         const val SEARCH_URL = "https://geocoding-api.open-meteo.com/v1/search"
         const val REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+
+        /** The same gazetteer, addressed by its own id: what re-names a saved city. */
+        const val GET_URL = "https://geocoding-api.open-meteo.com/v1/get"
+
+        /**
+         * Candidate rows the card offers. Five, not the three this file used to ask for:
+         * probed with `name=Roma&count=10`, the answer the owner meant sat below the
+         * third row for several spellings, so a shorter list would keep guessing wrong.
+         */
+        const val CANDIDATE_COUNT = 5
 
         /** A hair over a second, so clock jitter cannot put two requests in one second. */
         const val MIN_REVERSE_INTERVAL_MS = 1_100L
@@ -100,14 +156,27 @@ class PlaceNames(
         /** Administrative names Nominatim puts in `address`, most specific useful first. */
         private val ADDRESS_KEYS = listOf("city", "town", "village", "hamlet", "municipality", "county", "state")
 
-        fun searchUrl(name: String): String =
+        /**
+         * The search URL. [language] is not cosmetic: the gazetteer's matcher treats three
+         * or more characters as a **prefix of the name in the requested language**, so the
+         * same letters find different places. `name=Roma&language=en` answers with the
+         * country Romania; the same query as `language=it` answers with Roma, Lazio, Italia
+         * (population 2.3 M) first. See [PlaceLanguages] for the codes this app offers.
+         */
+        fun searchUrl(name: String, language: String, count: Int = CANDIDATE_COUNT): String =
             SEARCH_URL + "?name=" + URLEncoder.encode(name.trim(), "UTF-8") +
-                // Three candidates, so the settings card can show what it chose and the
-                // owner can tell "Munich, Bavaria, Germany" from "Munich, North Dakota".
-                "&count=3&language=en&format=json"
+                // The candidates are what the card offers to choose between, so the owner
+                // can tell "Munich, Bavaria, Germany" from "Munich, North Dakota" by hand
+                // rather than trusting the provider's population ranking.
+                "&count=" + count.coerceIn(1, 40) +
+                "&language=" + tag(language) + "&format=json"
+
+        /** One saved place, re-read in another language. Same response shape as [searchUrl]. */
+        fun getUrl(id: Long, language: String): String =
+            GET_URL + "?id=" + id + "&language=" + tag(language) + "&format=json"
 
         /** Null for a coordinate that is not one — those must not leave the phone. */
-        fun reverseUrl(lat: Double, lon: Double): String? {
+        fun reverseUrl(lat: Double, lon: Double, language: String): String? {
             if (!lat.isFinite() || !lon.isFinite()) return null
             if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return null
             return REVERSE_URL + String.format(
@@ -115,29 +184,75 @@ class PlaceNames(
                 // Seven decimals, the same precision the weather query and the route
                 // points use. zoom=12 asks for a city rather than the nearest building;
                 // addressdetails=1 is what makes the short administrative name available.
-                "?format=jsonv2&lat=%.7f&lon=%.7f&zoom=12&addressdetails=1&accept-language=en",
-                lat, lon,
+                // Nominatim's language knob is a header-named parameter, and it translates
+                // the same way: Rome -> Roma -> Рим, which is the label on the panel.
+                "?format=jsonv2&lat=%.7f&lon=%.7f&zoom=12&addressdetails=1&accept-language=%s",
+                lat, lon, tag(language),
             )
         }
+
+        /** A provider language tag, always one this file can safely put in a URL. */
+        private fun tag(language: String): String =
+            language.trim().lowercase(Locale.ROOT).filter { it.isLetterOrDigit() || it == '-' }
+                .ifEmpty { PlaceLanguages.FALLBACK_TAG }
+
+        /**
+         * Settlement rows first, in the provider's own order.
+         *
+         * The gazetteer indexes countries, mountains and water bodies next to towns, and
+         * `feature_code` names the kind: `PPL` is a populated place and `PPLC`/`PPLA*` are
+         * its administrative ranks, while `PCLI` is a country — the row that put the centre
+         * of Romania on the card as a spelling of "Roma". Anything that is not a settlement
+         * is dropped here, **unless** a query has no settlement at all, in which case the
+         * raw list is handed back: a person searching for a mountain range or an island
+         * group gets candidates rather than an empty card and a "not found".
+         */
+        fun settlementFirst(all: List<Place>): List<Place> =
+            all.filter { it.isSettlement }.ifEmpty { all }
 
         /** Open-Meteo's `results` array, in the provider's own order (largest first). */
         fun parseSearch(body: String): List<Place> {
             val root = BleJson.obj(body) ?: return emptyList()
             val results = root["results"] as? List<*> ?: return emptyList()
             return results.mapNotNull { entry ->
-                val o = entry as? Map<*, *> ?: return@mapNotNull null
-                val name = BleJson.string(o.asStringKeyMap(), "name") ?: return@mapNotNull null
-                val lat = (o["latitude"] as? Double)?.takeIf { it.isFinite() } ?: return@mapNotNull null
-                val lon = (o["longitude"] as? Double)?.takeIf { it.isFinite() } ?: return@mapNotNull null
-                if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return@mapNotNull null
-                Place(
-                    name = name,
-                    admin1 = BleJson.string(o.asStringKeyMap(), "admin1"),
-                    country = BleJson.string(o.asStringKeyMap(), "country"),
-                    lat = lat,
-                    lon = lon,
-                )
+                placeFrom(entry as? Map<*, *>)
             }
+        }
+
+        /**
+         * The `v1/get?id=` answer, which is **one place object at the root** rather than a
+         * `results` array — the same gazetteer, a different shape, and the reason this is a
+         * second entry point instead of [parseSearch] with a flag. A bad id comes back as an
+         * error object with no `name`, so it reads as null here, and [WeatherHttp] has
+         * already turned its 400 into null.
+         */
+        fun parsePlace(body: String): Place? = placeFrom(BleJson.obj(body))
+
+        /** One gazetteer row, from either shape. Null unless it is a place with a position. */
+        private fun placeFrom(o: Map<*, *>?): Place? {
+            o ?: return null
+            val fields = o.asStringKeyMap()
+            val name = BleJson.string(fields, "name") ?: return null
+            // A coordinate the app cannot ask weather about is not a candidate, whatever
+            // the gazetteer says the row is called.
+            val lat = (o["latitude"] as? Double)?.takeIf { it.isFinite() } ?: return null
+            val lon = (o["longitude"] as? Double)?.takeIf { it.isFinite() } ?: return null
+            if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return null
+            return Place(
+                name = name,
+                admin1 = BleJson.string(fields, "admin1"),
+                country = BleJson.string(fields, "country"),
+                lat = lat,
+                lon = lon,
+                // The two fields the picker needs: `feature_code` says what kind of place
+                // this is (settlement / country / mountain), `id` lets a saved one be re-read
+                // in another language instead of being searched for and guessed again.
+                // `BleJson` reads every JSON number as Double (its own doc says so), so this
+                // is `as? Number` and not `as? Long`.
+                id = (o["id"] as? Number)?.toLong()?.takeIf { it > 0L },
+                featureCode = BleJson.string(fields, "feature_code")?.trim()?.takeIf { it.isNotEmpty() },
+                population = (o["population"] as? Number)?.toLong()?.takeIf { it > 0L },
+            )
         }
 
         /**

@@ -52,6 +52,20 @@ data class CityFallback(val typed: String?, val place: Place?) {
 }
 
 /**
+ * The half of the weather store the App Settings card **writes**: the owner's two choices.
+ *
+ * The seam exists for the same reason [WeatherStore] and [WeatherUnit] do — the card's save
+ * path is logic worth testing (what gets stored for one hit, what does not for five, what a
+ * language change does to a saved city), and the production class behind it needs an Android
+ * `Context`. A screen depends on this, not on [WeatherSettings].
+ */
+interface WeatherWriter {
+    suspend fun setCity(typed: String?, place: Place?)
+
+    suspend fun setLanguage(tag: String)
+}
+
+/**
  * The weather feed's settings and cache.
  *
  * The cache is keyed by `UnitIdentity.key(mac, bleAddress)`, not by the address the
@@ -64,7 +78,7 @@ data class CityFallback(val typed: String?, val place: Place?) {
  * the free-text field is kept last and split with a limit, which is what keeps a label
  * containing a `;` whole.
  */
-class WeatherSettings(context: Context) : WeatherStore {
+class WeatherSettings(context: Context) : WeatherStore, WeatherWriter {
 
     private val store = context.applicationContext.weatherSettingsStore
 
@@ -90,29 +104,58 @@ class WeatherSettings(context: Context) : WeatherStore {
      * Passing null for [place] means "the owner typed something, the gazetteer had no
      * answer" — the text is kept so it can be shown and re-tried, but it is not a
      * position and the ladder will not use it.
+     *
+     * [Place.id] is stored too: it is what lets a saved city be re-named when the place
+     * language changes, instead of leaving the card reading `Monachium` while the panel is
+     * being fed `Monaco di Baviera`. A row saved before ids existed keeps a null there and
+     * ages out the ordinary way — the next SAVE CITY stores one.
      */
-    suspend fun setCity(typed: String?, place: Place?) {
+    override suspend fun setCity(typed: String?, place: Place?) {
         store.edit { prefs ->
             val text = typed?.trim()?.takeIf { it.isNotEmpty() }
             if (text == null) {
-                listOf(KEY_CITY, KEY_CITY_LAT, KEY_CITY_LON, KEY_CITY_NAME, KEY_CITY_ADMIN1, KEY_CITY_COUNTRY)
-                    .forEach { prefs.remove(it) }
+                cityKeys().forEach { prefs.remove(it) }
             } else {
                 prefs[KEY_CITY] = text
                 if (place == null) {
                     // Drop any geocode left from a previous, different city: an old
                     // coordinate behind a new name would feed weather for the wrong town.
-                    listOf(KEY_CITY_LAT, KEY_CITY_LON, KEY_CITY_NAME, KEY_CITY_ADMIN1, KEY_CITY_COUNTRY)
-                        .forEach { prefs.remove(it) }
+                    cityGeocodeKeys().forEach { prefs.remove(it) }
                 } else {
                     prefs[KEY_CITY_LAT] = String.format(Locale.US, "%.7f", place.lat)
                     prefs[KEY_CITY_LON] = String.format(Locale.US, "%.7f", place.lon)
                     prefs[KEY_CITY_NAME] = place.name
                     place.admin1?.let { prefs[KEY_CITY_ADMIN1] = it } ?: prefs.remove(KEY_CITY_ADMIN1)
                     place.country?.let { prefs[KEY_CITY_COUNTRY] = it } ?: prefs.remove(KEY_CITY_COUNTRY)
+                    place.id?.let { prefs[KEY_CITY_ID] = it.toString() } ?: prefs.remove(KEY_CITY_ID)
                 }
             }
         }
+    }
+
+    /**
+     * The language place names come back in: what the card's **PLACE LANGUAGE** row shows,
+     * what both providers are asked with, and therefore what the unit's panel prints.
+     *
+     * The default is the **phone's** language, mapped to one the panel can draw
+     * ([PlaceLanguages.fromLocale]) — recomputed on every read, so a phone moved to German
+     * starts naming places in German, and only an owner's explicit choice breaks that link.
+     * A stored tag this build does not offer falls back to that default rather than being
+     * sent to a provider that cannot answer it.
+     */
+    val language: Flow<String> =
+        store.data.catch { emit(emptyPreferences()) }.map { readLanguage(it) }
+
+    override suspend fun languageNow(): String = language.first()
+
+    /**
+     * Store the language choice. An unknown tag is refused rather than stored: it would go
+     * out to both providers as a language neither answers, and put a name in a script the
+     * panel cannot draw on the dashboard. [PlaceLanguages] is the only authority here.
+     */
+    override suspend fun setLanguage(tag: String) {
+        val known = PlaceLanguages.byTag(tag)?.tag ?: return
+        store.edit { it[KEY_LANGUAGE] = known }
     }
 
     /** This unit's cache row, or null when the app has never fed this unit. */
@@ -151,6 +194,17 @@ class WeatherSettings(context: Context) : WeatherStore {
         private val KEY_CITY_NAME = stringPreferencesKey("weather:city_name")
         private val KEY_CITY_ADMIN1 = stringPreferencesKey("weather:city_admin1")
         private val KEY_CITY_COUNTRY = stringPreferencesKey("weather:city_country")
+
+        /** The gazetteer's own key for the saved city — how a language change re-names it. */
+        private val KEY_CITY_ID = stringPreferencesKey("weather:city_id")
+
+        /** A [PlaceLanguages] tag, or absent for "follow the phone". */
+        private val KEY_LANGUAGE = stringPreferencesKey("weather:lang")
+
+        private fun cityKeys() = listOf(KEY_CITY) + cityGeocodeKeys()
+
+        private fun cityGeocodeKeys() =
+            listOf(KEY_CITY_LAT, KEY_CITY_LON, KEY_CITY_NAME, KEY_CITY_ADMIN1, KEY_CITY_COUNTRY, KEY_CITY_ID)
 
         /** The row for one unit identity: `weather:cache:<identity key>`. */
         fun cacheKey(unitKey: String) = "weather:cache:$unitKey"
@@ -209,8 +263,16 @@ class WeatherSettings(context: Context) : WeatherStore {
                     country = prefs[KEY_CITY_COUNTRY],
                     lat = lat,
                     lon = lon,
+                    // A number in a string key, so a value written by hand or corrupted on
+                    // an old upgrade reads as "no id" (null) rather than as place 0.
+                    id = prefs[KEY_CITY_ID]?.toLongOrNull()?.takeIf { it > 0L },
                 ),
             )
         }
+
+        /** The stored tag when this build offers it, else the phone's own language. */
+        fun readLanguage(prefs: Preferences): String =
+            PlaceLanguages.byTag(prefs[KEY_LANGUAGE])?.tag
+                ?: PlaceLanguages.fromLocale(Locale.getDefault()).tag
     }
 }

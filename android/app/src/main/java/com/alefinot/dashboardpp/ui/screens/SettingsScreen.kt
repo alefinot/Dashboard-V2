@@ -52,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
@@ -64,6 +65,7 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
+import com.alefinot.dashboardpp.ui.components.HudSelectMenu
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.hudPage
@@ -81,11 +83,14 @@ import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
 import com.alefinot.dashboardpp.weather.CityFallback
 import com.alefinot.dashboardpp.weather.Place
+import com.alefinot.dashboardpp.weather.PlaceLanguages
+import com.alefinot.dashboardpp.weather.PlaceNames
 import com.alefinot.dashboardpp.weather.PositionSource
 import com.alefinot.dashboardpp.weather.WeatherCoordinator
 import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.weather.WeatherSettings
 import com.alefinot.dashboardpp.weather.WeatherStatus
+import com.alefinot.dashboardpp.weather.WeatherWriter
 
 /**
  * The "APP SETTINGS" tab — controls that apply to the Android app itself. The unit's own
@@ -133,11 +138,22 @@ fun SettingsScreen(
     val weatherOn by weatherSettings.enabled.collectAsStateWithLifecycle(initialValue = true)
     val weatherCity by weatherSettings.cityFallback
         .collectAsStateWithLifecycle(initialValue = CityFallback(null, null))
+    val placeLang by weatherSettings.language
+        .collectAsStateWithLifecycle(initialValue = PlaceLanguages.FALLBACK_TAG)
+    val placeOptions = remember { PlaceLanguages.ALL }
     val weatherStatus by weatherFeed.status.collectAsStateWithLifecycle()
     // null means "not edited yet", which is what lets the field show the stored city
     // once the store has answered instead of starting out empty and staying that way.
     var cityEdit by remember { mutableStateOf<String?>(null) }
     var weatherLine by remember { mutableStateOf("") }
+    /**
+     * The places the last city search found, when it found more than one. Empty is the
+     * normal state: it means the search settled the question (one answer, or none) and
+     * there is nothing to choose. It holds **no** saved city — a search that comes back
+     * ambiguous stores nothing, so the fallback the owner had before keeps feeding the
+     * ladder while they decide.
+     */
+    var cityChoices by remember { mutableStateOf<List<Place>>(emptyList()) }
     // Hoisted out of the Updates body on 2026-11-15: an accordion body is only composed
     // while its group is open, so a note that lives inside one is wiped every time the
     // owner opens the group next door. The lines that report what a press did belong to
@@ -392,6 +408,29 @@ fun SettingsScreen(
                 scope.launch { weatherFeed.refresh(key) }
             }
             Spacer(Modifier.height(12.dp))
+            // Place names, both providers, in one choice. The language is what makes the
+            // gazetteer *find* the place the owner typed — "Roma" in English answers with
+            // the country Romania, in Italian it answers with Rome — and it also renames
+            // the label the unit's panel prints, because the reverse lookup is asked in the
+            // same tongue. Only languages whose names the panel's font can draw are offered
+            // (see PlaceLanguages), so this row cannot produce a name the dash cannot show.
+            Text("PLACE LANGUAGE", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(4.dp))
+            HudSelectMenu(
+                triggerLabel = PlaceLanguages.endonymOf(placeLang),
+                items = placeOptions,
+                label = { it.endonym },
+                isSelected = { it.tag == placeLang },
+                onPick = { picked ->
+                    scope.launch {
+                        weatherLine = applyPlaceLanguage(
+                            picked.tag, weatherFeed, weatherSettings, weatherCity,
+                        )
+                        cityChoices = emptyList()
+                    }
+                },
+            )
+            Spacer(Modifier.height(12.dp))
             Text("FALLBACK CITY", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(4.dp))
             HudInput(
@@ -402,7 +441,11 @@ fun SettingsScreen(
                 placeholder = "Used when the unit has no GPS fix",
                 onDone = {
                     val typed = cityEdit ?: weatherCity.typed
-                    scope.launch { weatherLine = saveWeatherCity(typed, weatherFeed, weatherSettings) }
+                    scope.launch {
+                        val found = searchWeatherCity(typed, weatherFeed, weatherSettings)
+                        weatherLine = found.line
+                        cityChoices = found.choices
+                    }
                 },
             )
             Spacer(Modifier.height(8.dp))
@@ -414,7 +457,11 @@ fun SettingsScreen(
                     glyph = HudIcons.Check,
                 ) {
                     val typed = cityEdit ?: weatherCity.typed
-                    scope.launch { weatherLine = saveWeatherCity(typed, weatherFeed, weatherSettings) }
+                    scope.launch {
+                        val found = searchWeatherCity(typed, weatherFeed, weatherSettings)
+                        weatherLine = found.line
+                        cityChoices = found.choices
+                    }
                 }
                 HudButton(
                     "PUSH NOW",
@@ -425,6 +472,28 @@ fun SettingsScreen(
                     val key = weatherStatus.unitKey ?: return@HudButton
                     scope.launch { weatherFeed.pushNow(key) }
                 }
+            }
+            // The gazetteer's answer to a name is a list, and for an ambiguous one the app
+            // used to take the top row and store it — which is how the maintainer's phone
+            // came to hold the centre of Romania under the word "Roma". Nothing is stored
+            // from here until the owner taps a row.
+            if (cityChoices.size > 1) {
+                Spacer(Modifier.height(8.dp))
+                HudSelectMenu(
+                    triggerLabel = "PICK THE ONE YOU MEAN",
+                    items = cityChoices,
+                    label = { placeChoiceLabel(it) },
+                    isSelected = { it == weatherCity.place },
+                    onPick = { chosen ->
+                        val typed = cityEdit ?: weatherCity.typed
+                        scope.launch {
+                            weatherSettings.setCity(typed?.trim(), chosen)
+                            weatherLine = "Fallback: ${placeLabel(chosen)}"
+                            cityChoices = emptyList()
+                        }
+                    },
+                    menuModifier = Modifier.fillMaxWidth(),
+                )
             }
             Spacer(Modifier.height(10.dp))
             Text(weatherStatusLine(weatherStatus), color = HudColors.TextMuted, style = HudeCfgLive())
@@ -710,36 +779,108 @@ private fun ToggleRow(
 }
 
 /**
- * Store the owner's fallback city together with the coordinates the gazetteer gave it.
+ * What a city search left for the card to do with: the sentence to print under the field,
+ * and the rows to offer when the answer is not one place.
+ */
+internal data class CitySearch(val line: String, val choices: List<Place>)
+
+/**
+ * Search the owner's typed city, and store whatever the search settles.
  *
  * The lookup runs here, at save time, and never once per feed: a typed city is one line
  * of text the owner changes once a year, while the schedule asks about it on every pass.
- * The answer returned is the sentence to show under the field, including the honest one
- * for a name no gazetteer knows — the text is kept so it can be edited, but there is no
- * position behind it, so the ladder will not use it.
+ *
+ * It no longer stores the gazetteer's first answer. One answer is stored at once; several
+ * come back as [CitySearch.choices] for the owner to choose between, and **nothing is
+ * stored in that case** — a working fallback must not be wiped because a search was
+ * ambiguous. Zero answers keeps the text with no position behind it, which is what lets the
+ * field show what was typed while PUSH NOW knows there is nothing to fetch for it.
  */
-internal suspend fun saveWeatherCity(
+internal suspend fun searchWeatherCity(
     typed: String?,
     feed: WeatherCoordinator,
-    settings: WeatherSettings,
-): String {
+    settings: WeatherWriter,
+): CitySearch {
     val query = typed?.trim().orEmpty()
     if (query.isEmpty()) {
         settings.setCity(null, null)
-        return "Fallback city cleared."
+        return CitySearch("Fallback city cleared.", emptyList())
     }
-    val place = feed.resolveCity(query)
-    settings.setCity(query, place)
-    return if (place == null) {
-        "\"$query\" not found."
-    } else {
-        "Fallback: ${placeLabel(place)}"
+    val found = feed.searchCity(query)
+    return when (found.size) {
+        0 -> {
+            settings.setCity(query, null)
+            CitySearch("\"$query\" not found.", emptyList())
+        }
+        1 -> {
+            val place = found[0]
+            settings.setCity(query, place)
+            CitySearch("Fallback: ${placeLabel(place)}", emptyList())
+        }
+        else -> CitySearch(
+            "\"$query\" is ${found.size} places \u2014 tap the one you mean.",
+            found,
+        )
     }
+}
+
+/**
+ * Change the language place names come back in, and bring the saved city with it.
+ *
+ * The saved city is re-read by its gazetteer id, so the card and the panel both move to the
+ * new language instead of the card reading `Monachium` while the unit is being fed
+ * `Monaco di Baviera` — the owner does not have to re-type and re-pick a town they already
+ * saved just to change the spelling of its name. A row saved before ids were stored cannot
+ * be re-named, and the returned line says so rather than failing silently.
+ */
+internal suspend fun applyPlaceLanguage(
+    tag: String,
+    feed: WeatherCoordinator,
+    settings: WeatherWriter,
+    current: CityFallback,
+): String {
+    val chosen = PlaceLanguages.byTag(tag)?.tag ?: return "That language is not offered."
+    settings.setLanguage(chosen)
+    val saved = current.place
+        ?: return "Place names will be in ${PlaceLanguages.endonymOf(chosen)}."
+    if (saved.id == null) {
+        return "Place names will be in ${PlaceLanguages.endonymOf(chosen)} \u2014 " +
+            "save ${saved.name} once more to re-name it."
+    }
+    val renamed = feed.renamePlace(saved, chosen)
+        ?: return "Place names will be in ${PlaceLanguages.endonymOf(chosen)} \u2014 " +
+            "${saved.name} could not be re-read, so it stays as it is."
+    settings.setCity(current.typed, renamed)
+    // Both providers hand back the *native* name when they have no translation for a place,
+    // so a single odd row can still arrive in a script the panel has no glyphs for. Saying
+    // it now, at the moment the owner is looking at the card, beats them finding the
+    // coordinates on the dash and hunting for the reason.
+    val onPanel = PlaceNames.panelLabel(renamed.name) != null
+    return "Fallback: ${placeLabel(renamed)}" +
+        if (onPanel) "" else " \u00b7 the unit shows its coordinates for that name"
 }
 
 /** "Munich, Bavaria, Germany" — which of the several Münchs this app picked, in full. */
 internal fun placeLabel(place: Place): String =
     listOfNotNull(place.name, place.admin1, place.country).joinToString(", ")
+
+/**
+ * One candidate row, and the part that tells it apart from its neighbour.
+ *
+ * The number is not decoration: a search for `Roma` answers with two rows that both read
+ * "Roma, Veneto, Italy" — one of 33 people, one of 13 — so without the count the owner is
+ * asked to choose between identical labels. A row that is not a settlement at all (the
+ * kind that only appears when a name has no settlement in the gazetteer) says so instead.
+ */
+internal fun placeChoiceLabel(place: Place): String {
+    val people = place.population
+    val hint = when {
+        people != null -> String.format(Locale.US, "%,d people", people)
+        !place.isSettlement -> "not a town"
+        else -> null
+    }
+    return listOfNotNull(placeLabel(place), hint).joinToString(" \u00b7 ")
+}
 
 /**
  * The feed in one line: when it last reached the unit, which position it used, and what
