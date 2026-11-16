@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +41,7 @@ import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
+import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudStepButton
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPressable
@@ -125,7 +125,7 @@ fun SettingsRow(
                 }
             }
             @Composable
-            fun Trailing() {
+            fun Trailing(root: Modifier = Modifier) {
                 if (readOnlyHint != null) {
                     Text(
                         SettingsUnits.text(item, box) + (unit?.let { " $it" } ?: ""),
@@ -134,7 +134,9 @@ fun SettingsRow(
                         modifier = Modifier.padding(start = 12.dp),
                     )
                 } else {
-                    Control(item, box, view, imperial, enabled, !stacked) { x, y -> onEdit(x, y) }
+                    Control(item, box, view, imperial, enabled, !stacked, root) { x, y ->
+                        onEdit(x, y)
+                    }
                     // The unit's own `config.reset`, one key at a time — the WebUI's reset
                     // button. Typing a default back in by hand would be a guess; this asks
                     // the firmware what the default is and gets it written the same way.
@@ -168,7 +170,14 @@ fun SettingsRow(
             if (stacked) {
                 LabelBlock(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) { Trailing() }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // A slider is the one stacked control that fills its line. Without the
+                    // weight its `fillMaxWidth` claimed the whole row and the reset beside it
+                    // was measured at zero width - an invisible 48 dp box that still set the
+                    // row's height. Weighted, the rail gives up the glyph's ~34 dp and the
+                    // reset keeps the 48 dp target every other row's reset has.
+                    Trailing(if (item.control == RowControl.SLIDER) Modifier.weight(1f) else Modifier)
+                }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LabelBlock(Modifier.weight(1f))
@@ -254,6 +263,7 @@ private fun Control(
     imperial: Boolean,
     enabled: Boolean,
     wide: Boolean,
+    root: Modifier = Modifier,
     onEdit: (Any?, Any?) -> Unit,
 ) {
     val lead = if (wide) 12.dp else 0.dp
@@ -265,7 +275,9 @@ private fun Control(
             onToggle = { if (enabled) onEdit(it, null) },
         )
         RowControl.SELECT -> SelectControl(item, box, enabled, wide) { onEdit(it, null) }
-        RowControl.SLIDER -> SliderControl(item, box, imperial, enabled, wide) { onEdit(it, null) }
+        RowControl.SLIDER -> SliderControl(item, box, imperial, enabled, wide, root) {
+            onEdit(it, null)
+        }
         RowControl.SWATCH -> ColorControl(item, box, enabled, wide) { onEdit(it, null) }
         RowControl.PAIR -> PairControl(item, view, enabled, wide) { x, y -> onEdit(x, y) }
         RowControl.FUEL_TABLE -> FuelTableControl(item, view, enabled, wide) { onEdit(it, null) }
@@ -409,6 +421,14 @@ private fun SelectControl(
  * firmware band, and never narrower than the value it starts at. The store still
  * clamps to the band; the slider simply cannot ask for a value outside what the old
  * page allowed.
+ *
+ * The control is [HudSlider] and lives on one 30 dp line: the window's two ends at the
+ * rail's ends, the value in a mono readout on the right. It used to be a Material slider
+ * (a 48 dp box) plus a `0 – 100` caption on the next line, which made this the tallest
+ * row on the page and the only one that did not look like the app. The readout also
+ * fixes a hole the old shape had: nothing on the row showed the value the thumb was
+ * setting - the label carried the unit and the caption carried the band, but the number
+ * itself was nowhere until the thumb was dragged to it.
  */
 @Composable
 private fun SliderControl(
@@ -417,33 +437,50 @@ private fun SliderControl(
     imperial: Boolean,
     enabled: Boolean,
     wide: Boolean,
+    root: Modifier = Modifier,
     onCommit: (Double) -> Unit,
 ) {
     val decimals = SettingsUnits.decimals(item)
     val lo = (SettingsUnits.toBox(item, item.sliderMin, imperial) as? Number)?.toDouble() ?: 0.0
     val hi = (SettingsUnits.toBox(item, item.sliderMax, imperial) as? Number)?.toDouble() ?: 0.0
+    val top = lo.coerceAtLeast(hi)
     val stored = (box as? Number)?.toDouble() ?: lo
-    var draft by remember(item.key, box) { mutableStateOf(stored.coerceIn(lo, lo.coerceAtLeast(hi))) }
-    Column(
+    var draft by remember(item.key, box) { mutableStateOf(stored.coerceIn(lo, top)) }
+    HudSlider(
+        value = draft.toFloat().coerceIn(lo.toFloat(), top.toFloat()),
+        onValueChange = { draft = it.toDouble() },
+        onValueChangeFinished = { onCommit(draft) },
+        valueRange = lo.toFloat()..top.toFloat(),
+        steps = sliderSteps(lo, hi, SettingsUnits.boxStep(item, imperial)),
+        enabled = enabled,
+        loText = renderNumber(lo, decimals),
+        hiText = renderNumber(top, decimals),
+        // With no value from the unit, the thumb sits at the bottom of the window; a readout
+        // that printed that `lo` as if it were the setting would be inventing one.
+        valueText = if (box == null) "—" else renderNumber(draft, decimals),
+        valueWidth = sliderReadoutWidth(lo, top, decimals),
         // In the wide shape the slider is a fixed 250 dp because an unweighted child that fills
         // the row starves the `weight(1f)` label beside it. Stacked it owns the line, so it
-        // takes the whole width — a 250 dp slider in a 341 dp row is 90 dp of dead track.
-        (if (wide) Modifier.width(250.dp) else Modifier.fillMaxWidth())
+        // takes the whole width — a 250 dp slider in a 341 dp row is 90 dp of dead track — but
+        // the caller passes a weight when a reset sits beside it, and then the 34 dp the glyph
+        // takes is the only thing the rail gives up.
+        modifier = root
+            .then(if (wide) Modifier.width(250.dp) else Modifier.fillMaxWidth())
             .padding(start = if (wide) 12.dp else 0.dp),
-    ) {
-        Slider(
-            value = draft.toFloat().coerceIn(lo.toFloat(), lo.coerceAtLeast(hi).toFloat()),
-            onValueChange = { draft = it.toDouble() },
-            onValueChangeFinished = { onCommit(draft) },
-            valueRange = lo.toFloat()..lo.coerceAtLeast(hi).toFloat(),
-            steps = sliderSteps(lo, hi, SettingsUnits.boxStep(item, imperial)),
-            enabled = enabled,
-        )
-        Text(
-            "${renderNumber(lo, decimals)} – ${renderNumber(hi, decimals)}",
-            style = HudeCfgNote(),
-            color = HudColors.TextDim,
-        )
+    )
+}
+
+/**
+ * Enough room for the widest figure the band can produce, so the readout's width does not
+ * change while a drag crosses a digit boundary. Same ladder as [numberWidth], one size
+ * down: this is a 26 dp chip on a 30 dp line, not the editable box of a number row.
+ */
+private fun sliderReadoutWidth(lo: Double, hi: Double, decimals: Int): Dp {
+    val chars = maxOf(renderNumber(lo, decimals).length, renderNumber(hi, decimals).length)
+    return when {
+        chars <= 3 -> 46.dp
+        chars <= 5 -> 56.dp
+        else -> 68.dp
     }
 }
 

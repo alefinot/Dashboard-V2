@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,6 +32,7 @@ import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
+import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -326,19 +325,19 @@ private fun PositionBlock(
                     modifier = Modifier.width(18.dp),
                 )
                 if (hi - lo >= 1.0) {
-                    Slider(
+                    // The range rides on the rail's two ends instead of a caption line under
+                    // it; the box beside still carries the exact value, so the slider needs no
+                    // readout of its own. Same control as every settings slider, one line.
+                    HudSlider(
                         value = draft.toFloat().coerceIn(lo.toFloat(), hi.toFloat()),
                         onValueChange = { draft = it.toDouble() },
                         onValueChangeFinished = commitDrag,
                         valueRange = lo.toFloat()..hi.toFloat(),
                         steps = sliderSteps(lo, hi, 1.0),
                         enabled = enabled,
+                        loText = lo.toInt().toString(),
+                        hiText = hi.toInt().toString(),
                         modifier = Modifier.weight(1f),
-                        colors = SliderDefaults.colors(
-                            thumbColor = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                            activeTrackColor = if (enabled) HudColors.Cyan else HudColors.TextDim,
-                            inactiveTrackColor = HudColors.Field,
-                        ),
                     )
                 } else {
                     // The firmware band does not reach the screen window at all — the
@@ -369,11 +368,6 @@ private fun PositionBlock(
                     },
                 )
             }
-            Text(
-                "slider ${lo.toInt()} … ${hi.toInt()} px",
-                style = HudeCfgNote(),
-                color = HudColors.TextDim,
-            )
         }
     }
 
