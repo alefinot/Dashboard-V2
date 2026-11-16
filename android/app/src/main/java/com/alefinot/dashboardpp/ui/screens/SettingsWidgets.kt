@@ -16,6 +16,7 @@ import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
+import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
@@ -152,6 +153,7 @@ private fun OdometerControl(
             value = odoText,
             onValueChange = { raw -> onOdo(raw.filter { it.isDigit() || it == '.' }) },
             modifier = Modifier.width(140.dp),
+            style = HudInputStyle.BARE,
             placeholder = "km",
         )
         HudButton(

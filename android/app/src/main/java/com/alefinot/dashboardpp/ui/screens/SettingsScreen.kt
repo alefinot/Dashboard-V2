@@ -61,6 +61,7 @@ import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
+import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.HudToggle
@@ -385,6 +386,7 @@ fun SettingsScreen(
                 value = cityEdit ?: (weatherCity.typed ?: ""),
                 onValueChange = { cityEdit = it },
                 modifier = Modifier.fillMaxWidth(),
+                style = HudInputStyle.BARE,
                 placeholder = "Used when the unit has no GPS fix",
                 onDone = {
                     val typed = cityEdit ?: weatherCity.typed

@@ -718,7 +718,11 @@ private fun EditorFooter(
     }
 }
 
-/** One editable field: its label over the input, in the same furniture as every settings row. */
+/**
+ * One editable field: its label over the value, in the same furniture as every settings
+ * row — which since 2026-11-16 means no box: the value is the control, and the cyan rule
+ * [HudInput] draws while the keyboard is on it is what says this line takes typing.
+ */
 @Composable
 private fun Field(
     label: String,
@@ -734,7 +738,7 @@ private fun Field(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
-            style = HudInputStyle.FIELD,
+            style = HudInputStyle.BARE,
             placeholder = placeholder,
             keyboardType = keyboardType,
             imeAction = ImeAction.Next,

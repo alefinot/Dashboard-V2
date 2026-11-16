@@ -86,6 +86,27 @@ fun HudeParamValue(spacingEm: Float = 0.3f / 12f) = TextStyle(
     lineHeight = 17.sp,
 )
 
+/**
+ * A bare value: the figure a settings row or a form field shows and edits in place.
+ *
+ * Nothing in the Web UI matches it, and it is not meant to. The app's editable figures
+ * were 12px inside a bordered box, and the box — its fill, its hairline, its 6x10
+ * padding — was the whole affordance. The maintainer took every value box off the app on
+ * 2026-11-16, and once the box is gone a 12px figure that its own 13px label is allowed
+ * to outweigh is not a control anyone can see. So the value steps up to 17px, one band
+ * above the setting name it belongs to, at the medium weight the page already uses for a
+ * value that is meant to be read rather than read past.
+ *
+ * `lineHeight` stays at 22px on purpose: a taller figure is wanted, a taller row is not.
+ */
+fun HudeBareValue(spacingEm: Float = 0f) = TextStyle(
+    fontFamily = HudeBodyFamily,
+    fontSize = 17.sp,
+    fontWeight = FontWeight.W500,
+    letterSpacing = spacingEm.em,
+    lineHeight = 22.sp,
+)
+
 /** `p`: 13px, 500, 1.55 line-height — the page's paragraph. */
 fun HudeBody(spacingEm: Float = 0f) = TextStyle(
     fontFamily = HudeBodyFamily,

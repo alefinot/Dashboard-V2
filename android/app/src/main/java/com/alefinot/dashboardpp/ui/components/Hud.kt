@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.geometry.Rect
@@ -59,11 +61,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnit
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudTouch
+import com.alefinot.dashboardpp.ui.theme.HudeBareValue
 import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
 
 /**
@@ -370,7 +374,8 @@ fun HudOverlayScrim(
 }
 
 /**
- * The page's two field recipes, copied. `#searchBar`: 10px radius, glass fill,
+ * The page's two field recipes, copied, and the app's own third style that the page never
+ * had. `#searchBar`: 10px radius, glass fill,
  * 8x16 padding, 13px text, `transition: all .25s ease`, and on focus a cyan
  * border, `rgba(20,28,45,.9)` behind it and `0 0 16px rgba(0,229,255,.2)` around
  * it - which is why the focused search field here gets a *cyan* shadow: Compose
@@ -381,23 +386,47 @@ fun HudOverlayScrim(
  * `#searchBar`'s 40px left padding is room for the `.search-icon` glyph, so a search
  * field that is given a [leading] slot (the magnifier) indents its text by the same 40dp
  * and draws the slot at 14dp, the way the page's absolutely-positioned icon does.
+ *
+ * [HudInputStyle.BARE] is none of that recipe and was not copied from the page: it is the
+ * maintainer's order of 2026-11-16, "remove all the value boxes across the entire app and
+ * just keep the value and make it clickable and editable natively without the boxes".
+ * It keeps the padding of the recipe it replaces — so no row changes height — and paints
+ * nothing but the text, plus one cyan rule while the keyboard is actually on it.
+ *
+ * `BARE` is the default and `FIELD` now has to be asked for by name. That is the point: a
+ * box should be a decision someone wrote down, not the thing that happens when a caller
+ * forgets to say. The two tests that read this file look for `SEARCH`, not for the default.
  */
-enum class HudInputStyle { SEARCH, FIELD }
+enum class HudInputStyle { SEARCH, BARE, FIELD }
 
 @Composable
 fun HudInput(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    style: HudInputStyle = HudInputStyle.FIELD,
+    style: HudInputStyle = HudInputStyle.BARE,
     placeholder: String = "",
     keyboardType: KeyboardType = KeyboardType.Text,
     imeAction: ImeAction = ImeAction.Done,
     onDone: () -> Unit = {},
     /** `.search-icon`: an 18dp glyph at the field's left edge, never part of the text. */
     leading: (@Composable () -> Unit)? = null,
+    /**
+     * Where the text sits inside the width the caller reserved. A bare value that owns the
+     * trailing edge of a row wants [TextAlign.End]: the number then ends against the reset
+     * glyph instead of floating in the middle of the width it reserves for its longest
+     * figure. Left is the form's answer and what every boxed field has always drawn.
+     */
+    textAlign: TextAlign = TextAlign.Start,
+    /**
+     * Overrides the style's own text size. Only wanted by the few fields that are not a
+     * single figure — the fuel table's comma list is a table on one line, and at the bare
+     * value's 17px it stops fitting the card it lives in.
+     */
+    textSize: TextUnit = TextUnit.Unspecified,
 ) {
     val search = style == HudInputStyle.SEARCH
+    val bare = style == HudInputStyle.BARE
     var focused by remember { mutableStateOf(false) }
     // The tap rule (`KeyboardFocus.ClearFocusOnTapOutside`) must not touch a tap that
     // lands on a text field, so every live field publishes its rectangle here. It is a
@@ -411,6 +440,10 @@ fun HudInput(
     }
     val fill by animateColorAsState(
         when {
+            // A bare value has no surface at all, and nothing to ease between two surfaces
+            // either: the text is the control, so the animation stays defined (the labels
+            // below stay valid) and simply never moves.
+            bare -> Color.Transparent
             !focused -> if (search) HudColors.Panel else HudColors.Field
             search -> HudColors.PanelFocus
             else -> HudColors.FieldFocus
@@ -419,7 +452,11 @@ fun HudInput(
         label = "inputFill",
     )
     val edge by animateColorAsState(
-        if (focused) HudColors.Cyan else HudColors.Hairline,
+        when {
+            bare -> Color.Transparent
+            focused -> HudColors.Cyan
+            else -> HudColors.Hairline
+        },
         tween(if (search) HudMotion.SHORT_MS else HudMotion.SWITCH_MS, easing = HudMotion.Ease),
         label = "inputEdge",
     )
@@ -436,17 +473,26 @@ fun HudInput(
         tween(if (search) HudMotion.SHORT_MS else HudMotion.SWITCH_MS, easing = HudMotion.Ease),
         label = "inputGlow",
     )
+    // The text the field draws, and the size it draws at. A boxed field keeps the page's
+    // band — 13px for `#searchBar`, 12px for `input[type]`, because the box around it does
+    // the talking. A bare value has no box to talk with since 2026-11-16, so it is drawn at
+    // [HudeBareValue]: bigger than the setting name beside it, because the figure is the
+    // control now.
+    val baseStyle = if (bare) HudeBareValue() else TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontSize = if (search) 13.sp else 12.sp,
+    )
+    val sizedStyle = if (textSize == TextUnit.Unspecified) baseStyle else baseStyle.copy(fontSize = textSize)
+    val valueStyle = sizedStyle.merge(
+        TextStyle(color = HudColors.TextPrimary, textAlign = textAlign),
+    )
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
         keyboardActions = KeyboardActions(onDone = { onDone() }),
-        textStyle = TextStyle(
-            color = HudColors.TextPrimary,
-            fontFamily = FontFamily.SansSerif,
-            fontSize = if (search) 13.sp else 12.sp,
-        ),
+        textStyle = valueStyle,
         cursorBrush = SolidColor(HudColors.Cyan),
         modifier = modifier
             .onGloballyPositioned { coords ->
@@ -488,12 +534,33 @@ fun HudInput(
                 ) {
                     if (value.isEmpty() && placeholder.isNotEmpty()) {
                         Text(
+                            // The placeholder is drawn at the field's own size and alignment:
+                            // it is the answer that will be there, in the place it will be
+                            // there, and a small dim echo of it in the wrong corner reads as a
+                            // bug rather than as a hint.
                             placeholder,
-                            color = HudColors.TextDim,
-                            fontSize = if (search) 13.sp else 12.sp,
+                            style = valueStyle.copy(color = HudColors.TextDim),
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     inner()
+                    if (bare) {
+                        // The only mark a bare value paints when it has no box: while the
+                        // keyboard is on it, a rule under the line, so "which value am I
+                        // typing into?" has an answer on screen. Idle, it is nothing — the
+                        // maintainer asked for the value without its box (2026-11-16), and a
+                        // permanent rule would be a box with three sides.
+                        Box(
+                            // `BottomCenter`, not `Bottom`: this Compose types `Alignment.Bottom`
+                            // as an `Alignment.Vertical`, and `BoxScope.align` wants the full
+                            // `Alignment`. The horizontal half is nothing here — the rule is
+                            // `fillMaxWidth`.
+                            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(1.dp)
+                                .background(
+                                    if (focused) HudColors.Cyan else Color.Transparent,
+                                ),
+                        )
+                    }
                 }
             }
         },

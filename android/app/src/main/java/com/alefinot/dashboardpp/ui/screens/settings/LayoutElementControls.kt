@@ -27,10 +27,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
+import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudOverlayScrim
 import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudToggle
@@ -276,17 +278,21 @@ fun LayoutElementSheet(
 }
 
 /**
- * The position of one element: the two axes, each a full-width slider over the screen
- * with a keyboard box beside it.
+ * The position of one element: the two axes, each a full-width slider over the screen with
+ * the exact figure beside it, typed in place.
  *
- * The slider is the aim and the box is the limit. The slider spans what [LayoutElements]
+ * The slider is the aim and the number is the entry. The slider spans what [LayoutElements]
  * computes — the screen itself for the viewport centre, half a screen either side of the
  * middle for every offset, intersected with the firmware band so the track can never ask
- * for a value the unit would clamp. The box keeps the whole band the old steppers
+ * for a value the unit would clamp. The number keeps the whole band the old steppers
  * allowed (±4096 for most offsets), because aiming at 468 px with a thumb is not how a
  * fine placement gets done — one drags close, one types exact. A drag commits one
  * rounded pixel on release, never per frame: every intermediate pixel of a drag through
  * the whole screen would put that many `config.set` writes on the link.
+ *
+ * A drag also rewrites the figure beside it, so the number under the thumb is the number
+ * the thumb is on — the same hand-back the settings rows' sliders do (2026-11-16, the day
+ * every value box came off the app and the values themselves became the controls).
  */
 @Composable
 private fun PositionBlock(
@@ -325,13 +331,16 @@ private fun PositionBlock(
                     modifier = Modifier.width(18.dp),
                 )
                 if (hi - lo >= 1.0) {
-                    // The rail carries no figures of its own: the box beside is the exact
+                    // The rail carries no figures of its own: the number beside is the exact
                     // value, and the whole width the ends used to take is rail - a longer
                     // track is what makes a drag land on the pixel the driver wants. Same
                     // control as every settings slider, one line.
                     HudSlider(
                         value = draft.toFloat().coerceIn(lo.toFloat(), hi.toFloat()),
-                        onValueChange = { draft = it.toDouble() },
+                        onValueChange = { v ->
+                            draft = v.toDouble()
+                            text = renderNumber(v.toDouble(), 0)
+                        },
                         onValueChangeFinished = commitDrag,
                         valueRange = lo.toFloat()..hi.toFloat(),
                         steps = sliderSteps(lo, hi, 1.0),
@@ -340,7 +349,7 @@ private fun PositionBlock(
                     )
                 } else {
                     // The firmware band does not reach the screen window at all — the
-                    // slider would be a pin on a point. Say so and lean on the box.
+                    // slider would be a pin on a point. Say so and lean on the number.
                     Text(
                         "off-screen range",
                         style = HudeCfgNote(),
@@ -353,13 +362,15 @@ private fun PositionBlock(
                     onValueChange = { raw ->
                         text = raw.filter { it.isDigit() || it == '-' || it == '.' || it == ',' }
                     },
-                    modifier = Modifier.width(76.dp).padding(start = 8.dp),
+                    modifier = Modifier.width(SettingsValueSlot).padding(start = 8.dp),
+                    style = HudInputStyle.BARE,
+                    textAlign = TextAlign.Center,
                     keyboardType = KeyboardType.Number,
                     imeAction = ImeAction.Done,
                     onDone = {
                         val parsed = text.trim().replace(',', '.').toDoubleOrNull()
                         if (parsed != null && parsed != confirmed) {
-                            // The box takes the whole firmware band; the store clamps
+                            // The number takes the whole firmware band; the store clamps
                             // and reports a clamp, exactly as a typed number does on
                             // any other row of the page.
                             if (xAxis) store.edit(item, parsed, y) else store.edit(item, x, parsed)
