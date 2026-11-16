@@ -2,7 +2,7 @@
  "_generated": "scripts/gen_config_schema.py - do not edit. Sources: src/config.cpp (CFG_TABLE) and scripts/config_schema_presentation.json (labels, grouping).",
  "schemaVersion": 1,
  "firmware": "2.0.6",
- "rows": 174,
+ "rows": 176,
  "groups": [
   {
    "id": "system_general",
@@ -1850,6 +1850,34 @@
        }
       },
       {
+       "key": "SIDEBAR_LEFT_BAR_WIDTH",
+       "kind": "int",
+       "default": 8,
+       "label": "Width",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
+      },
+      {
+       "key": "SIDEBAR_LEFT_BAR_HEIGHT",
+       "kind": "int",
+       "default": 190,
+       "label": "Height",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "barLeft",
+        "label": "Left Bar (Engine Temp)"
+       }
+      },
+      {
        "key": "TEMP_BAR_MIN",
        "kind": "int",
        "default": 10,
@@ -1988,6 +2016,34 @@
        }
       },
       {
+       "key": "SIDEBAR_RIGHT_BAR_WIDTH",
+       "kind": "int",
+       "default": 8,
+       "label": "Width",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
+      },
+      {
+       "key": "SIDEBAR_RIGHT_BAR_HEIGHT",
+       "kind": "int",
+       "default": 190,
+       "label": "Height",
+       "min": 1,
+       "max": 2048,
+       "unit": "px",
+       "section": "Bar Dimensions",
+       "element": {
+        "id": "barRight",
+        "label": "Right Bar (Fuel)"
+       }
+      },
+      {
        "key": "COLOR_FUEL_NORM",
        "kind": "color",
        "default": "#00ff00",
@@ -2049,34 +2105,6 @@
        "element": {
         "id": "barRight",
         "label": "Right Bar (Fuel)"
-       }
-      },
-      {
-       "key": "SIDEBAR_BAR_WIDTH",
-       "kind": "int",
-       "default": 8,
-       "label": "Width",
-       "min": 1,
-       "max": 2048,
-       "unit": "px",
-       "section": "Bar Dimensions",
-       "element": {
-        "id": "bars",
-        "label": "Bar Dimensions (both bars)"
-       }
-      },
-      {
-       "key": "SIDEBAR_BAR_HEIGHT",
-       "kind": "int",
-       "default": 190,
-       "label": "Height",
-       "min": 1,
-       "max": 2048,
-       "unit": "px",
-       "section": "Bar Dimensions",
-       "element": {
-        "id": "bars",
-        "label": "Bar Dimensions (both bars)"
        }
       }
      ]

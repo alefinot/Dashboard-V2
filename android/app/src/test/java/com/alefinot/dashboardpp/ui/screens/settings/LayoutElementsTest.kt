@@ -117,6 +117,35 @@ class LayoutElementsTest {
     }
 
     @Test
+    fun eachBarCarriesItsOwnDimensions() {
+        val elements = LayoutElements.elementsOf(uiGroup)
+        val left = elements.first { it.id == "barLeft" }
+        val right = elements.first { it.id == "barRight" }
+        assertEquals(
+            listOf("SIDEBAR_LEFT_BAR_WIDTH", "SIDEBAR_LEFT_BAR_HEIGHT"),
+            left.items.filter { it.key.endsWith("_WIDTH") || it.key.endsWith("_HEIGHT") }
+                .map { it.key },
+        )
+        assertEquals(
+            listOf("SIDEBAR_RIGHT_BAR_WIDTH", "SIDEBAR_RIGHT_BAR_HEIGHT"),
+            right.items.filter { it.key.endsWith("_WIDTH") || it.key.endsWith("_HEIGHT") }
+                .map { it.key },
+        )
+        assertFalse("the shared bars element still exists", elements.any { it.id == "bars" })
+
+        // Each bar's list row reports its own size, and one bar's numbers do not leak
+        // into the other's.
+        val leftState = stateAt(
+            "SIDEBAR_LEFT_X", 10, 95,
+            "SHOW_ELEMENT_SIDEBAR_TEMP" to true,
+            "SIDEBAR_LEFT_BAR_WIDTH" to 12L,
+            "SIDEBAR_LEFT_BAR_HEIGHT" to 140L,
+        )
+        assertEquals("offset 10 / 95 · 12x140", LayoutElements.summary(left, leftState))
+        assertNull(LayoutElements.summary(right, leftState))
+    }
+
+    @Test
     fun elementIdAndLabelAreParsedFromTheAsset() {
         val clock = SettingsFixtures.asset.allItems.first { it.key == "OFFSET_BIG_TIME_X" }
         assertEquals("clock", clock.elementId)

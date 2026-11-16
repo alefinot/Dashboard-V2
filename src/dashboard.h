@@ -219,10 +219,12 @@ extern int OFFSET_BIG_BAT_Y;
 
 extern int SIDEBAR_LEFT_X;
 extern int SIDEBAR_LEFT_Y;
+extern int SIDEBAR_LEFT_BAR_WIDTH;
+extern int SIDEBAR_LEFT_BAR_HEIGHT;
 extern int SIDEBAR_RIGHT_X;
 extern int SIDEBAR_RIGHT_Y;
-extern int SIDEBAR_BAR_WIDTH;
-extern int SIDEBAR_BAR_HEIGHT;
+extern int SIDEBAR_RIGHT_BAR_WIDTH;
+extern int SIDEBAR_RIGHT_BAR_HEIGHT;
 
 extern int OFFSET_HALL_ICON_X;
 extern int OFFSET_HALL_ICON_Y;

@@ -1034,7 +1034,7 @@ if (!vlw120Ready) {
       ((tempSigChanged || tempMoving) || forceDraw)))) {
     if (tempSigChanged) lastEngineTemp = currentTemp;
 
-    int barX = SIDEBAR_LEFT_X, barY = SIDEBAR_LEFT_Y, barW = SIDEBAR_BAR_WIDTH, barH = SIDEBAR_BAR_HEIGHT;
+    int barX = SIDEBAR_LEFT_X, barY = SIDEBAR_LEFT_Y, barW = SIDEBAR_LEFT_BAR_WIDTH, barH = SIDEBAR_LEFT_BAR_HEIGHT;
 
     // Colour ramp with three fade points, cold to hot: flat c_temp_norm below
     // TEMP_WARN_LOW, norm->warn across LOW..YEL, warn->crit across YEL..RED, then
@@ -1103,7 +1103,7 @@ if (!vlw120Ready) {
       ((currentFuel != lastFuelPct || fuelMoving) || forceDraw)))) {
     lastFuelPct = currentFuel;
 
-    int barX = SIDEBAR_RIGHT_X, barY = SIDEBAR_RIGHT_Y, barW = SIDEBAR_BAR_WIDTH, barH = SIDEBAR_BAR_HEIGHT;
+    int barX = SIDEBAR_RIGHT_X, barY = SIDEBAR_RIGHT_Y, barW = SIDEBAR_RIGHT_BAR_WIDTH, barH = SIDEBAR_RIGHT_BAR_HEIGHT;
 
     uint16_t fuelColor;
     if (currentFuel >= 100) {

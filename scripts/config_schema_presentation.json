@@ -1179,6 +1179,20 @@
         },
         {
           "type": "section_header",
+          "label": "Bar Dimensions"
+        },
+        {
+          "id": "SIDEBAR_LEFT_BAR_WIDTH",
+          "label": "Width",
+          "unit": "px"
+        },
+        {
+          "id": "SIDEBAR_LEFT_BAR_HEIGHT",
+          "label": "Height",
+          "unit": "px"
+        },
+        {
+          "type": "section_header",
           "label": "Engine Temperature Color Ramp"
         },
         {
@@ -1233,6 +1247,20 @@
         },
         {
           "type": "section_header",
+          "label": "Bar Dimensions"
+        },
+        {
+          "id": "SIDEBAR_RIGHT_BAR_WIDTH",
+          "label": "Width",
+          "unit": "px"
+        },
+        {
+          "id": "SIDEBAR_RIGHT_BAR_HEIGHT",
+          "label": "Height",
+          "unit": "px"
+        },
+        {
+          "type": "section_header",
           "label": "Fuel Level Color Ramp"
         },
         {
@@ -1253,25 +1281,6 @@
           "colorId": "COLOR_FUEL_CRIT",
           "valueId": "FUEL_WARN_RED",
           "unit": "%"
-        },
-        {
-          "type": "element_header",
-          "id": "bars",
-          "label": "Bar Dimensions (both bars)"
-        },
-        {
-          "type": "section_header",
-          "label": "Bar Dimensions"
-        },
-        {
-          "id": "SIDEBAR_BAR_WIDTH",
-          "label": "Width",
-          "unit": "px"
-        },
-        {
-          "id": "SIDEBAR_BAR_HEIGHT",
-          "label": "Height",
-          "unit": "px"
         }
       ]
     }

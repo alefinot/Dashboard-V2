@@ -117,10 +117,12 @@ int OFFSET_BIG_BAT_Y = 123;
 
 int SIDEBAR_LEFT_X = 10;
 int SIDEBAR_LEFT_Y = 95;
+int SIDEBAR_LEFT_BAR_WIDTH = 8;
+int SIDEBAR_LEFT_BAR_HEIGHT = 190;
 int SIDEBAR_RIGHT_X = 462;
 int SIDEBAR_RIGHT_Y = 95;
-int SIDEBAR_BAR_WIDTH = 8;
-int SIDEBAR_BAR_HEIGHT = 190;
+int SIDEBAR_RIGHT_BAR_WIDTH = 8;
+int SIDEBAR_RIGHT_BAR_HEIGHT = 190;
 
 int OFFSET_HALL_ICON_X = 0;
 int OFFSET_HALL_ICON_Y = -100;
@@ -761,9 +763,13 @@ static const CfgParam CFG_TABLE[] = {
 
   { &OFFSET_FUEL_LTRS_Y, "OFFSET_FUEL_LTRS_Y", "O_FLTRS_Y", nullptr, -4096, 4096, 123, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
-  { &SIDEBAR_BAR_WIDTH, "SIDEBAR_BAR_WIDTH", "SBAR_W", nullptr, 1, 2048, 8, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+  { &SIDEBAR_LEFT_BAR_WIDTH, "SIDEBAR_LEFT_BAR_WIDTH", "SBAR_LW", nullptr, 1, 2048, 8, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
-  { &SIDEBAR_BAR_HEIGHT, "SIDEBAR_BAR_HEIGHT", "SBAR_H", nullptr, 1, 2048, 190, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+  { &SIDEBAR_LEFT_BAR_HEIGHT, "SIDEBAR_LEFT_BAR_HEIGHT", "SBAR_LH", nullptr, 1, 2048, 190, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+
+  { &SIDEBAR_RIGHT_BAR_WIDTH, "SIDEBAR_RIGHT_BAR_WIDTH", "SBAR_RW", nullptr, 1, 2048, 8, 0.0f, 0.0f, 0.0f, 0, CK_INT },
+
+  { &SIDEBAR_RIGHT_BAR_HEIGHT, "SIDEBAR_RIGHT_BAR_HEIGHT", "SBAR_RH", nullptr, 1, 2048, 190, 0.0f, 0.0f, 0.0f, 0, CK_INT },
 
   { &SHOW_ELEMENT_BOUNDS, "SHOW_ELEMENT_BOUNDS", "SHW_BNDS", nullptr, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0, CK_BOOL },
 
@@ -1325,7 +1331,9 @@ void sanitizeConfigPairs() {
 // Renamed NVS keys, carried over once. The glyph in the old Wi-Fi-icon slot is
 // Bluetooth on this build, so the three keys that drive it change names (and the
 // schema labels with them); a unit that had moved the icon or switched it off
-// keeps that choice instead of silently reverting to the shipped default.
+// keeps that choice instead of silently reverting to the shipped default. The
+// sidebar bars follow the same rule: the one shared width/height pair becomes
+// one pair per bar, and both bars inherit the stored value.
 // Copied on the boot load only, only when the new name is absent and the old one
 // is present, so it costs at most one write per key per unit and never runs in a
 // loop (rule 12). The old names are then never read again - the same way the
@@ -1335,6 +1343,8 @@ static const struct {
   const char *now;   // NVS name this build reads
 } CFG_RENAMED_KEYS[] = {
     {"SH_WIFI", "SH_BLE"}, {"O_WIFI_X", "O_BLE_X"}, {"O_WIFI_Y", "O_BLE_Y"},
+    {"SBAR_W", "SBAR_LW"}, {"SBAR_W", "SBAR_RW"},
+    {"SBAR_H", "SBAR_LH"}, {"SBAR_H", "SBAR_RH"},
 };
 
 static void cfgCarryRenamedKeys(Preferences &pref) {
