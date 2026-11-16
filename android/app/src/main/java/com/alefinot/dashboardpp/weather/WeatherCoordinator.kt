@@ -149,14 +149,23 @@ class WeatherCoordinator(
      * frame it just recorded, which is how a 2 km move is noticed without spending an RPC
      * to ask the unit where it is. Pass null (the ViewModel's tick) and the coordinator
      * spends at most one `snapshot` RPC, and only when it was going to fetch anyway.
+     *
+     * [onlySource] is the card's buttons: a named rung of [WeatherPolicy.positionLadder] to
+     * fetch for, in place of the ladder. Null (every scheduled wake) means "best available".
      */
-    suspend fun wake(reason: String, unitKey: String, snapshot: Snapshot? = null, force: Boolean = false) =
+    suspend fun wake(
+        reason: String,
+        unitKey: String,
+        snapshot: Snapshot? = null,
+        force: Boolean = false,
+        onlySource: PositionSource? = null,
+    ) =
         withContext(io) {
             if (inFlight) return@withContext
             inFlight = true
             _status.value = _status.value.copy(unitKey = unitKey, busy = true)
             try {
-                lock.withLock { pass(unitKey, snapshot, force) }
+                lock.withLock { pass(unitKey, snapshot, force, onlySource) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Whoever owns this object is going away; that is not a feed failure and it
                 // must not be recorded as one. `finally` still parks `busy`.
@@ -189,9 +198,28 @@ class WeatherCoordinator(
             "It will try again."
     }
 
-    /** Ask for weather for one position and push it, ignoring the schedule. */
-    suspend fun pushNow(unitKey: String, snapshot: Snapshot? = null) =
-        wake("manual", unitKey, snapshot, force = true)
+    /**
+     * **PUSH NOW** on the card: fetch for the **fallback city** and push it, ignoring both
+     * the schedule and the ladder.
+     *
+     * The city rather than the best position available, because that is what the owner is
+     * pointing at: the field above the button, holding a town they typed. No saved city
+     * means nothing to fetch, and the pass says so — it does not quietly fetch the car's
+     * position instead, which is what [refresh] is for.
+     */
+    suspend fun pushNow(unitKey: String) =
+        wake("manual", unitKey, force = true, onlySource = PositionSource.CITY)
+
+    /**
+     * **REFRESH** on the card: fetch for the **unit's own GNSS position** and push it,
+     * ignoring both the schedule and the ladder.
+     *
+     * The opposite ask, and just as strict: no fix means no position, and the pass reports
+     * that instead of reaching down to a cached town or a typed city. The owner presses this
+     * precisely because the panel is showing weather for somewhere the car is not.
+     */
+    suspend fun refresh(unitKey: String, snapshot: Snapshot? = null) =
+        wake("refresh", unitKey, snapshot, force = true, onlySource = PositionSource.FIX)
 
     /**
      * Look a typed city up for the settings card, so the only thing a screen has to call
@@ -200,7 +228,12 @@ class WeatherCoordinator(
      */
     suspend fun resolveCity(name: String): Place? = withContext(io) { names.geocodeCity(name) }
 
-    private suspend fun pass(unitKey: String, snapshot: Snapshot?, force: Boolean) {
+    private suspend fun pass(
+        unitKey: String,
+        snapshot: Snapshot?,
+        force: Boolean,
+        onlySource: PositionSource?,
+    ) {
         val now = clock()
 
         if (servingUnitKey != unitKey) {
@@ -227,8 +260,10 @@ class WeatherCoordinator(
         val lastFetchMs = cache?.fetchEpochMs?.takeIf { it != WeatherSettings.NO_EPOCH }
 
         // 1. A frame we already paid the network for goes out before anything new is
-        // asked for.
-        pending?.let { queued ->
+        // asked for. A button press skips 1–3: those three shortcuts exist to save a
+        // network call on a scheduled wake, and handing back a frame this process already
+        // held is the one answer that ignores the position the owner just asked for.
+        if (onlySource == null) pending?.let { queued ->
             if (now >= retryAtMs) {
                 when (deliver(queued)) {
                     DeliverResult.DONE -> {
@@ -255,7 +290,7 @@ class WeatherCoordinator(
         // network, no `snapshot` RPC, one frame on the link. Ahead of the staleness
         // goodbye on purpose - a unit that just woke up needs data, not a "no data" marker
         // it would then wait a tick to have corrected.
-        if (awaitingFrameFor == unitKey && now >= retryAtMs) {
+        if (onlySource == null && awaitingFrameFor == unitKey && now >= retryAtMs) {
             val held = heldFrame?.takeIf {
                 heldFrameFor == unitKey && it.valid &&
                     now - heldAtMs < WeatherPolicy.INTERVAL_MS
@@ -276,7 +311,7 @@ class WeatherCoordinator(
         // 3. A unit that has a frame from us, and whose last feed is now stale, gets one
         // `valid=false` frame — the plan's once-per-transition, never again until it
         // recovers. `offlineSent` is what makes that survive an app restart.
-        if (cache != null && lastFetchMs != null &&
+        if (onlySource == null && cache != null && lastFetchMs != null &&
             cache.lastPushEpochMs != WeatherSettings.NO_EPOCH &&
             WeatherPolicy.stale(now, lastFetchMs) && !cache.offlineSent
         ) {
@@ -303,20 +338,30 @@ class WeatherCoordinator(
         if (!force && due == WeatherDue.NEVER && awaitingFrameFor != unitKey) return
         if (!force && now < retryAtMs) return
 
-        // 5. The ladder. The unit's snapshot RPC is spent only here, only when nothing
-        // already tells us where the car is, and only because this pass is fetching.
+        // 5. The position. A scheduled wake climbs the ladder (best available); a button
+        // names one rung and takes that rung or nothing. The `snapshot` RPC is spent only
+        // here and only when nothing already tells us where the car is — which is why a
+        // PUSH NOW for the typed city does not spend it: a saved city carries its own
+        // coordinates.
         val city = store.cityNow()
-        // One `snapshot` RPC, spent only because this pass is fetching and nothing else
-        // says where the car is.
-        val pos = WeatherPolicy.positionLadder(
-            fix = host ?: unit.snapshot(),
-            cached = cache?.asCachedPosition(),
-            city = city.place,
-            nowMs = now,
-        ) ?: run {
-            _status.value = _status.value.copy(
-                note = "No position \u2014 add a city or wait for a GNSS fix.",
+        val pos = when (onlySource) {
+            // A saved city carries its own coordinates, so this arm spends no `snapshot` RPC.
+            PositionSource.CITY ->
+                WeatherPolicy.positionFor(PositionSource.CITY, null, null, city.place, now)
+            // The unit's own rung, asked for by name. CACHE shares this arm only because
+            // `when` has to be exhaustive — no button names the cached rung, the ladder is
+            // what uses it. Nulls where the other rungs would go: a named rung gets no backup.
+            PositionSource.FIX, PositionSource.CACHE -> WeatherPolicy.positionFor(
+                onlySource, host ?: unit.snapshot(), null, null, now,
             )
+            null -> WeatherPolicy.positionLadder(
+                fix = host ?: unit.snapshot(),
+                cached = cache?.asCachedPosition(),
+                city = city.place,
+                nowMs = now,
+            )
+        } ?: run {
+            _status.value = _status.value.copy(note = missingPositionNote(onlySource))
             retryAtMs = now + NO_POSITION_BACKOFF_MS
             return
         }
@@ -352,6 +397,10 @@ class WeatherCoordinator(
         when (deliver(push)) {
             DeliverResult.DONE -> {
                 pending = null
+                // The unit now holds a live frame, which is the whole question
+                // `awaitingFrameFor` asks — a forced fetch answers it just as well as the
+                // held-frame handover does.
+                awaitingFrameFor = null
                 savePush(unitKey, push, now)
                 _status.value = _status.value.copy(
                     lastSuccessAt = now,
@@ -382,6 +431,20 @@ class WeatherCoordinator(
     }
 
     private enum class DeliverResult { DONE, RETRY_LATER, BAD_PAYLOAD }
+
+    /**
+     * Why a pass found nothing to fetch, in the words that belong to the rung it was asked
+     * for. Not one shared sentence: an owner who pressed the unit's own button does not want
+     * advice to add a city they already saved, and a scheduled pass has no button to blame,
+     * so it keeps the general wording it has always had.
+     */
+    private fun missingPositionNote(onlySource: PositionSource?): String = when (onlySource) {
+        PositionSource.CITY ->
+            "No fallback city saved \u2014 type one above and press SAVE CITY."
+        PositionSource.FIX ->
+            "The unit has no GPS fix to ask about \u2014 PUSH NOW uses the fallback city instead."
+        else -> "No position \u2014 add a city or wait for a GNSS fix."
+    }
 
     /** Send one frame, taking the unit's `busy` (its 100 ms settings mutex) once. */
     private suspend fun deliver(push: WeatherPush): DeliverResult {

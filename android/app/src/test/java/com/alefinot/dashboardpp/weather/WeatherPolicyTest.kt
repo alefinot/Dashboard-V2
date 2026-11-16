@@ -56,6 +56,48 @@ class WeatherPolicyTest {
         assertNull(WeatherPolicy.positionOf(null))
     }
 
+    // ---- one rung named by hand: the card's two buttons ---------------------
+
+    @Test
+    fun `a named rung ignores every better one`() {
+        // PUSH NOW names the city with a live fix sitting right there, and REFRESH names
+        // the fix with a town saved. Each gets exactly what it asked for, in both
+        // directions — the ladder's preference order is not in this path at all.
+        val city = Place("Munich", "Bavaria", "Germany", 48.13743, 11.57549)
+        val fix = snap(53.5511, 9.9937)
+        val cached = CachedPosition(47.0, 9.0, now - minute, label = "Memmingen")
+
+        val pushed = WeatherPolicy.positionFor(PositionSource.CITY, fix, cached, city, now)!!
+        assertEquals(PositionSource.CITY, pushed.source)
+        assertEquals(48.13743, pushed.lat, 0.0)
+        assertEquals("Munich", pushed.labelHint)
+
+        val refreshed = WeatherPolicy.positionFor(PositionSource.FIX, fix, cached, city, now)!!
+        assertEquals(PositionSource.FIX, refreshed.source)
+        assertEquals(53.5511, refreshed.lat, 0.0)
+    }
+
+    @Test
+    fun `an empty rung is null and not the next one down`() {
+        // Deliberately no fallback in `positionFor`: a button that promises the unit's
+        // position must come back empty-handed rather than deliver the town the panel is
+        // already showing, which is the thing the owner pressed the button about.
+        val city = Place("Munich", "Bavaria", "Germany", 48.13743, 11.57549)
+        assertNull(
+            WeatherPolicy.positionFor(PositionSource.FIX, snap(0.0, 0.0, fix = 0), null, city, now),
+        )
+        assertNull(
+            WeatherPolicy.positionFor(PositionSource.CITY, snap(48.13743, 11.57549), null, null, now),
+        )
+        // The cached rung ages out here exactly as it does in the ladder.
+        assertNull(
+            WeatherPolicy.positionFor(
+                PositionSource.CACHE, null,
+                CachedPosition(47.0, 9.0, now - 25 * hour, label = "Memmingen"), null, now,
+            ),
+        )
+    }
+
     @Test
     fun `the last known position is next, and it remembers its name`() {
         val target = WeatherPolicy.positionLadder(

@@ -376,6 +376,22 @@ fun SettingsScreen(
                 toggleLabel = "push weather",
             ) { on -> scope.launch { weatherSettings.setEnabled(on) } }
             Spacer(Modifier.height(12.dp))
+            // The card's two forced pushes, split by which position they fetch for:
+            // REFRESH asks the unit where the car is, PUSH NOW (below) uses the city field
+            // above it. Neither waits for the 5-minute schedule, and neither falls back to
+            // the other's position — a button that names a source delivers that source or
+            // says plainly why it could not.
+            HudButton(
+                "REFRESH",
+                modifier = Modifier.fillMaxWidth(),
+                style = HudButtonStyle.SECONDARY,
+                enabled = weatherStatus.unitKey != null,
+                glyph = HudIcons.Reset,
+            ) {
+                val key = weatherStatus.unitKey ?: return@HudButton
+                scope.launch { weatherFeed.refresh(key) }
+            }
+            Spacer(Modifier.height(12.dp))
             Text("FALLBACK CITY", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(4.dp))
             HudInput(

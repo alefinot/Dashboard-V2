@@ -94,14 +94,40 @@ object WeatherPolicy {
         cached: CachedPosition?,
         city: Place?,
         nowMs: Long,
-    ): WeatherTarget? {
-        positionOf(fix)?.let { return WeatherTarget(PositionSource.FIX, it.lat, it.lon, null) }
-        cached?.takeIf { nowMs - it.fixEpochMs in 0..CACHE_MAX_AGE_MS }?.let {
-            return WeatherTarget(PositionSource.CACHE, it.lat, it.lon, it.label)
-        }
-        city?.let { return WeatherTarget(PositionSource.CITY, it.lat, it.lon, it.name) }
-        return null
+    ): WeatherTarget? =
+        fixRung(fix) ?: cacheRung(cached, nowMs) ?: cityRung(city)
+
+    /**
+     * One rung named instead of rung-by-rung: what the card's two buttons ask the feed for.
+     *
+     * [positionLadder] answers "best I have"; this answers "exactly this, or nothing". The
+     * two buttons exist because the ladder is wrong for them by design — an owner pressing
+     * the unit's own button while a cached town is sitting in the store does not want the
+     * town, and there is no point fetching weather the panel is already showing. So there is
+     * deliberately **no fallback in here**: a rung that is empty is null, and the card says
+     * which one came up empty.
+     */
+    fun positionFor(
+        source: PositionSource,
+        fix: Snapshot?,
+        cached: CachedPosition?,
+        city: Place?,
+        nowMs: Long,
+    ): WeatherTarget? = when (source) {
+        PositionSource.FIX -> fixRung(fix)
+        PositionSource.CACHE -> cacheRung(cached, nowMs)
+        PositionSource.CITY -> cityRung(city)
     }
+
+    private fun fixRung(fix: Snapshot?): WeatherTarget? =
+        positionOf(fix)?.let { WeatherTarget(PositionSource.FIX, it.lat, it.lon, null) }
+
+    private fun cacheRung(cached: CachedPosition?, nowMs: Long): WeatherTarget? =
+        cached?.takeIf { nowMs - it.fixEpochMs in 0..CACHE_MAX_AGE_MS }
+            ?.let { WeatherTarget(PositionSource.CACHE, it.lat, it.lon, it.label) }
+
+    private fun cityRung(city: Place?): WeatherTarget? =
+        city?.let { WeatherTarget(PositionSource.CITY, it.lat, it.lon, it.name) }
 
     /**
      * Great-circle distance in km. The cheap formula, not a flat-earth approximation:

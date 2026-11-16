@@ -214,13 +214,91 @@ class WeatherCoordinatorTest {
     }
 
     @Test
-    fun `PUSH NOW fetches even a minute after the last feed`() = runBlocking {
+    fun `PUSH NOW fetches the saved city even while the unit has a fix`() = runBlocking {
+        // The button sits under the city field, so "push now" there means "push what I
+        // typed" — the ladder is not consulted, and the unit's own position is not used
+        // even though it is available and would normally outrank a town.
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - minute, pushedAt = t0 - minute)
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        store.city = CityFallback(
+            typed = "Hamburg",
+            place = Place("Hamburg", "Hamburg", "Germany", 53.5511, 9.9937),
+        )
+
+        feed.pushNow(unitKey)
+
+        assertEquals(OpenMeteo.url(53.5511, 9.9937), http.forecasts.single())
+        assertEquals(PositionSource.CITY, feed.status.value.source)
+        // A saved city carries its coordinates: this pass asks the unit for nothing.
+        assertEquals(0, unit.snapshotCalls)
+    }
+
+    @Test
+    fun `PUSH NOW with no saved city says so and spends nothing`() = runBlocking {
         store.rows[unitKey] = cacheRow(fetchedAt = t0 - minute, pushedAt = t0 - minute)
         unit.fix = snapshotAt(48.13743, 11.57549)
 
         feed.pushNow(unitKey)
 
+        assertTrue(http.forecasts.isEmpty())
+        assertTrue(unit.pushes.isEmpty())
+        assertTrue(feed.status.value.note!!, feed.status.value.note!!.contains("fallback city"))
+    }
+
+    @Test
+    fun `REFRESH fetches the unit's own position even a minute after the last feed`() = runBlocking {
+        store.rows[unitKey] = cacheRow(fetchedAt = t0 - minute, pushedAt = t0 - minute)
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+
+        feed.refresh(unitKey)
+
+        assertEquals(OpenMeteo.url(48.13743, 11.57549), http.forecasts.single())
+        assertEquals(1, unit.pushes.size)
+        assertEquals(PositionSource.FIX, feed.status.value.source)
+    }
+
+    @Test
+    fun `REFRESH with no fix refuses instead of pushing the typed city`() = runBlocking {
+        // The whole point of naming a source: a button that says "where the car is" must not
+        // quietly deliver the town in the store, because that is the weather already on the
+        // panel and the reason the owner pressed the button.
+        unit.fix = null
+        store.city = CityFallback(
+            typed = "Munich",
+            place = Place("Munich", "Bavaria", "Germany", 48.13743, 11.57549),
+        )
+
+        feed.refresh(unitKey)
+
+        assertTrue(http.forecasts.isEmpty())
+        assertTrue(unit.pushes.isEmpty())
+        assertTrue(feed.status.value.note!!, feed.status.value.note!!.contains("GPS"))
+    }
+
+    @Test
+    fun `a forced push does not stop at the frame in hand`() = runBlocking {
+        // The scheduled answer to a unit that came up is "here is the frame I am holding",
+        // and the pass stops there. A button press is a different question and must not be
+        // answered with the old frame: REFRESH still asks for the car's current position.
+        unit.fix = snapshotAt(48.13743, 11.57549)
+        http.reverseBody = """{"address":{"city":"Munich"}}"""
+        feed.wake("link", unitKey)
         assertEquals(1, http.forecasts.size)
+        unit.pushes.clear()
+
+        now += 30_000L
+        feed.unitWoke(unitKey)
+        assertEquals("a wake-up re-pushes the frame in hand, no fetch", 1, unit.pushes.size)
+        assertEquals(1, http.forecasts.size)
+        unit.pushes.clear()
+
+        // The car moved while the panel was off. The held frame is Munich's weather.
+        unit.fix = snapshotAt(53.5511, 9.9937)
+        feed.refresh(unitKey)
+
+        assertEquals(2, http.forecasts.size)
+        assertEquals(OpenMeteo.url(53.5511, 9.9937), http.forecasts.last())
     }
 
     @Test
