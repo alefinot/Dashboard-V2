@@ -75,6 +75,8 @@ import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -665,6 +667,23 @@ private fun CardBlock(
     noiseLine: String,
     onNoise: (String) -> Unit,
 ) {
+    // The Auto Brightness card is the one card that watches a number the unit keeps changing:
+    // its live ambient reading. The settings read is a one-shot pull, so the snapshot this card
+    // was built from never moves on its own — the owner would see a frozen number on a card whose
+    // whole job is "watch the sensor, then tap READ". So while this card is on screen (it leaves
+    // composition the moment its group closes), the card pulls the unit's `ambient` reading — the
+    // lightweight one-shot the calibration screens are built to watch — and shows that. The READ
+    // button stores the unit's live sensor value either way; this is only about *showing* it.
+    val ambientCard = block.body.any { it is RenderWidget && it.widget == "ambientCalibrate" }
+    var liveAmbient by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(ambientCard && enabled, store) {
+        if (!(ambientCard && enabled)) return@LaunchedEffect
+        while (isActive) {
+            val r = store.action("ambient")
+            if (r.ok) liveAmbient = (r.fields["raw"] as? Number)?.toInt()
+            delay(800)
+        }
+    }
     Column(
         modifier.hudCard().padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
@@ -679,7 +698,15 @@ private fun CardBlock(
         }
         block.body.forEach { renderable ->
             when (renderable) {
-                is RenderReading -> ReadingRow(renderable.spec, renderable.value)
+                is RenderReading -> {
+                    // Show the polled value once the card has one; until then fall back to the
+                    // snapshot this card was built from, so the row is never blank mid-poll.
+                    val shown =
+                        if (ambientCard && renderable.spec.key == "ambientLightValue")
+                            liveAmbient ?: renderable.value
+                        else renderable.value
+                    ReadingRow(renderable.spec, shown)
+                }
                 is RenderSection -> SectionHead(renderable.title)
                 is RenderWidget -> WidgetControl(
                     widget = renderable.widget,
