@@ -626,6 +626,17 @@ private fun groupIcon(icon: String?): Int? = when (icon) {
 }
 
 /**
+ * The ambient-light point a row captures, for the two rows the Auto Brightness card calibrates
+ * (`cal.ambient`'s `which`), and null for every other row. The keys are unique to that card, so
+ * the row itself is enough to know which point a capture stores.
+ */
+private fun ambientCaptureWhich(key: String): String? = when (key) {
+    "LIGHT_SENSOR_DARK_VAL" -> "dark"
+    "LIGHT_SENSOR_BRIGHT_VAL" -> "bright"
+    else -> null
+}
+
+/**
  * One card of the group's grid: `.card` itself — 8 dp corners, `rgba(22,30,46,.6)`, a 5%
  * hairline, 12x14 padding, and the card's title in `.card h4`'s 13 px/700 cyan.
  *
@@ -683,15 +694,27 @@ private fun CardBlock(
                     onNoise = onNoise,
                     scope = scope,
                 )
-                is RenderRow -> SettingsRow(
-                    item = renderable.item,
-                    view = state.rows[renderable.item.key],
-                    imperial = state.imperial,
-                    unitSwap = schema.imperial,
-                    enabled = enabled,
-                    onEdit = { x, y -> store.edit(renderable.item, x, y) },
-                    onReset = { store.reset(renderable.item) },
-                )
+                is RenderRow -> {
+                    // The two ambient-light points are captured from the unit, not typed, so the
+                    // card puts a small capture mark on the value row it fills (`cal.ambient`);
+                    // every other row has none and the param is null.
+                    val captureWhich = ambientCaptureWhich(renderable.item.key)
+                    SettingsRow(
+                        item = renderable.item,
+                        view = state.rows[renderable.item.key],
+                        imperial = state.imperial,
+                        unitSwap = schema.imperial,
+                        enabled = enabled,
+                        onEdit = { x, y -> store.edit(renderable.item, x, y) },
+                        onReset = { store.reset(renderable.item) },
+                        onCapture = captureWhich?.let { which ->
+                            { captureAmbientPoint(store, which, scope, onNote) }
+                        },
+                        captureDescription = captureWhich?.let {
+                            "store the current ambient reading as the $it point"
+                        },
+                    )
+                }
             }
         }
     }

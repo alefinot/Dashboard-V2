@@ -63,7 +63,7 @@ internal fun WidgetControl(
     when (widget) {
         "tripReset" -> TripResetControl(store, enabled, confirm, onConfirm, onNote, scope)
         "odometerSet" -> OdometerControl(store, enabled, odoText, onOdo, onNote, scope)
-        "ambientCalibrate" -> AmbientCalibrationControl(store, enabled, onNote, scope)
+        "ambientCalibrate" -> AmbientCalibrationControl()
         "noiseBench" -> NoiseBenchControl(store, enabled, noiseLine, onNoise, scope)
         "tempCalibrate" -> NoLiveReadingControl("engine temperature", "NTC_TEMP_OFFSET", enabled)
         "batteryCalibrate" -> NoLiveReadingControl("battery voltage", "BATTERY_OFFSET", enabled)
@@ -182,64 +182,53 @@ private fun OdometerControl(
 }
 
 /**
- * Capture the dark and bright points of the ambient light sensor.
+ * The one line the Auto Brightness card carries above its rows.
  *
- * `cal.ambient` reports `adjusted` when the other point moved too (the unit keeps the two
- * points a fixed distance apart), and the note says so, because a capture that moved a value
- * nobody touched looks like a bug unless the screen mentions it. The read is forced
- * afterwards: the rows of this same card just changed on the unit.
- *
- * What the two buttons store is whatever the sensor says at the instant one is pressed — the
- * firmware assigns `ambientLightValue` to the point's row (`bt_rpc.cpp`) — so the reading itself
- * is drawn on this card, above the buttons, by `SettingsLayout.CARD_READINGS`. It is a snapshot of
- * the last read rather than a stream (the settings page has no telemetry feed of its own), and the
- * forced re-read below is what keeps it honest: after a capture the number on the card is the
- * number that just went into the row, not the one that was on the screen when the finger landed.
+ * What used to be two full-width Capture buttons is now a small capture mark drawn on the value
+ * row it fills (`SettingsRow.onCapture`, wired from `CardBlock`), so a point's button sits with
+ * the number it sets. That left this widget with nothing to press — the live reading the marks
+ * store is drawn above by `SettingsLayout.CARD_READINGS`, and the press itself is the row's
+ * mark — so all that is left to say is what the marks do.
  */
 @Composable
-private fun AmbientCalibrationControl(
-    store: ConfigStore,
-    enabled: Boolean,
-    onNote: (String) -> Unit,
-    scope: CoroutineScope,
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun AmbientCalibrationControl() {
+    Text(
+        "the capture mark on the Dark and Bright value rows stores the reading above as that point",
+        style = HudeCfgHelp(),
+        color = HudColors.TextDim,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-    ) {
-        Text(
-            "stores the reading above as the point you tap",
-            style = HudeCfgHelp(),
-            color = HudColors.TextDim,
-            modifier = Modifier.weight(1f),
+    )
+}
+
+/**
+ * Stores the unit's current ambient reading as one calibration point (`cal.ambient`).
+ *
+ * `cal.ambient` reports `adjusted` when the other point moved too (the unit keeps the two points
+ * a fixed distance apart), and the note says so, because a capture that moved a value nobody
+ * touched looks like a bug unless the screen mentions it. The read is forced afterwards: the rows
+ * of this same card just changed on the unit. What is stored is whatever the sensor says at the
+ * instant the mark is pressed — the firmware assigns `ambientLightValue` to the point's row
+ * (`bt_rpc.cpp`) — so the number on the card after the re-read is the number that just went into
+ * the row, not the one that was on the screen when the finger landed.
+ */
+internal fun captureAmbientPoint(
+    store: ConfigStore,
+    which: String,
+    scope: CoroutineScope,
+    onNote: (String) -> Unit,
+) {
+    scope.launch {
+        val r = store.action("cal.ambient", BleJson.params("which" to which))
+        onNote(
+            if (r.ok) {
+                "$which point captured" +
+                    if (r.fields["adjusted"] == true) " (the other point moved too)"
+                    else ""
+            } else {
+                "capture refused: ${r.error}"
+            },
         )
-        listOf("dark", "bright").forEach { which ->
-            HudButton(
-                label = "CAPTURE $which",
-                style = HudButtonStyle.SECONDARY,
-                enabled = enabled,
-                // Begin the one thing this card can begin: take the reading that is on the card
-                // now and store it as the point. Same mark the bench's RUN wears, for the same
-                // reason — a press that starts something on the unit and answers afterwards.
-                glyph = HudIcons.Play,
-                onClick = {
-                    scope.launch {
-                        val r = store.action("cal.ambient", BleJson.params("which" to which))
-                        onNote(
-                            if (r.ok) {
-                                "$which point captured" +
-                                    if (r.fields["adjusted"] == true) " (the other point moved too)"
-                                    else ""
-                            } else {
-                                "capture refused: ${r.error}"
-                            },
-                        )
-                        store.syncIfNeeded(force = true)
-                    }
-                },
-            )
-        }
+        store.syncIfNeeded(force = true)
     }
 }
 

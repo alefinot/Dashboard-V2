@@ -76,8 +76,9 @@ class LivePageReadoutsTest {
      *    the low-water heap mark and the largest free block beside them. The Live card had one
      *    number from the 1 Hz telemetry frame.
      *  - `amb` — the **Auto Brightness** card on the unit's settings page draws it as *Ambient
-     *    light reading (ADC)*, above the two capture buttons that store that very reading
-     *    (`SettingsLayout.CARD_READINGS`, held by `SettingsLayoutTest`), and the same value is
+     *    light reading (ADC)*, above the capture marks on its Dark and Bright value rows that
+     *    store that very reading (`SettingsLayout.CARD_READINGS`, held by `SettingsLayoutTest`),
+     *    and the same value is
      *    what auto-brightness dims the panel from. A bare `LIGHT 2844` with no band beside it
      *    was the least useful place in the app for that number.
      *

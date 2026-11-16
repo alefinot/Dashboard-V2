@@ -257,15 +257,15 @@ class SettingsLayoutTest {
     }
 
     /**
-     * The ambient light reading is drawn on the Auto Brightness card, above the two capture
-     * buttons that store it — the only place the page shows it.
+     * The ambient light reading is drawn on the Auto Brightness card, above the capture marks on
+     * its Dark and Bright value rows that store it — the only place the page shows it.
      *
      * `cal.ambient` takes no number the owner typed: it stores whatever the sensor says at the
-     * instant the button is pressed, which is why the firmware writes `ambientLightValue` straight
-     * into the point's row. A number that is the input to a control belongs beside that control,
-     * which is where the unit's own page kept it, in that card's toolbar. Two rules keep the move
-     * honest: an absent reading draws nothing (a card that invents a zero is a card that lies), and
-     * a reading is still not searchable, on this page or the unit's.
+     * instant a point's mark is pressed, which is why the firmware writes `ambientLightValue`
+     * straight into the point's row. A number that is the input to a control belongs beside that
+     * control, which is why the capture moved onto the value rows it fills on 2026-11-16. Two
+     * rules keep the move honest: an absent reading draws nothing (a card that invents a zero is
+     * a card that lies), and a reading is still not searchable, on this page or the unit's.
      */
     @Test
     fun theAmbientReadingIsDrawnOnTheCardWhoseButtonsStoreIt() {
@@ -282,7 +282,7 @@ class SettingsLayoutTest {
         ).first { it.card.title == "Auto brightness" }.body
 
         assertEquals(
-            "the reading is drawn first on the card, above the capture buttons that store it",
+            "the reading is drawn first on the card, above the rows whose capture marks store it",
             listOf("ambientLightValue", "ambientCalibrate", "ENABLE_AUTO_BRIGHTNESS"),
             read.map {
                 when (it) {
@@ -313,7 +313,7 @@ class SettingsLayoutTest {
             body.none { it is RenderReading },
         )
         assertTrue(
-            "the capture buttons went away with the number above them",
+            "the card's capture widget went away with the number above it",
             body.any { it is RenderWidget },
         )
     }
