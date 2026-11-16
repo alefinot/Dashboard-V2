@@ -1,7 +1,5 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +40,7 @@ import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
+import com.alefinot.dashboardpp.ui.components.HudSelectMenu
 import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudPressable
@@ -172,12 +171,13 @@ fun SettingsRow(
                 LabelBlock(Modifier.fillMaxWidth())
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // A slider is the one stacked control that fills its line. Without the
-                    // weight its `fillMaxWidth` claimed the whole row and the reset beside it
-                    // was measured at zero width - an invisible 48 dp box that still set the
-                    // row's height. Weighted, the rail gives up the glyph's ~34 dp and the
-                    // reset keeps the 48 dp target every other row's reset has.
-                    Trailing(if (item.control == RowControl.SLIDER) Modifier.weight(1f) else Modifier)
+                    // The slider and the dropdown are the two stacked controls that fill their
+                    // line. Without the weight their `fillMaxWidth` claimed the whole row and the
+                    // reset beside them was measured at zero width - an invisible 48 dp box that
+                    // still set the row's height. Weighted, each gives up the glyph's ~34 dp and
+                    // the reset keeps the 48 dp target every other row's reset has.
+                    val fills = item.control == RowControl.SLIDER || item.control == RowControl.SELECT
+                    Trailing(if (fills) Modifier.weight(1f) else Modifier)
                 }
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -216,9 +216,9 @@ private val WideFormRow = 480.dp
  * rather than beside its label. Everything else — the values, the toggles, the colour
  * fields — stays on the label's line.
  *
- * - [RowControl.SELECT] draws its options as chips. Beside a label they are left the remnant of
- *   the row and stack into a column of one chip per line, which is both unreadable and taller
- *   than giving them the line.
+ * - [RowControl.SELECT] is a dropdown trigger that fills its line; beside a label it gets the
+ *   remnant of the row, which is not wide enough to show the option the unit is actually holding
+ *   (the time zone's labels run to `(UTC+05:30) India Standard Time`).
  * - [RowControl.SLIDER] is a track you aim at. The page's 250 dp is already the shortest usable
  *   slider; the ~90 dp left beside a long label is a fidget control.
  * - [RowControl.PAIR] is an X and a Y with their reserved widths, and the pair reads as one
@@ -288,7 +288,7 @@ private fun Control(
                 onToggle = { if (enabled) onEdit(it, null) },
             )
         }
-        RowControl.SELECT -> SelectControl(item, box, enabled, wide) { onEdit(it, null) }
+        RowControl.SELECT -> MenuControl(item, box, enabled, wide, root) { onEdit(it, null) }
         RowControl.SLIDER -> SliderControl(item, box, imperial, enabled, wide, root) {
             onEdit(it, null)
         }
@@ -384,70 +384,56 @@ private fun NumberControl(
 internal val SettingsValueSlot = 92.dp
 
 /**
- * A picker drawn as its options, not as a dropdown: on a tablet every choice is
- * visible at a glance, and one tap commits it. The unit's own option list comes
- * from the schema — the app does not invent labels or values.
+ * An option row drawn as a dropdown: the trigger wears the label of the value the unit is
+ * holding, and the list that opens is the unit's own option table from the schema — the app
+ * does not invent labels or values.
+ *
+ * This replaced a wall of one chip per option, which the maintainer asked for off the settings
+ * page on 2026-11-16 ("the dst rule, time zone and manual cpu frequency should be dropdown
+ * menus", and Speed Source with them so no row on the page is styled unlike its neighbours).
+ * Chips suited three short choices and nothing else: the time zone's 27 options stacked into a
+ * block about twenty lines tall, and a label like `(UTC+05:30) India Standard Time` wrapped
+ * across three of them. One menu draws all four rows the same way, and it is the same menu the
+ * vehicle-type editor and the firmware card open ([HudSelectMenu]) — 44 dp rows, three visible,
+ * the current one scrolled into view when the menu opens.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SelectControl(
+private fun MenuControl(
     item: SchemaItem,
     box: Any?,
     enabled: Boolean,
     wide: Boolean,
+    root: Modifier = Modifier,
     onPick: (Any?) -> Unit,
 ) {
     val options = item.options ?: return
     val current = (box as? Number)?.toDouble()
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        // `widthIn`, not `fillMaxWidth`, in the wide shape: an unweighted child that claims the
-        // whole row leaves the `weight(1f)` label column nothing, which is how a picker's
-        // options used to arrive with the label of the row missing beside them. Stacked, the
-        // chips own the line and may have all of it.
-        modifier = Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
-            .padding(start = if (wide) 12.dp else 0.dp),
-    ) {
-        for (option in options) {
-            val selected = when (val v = option.value) {
-                is Number -> current == v.toDouble()
-                else -> box?.toString() == v.toString()
-            }
-            // A picker's choice moves rather than swaps: the chip the user taps fills
-            // and lights on the page's control clock, the one it replaces fades back.
-            val fill by animateColorAsState(
-                if (selected) HudColors.CyanDim else HudColors.Field,
-                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-                label = "selectFill",
-            )
-            val edge by animateColorAsState(
-                if (selected) HudColors.Cyan else HudColors.Hairline,
-                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-                label = "selectEdge",
-            )
-            val ink by animateColorAsState(
-                if (selected) HudColors.TextPrimary else HudColors.TextDim,
-                tween(if (HudMotion.enabled) HudMotion.CONTROL_MS else 0, easing = HudMotion.Ease),
-                label = "selectInk",
-            )
-            val shape = RoundedCornerShape(4.dp)
-            Box(
-                Modifier
-                    .hudPressable(enabled = enabled) { onPick(option.value) }
-                    .clip(shape)
-                    .background(fill)
-                    .border(1.dp, edge, shape)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    option.label,
-                    color = ink,
-                    fontSize = 12.sp,
-                )
-            }
+    val selected = options.firstOrNull { option ->
+        when (val v = option.value) {
+            is Number -> current == v.toDouble()
+            else -> box?.toString() == v.toString()
         }
     }
+    // A unit can hold something the option table does not offer — a value an older firmware
+    // wrote, or one set over RPC. The trigger says what is stored instead of naming the
+    // nearest option it does not offer.
+    val trigger = selected?.label ?: box?.toString()?.takeIf { it.isNotBlank() } ?: "—"
+    HudSelectMenu(
+        triggerLabel = trigger,
+        items = options,
+        label = { it.label },
+        isSelected = { it == selected },
+        onPick = { onPick(it.value) },
+        enabled = enabled,
+        modifier = root
+            .then(if (wide) Modifier.width(300.dp) else Modifier.fillMaxWidth())
+            .padding(start = if (wide) 12.dp else 0.dp),
+        // Wider than the component's own default: these labels come from the unit and run long
+        // ("EU / EEA — last Sunday of Mar & Oct, 01:00 UTC"), and at the default 280 dp the menu
+        // ellipsized exactly the part that tells the zones apart. A DropdownMenu is clamped to
+        // the window, so a phone never gets a popup wider than its screen.
+        menuModifier = Modifier.widthIn(min = 220.dp, max = 360.dp),
+    )
 }
 
 /**
