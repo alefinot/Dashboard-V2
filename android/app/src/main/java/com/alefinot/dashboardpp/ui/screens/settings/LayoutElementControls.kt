@@ -325,9 +325,10 @@ private fun PositionBlock(
                     modifier = Modifier.width(18.dp),
                 )
                 if (hi - lo >= 1.0) {
-                    // The range rides on the rail's two ends instead of a caption line under
-                    // it; the box beside still carries the exact value, so the slider needs no
-                    // readout of its own. Same control as every settings slider, one line.
+                    // The rail carries no figures of its own: the box beside is the exact
+                    // value, and the whole width the ends used to take is rail - a longer
+                    // track is what makes a drag land on the pixel the driver wants. Same
+                    // control as every settings slider, one line.
                     HudSlider(
                         value = draft.toFloat().coerceIn(lo.toFloat(), hi.toFloat()),
                         onValueChange = { draft = it.toDouble() },
@@ -335,8 +336,6 @@ private fun PositionBlock(
                         valueRange = lo.toFloat()..hi.toFloat(),
                         steps = sliderSteps(lo, hi, 1.0),
                         enabled = enabled,
-                        loText = lo.toInt().toString(),
-                        hiText = hi.toInt().toString(),
                         modifier = Modifier.weight(1f),
                     )
                 } else {

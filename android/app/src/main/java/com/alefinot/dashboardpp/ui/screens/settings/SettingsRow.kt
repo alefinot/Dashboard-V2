@@ -422,8 +422,8 @@ private fun SelectControl(
  * clamps to the band; the slider simply cannot ask for a value outside what the old
  * page allowed.
  *
- * The control is [HudSlider] and lives on one 30 dp line: the window's two ends at the
- * rail's ends, the value in a mono readout on the right. It used to be a Material slider
+ * The control is [HudSlider] and lives on one 30 dp line, with the value in a mono readout
+ * on the right. It used to be a Material slider
  * (a 48 dp box) plus a `0 – 100` caption on the next line, which made this the tallest
  * row on the page and the only one that did not look like the app. The readout also
  * fixes a hole the old shape had: nothing on the row showed the value the thumb was
@@ -453,8 +453,8 @@ private fun SliderControl(
         valueRange = lo.toFloat()..top.toFloat(),
         steps = sliderSteps(lo, hi, SettingsUnits.boxStep(item, imperial)),
         enabled = enabled,
-        loText = renderNumber(lo, decimals),
-        hiText = renderNumber(top, decimals),
+        // No end figures on the rail: the readout is the number the row exists to show, and
+        // the width they used to take is rail - the longer the rail, the finer a drag is.
         // With no value from the unit, the thumb sits at the bottom of the window; a readout
         // that printed that `lo` as if it were the setting would be inventing one.
         valueText = if (box == null) "—" else renderNumber(draft, decimals),

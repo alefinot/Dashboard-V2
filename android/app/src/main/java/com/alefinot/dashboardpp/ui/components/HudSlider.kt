@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
-import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudePerfRowValue
 
 /**
@@ -52,21 +51,19 @@ import com.alefinot.dashboardpp.ui.theme.HudePerfRowValue
  *    uses for "this far" (`.perf-bar`, the fuel bar, the gauge arc);
  *  - the thumb is the toggle's 14 dp knob in a 2 dp black ring, so a fader, a switch and
  *    a stepper read as one family;
- *  - the range's two ends and the current value sit on the slider's own line: min at the
- *    left, max at the right, value in a mono readout at the trailing end. The old row
- *    printed `0 – 100` under the track on a 17 dp line of its own, which is the line that
- *    made a slider 65 dp tall while every other control was 30.
+ *  - the current value sits on the slider's own line in a mono readout at the trailing
+ *    end. The old row printed `0 – 100` under the track on a 17 dp line of its own, which
+ *    is the line that made a slider 65 dp tall while every other control was 30.
  *
  * The whole control is 30 dp tall (the stepper's height) instead of a 48 dp interactive
  * box plus a caption: a slider row now costs a label line and one control line, exactly
  * like a number row. The small rail is still a 30 dp finger target, and the value readout
  * beside it keeps the number visible while the thumb moves.
  *
- * [loText] and [hiText] are printed at the rail's ends rather than under it. They are the
- * *window* the control offers (see `SchemaItem.sliderMin/sliderMax`), not the firmware band
- * - the store still clamps to the band, and the ends of the rail say what a drag can ask
- * for. Pass null to hide them where the range is already explained (the position block's
- * number box).
+ * The rail's two ends carry no figures of their own. The number is the readout, and the
+ * band's ends are the store's business (`SchemaItem.sliderMin/sliderMax` still clamp every
+ * write) - printing them at the rail put two more numbers on a row whose job is to show
+ * one, and every slider on the page had the same pair to read.
  *
  * [valueText] is the live readout, not an input: the number rows' editable box is a
  * `HudInput`, while this is the figure the drag is producing. It is deliberately styled
@@ -89,8 +86,6 @@ fun HudSlider(
     enabled: Boolean = true,
     steps: Int = 0,
     onValueChangeFinished: (() -> Unit)? = null,
-    loText: String? = null,
-    hiText: String? = null,
     valueText: String? = null,
     valueWidth: Dp = 56.dp,
 ) {
@@ -110,15 +105,6 @@ fun HudSlider(
             modifier = modifier,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (loText != null) {
-                Text(
-                    loText,
-                    style = HudeCfgNote(),
-                    color = HudColors.TextDim,
-                    maxLines = 1,
-                    modifier = Modifier.padding(end = HudSliderSpec.Gap),
-                )
-            }
             Slider(
                 value = value,
                 onValueChange = onValueChange,
@@ -130,15 +116,6 @@ fun HudSlider(
                 thumb = { HudSliderThumb(ink) },
                 track = { state -> HudSliderTrack(state, ink) },
             )
-            if (hiText != null) {
-                Text(
-                    hiText,
-                    style = HudeCfgNote(),
-                    color = HudColors.TextDim,
-                    maxLines = 1,
-                    modifier = Modifier.padding(start = HudSliderSpec.Gap),
-                )
-            }
             if (valueText != null) {
                 Box(
                     Modifier
@@ -176,10 +153,7 @@ private object HudSliderSpec {
     /** The readout chip's height: a little shorter than the rail, so the rail stays dominant. */
     val Readout = 26.dp
 
-    /** Between an endpoint figure and the rail. */
-    val Gap = 6.dp
-
-    /** Between the max figure and the readout; one step wider so the chip separates. */
+    /** Between the rail and the readout; the chip separates from the track's end. */
     val ValueGap = 8.dp
 
     /** The groove's visible thickness. */
