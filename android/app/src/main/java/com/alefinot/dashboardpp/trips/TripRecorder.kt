@@ -123,6 +123,31 @@ class TripRecorder(
 
     val isRecording: Boolean get() = openTrip != null
 
+    /**
+     * True while the open trip is paused: the file stays open, but no sample is
+     * appended until [resume]. Runtime state only - it is not part of [SessionRecord],
+     * because a pause belongs to the pass the owner is on, not to the drive.
+     */
+    var isPaused: Boolean = false
+        private set
+
+    /**
+     * Stop logging samples without ending the trip. The file stays open, so a resume
+     * continues the same drive; the span becomes a timestamp gap in it.
+     *
+     * Deliberately allowed before the first sample too: a service command can land
+     * while the recorder is still waiting for a frame, and an ignored pause would log
+     * the very samples the owner asked it not to.
+     */
+    fun pause() {
+        isPaused = true
+    }
+
+    /** Continue appending to the same open file. */
+    fun resume() {
+        isPaused = false
+    }
+
     /** Running summary of the open trip, straight from RAM (no file re-read). */
     fun summary(): TripSummary? = accumulator.summary()
 
@@ -154,6 +179,16 @@ class TripRecorder(
                 seal("session-cap-12h")
                 sealedBeforeOpen = true
             }
+        }
+
+        // A paused recorder keeps following the link - the fresh silence baseline is
+        // what stops the 120 s seal from firing during a long pause on a live unit -
+        // but it writes nothing, accumulates nothing and opens no file. The reboot and
+        // cap checks above still ran, so a pause cannot mask a dead or restarted device.
+        if (isPaused) {
+            lastSampleMs = now
+            lastSnapshot = s
+            return TripEvent.NONE
         }
 
         if (openTrip == null) {
@@ -214,6 +249,7 @@ class TripRecorder(
 
     /** Service stopping: seal, leaving a complete file. */
     fun stop(): TripEvent {
+        isPaused = false
         if (openTrip == null) return TripEvent.NONE
         seal("service-stop")
         return TripEvent.SEALED

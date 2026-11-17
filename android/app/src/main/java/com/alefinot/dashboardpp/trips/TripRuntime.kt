@@ -27,6 +27,13 @@ data class TripRuntimeState(
     val polling: Boolean = false,
     /** True while samples are being appended to a trip file. */
     val recording: Boolean = false,
+    /**
+     * True while the owner has paused the open trip. The file stays open, so a resume
+     * continues the same drive; the pause is runtime state, not a preference.
+     */
+    val paused: Boolean = false,
+    /** Wall-clock moment of the pause, so the trip clock can freeze while paused. */
+    val pausedAtMs: Long = 0L,
     val tripPath: String? = null,
     val tripStartMs: Long = 0L,
     val snapshot: Snapshot? = null,

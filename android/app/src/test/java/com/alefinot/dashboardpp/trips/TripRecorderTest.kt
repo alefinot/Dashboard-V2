@@ -252,6 +252,140 @@ class TripRecorderTest {
         assertEquals(45.70, pts.first().lat, 1e-9)
     }
 
+    // ─── pause / resume (owner controls, 2026-11-17) ─────────────────────────────
+
+    @Test
+    fun pauseStopsAppendingButKeepsTheFileOpen() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        val path = writer.pathAt(0)
+        recorder.pause()
+        now += 1_000L
+        // The link is still up: the frame is seen (a fresh silence baseline) but the
+        // file, the accumulator and the live route are untouched.
+        assertEquals(TripEvent.NONE, recorder.onSnapshot("10.0.0.5", snap(up = 101, spd = 30.0)))
+        assertTrue(recorder.isPaused)
+        assertTrue(recorder.isRecording)
+        assertEquals(path, recorder.openTrip?.path)
+        assertEquals(1, writer.lines(path).size)
+        assertEquals(1, recorder.summary()?.samples)
+    }
+
+    @Test
+    fun resumeContinuesTheSameFile() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        val path = writer.pathAt(0)
+        recorder.pause()
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, spd = 30.0))
+        recorder.resume()
+        now += 1_000L
+        // `max` is the unit's session peak and never drops; a fixture that let it fall would
+        // be read as a reboot, which is a different test.
+        assertEquals(
+            TripEvent.APPENDED,
+            recorder.onSnapshot("10.0.0.5", snap(up = 102, spd = 12.0, max = 30.0)),
+        )
+        // One drive is one file: the pause is a hole in it, not a split.
+        assertEquals(1, writer.files.size)
+        assertEquals(2, writer.lines(path).size)
+        assertEquals(2, recorder.summary()?.samples)
+    }
+
+    @Test
+    fun aLiveLinkDuringALongPauseDoesNotSealTheTrip() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        recorder.pause()
+        // Ten minutes of frames, each refreshing the silence baseline: the 120 s seal is
+        // about a dead unit, not about a pause the owner asked for.
+        for (i in 1..10) {
+            now += 60_000L
+            assertEquals(TripEvent.NONE, recorder.onSnapshot("10.0.0.5", snap(up = 100L + i, spd = 20.0)))
+            assertEquals(TripEvent.NONE, recorder.onTick())
+        }
+        assertTrue(recorder.isRecording)
+        assertTrue(writer.sealedPaths.isEmpty())
+    }
+
+    @Test
+    fun aGenuinelySilentPausedRecorderStillSeals() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        recorder.pause()
+        now += TripPolicy.SEAL_AFTER_MS + 1_000L
+        assertEquals(TripEvent.SEALED, recorder.onTick())
+        assertEquals("device-silent", recorder.lastSealReason)
+        assertFalse(recorder.isRecording)
+        // The pause survives the seal: RESUME is what starts the next file, not a frame.
+        assertTrue(recorder.isPaused)
+    }
+
+    @Test
+    fun resumeAfterASealOpensANewFile() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        recorder.pause()
+        now += TripPolicy.SEAL_AFTER_MS + 1_000L
+        recorder.onTick()
+        recorder.resume()
+        now += 1_000L
+        assertEquals(TripEvent.OPENED, recorder.onSnapshot("10.0.0.5", snap(up = 500, spd = 10.0)))
+        assertEquals(2, writer.files.size)
+    }
+
+    @Test
+    fun pauseBeforeTheFirstSampleOpensNoFile() {
+        // The service's pause can land before the unit sends anything; an ignored pause
+        // would log exactly the samples the owner asked it not to.
+        recorder.pause()
+        assertEquals(TripEvent.NONE, recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0)))
+        assertTrue(writer.files.isEmpty())
+        assertFalse(recorder.isRecording)
+        recorder.resume()
+        now += 1_000L
+        assertEquals(TripEvent.OPENED, recorder.onSnapshot("10.0.0.5", snap(up = 101, spd = 10.0)))
+        assertEquals(1, writer.files.size)
+    }
+
+    @Test
+    fun stopWhilePausedSealsAndClearsThePause() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        recorder.pause()
+        assertEquals(TripEvent.SEALED, recorder.stop())
+        assertFalse(recorder.isPaused)
+        assertFalse(recorder.isRecording)
+        assertTrue(writer.sealedPaths.isNotEmpty())
+    }
+
+    @Test
+    fun aRebootWhilePausedSealsWithoutWritingASample() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 500, spd = 20.0, max = 40.0))
+        recorder.pause()
+        now += 1_000L
+        // The reboot check runs before the pause guard: a pause must not mask a dead unit.
+        assertEquals(
+            TripEvent.NONE,
+            recorder.onSnapshot("10.0.0.5", snap(up = 12, spd = 5.0, max = 5.0)),
+        )
+        assertEquals("esp-reboot", recorder.lastSealReason)
+        assertFalse(recorder.isRecording)
+        assertEquals(1, writer.files.size)
+    }
+
+    @Test
+    fun distanceIncludesTheOdometerMovementLoggedWhilePaused() {
+        // The pause drops samples, not kilometres: the drive happened while the file was
+        // closed to appends, and the odometer delta is what the summary reports.
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0, odo = 10.0))
+        recorder.pause()
+        now += 60_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 160, spd = 40.0, odo = 12.0))
+        recorder.resume()
+        now += 60_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 220, spd = 30.0, max = 40.0, odo = 15.0))
+        assertEquals(5.0, recorder.summary()!!.distanceKm, 1e-9)
+        // Only the two written samples are in the file; the paused one is a gap.
+        assertEquals(2, writer.lines(writer.pathAt(0)).size)
+        assertEquals(1, recorder.summary()!!.gaps)
+    }
+
     @Test
     fun theLiveTrackStaysBoundedOverAlongDrive() {
         for (i in 0 until 600) {

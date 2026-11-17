@@ -99,6 +99,20 @@ class TripLogService : Service() {
     private var eff: String = ""
     private var telemetryInNotification = true
 
+    /**
+     * A pause asked for by the owner. Kept here as well as in the recorder because the
+     * service command can land before [awaitRecorder] has built the recorder; the flag
+     * is applied to the recorder the moment it exists.
+     */
+    private var pausedByUser = false
+
+    /**
+     * True when this start command came from the pages' START control rather than from
+     * the shell's auto-start lane. A manual start begins a new trip file: the user is
+     * starting a recording, not resuming a session the previous run let go of.
+     */
+    private var manualStart = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -109,8 +123,38 @@ class TripLogService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                shutdown()
+                // The shade's Stop is the owner's: it also turns auto-start off, so the
+                // next connection cannot quietly start another drive behind their back.
+                if (intent.getBooleanExtra(EXTRA_DISABLE_AUTO, false)) {
+                    stopAndDisableAuto()
+                } else {
+                    shutdown()
+                }
                 return START_NOT_STICKY
+            }
+            ACTION_PAUSE -> {
+                if (recorder == null && feedJob?.isActive != true) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                pausedByUser = true
+                recorder?.pause()
+                publishPaused(true)
+                applyWake(false)
+                refreshNotification()
+                return START_STICKY
+            }
+            ACTION_RESUME -> {
+                if (recorder == null && feedJob?.isActive != true) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                pausedByUser = false
+                recorder?.resume()
+                publishPaused(false)
+                applyWake(recorder?.isRecording == true)
+                refreshNotification()
+                return START_STICKY
             }
         }
         val key = intent?.getStringExtra(EXTRA_DEVICE_KEY)
@@ -119,6 +163,7 @@ class TripLogService : Service() {
             return START_NOT_STICKY
         }
         deviceKey = key
+        manualStart = intent.getBooleanExtra(EXTRA_MANUAL, false)
         vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
         vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
         eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
@@ -143,14 +188,55 @@ class TripLogService : Service() {
     fun shutdown() {
         feedJob?.cancel()
         feedJob = null
+        pausedByUser = false
         recorder?.stop()
         recorder = null
         writer?.closeAll()
         writer = null
         releaseWake()
-        TripRuntime.update { it.copy(polling = false, recording = false) }
+        TripRuntime.update {
+            it.copy(polling = false, recording = false, paused = false, pausedAtMs = 0L)
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * The owner's Stop: end the drive and turn auto-start off, then stop. The preference
+     * write happens before the shutdown so the next launch (and the App Settings switch)
+     * agree that nothing should record until the owner says so again.
+     */
+    private fun stopAndDisableAuto() {
+        val app = applicationContext
+        scope.launch {
+            try {
+                RecorderSettings(app).setRecordingEnabled(false)
+            } catch (e: Exception) {
+                // The drive still ends; a lost preference write is not a lost file.
+            }
+            shutdown()
+        }
+    }
+
+    /**
+     * Publish the pause to the pages and the notification. [pausedAtMs] is taken once,
+     * at the press, so the trip clock freezes where the owner stopped it.
+     */
+    private fun publishPaused(paused: Boolean) {
+        TripRuntime.update {
+            it.copy(
+                paused = paused,
+                pausedAtMs = when {
+                    !paused -> 0L
+                    it.paused && it.pausedAtMs > 0L -> it.pausedAtMs
+                    else -> System.currentTimeMillis()
+                },
+            )
+        }
+    }
+
+    private fun refreshNotification() {
+        notify(recorder?.lastSnapshot, recorder?.summary())
     }
 
     /**
@@ -247,12 +333,20 @@ class TripLogService : Service() {
                 liveTrack = rec.liveTrackPoints(),
                 lastOkMs = now,
                 recording = rec.isRecording,
+                paused = rec.isPaused,
+                pausedAtMs = when {
+                    !rec.isPaused -> 0L
+                    it.paused && it.pausedAtMs > 0L -> it.pausedAtMs
+                    else -> now
+                },
                 tripPath = rec.openTrip?.path,
                 tripStartMs = rec.openTrip?.startMs ?: 0L,
                 lastError = null,
             )
         }
-        applyWake(rec.isRecording)
+        // A paused drive is not logging: holding the CPU awake for it would be a
+        // battery cost with no file behind it. Resume re-acquires on the next frame.
+        applyWake(rec.isRecording && !rec.isPaused)
         notify(s, summary)
         when (event) {
             TripEvent.OPENED, TripEvent.REOPENED, TripEvent.SEALED_THEN_OPENED -> persistSession()
@@ -304,14 +398,15 @@ class TripLogService : Service() {
         } catch (e: Exception) {
             true
         }
-        if (!wanted) {
+        if (!wanted && !manualStart) {
             TripRuntime.update { it.copy(lastError = "disabled-by-user") }
             shutdown()
             return false
         }
         // Carry the last session across service restarts, so the ESP rebooting
-        // while the app was closed still continues the same trip file.
-        val prior = try {
+        // while the app was closed still continues the same trip file. A start the
+        // owner asked for begins a new drive instead: STOP was pressed on the last one.
+        val prior = if (manualStart) null else try {
             appSettings.sessionFor(deviceKey)
         } catch (e: Exception) {
             null
@@ -322,6 +417,12 @@ class TripLogService : Service() {
         // The identity arrives on the intent, the recorder is built later (this is
         // the first place it can be built): hand it over before the first sample.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
+        // A pause can land before this point (the notification's action is available
+        // as soon as the service is); apply it now instead of logging a sample first.
+        if (pausedByUser) {
+            recorder?.pause()
+            publishPaused(true)
+        }
         return true
     }
 
@@ -365,7 +466,12 @@ class TripLogService : Service() {
 
     private fun buildNotification(snapshot: Snapshot?, summary: TripSummary?): Notification {
         val recording = recorder?.isRecording == true
+        val paused = recording && recorder?.isPaused == true
         val title = when {
+            paused && summary != null ->
+                "Paused · ${formatDuration(summary.durationMs)}" +
+                    " · ${format1(summary.distanceKm)} km"
+            paused -> "Paused · not logging"
             recording && summary != null ->
                 "Recording · ${formatDuration(summary.durationMs)}" +
                     " · ${format1(summary.distanceKm)} km"
@@ -373,6 +479,7 @@ class TripLogService : Service() {
             else -> "Waiting for the dashboard"
         }
         val text = when {
+            paused -> "Not logging samples"
             !telemetryInNotification -> "Logging is on"
             snapshot == null -> "No answer from the device yet"
             else -> "${snapshot.spd.toInt()} km/h · ${format1(snapshot.trpL)} L · " +
@@ -389,12 +496,15 @@ class TripLogService : Service() {
         val stopIntent = Intent(this, TripLogService::class.java).apply {
             action = ACTION_STOP
             putExtra(EXTRA_DEVICE_KEY, deviceKey)
+            // The shade's Stop is the owner's: it ends the drive and turns auto-start
+            // off. The shell's own stop (link lost) uses the plain action and leaves it.
+            putExtra(EXTRA_DISABLE_AUTO, true)
         }
         val stopPending = PendingIntent.getService(
             this, 1, stopIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        return NotificationCompat.Builder(this, CHANNEL)
+        val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_dashboard)
             .setContentTitle(title)
             .setContentText(text)
@@ -404,7 +514,6 @@ class TripLogService : Service() {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .addAction(0, "Stop recording", stopPending)
             .setVisibility(
                 if (telemetryInNotification) {
                     NotificationCompat.VISIBILITY_PRIVATE
@@ -413,7 +522,24 @@ class TripLogService : Service() {
                     NotificationCompat.VISIBILITY_SECRET
                 },
             )
-            .build()
+        when {
+            paused -> builder
+                .addAction(0, "Resume recording", recordingPending(ACTION_RESUME, 3))
+                .addAction(0, "Stop recording", stopPending)
+            recording -> builder
+                .addAction(0, "Pause recording", recordingPending(ACTION_PAUSE, 2))
+                .addAction(0, "Stop recording", stopPending)
+            else -> builder.addAction(0, "Stop recording", stopPending)
+        }
+        return builder.build()
+    }
+
+    private fun recordingPending(action: String, requestCode: Int): PendingIntent {
+        val intent = Intent(this, TripLogService::class.java).apply { this.action = action }
+        return PendingIntent.getService(
+            this, requestCode, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
     }
 
     private fun formatDuration(ms: Long): String {
@@ -452,9 +578,20 @@ class TripLogService : Service() {
 
     companion object {
         const val ACTION_STOP = "com.alefinot.dashboardpp.action.STOP_TRIPS"
+        const val ACTION_PAUSE = "com.alefinot.dashboardpp.action.PAUSE_TRIPS"
+        const val ACTION_RESUME = "com.alefinot.dashboardpp.action.RESUME_TRIPS"
         const val EXTRA_DEVICE_KEY = "device_key"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_LIVE = "live"
+
+        /** The shade's Stop: also turn the auto-start preference off. */
+        const val EXTRA_DISABLE_AUTO = "disable_auto_start"
+
+        /**
+         * A start the owner asked for (the pages' START), not the shell's auto-start
+         * lane. It begins a new trip file.
+         */
+        const val EXTRA_MANUAL = "manual_start"
 
         /** The card whose drives these are, and the MAC the dashboard reported. */
         const val EXTRA_VEHICLE_ID = "vehicle_id"
@@ -478,12 +615,14 @@ class TripLogService : Service() {
             vehicleId: String,
             vehicleName: String,
             eff: String,
+            manual: Boolean = false,
         ) {
             val intent = Intent(context, TripLogService::class.java).apply {
                 putExtra(EXTRA_DEVICE_KEY, deviceKey)
                 putExtra(EXTRA_VEHICLE_ID, vehicleId)
                 putExtra(EXTRA_VEHICLE_NAME, vehicleName)
                 putExtra(EXTRA_EFF, eff)
+                putExtra(EXTRA_MANUAL, manual)
             }
             ContextCompat.startForegroundService(context, intent)
         }
@@ -494,6 +633,25 @@ class TripLogService : Service() {
                 context.startService(intent)
             } catch (e: Exception) {
                 // Already stopped.
+            }
+        }
+
+        /** Pause the open trip; the file stays open and the service keeps following the link. */
+        fun pause(context: Context) {
+            sendAction(context, ACTION_PAUSE)
+        }
+
+        /** Continue appending to the same open trip. */
+        fun resume(context: Context) {
+            sendAction(context, ACTION_RESUME)
+        }
+
+        private fun sendAction(context: Context, action: String) {
+            val intent = Intent(context, TripLogService::class.java).apply { this.action = action }
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                // The service is already gone; there is no open trip to act on.
             }
         }
     }

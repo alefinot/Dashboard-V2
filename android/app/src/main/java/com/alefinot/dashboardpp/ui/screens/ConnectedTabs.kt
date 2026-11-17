@@ -188,6 +188,14 @@ fun AppShell(
     val settings = remember { RecorderSettings(context) }
     val recordingEnabled by settings.recordingEnabled
         .collectAsStateWithLifecycle(initialValue = true)
+    // One START was asked for on a page, and it begins a new file instead of
+    // re-opening the session the previous run sealed. The flag lives in the shell
+    // because the start command itself is sent by the effect below - the one place
+    // that already knows how to hand the recorder whose drives these are. Bumping
+    // [startRequest] is how a START for an already-enabled preference reaches that
+    // effect: writing `true` over `true` emits nothing.
+    var manualStart by remember { mutableStateOf(false) }
+    var startRequest by remember { mutableStateOf(0) }
     // The motion switch, collected once here (this composable owns the bar, the pill
     // and both lists) and mirrored into the theme, so the pill, the entrances and the
     // list stagger all read one flag and change together.
@@ -337,15 +345,24 @@ fun AppShell(
     // in the offline shell (see ShellRules.recorderWants). It also needs to know whose
     // drive this is, which is what the recorder writes as the file's `#vehicle=` line:
     // a telemetry frame says nothing about who sent it, so the app has to say it.
-    LaunchedEffect(address, conn?.vehicleId, tripsAvailable, recordingEnabled) {
+    //
+    // The pages' controls do not start the service themselves: they write the switch and
+    // ask this effect (the same door auto-start uses), so a START and a reconnect differ
+    // only in whether the drive begins a new file.
+    LaunchedEffect(address, conn?.vehicleId, tripsAvailable, recordingEnabled, startRequest) {
         // The recorder's owner is resolved once, here, and handed over whole: the service
         // cannot ask a pushed frame who sent it, and a trip file outlives the link that
         // produced it. `owner` is null exactly when nothing is linked, so one null check
         // carries both halves of that.
         val owner = connection.recorderTarget()
         if (owner != null && ShellRules.recorderWants(true, tripsAvailable, recordingEnabled)) {
+            // A manual START begins a new trip file; the flag is consumed so the next
+            // auto-start (a reconnect, the settings switch) keeps the 24 h re-open.
+            val beginNewFile = manualStart
+            manualStart = false
             TripLogService.start(
                 context, owner.deviceKey, owner.vehicleId, owner.vehicleName, owner.eff,
+                manual = beginNewFile,
             )
         } else {
             TripLogService.stop(context)
@@ -358,6 +375,41 @@ fun AppShell(
             }
         }
     }
+
+    // The trip recorder's controls, built once for both pages (see TripRecordingBar): one
+    // set of actions means a PAUSE on the Live page and a PAUSE on the Trips page cannot
+    // do two different things. START writes the switch first and lets the effect above do
+    // the starting; STOP writes it off, which is the same value App Settings shows, so
+    // nothing records again until the owner says so.
+    val recordingActions = TripRecordingActions(
+        canRecord = conn != null && tripsAvailable,
+        blocked = when {
+            conn == null -> "Connect a dashboard to start a drive."
+            !tripsAvailable -> "This dashboard's firmware cannot record trips."
+            else -> ""
+        },
+        onStart = {
+            if (recordingEnabled) {
+                // Already on, so the write below would emit nothing and the effect would
+                // never run: ask it for a start directly.
+                manualStart = true
+                startRequest++
+            } else {
+                manualStart = true
+                storeScope.launch { settings.setRecordingEnabled(true) }
+            }
+        },
+        onPause = { TripLogService.pause(context) },
+        onResume = { TripLogService.resume(context) },
+        onStop = {
+            storeScope.launch {
+                // The owner's stop: the next connection must not record by itself, and the
+                // App Settings switch must agree with the button that was just pressed.
+                settings.setRecordingEnabled(false)
+                TripLogService.stop(context)
+            }
+        },
+    )
 
     // Two different questions, and collapsing them is what made the app sluggish.
     // "Is the page inside the pager's viewport" decides whether it may paint and take
@@ -460,7 +512,9 @@ fun AppShell(
                                 },
                             )
                         }
-                        AppTab.TRIPS -> NativePage(inView) { TripsTab(trips) { row -> openTrip = row } }
+                        AppTab.TRIPS -> NativePage(inView) {
+                            TripsTab(trips, recordingActions) { row -> openTrip = row }
+                        }
                         AppTab.LIVE -> NativePage(inView) {
                             if (conn == null) {
                                 // The page stays, the live view does not: this is what
@@ -480,7 +534,10 @@ fun AppShell(
                                 // unit's frames whether this page is on screen or not, and
                                 // the page renders what the service published rather than
                                 // opening a second reader of the same link.
-                                LiveTab(active = page == AppTab.LIVE)
+                                LiveTab(
+                                    active = page == AppTab.LIVE,
+                                    actions = recordingActions,
+                                )
                             }
                         }
                         AppTab.WEB -> NativePage(inView) {

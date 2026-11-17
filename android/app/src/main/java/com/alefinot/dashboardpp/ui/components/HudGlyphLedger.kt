@@ -48,6 +48,7 @@ object HudGlyphLedger {
         "action.step-up" to HudIcons.Plus,
         "action.step-down" to HudIcons.Minus,
         "action.start" to HudIcons.Play,
+        "action.pause" to HudIcons.Pause,
         "action.stop" to HudIcons.Stop,
         "action.destroy" to HudIcons.Bin,
         "action.unit-restart" to HudIcons.Power,
@@ -74,6 +75,7 @@ object HudGlyphLedger {
         "readout.gnss" to HudIcons.Signal,
         "readout.power" to HudIcons.Bolt,
         "readout.recording" to HudIcons.Record,
+        "readout.paused" to HudIcons.Pause,
         "readout.stale" to HudIcons.Warn,
         // The vehicle card's empty cover and the editor's empty well. Same mark as the bar's
         // `nav.vehicles`, and `SHARED["SportWheel"]` is the reason that is not a collision.
@@ -102,6 +104,9 @@ object HudGlyphLedger {
             "app's subject. The bar's centre slot, a card's empty cover, the editor's empty well and " +
             "`OPEN VEHICLE PAGE` therefore draw one Ultraleggera rather than a tab mark and a " +
             "placeholder mark that happen to look alike.",
+        "Pause" to "The PAUSED pill and the PAUSE action are one act in two voices: the pill reports " +
+            "the state the control puts the drive in, exactly as `readout.recording` reports what " +
+            "the recorder is doing while `action.start` is what begins it.",
     )
 
     /**

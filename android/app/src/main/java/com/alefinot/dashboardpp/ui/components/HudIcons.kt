@@ -746,6 +746,21 @@ object HudIcons {
             "L8.4,18.8 A3.2,3.2 0 0 1 5.2,15.6 L5.2,8.4 A3.2,3.2 0 0 1 8.4,5.2 Z"
 
     /**
+     * **PAUSE** — hold what is running, without ending it. Two open strokes, the same weight and
+     * height as [Stop]'s square so the control line does not change size when the verb does.
+     *
+     * Deliberately a line mark and not two filled bars: the set's rule is that a body's interior
+     * detail is cut out of it, and between two bars there is nothing to cut — the daylight *is*
+     * the meaning. Two separately stroked paths also keep the pair from closing into a square at
+     * a row's 18 dp, which is what a single closed outline would read as.
+     */
+    val Pause: ImageVector by lazy {
+        stroked("Pause", PauseData)
+    }
+
+    internal val PauseData: String = "M8.8,5.2 L8.8,18.8 M15.2,5.2 L15.2,18.8"
+
+    /**
      * **FILE** — pick a file with a finger: the Storage Access Framework's own document shape.
      *
      * Deliberately not [ImportFile], which is a file arriving *into* this system: this mark opens a

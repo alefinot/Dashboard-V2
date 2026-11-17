@@ -142,7 +142,7 @@ class LivePageReadoutsTest {
         assertTrue(
             "the trip card is back on the frame clock: its elapsed figure must read the card's " +
                 "own ticking clock (nowMs), not System.currentTimeMillis() at composition time",
-            Regex("""val elapsedMs = nowMs - state\.tripStartMs""").containsMatchIn(page),
+            Regex("""nowMs - state\.tripStartMs""").containsMatchIn(page),
         )
         assertTrue(
             "the trip card stopped ticking between frames - the elapsed figure would freeze " +
@@ -153,12 +153,25 @@ class LivePageReadoutsTest {
             "the clock no longer follows the pager's viewport flag: every page stays composed " +
                 "in this pager, so a card nobody can see would tick four times a second for " +
                 "nobody and redraw itself all the way through a ride",
-            Regex("""LaunchedEffect\(state\.recording, state\.tripStartMs, inView\)""").containsMatchIn(page),
+            Regex("""LaunchedEffect\(state\.recording, state\.paused, state\.tripStartMs, inView\)""")
+                .containsMatchIn(page),
         )
         assertTrue(
             "the TIME figure and its meta note no longer share the H:MM:SS format; without " +
                 "seconds the card sits on one value for a minute",
             Regex("""hudDuration\(elapsedMs\)""").findAll(page).count() >= 2,
+        )
+        // The owner's PAUSE (2026-11-17): a frozen stopwatch, not one that keeps climbing while
+        // the file receives nothing. The paused figure has to come from the pause instant.
+        assertTrue(
+            "the trip clock runs through a pause again: the elapsed figure must freeze at " +
+                "state.pausedAtMs, or the card claims time the file never got",
+            Regex("""state\.pausedAtMs - state\.tripStartMs""").containsMatchIn(page),
+        )
+        assertTrue(
+            "the tick no longer stops while paused - a frozen figure must not recompose the " +
+                "card four times a second for a clock that cannot move",
+            Regex("""if \(!state\.recording \|\| state\.paused""").containsMatchIn(page),
         )
     }
 
@@ -191,7 +204,7 @@ class LivePageReadoutsTest {
         assertTrue(
             "the row map drifted back to the right of the numbers: the sketch belongs on the " +
                 "left, the corner the sealed card this drive becomes wears it in",
-            row.indexOf("state.liveTrack") < row.indexOf("Text(\"RECORDING\""),
+            row.indexOf("state.liveTrack") < row.indexOf("\"RECORDING\""),
         )
         assertTrue(
             "the row map started swallowing gestures again: the thumbnail is a status " +

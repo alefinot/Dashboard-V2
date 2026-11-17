@@ -33,6 +33,7 @@ class HudGlyphGeometryTest {
         "Minus" to HudIcons.Minus,
         "Play" to HudIcons.Play,
         "Stop" to HudIcons.Stop,
+        "Pause" to HudIcons.Pause,
         "File" to HudIcons.File,
         "Camera" to HudIcons.Camera,
         "Frame" to HudIcons.Frame,
@@ -62,6 +63,7 @@ class HudGlyphGeometryTest {
         "CheckData" to HudIcons.CheckData,
         "PlusData" to HudIcons.PlusData,
         "MinusData" to HudIcons.MinusData,
+        "PauseData" to HudIcons.PauseData,
         "FrameData" to HudIcons.FrameData,
         "SignalArcs" to HudIcons.SignalArcs,
     )
@@ -208,6 +210,33 @@ class HudGlyphGeometryTest {
                 assertTrue("$id stroke $i has no line to stroke", contourPoints(sub).size >= 2)
             }
         }
+    }
+
+    /**
+     * PAUSE is two strokes and the daylight between them is the meaning. Measured rather than
+     * eyeballed: at a row's 18 dp the gap between the bars is ~9 px, while the stroke that draws
+     * them is ~4 - any closer and the pair reads as one fat bar, which is the opposite verb.
+     */
+    @Test
+    fun `pause is two vertical bars with daylight between them`() {
+        val bars = polylines(HudIcons.PauseData)
+        assertEquals("pause is two strokes", 2, bars.size)
+        for (bar in bars) {
+            assertEquals("a pause bar is not vertical", 2, bar.size)
+            assertEquals("a pause bar leans", bar.first().x, bar.last().x, 0.01f)
+            assertEquals("a pause bar is shorter than the stop square beside it", 13.6f,
+                bar.last().y - bar.first().y, 0.01f)
+        }
+        val left = bars.minByOrNull { it.first().x }!!
+        val right = bars.maxByOrNull { it.first().x }!!
+        // The pair straddles the grid's centre line, so the mark sits centred in its box.
+        assertEquals("the pause bars are not centred on the grid", 12f,
+            (left.first().x + right.first().x) / 2f, 0.01f)
+        val daylight = right.first().x - left.first().x - 1.9f
+        assertTrue("the bars sit $daylight apart, so they read as one bar", daylight >= 2.0f)
+        // Same height as the stop square: the control line must not resize when the verb changes.
+        assertEquals("pause is not the stop mark's height", 13.6f,
+            (bars.maxOf { it.maxOf { p -> p.y } } - bars.minOf { it.minOf { p -> p.y } }), 0.01f)
     }
 
     @Test
@@ -363,8 +392,8 @@ class HudGlyphGeometryTest {
         val names = drawn.map { it.first }.toSet()
         val unmeasured = glyphOf.values.map { it.name.removePrefix("Hud") }.filter {
             it in setOf(
-                "Close", "Check", "Plus", "Minus", "Play", "Stop", "File", "Camera", "Frame",
-                "Droplet", "Signal", "Bolt", "Record", "Warn",
+                "Close", "Check", "Plus", "Minus", "Play", "Stop", "Pause", "File", "Camera",
+                "Frame", "Droplet", "Signal", "Bolt", "Record", "Warn",
             ) && it !in names
         }
         assertTrue("the ledger points at a mark this test does not measure: $unmeasured",

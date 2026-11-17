@@ -119,7 +119,7 @@ private val LiveMapBox = 150.dp
  * trace answers the one question a snapshot cannot: was it always that hot?
  */
 @Composable
-fun LiveTab(active: Boolean) {
+fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     var state by remember { mutableStateOf(TripRuntime.state.value) }
 
     // One history for the page, kept across recompositions and filled by the collector
@@ -178,7 +178,7 @@ fun LiveTab(active: Boolean) {
             // `pageFadeIn` per card, one stagger step apart: the stack arrives inside a
             // single page entrance.
             SpeedCard(snapshot, step = 1)
-            TripCard(state, snapshot, step = 2)
+            TripCard(state, snapshot, step = 2, actions = actions)
             PowerCard(snapshot, trends, step = 3)
             FuelCard(snapshot, step = 4)
             GnssCard(snapshot, step = 5)
@@ -532,31 +532,49 @@ private fun TraceOr(
  * moves when the minute rolls over - is not a stopwatch. The tick is scoped to this card, so
  * the other four are not redrawn for it.
  *
+ * A pause freezes the figure where the owner pressed PAUSE ([TripRuntimeState.pausedAtMs]) and
+ * stops the tick: a stopwatch that keeps climbing while the file gets nothing is a lie about
+ * the drive. On RESUME the clock is read from wall time again, so it jumps forward by the pause
+ * — which is what the file itself records, because `TripSummary.durationMs` is the span from
+ * the first sample to the last and the pause is a gap inside it.
+ *
  * While the file is open the card also carries the live route map: the drive's shape,
  * drawing itself as the recorder appends it (live route plan §4).
  */
 @Composable
-private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
+private fun TripCard(
+    state: TripRuntimeState,
+    s: Snapshot,
+    step: Int,
+    actions: TripRecordingActions,
+) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    // Ticks while the page can be seen and a file is open. Off-screen pages stay composed in
-    // this pager, and a hidden card has nothing to keep current for anybody.
+    // Ticks while the page can be seen and a file is being written. Off-screen pages stay
+    // composed in this pager, and a hidden card has nothing to keep current for anybody; a
+    // paused drive has nothing arriving, so its clock is frozen by definition.
     val inView = LocalEnterActive.current
-    LaunchedEffect(state.recording, state.tripStartMs, inView) {
-        if (!state.recording || state.tripStartMs <= 0L || !inView) return@LaunchedEffect
+    LaunchedEffect(state.recording, state.paused, state.tripStartMs, inView) {
+        if (!state.recording || state.paused || state.tripStartMs <= 0L || !inView) return@LaunchedEffect
         while (true) {
             nowMs = System.currentTimeMillis()
             delay(TRIP_CLOCK_TICK_MS)
         }
     }
-    val elapsedMs = nowMs - state.tripStartMs
+    // Paused: the figure is the pause instant, not now. A pause that began before the open
+    // file (the service can be paused while it waits for the first sample) has no pause
+    // instant to show yet, so the clock reads zero rather than a negative span.
+    val elapsedMs = when {
+        state.paused -> if (state.pausedAtMs > 0L) state.pausedAtMs - state.tripStartMs else 0L
+        else -> nowMs - state.tripStartMs
+    }
     LiveCard(
         title = "THIS TRIP",
         step = step,
         mark = HudGlyphLedger.mark("readout.trip"),
-        meta = if (state.recording && elapsedMs >= 0L) {
-            "recording ${hudDuration(elapsedMs)}"
-        } else {
-            when {
+        meta = when {
+            state.paused && elapsedMs >= 0L -> "paused ${hudDuration(elapsedMs)}"
+            state.recording && elapsedMs >= 0L -> "recording ${hudDuration(elapsedMs)}"
+            else -> when {
                 state.lastOkMs == 0L -> "connecting"
                 state.stale -> "no data"
                 else -> "not recording"
@@ -580,6 +598,11 @@ private fun TripCard(state: TripRuntimeState, s: Snapshot, step: Int) {
             // for the better part of a minute at demo speed and reads as a dead card.
             Figure("ODO", "", "km", num = s.odo, places = 1),
         )
+        // The recorder's controls: the card is the page's answer to "what is being written",
+        // so the buttons that start, hold and end it belong here rather than on the Trips
+        // page alone. One line, the same one the Trips page draws (TripRecordingBar).
+        Spacer(Modifier.height(6.dp))
+        TripRecordingBar(state, actions)
         // The drive's route, drawn while it is being made (live route plan §4): the
         // same tile map the sealed drive gets a detail page for, following the newest
         // position. Only a recording gets one - with no file open there is no route
@@ -933,6 +956,13 @@ private fun fmt(value: Double, places: Int = 1): String =
 @Composable
 private fun StatusChip(state: TripRuntimeState, active: Boolean) {
     when {
+        // A paused drive is still a recording - the file is open - so it outranks the
+        // RECORDING pill rather than replacing it with a link state. Amber and no breath:
+        // nothing is being written, and a pill that breathes would claim it is.
+        state.paused -> HudStateChip(
+            "PAUSED", HudGlyphLedger.mark("readout.paused"), HudColors.Amber,
+            pulse = false, active = active,
+        )
         state.recording -> HudStateChip(
             "RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.Green,
             pulse = true, active = active,

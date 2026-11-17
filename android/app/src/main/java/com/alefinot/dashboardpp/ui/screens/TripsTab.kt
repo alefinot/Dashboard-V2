@@ -82,7 +82,11 @@ import java.util.Locale
  * than re-reading the file it is appending to.
  */
 @Composable
-fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
+fun TripsTab(
+    vm: TripsViewModel,
+    actions: TripRecordingActions,
+    onOpen: (TripRow) -> Unit,
+) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val visible by vm.visibleRows.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
@@ -160,6 +164,13 @@ fun TripsTab(vm: TripsViewModel, onOpen: (TripRow) -> Unit) {
             Text(message.orEmpty(), color = HudColors.Amber, style = HudeCfgHelp())
             Spacer(Modifier.height(8.dp))
         }
+
+        // The recorder's controls, above the live row they act on: the row is what a drive
+        // looks like while it is being written, so the buttons belong with it and not at
+        // the far end of the list. They stay here when nothing is recording - a disabled
+        // START and the reason is how the owner finds this half of the page at all.
+        TripRecordingBar(runtime, actions)
+        Spacer(Modifier.height(10.dp))
 
         if (runtime.recording) {
             LiveTripRow(runtime)
@@ -363,7 +374,11 @@ private fun LiveTripRow(state: TripRuntimeState) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     // `#msg`'s own 13px, at the weight the page gives a line it wants
                     // read first (`.cfg-warn`, `.card h4`).
-                    Text("RECORDING", color = HudColors.Green, style = HudeSectionTitle(0f))
+                    Text(
+                        if (state.paused) "PAUSED" else "RECORDING",
+                        color = if (state.paused) HudColors.Amber else HudColors.Green,
+                        style = HudeSectionTitle(0f),
+                    )
                     Spacer(Modifier.width(10.dp))
                     Text(
                         summary?.let { formatDuration(it.durationMs) } ?: "0:00:00",

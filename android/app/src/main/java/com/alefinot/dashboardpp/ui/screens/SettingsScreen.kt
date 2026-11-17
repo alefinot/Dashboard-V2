@@ -317,6 +317,14 @@ fun SettingsScreen(
                     }
                 }
             }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                // The controls on the Live and Trips pages write this same switch, so a STOP
+                // here and a STOP there mean one thing: nothing records until the owner asks.
+                "The START and STOP controls on the Live and Trips pages set this same switch.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
             Spacer(Modifier.height(12.dp))
             ToggleRow(
                 label = "MOTION",
