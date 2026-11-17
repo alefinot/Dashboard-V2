@@ -4,9 +4,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color as AndroidColor
+import android.graphics.ColorFilter
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.view.ViewTreeObserver
 import kotlin.math.ceil
 import kotlin.math.max
@@ -251,12 +255,17 @@ private class MapHolder {
  * cannot answer "which end is this?" while the map is just looked at - and the
  * dots therefore swallow that tap outright, so osmdroid never opens the window.
  *
+ * Two kinds of art live here: a disc for a position a drive visited
+ * ([labelled] - START, END), and a dart for the position it is at right now
+ * ([heading] - LIVE), whose head turns with the direction of travel.
+ *
  * Drawn in code, not loaded from a resource, and shared by the detail map's
  * START/END dots and the live map's LIVE/START dots so the two can never drift
  * apart in size or ink. An empty label draws just the dot — what the small row
  * map can actually show.
  */
 internal object MapMarkers {
+    /** A fixed position: a disc with its name beside it. */
     fun labelled(view: MapView, point: GeoPoint, color: Int, label: String): Marker {
         val icon = dotWithLabel(view.context, view.resources.displayMetrics.density, color, label)
         val marker = Marker(view, view.context)
@@ -272,6 +281,31 @@ internal object MapMarkers {
         // Returning true means "handled, do nothing".
         marker.setOnMarkerClickListener { _, _ -> true }
         return marker
+    }
+
+    /**
+     * The live position as an arrow, its head turned to the direction of travel.
+     *
+     * Same ink, same label, same tap policy as [labelled] - the live marker is the one dot on
+     * these maps that is not a place, so it is the one dot allowed to rotate. The rotation
+     * lives inside the icon ([HeadingArrowDrawable]), not in `Marker.setRotation`: that one
+     * feeds its bearing through osmdroid's own screen-rotation maths (`-mBearing` on a flat
+     * marker, `-orientation - mBearing` otherwise), so which way the head ends up pointing
+     * depends on a library internal this app has no reason to depend on. A dart that turns
+     * itself is honest arithmetic: degrees clockwise from north, on a map that is always
+     * north-up.
+     */
+    fun heading(view: MapView, point: GeoPoint, color: Int, label: String): HeadingMarker {
+        val icon = HeadingArrowDrawable(view.resources.displayMetrics.density, color, label)
+        val marker = Marker(view, view.context)
+        marker.setPosition(point)
+        marker.setTitle(label)
+        marker.setAnchor(icon.anchorU, icon.anchorV)
+        marker.setIcon(icon)
+        // Swallow the tap for the same reason the dots do: on these maps a tap is the
+        // resume-follow gesture, aimed wherever the car happens to be.
+        marker.setOnMarkerClickListener { _, _ -> true }
+        return HeadingMarker(marker, icon)
     }
 
     private class MarkerIcon(
@@ -320,4 +354,128 @@ internal object MapMarkers {
             anchorV = cy / height,
         )
     }
+}
+
+/**
+ * The live position's marker: the [marker] osmdroid draws, and the one door the map's frame
+ * ticker uses to turn its head.
+ */
+internal class HeadingMarker(
+    val marker: Marker,
+    private val icon: HeadingArrowDrawable,
+) {
+    /**
+     * Degrees clockwise from north. Called at frame rate, so it only stores a number: the
+     * arrow turns on the draw the map performs anyway.
+     */
+    fun setBearing(degrees: Float) {
+        icon.bearingDeg = degrees
+    }
+}
+
+/**
+ * The dart that stands where the drive is and points the way it is going.
+ *
+ * Three rules the drawing obeys:
+ * - The head turns, the word beside it does not. A rotated `LIVE` is unreadable, and these
+ *   maps are north-up, so the label's upright is the map's upright - which is exactly why the
+ *   rotation is here in the icon and around the dart's own centre, rather than the whole
+ *   marker's.
+ * - Nothing is built per frame. The path is made once, in pixel offsets around the origin;
+ *   the ticker moves one float and the map draws.
+ * - The tip never touches the label: 15 dp of dart inside an 11 dp box with a 5 dp gap leaves
+ *   3 dp of clear air at the worst rotation.
+ */
+internal class HeadingArrowDrawable(
+    density: Float,
+    color: Int,
+    private val label: String,
+) : Drawable() {
+
+    /** Degrees clockwise from north: 0 points up the map. */
+    var bearingDeg: Float = 0f
+
+    private val pad = 3f * density
+
+    /** The box the dart lives in; the dart is longer than it is wide, so it can read as a point. */
+    private val headW = 11f * density
+    private val headL = 15f * density
+    private val gap = 5f * density
+
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = AndroidColor.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 1.75f * density
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        this.color = color
+        textSize = 10f * density
+        typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        letterSpacing = 0.08f
+        // The same dark halo the labelled dots use: the word has to survive the pale parts
+        // of a raster basemap.
+        setShadowLayer(3f * density, 0f, 0f, AndroidColor.BLACK)
+    }
+
+    private val labelled = label.isNotEmpty()
+    private val textWidth = if (labelled) text.measureText(label) else 0f
+    private val textHeight = text.fontMetrics.let { it.descent - it.ascent }
+
+    private val widthPx = ceil(pad * 2 + headW + if (labelled) gap + textWidth else 0f).toInt()
+    private val heightPx = ceil(pad * 2 + max(headL, if (labelled) textHeight else 0f)).toInt()
+
+    /** Fraction of the icon that sits on the coordinate: the dart's centre. */
+    val anchorU = (pad + headW / 2f) / widthPx
+
+    /** The dart is centred vertically in the icon, label or no label. */
+    val anchorV = 0.5f
+
+    /** The dart, in pixel offsets around (0, 0), pointing north. Built once, never rebuilt. */
+    private val dart = Path().apply {
+        moveTo(0f, -headL / 2f)          // the tip
+        lineTo(headW / 2f, headL / 2f)   // right wing
+        lineTo(0f, headL / 4f)           // tail notch
+        lineTo(-headW / 2f, headL / 2f)  // left wing
+        close()
+    }
+
+    override fun getIntrinsicWidth(): Int = widthPx
+
+    override fun getIntrinsicHeight(): Int = heightPx
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        val cx = b.left + pad + headW / 2f
+        val cy = (b.top + b.bottom) / 2f
+        canvas.save()
+        canvas.rotate(bearingDeg, cx, cy)
+        canvas.translate(cx, cy)
+        canvas.drawPath(dart, fill)
+        canvas.drawPath(dart, ring)
+        canvas.restore()
+        if (labelled) {
+            val metrics = text.fontMetrics
+            val baseline = cy - (metrics.ascent + metrics.descent) / 2f
+            canvas.drawText(label, b.left + pad + headW + gap, baseline, text)
+        }
+    }
+
+    override fun setAlpha(alpha: Int) {
+        fill.alpha = alpha
+        ring.alpha = alpha
+        text.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        fill.colorFilter = colorFilter
+        ring.colorFilter = colorFilter
+        text.colorFilter = colorFilter
+    }
+
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }

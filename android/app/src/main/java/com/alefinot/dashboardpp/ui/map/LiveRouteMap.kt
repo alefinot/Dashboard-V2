@@ -49,6 +49,14 @@ import kotlin.math.sqrt
  * drawn position sits on the segment between two recorded points, so it is a
  * position the drive really passed through, at most a second behind the recorder.
  *
+ * The newest position wears an arrow, not a disc: its head points the way the drive is
+ * going. [LiveHeading] reads that direction out of the very same positions, so nothing new
+ * has to come over the radio, and the arrow turns through the segment the way the dot
+ * travels it - a corner reads as a turn, not as a jump. A drive that has not moved has no
+ * direction to report, and the arrow keeps the last one it honestly had: the one failure an
+ * arrow at a traffic light can have is coming round in a slow circle because the receiver's
+ * noise cleared six metres.
+ *
  * A finger still wins, and now it wins the moment it moves: the map view's own
  * `onTouchEvent` treats travel past the touch slop as "this camera is mine",
  * follow stops, and the resume is a tap anywhere on the map. (It has to be caught
@@ -72,7 +80,7 @@ import kotlin.math.sqrt
 fun LiveRouteMap(
     points: List<TrackPoint>,
     modifier: Modifier = Modifier,
-    /** Labels beside the dots; too wide for the 72 dp row map, useful on the card. */
+    /** Labels beside the markers; too wide for the 72 dp row map, useful on the card. */
     showLabels: Boolean = true,
     /**
      * False makes the map a picture of the drive: no pan, no pinch or double-tap zoom,
@@ -95,7 +103,7 @@ fun LiveRouteMap(
             // paints its basemap over everything the canvas holds, not just its slot.
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx -> holder.build(ctx) },
-            update = { map -> holder.applyTrack(map, geo, inView) },
+            update = { map -> holder.applyTrack(map, points, geo, inView) },
         )
         val following by holder.following
         if (!following) {
@@ -131,9 +139,15 @@ fun LiveRouteMap(
  * that the first position never moves - so it is placed once and never touched
  * again.
  *
- * The glide state is four fields and one Runnable: the segment's start and end,
- * when it began, and how long it may take. Everything the Runnable touches per
- * frame is reused, because it runs at frame rate for the whole drive.
+ * The arrow is the exception that proves the rule: it is also placed once and then only
+ * turned, and the turn is a float on its icon, so the frame ticker never builds anything.
+ * The heading it turns to is opened per fix in [advance] and interpolated per frame in
+ * [glide], which keeps the head's rotation on the same clock as the dot's travel.
+ *
+ * The glide state is a handful of fields and one Runnable: the segment's start and
+ * end, when it began, how long it may take, and the two headings the arrow turns
+ * between. Everything the Runnable touches per frame is reused, because it runs at
+ * frame rate for the whole drive.
  */
 private class LiveMapHolder(
     private val showLabels: Boolean,
@@ -143,7 +157,7 @@ private class LiveMapHolder(
     private var track: List<GeoPoint> = emptyList()
     private var line: Polyline? = null
     private var startMarker: Marker? = null
-    private var liveMarker: Marker? = null
+    private var liveArrow: HeadingMarker? = null
     private var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     /** The point list already consumed, by identity - see [applyTrack]. */
@@ -167,6 +181,16 @@ private class LiveMapHolder(
 
     /** Uptime of the previous arrival - two of them measure the stream's real period. */
     private var lastArrivalMs = 0L
+
+    /** Where the arrow's head points, degrees clockwise from north - what it shows right now. */
+    private var heading = 0f
+
+    /**
+     * The two headings the arrow turns between: where its head was when this segment opened
+     * and where it lands at t = 1. Opened by [advance], read by [glide].
+     */
+    private var headingFrom = 0f
+    private var headingTo = 0f
 
     /** Where the dot is drawn this frame. One object, mutated; never allocated per frame. */
     private val dot = GeoPoint(0.0, 0.0)
@@ -213,7 +237,8 @@ private class LiveMapHolder(
      * either way, so the next drawn frame lands exactly where the glide has reached and
      * nothing accumulates as error - the frames just thin out, to as often as a pixel of
      * travel and no less. Parked, the map stops drawing entirely, which is the same
-     * result arrived at by arithmetic.
+     * result arrived at by arithmetic. The arrow's head obeys the same rule: it turns on the
+     * frames that get drawn, so it never rotates for a difference no screen can show.
      */
     private val glide = object : Runnable {
         override fun run() {
@@ -235,7 +260,14 @@ private class LiveMapHolder(
                 view.postOnAnimation(this)
                 return
             }
-            liveMarker?.setPosition(dot)
+            // The head turns on the same clock the dot travels: the same t that carries it
+            // along the segment sweeps the arrow through the shortest arc to the newest
+            // heading, so a corner reads as a turn the eye can follow instead of a snap.
+            heading = LiveHeading.normalizeDeg(
+                headingFrom + LiveHeading.shortestArcDeg(headingFrom, headingTo) * t.toFloat(),
+            )
+            liveArrow?.marker?.setPosition(dot)
+            liveArrow?.setBearing(heading)
             // A finger that took the camera keeps it: only the dot keeps riding the route.
             if (following.value) view.controller.setCenter(GeoPoint(dot))
             drawn = GeoPoint(dot)
@@ -357,7 +389,13 @@ private class LiveMapHolder(
         return view
     }
 
-    fun applyTrack(view: MapView, points: List<GeoPoint>, inView: Boolean) {
+    /**
+     * One update of the drive's shape: [fixes] is what the recorder holds, [geo] the same
+     * positions as map points. Both are handed over because the arrow needs the drive as the
+     * recorder made it - its direction is a distance walked back through real fixes - while
+     * everything that gets painted works in projected points.
+     */
+    fun applyTrack(view: MapView, fixes: List<TrackPoint>, geo: List<GeoPoint>, inView: Boolean) {
         // The cards around this map recompose at frame rate while their figures glide
         // (ui/components/HudFlow.kt), and AndroidView re-runs this lambda on every one
         // of those passes. The point list is remembered by identity upstream, so the
@@ -367,19 +405,34 @@ private class LiveMapHolder(
         val woke = inView && !active
         active = inView
         if (!active) stopTicker(view)
-        if (points === lastRaw && !woke) return
-        lastRaw = points
-        val usable = MapFit.usable(points)
+        if (geo === lastRaw && !woke) return
+        lastRaw = geo
+        val usable = MapFit.usable(geo)
         if (!sameAs(usable)) {
+            val restart = newDrive(usable)
             track = usable
             ensureLine(view)
             line?.setPoints(track)
             ensureMarkers(view)
-            advance()
+            advance(fixes, restart)
         }
         // Overlay swaps do not invalidate the view by themselves (MapHolder lesson).
         view.invalidate()
         frameAndRun(view)
+    }
+
+    /**
+     * A different drive, as opposed to this one gaining a metre.
+     *
+     * [com.alefinot.dashboardpp.trips.TrackPreview] never moves its first position, so a
+     * first point that changed is another file being recorded. Only the arrow cares: a new
+     * drive gets north back, because carrying the last drive's heading into the first metres
+     * of the next one would be a claim about a vehicle that has not moved yet.
+     */
+    private fun newDrive(next: List<GeoPoint>): Boolean {
+        val first = next.firstOrNull() ?: return false
+        val was = track.firstOrNull() ?: return true
+        return first.latitude != was.latitude || first.longitude != was.longitude
     }
 
     /**
@@ -427,11 +480,14 @@ private class LiveMapHolder(
         track = emptyList()
         line = null
         startMarker = null
-        liveMarker = null
+        liveArrow = null
         lastRaw = null
         hasFix = false
         framed = false
         drawn = null
+        heading = 0f
+        headingFrom = 0f
+        headingTo = 0f
     }
 
     /** Decimation can drop a middle point, but the newest one says what moved. */
@@ -452,8 +508,12 @@ private class LiveMapHolder(
      * The segment's length is the arrival interval that was actually measured, not a
      * constant: the unit streams at 1 Hz but the radio delivers when it likes, and a
      * fixed 1000 ms makes a slow frame visibly lag and a fast one visibly snap.
+     *
+     * The arrow's turn opens here for the same reason the glide does: one fix is one new
+     * direction, and the segment that carries the dot is what decides how long the head has
+     * to get round to it.
      */
-    private fun advance() {
+    private fun advance(fixes: List<TrackPoint>, restart: Boolean) {
         val newest = track.lastOrNull() ?: return
         val now = SystemClock.uptimeMillis()
         if (lastArrivalMs > 0L) segMs = (now - lastArrivalMs).coerceIn(SEG_MIN_MS, SEG_MAX_MS)
@@ -467,6 +527,32 @@ private class LiveMapHolder(
         segTo.setCoords(newest.latitude, newest.longitude)
         segStartMs = now
         hasFix = true
+        turnHeading(fixes, restart)
+    }
+
+    /**
+     * Aim the arrow at the drive's newest direction of travel.
+     *
+     * Two ways to have no direction: the drive has not covered the baseline yet (a trip's
+     * first seconds), or it has stopped. Both answer with the last heading, which is the
+     * honest answer for a vehicle that has not gone anywhere - and the safe one, because a
+     * heading read out of receiver noise is an arrow that slowly circles a parked drive.
+     */
+    private fun turnHeading(fixes: List<TrackPoint>, restart: Boolean) {
+        if (restart) {
+            heading = 0f
+            headingFrom = 0f
+            headingTo = 0f
+            liveArrow?.setBearing(0f)
+            return
+        }
+        val bearing = LiveHeading.of(fixes) ?: return
+        // From where the head actually is, not where the last segment meant to put it: an
+        // arrival early on its segment means the previous turn is still in progress, and a
+        // turn that restarts mid-sweep is continuous; one that restarts from the endpoint is
+        // a step.
+        headingFrom = heading
+        headingTo = bearing.toFloat()
     }
 
     /** Point the camera at the dot, once, right now - the glide's only non-frame moves. */
@@ -512,11 +598,15 @@ private class LiveMapHolder(
 
     private fun ensureMarkers(view: MapView) {
         val last = track.lastOrNull() ?: return
-        if (liveMarker == null) {
-            liveMarker = MapMarkers.labelled(
+        if (liveArrow == null) {
+            // The arrow, not a dot: this is the one marker on these maps that stands for a
+            // vehicle rather than a place, so it gets the head that says which way it is
+            // facing. Created pointing north; the first fix with six metres behind it aims it.
+            val arrow = MapMarkers.heading(
                 view, last, HudColors.Green.toArgb(), if (showLabels) "LIVE" else "",
             )
-            view.getOverlayManager().add(liveMarker)
+            liveArrow = arrow
+            view.getOverlayManager().add(arrow.marker)
         }
         // The first position never moves (TrackPreview's rule), so this dot is
         // placed once when the route becomes a line and never repositioned.
