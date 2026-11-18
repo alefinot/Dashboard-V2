@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -33,13 +34,21 @@ import kotlinx.coroutines.launch
  * that: a press that lasted longer than a tap but shorter than the hold is a person who changed
  * their mind, so it does **nothing** - pausing a recording because a thumb rested on the pill
  * would be the worst of both readings.
+ *
+ * [FILL_DELAY_MS] is the tap window itself: the red sweep only starts once the press has stopped
+ * being a tap, so the first half-second of a hold shows no red at all and a tap can never paint
+ * a countdown under itself. The sweep then owns exactly the rest of the window, which keeps full
+ * red and the stop deadline the same moment.
  */
 object HoldRules {
     /** How long the finger must stay down for the hold to fire. */
     const val HOLD_MS = 3000L
 
     /** Anything released under this is a tap. */
-    const val TAP_MS = 450L
+    const val TAP_MS = 500L
+
+    /** The press has to outlive the tap window before the red sweep begins. */
+    const val FILL_DELAY_MS = TAP_MS
 
     /** How fast the fill drains once the press ends without a hold. */
     const val DRAIN_MS = 160
@@ -160,10 +169,14 @@ fun rememberHoldToAct(
                         val startedAt = SystemClock.uptimeMillis()
                         var fired = false
                         val sweep = launch {
+                            // Nothing red during the tap window: a press that ends under
+                            // TAP_MS is a tap, and a countdown under it would promise a stop
+                            // that tap never meant. The sweep owns the rest of the window.
+                            delay(HoldRules.FILL_DELAY_MS)
                             fill.animateTo(
                                 1f,
                                 animationSpec = tween(
-                                    holdMs.toInt(),
+                                    (holdMs - HoldRules.FILL_DELAY_MS).coerceAtLeast(1L).toInt(),
                                     // Linear: this is a deadline the owner is watching, and an
                                     // eased bar either looks finished early or stalls at the end.
                                     easing = LinearEasing,

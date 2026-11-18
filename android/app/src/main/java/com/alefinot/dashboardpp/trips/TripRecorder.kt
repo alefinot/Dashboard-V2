@@ -65,11 +65,36 @@ class TripRecorder(
      * The recorder already holds every position it appends, and the maps otherwise had
      * no way to see the drive before its file was scanned - so the shape lives here,
      * next to the totals, and travels through [TripRuntimeState] like the totals do.
-     * It runs [TrackPreview] doubled: at zoom 15 the follow map shows a few hundred
+     * It runs [LiveTrack] doubled: at zoom 15 the follow map shows a few hundred
      * metres across, and the stored preview's 128 points are a whole drive stretched
      * over a card, too coarse for a line being watched as it is drawn.
+     *
+     * The route is segmented because a pause is a real gap in it (2.0.7/179): a resume
+     * starts a new piece, and no map draws a line across the ground the file never saw.
      */
-    private var liveTrack = TrackPreview(LIVE_TRACK_POINTS)
+    private var liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+
+    /**
+     * Where each pause of the open drive froze the recorded line, oldest first.
+     *
+     * Appended by [resume], not by [pause]: a pause is still in progress, and while it is,
+     * its dot is derived from the route (the last written position) instead of being fixed.
+     * On resume the position stops moving and becomes a fact about the drive, so it is
+     * written down here - and it stays written: the owner reads these dots as "where I
+     * stopped and started again", and a resume that cleared them lost the trail of every
+     * pause but the last one (2026-11-18).
+     */
+    private val pauseMarks = ArrayList<TrackPoint>()
+
+    /** Where the last closed drive ended - the maps' red END dot. */
+    private var endedAt: TrackPoint? = null
+
+    /**
+     * The open trip's start instant, used as the live route's identity. A map resets its
+     * overlays and reframes once per value, so a new drive cannot inherit the old one's
+     * heading or markers even when the first fix lands a metre away.
+     */
+    private var driveId = 0L
 
     /**
      * The `#vehicle=` line for the next file this recorder creates ("" = no tag).
@@ -145,19 +170,53 @@ class TripRecorder(
 
     /** Continue appending to the same open file. */
     fun resume() {
+        if (!isPaused) return
         isPaused = false
+        // A resume closes one recorded stretch and opens another. Two things follow: the
+        // place the old one froze at becomes a permanent orange dot, and the new piece is
+        // not joined to it - the map draws a second START beside it and no line crosses the
+        // ground the file never saw.
+        //
+        // Only while a trip is open: with no file there was nothing recorded to freeze, and
+        // the position the drive last wrote is already the END dot of the file that closed.
+        if (openTrip != null) {
+            liveTrack.lastRecorded()?.let { pauseMarks.add(it) }
+            liveTrack.startSegment()
+        }
     }
 
     /** Running summary of the open trip, straight from RAM (no file re-read). */
     fun summary(): TripSummary? = accumulator.summary()
 
     /**
-     * The open trip's shape for the live maps; empty when nothing is open. A sealed
-     * trip's shape stays in RAM until the next trip replaces it, but a closed trip is
-     * nobody's live map, so the open-trip guard is the gate.
+     * The route the live maps draw: every recorded stretch, and the dots a pause or a stop
+     * left behind.
+     *
+     * The route survives a seal (2.0.7/179): the file is closed, but the drive's shape stays
+     * on the maps with its END dot until the next START replaces it. [LiveRoute.endAt] is
+     * therefore reported while no trip is open, and the pause dot a closing seal overtakes is
+     * deliberately not - the drive closed at that position, so it is now the END dot, while
+     * every pause before it stays orange.
+     *
+     * A recorder whose pause began before the first sample has no open file and no recorded
+     * point; its route is empty and has no pause dot, which is the honest picture of a drive
+     * that does not exist yet.
      */
-    fun liveTrackPoints(): List<TrackPoint> =
-        if (openTrip == null) emptyList() else liveTrack.points()
+    fun liveRoute(): LiveRoute {
+        val open = openTrip != null
+        val pauses = if (open && isPaused) {
+            val frozen = liveTrack.lastRecorded()
+            if (frozen == null) pauseMarks.toList() else pauseMarks + frozen
+        } else {
+            pauseMarks.toList()
+        }
+        return LiveRoute(
+            driveId = driveId,
+            segments = liveTrack.snapshot(),
+            pauses = pauses,
+            endAt = if (open) null else endedAt,
+        )
+    }
 
     fun sessionRecord(): SessionRecord? = session
 
@@ -195,7 +254,7 @@ class TripRecorder(
             val reuse = reusableSession(s, now)
             if (reuse != null && reuse.tripPath != null) {
                 writer.reopen(reuse.tripPath)
-                seedAccumulator(reuse.tripPath)
+                seedAccumulator(reuse.tripPath, reuse.tripStartMs)
                 openTrip = TripRef(reuse.tripPath, reuse.tripStartMs)
                 reopened = true
                 opened = true
@@ -203,7 +262,10 @@ class TripRecorder(
                 val path = pathFor(now)
                 writer.create(path, tag)
                 accumulator = TripAccumulator()
-                liveTrack = TrackPreview(LIVE_TRACK_POINTS)
+                liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+                pauseMarks.clear()
+                endedAt = null
+                driveId = now
                 openTrip = TripRef(path, now)
                 opened = true
             }
@@ -288,9 +350,12 @@ class TripRecorder(
      * route is seeded from the same pass for the same reason - the map on return
      * shows the whole drive, not the last minute of it.
      */
-    private fun seedAccumulator(path: String) {
+    private fun seedAccumulator(path: String, startMs: Long) {
         accumulator = TripAccumulator()
-        liveTrack = TrackPreview(LIVE_TRACK_POINTS)
+        liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+        pauseMarks.clear()
+        endedAt = null
+        driveId = startMs
         writer.readDataLines(path).forEach { line ->
             TripFormat.parseLine(line)?.let {
                 accumulator.add(it)
@@ -302,6 +367,10 @@ class TripRecorder(
 
     private fun seal(reason: String) {
         val trip = openTrip ?: return
+        // The drive's last written position - what the END dot marks. The route itself is
+        // not thrown away: a closed drive stays on the maps, with every pause dot it
+        // gathered, until the next START replaces it (2.0.7/179).
+        endedAt = liveTrack.lastRecorded()
         writer.seal(trip.path)
         openTrip = null
         session = (session ?: SessionRecord(
@@ -321,7 +390,8 @@ class TripRecorder(
         private const val MAX_SPEED_EPS = 0.15
 
         /** See [liveTrack]: double the stored preview's 128, for the follow maps. */
-        private const val LIVE_TRACK_POINTS = 256
+        /** Positions a live route piece holds before it is examined for redundant ones. */
+        private const val LIVE_TRACK_FIRST_THIN_AT = LiveTrack.FIRST_THIN_AT
     }
 }
 

@@ -14,7 +14,9 @@ package com.alefinot.dashboardpp.trips
  *    owner can still stop after the unit goes out of range; hiding STOP behind
  *    "connect a dashboard" would be the one moment the control is needed most.
  *  - **A live service is never "unavailable".** `polling` with no open file is the
- *    window between START and the first sample; STOP is what backs out of it.
+ *    window between START and the first sample; STOP is what backs out of it. The one
+ *    exception is a lane kept alive for the display alone (`watching`): that drive is
+ *    over, the picture is still moving, and the honest offer is START again.
  *  - **`canRecord` only decides START vs unavailable**, because it is the one state that
  *    needs a link to act on.
  */
@@ -41,10 +43,20 @@ enum class RecordingControlState {
             paused: Boolean,
             polling: Boolean,
             canRecord: Boolean,
+            /**
+             * True when the frame lane is running for the display alone (2.0.7/179): a drive
+             * has finished, the app is open, and the lane is kept alive only so the live map
+             * goes on moving. See [TripRuntimeState.watching].
+             */
+            watching: Boolean = false,
         ): RecordingControlState = when {
             paused -> PAUSED
             recording -> RECORDING
-            polling -> WAITING
+            // A watching lane is idle, not waiting. WAITING's press is STOP, and on this lane
+            // a STOP is put straight back down again by the app that owns it, which leaves the
+            // owner pressing a pill that answers nothing (bench, 2026-11-18). What is actually
+            // true here is "nothing is recording, and a link is ready" - which is START.
+            polling && !watching -> WAITING
             canRecord -> START
             else -> UNAVAILABLE
         }

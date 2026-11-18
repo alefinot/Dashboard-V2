@@ -11,8 +11,10 @@ import androidx.core.content.ContextCompat
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.lifecycle.lifecycleScope
+import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.trips.RecorderSettings
+import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.ClearFocusOnTapOutside
 import com.alefinot.dashboardpp.ui.components.ClearFocusWhenKeyboardCloses
 import com.alefinot.dashboardpp.ui.screens.DashboardRoot
@@ -71,6 +73,38 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * The live map of a drive that has already ended (2.0.7/179).
+     *
+     * A stop keeps the drive on the maps, and the owner wants that map to go on living while
+     * they are looking at it — which needs a reader of the unit's stream, and the recording
+     * service just released the link. So the app asks for one back on the way in: no file, no
+     * wake lock, no notification, and nothing asked for at all unless there is a finished
+     * drive to show. [onStop] puts it down again, because "while the app is open" is the
+     * promise that keeps this from costing battery the rest of the day.
+     */
+    override fun onStart() {
+        super.onStart()
+        TripLogService.setAppForeground(true)
+        val state = TripRuntime.state.value
+        if (!state.recording && !state.paused && !state.polling && state.liveRoute.hasTrack) {
+            TripLogService.watch(this)
+        }
+    }
+
+    /**
+     * Away from the app, the display-only reader goes; a drive that is open or paused keeps
+     * its service, because that one is writing the file and needs the silence baseline the
+     * 120 s seal is measured against. A rotation is not a visit to the background, so it does
+     * not tear the lane down and rebuild it for nothing.
+     */
+    override fun onStop() {
+        super.onStop()
+        if (isChangingConfigurations) return
+        TripLogService.setAppForeground(false)
+        if (TripRuntime.state.value.watching) TripLogService.stop(this, keepDisplay = false)
     }
 
     /**

@@ -13,21 +13,22 @@ import org.junit.Test
 class HoldToActTest {
 
     @Test
-    fun `the ui promises three seconds and a 450 ms tap`() {
+    fun `the ui promises three seconds and a 500 ms tap`() {
         assertEquals(3000L, HoldRules.HOLD_MS)
-        assertEquals(450L, HoldRules.TAP_MS)
+        assertEquals(500L, HoldRules.TAP_MS)
+        assertEquals(HoldRules.TAP_MS, HoldRules.FILL_DELAY_MS)
     }
 
     @Test
     fun `a quick press is a tap`() {
         assertEquals(HoldRules.Result.TAP, HoldRules.result(0, cancelled = false))
         assertEquals(HoldRules.Result.TAP, HoldRules.result(200, cancelled = false))
-        assertEquals(HoldRules.Result.TAP, HoldRules.result(449, cancelled = false))
+        assertEquals(HoldRules.Result.TAP, HoldRules.result(499, cancelled = false))
     }
 
     @Test
-    fun `one millisecond past the tap is no longer a tap`() {
-        assertEquals(HoldRules.Result.NOTHING, HoldRules.result(450, cancelled = false))
+    fun `the tap window ends at half a second`() {
+        assertEquals(HoldRules.Result.NOTHING, HoldRules.result(500, cancelled = false))
     }
 
     @Test

@@ -74,10 +74,13 @@ private const val CHIP_PULSE_STEP_MS = 60L
  * would stop the drive. The component stays a *state* chip - a call site with nothing
  * to offer passes no gesture and no [hold], and the pill goes back to being a readout.
  *
- * The pill keeps the page's `.ip-banner` shape and `.msg-*` tint recipe: [ink] at 8%
- * behind the glass, the same ink at 30% for the hairline, and in both the mark and
- * the word - one ink for every channel (see [HudGlyphAction]). [pulse] breathes the
- * page's `pulseGlow` keyframe while the state is live (see [CHIP_PULSE_MS]).
+ * The pill keeps the page's `.ip-banner` shape and `.msg-*` tint recipe: [edge] at
+ * [washAlpha] behind the glass, the same ink at [borderAlpha] for the hairline, and [ink]
+ * in both the mark and the word - one ink for every channel (see [HudGlyphAction]).
+ * [edge] is the ink by default; the recorder's stopped state passes red while the word
+ * stays dim, because "nothing is recording" is a warning about the drive, not a label
+ * about the link. [pulse] breathes the page's `pulseGlow` keyframe while the state is
+ * live (see [CHIP_PULSE_MS]).
  */
 @Composable
 fun HudStateChip(
@@ -88,6 +91,10 @@ fun HudStateChip(
     pulse: Boolean = false,
     active: Boolean = true,
     hold: () -> Float = { 0f },
+    /** Ink of the hairline and the wash; the mark and word keep [ink]. */
+    edge: Color = ink,
+    borderAlpha: Float = 0.3f,
+    washAlpha: Float = 0.08f,
 ) {
     // The state changes without the user touching anything (the recorder starts,
     // the page takes the connection, data goes stale), so both halves of the pill
@@ -135,9 +142,9 @@ fun HudStateChip(
             .hudCard(
                 shape = HudRadius.PillShape,
                 fill = HudColors.Panel,
-                borderColor = color.copy(alpha = 0.3f),
+                borderColor = edge.copy(alpha = borderAlpha),
             )
-            .background(color.copy(alpha = 0.08f), HudRadius.PillShape),
+            .background(edge.copy(alpha = washAlpha), HudRadius.PillShape),
     ) {
         // The hold's countdown, under the word rather than over it: a pill that fills red and
         // hides what it is filling for is a pill you have to remember. Read inside the draw

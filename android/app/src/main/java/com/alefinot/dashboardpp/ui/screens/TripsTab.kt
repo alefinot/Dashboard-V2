@@ -347,6 +347,7 @@ private fun RecordingCard(
         recording = state.recording,
         paused = state.paused,
         polling = state.polling,
+        watching = state.watching,
         canRecord = actions.canRecord,
     )
     val tap = control.tap()
@@ -375,18 +376,26 @@ private fun RecordingCard(
     // language: `#msg` plus `.msg-success` -- emerald hairline at 30%, emerald at
     // 8% as the wash, 8px radius. A paused drive is amber, the window before the first
     // sample wears the link's cyan, and an idle card the dim ink of a thing not running.
+    // The idle card's hairline and wash are red (2.0.7/179): a recording surface that is
+    // not recording is a warning about the drive, and it stays red on a fresh start too -
+    // the state is the same state whether or not this session ever wrote a file.
+    val stopped = control == RecordingControlState.START ||
+        control == RecordingControlState.UNAVAILABLE
     val ink = when {
         state.paused -> HudColors.Amber
         state.recording -> HudColors.Green
         control == RecordingControlState.WAITING -> HudColors.Cyan
         else -> HudColors.TextDim
     }
+    val edge = if (stopped) HudColors.Red else ink
+    val borderAlpha = if (stopped) 0.55f else 0.3f
+    val washAlpha = if (stopped) 0.12f else 0.08f
     Box(
         Modifier.fillMaxWidth()
             // `#msg`: 8px corners, the status strip's own fill under the state's wash,
             // its ink as the hairline at 30%. No shadow.
-            .hudCard(fill = HudColors.Msg, borderColor = ink.copy(alpha = 0.3f))
-            .background(ink.copy(alpha = 0.08f), HudRadius.CardShape)
+            .hudCard(fill = HudColors.Msg, borderColor = edge.copy(alpha = borderAlpha))
+            .background(edge.copy(alpha = washAlpha), HudRadius.CardShape)
             .then(hold.modifier),
     ) {
         // The stop countdown, under the row's own content: the card is what fills, and
@@ -412,10 +421,16 @@ private fun RecordingCard(
             // margin to spend on words - and show-only (`interactive = false`): a status
             // picture, not a second map, so it never pans, zooms or shows the +/− slabs,
             // and it refuses every touch at its own door, leaving the gesture to the card.
-            // Before the first fix there is no shape, and the words stand alone.
-            if (state.liveTrack.isNotEmpty()) {
+            // A pause keeps the frozen line, and a stopped drive keeps the finished one
+            // with its END dot (2.0.7/179): the row is the drive's picture until the next
+            // START replaces it. Before the first fix there is no shape, and the words
+            // stand alone.
+            val route = state.liveRoute
+            if (route.hasTrack) {
                 LiveRouteMap(
-                    state.liveTrack,
+                    route,
+                    state.liveTrail,
+                    writing = false,
                     Modifier.size(72.dp),
                     showLabels = false,
                     interactive = false,

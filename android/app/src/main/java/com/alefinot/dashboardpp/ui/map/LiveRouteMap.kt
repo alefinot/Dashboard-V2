@@ -1,4 +1,4 @@
-package com.alefinot.dashboardpp.ui.map
+﻿package com.alefinot.dashboardpp.ui.map
 
 import android.content.Context
 import android.os.SystemClock
@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.alefinot.dashboardpp.trips.LiveRoute
 import com.alefinot.dashboardpp.trips.TrackPoint
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -33,7 +34,7 @@ import org.osmdroid.views.overlay.Polyline
 import kotlin.math.sqrt
 
 /**
- * The open drive's route, drawing itself as the recorder appends it (live route plan).
+ * The recorded drive's route, drawing itself as the recorder appends it (live route plan).
  *
  * The same osmdroid tile map the sealed drive gets on its detail page, with the
  * opposite camera rule. The detail page frames a finished drive once and then keeps
@@ -46,16 +47,36 @@ import kotlin.math.sqrt
  * and the drive reads as a slideshow. Between two fixes the dot and the camera
  * travel the segment on the Choreographer instead ([LiveMapHolder.glide]) -
  * constant speed, arriving as the next fix lands. Nothing is invented: every
- * drawn position sits on the segment between two recorded points, so it is a
+ * drawn position sits on the segment between two real positions, so it is a
  * position the drive really passed through, at most a second behind the recorder.
  *
  * The newest position wears an arrow, not a disc: its head points the way the drive is
- * going. [LiveHeading] reads that direction out of the very same positions, so nothing new
- * has to come over the radio, and the arrow turns through the segment the way the dot
- * travels it - a corner reads as a turn, not as a jump. A drive that has not moved has no
- * direction to report, and the arrow keeps the last one it honestly had: the one failure an
- * arrow at a traffic light can have is coming round in a slow circle because the receiver's
- * noise cleared six metres.
+ * going. [LiveHeading] reads that direction out of the recorded positions plus the newest
+ * fix, so nothing new has to come over the radio, and the arrow turns through the segment
+ * the way the dot travels it - a corner reads as a turn, not as a jump. A drive that has
+ * not moved has no direction to report, and the arrow keeps the last one it honestly had:
+ * the one failure an arrow at a traffic light can have is coming round in a slow circle
+ * because the receiver's noise cleared six metres.
+ *
+ * **A pause is a gap, not a line** (2.0.7/179). The route is a list of segments, one per
+ * recording stretch: every piece is its own polyline with its own START dot, and a resume
+ * begins a second piece instead of joining the two across ground the file never saw. While
+ * paused the recorded line freezes at an amber PAUSE dot, but the arrow keeps riding the
+ * newest GPS fix - the unit still knows where the car is, and a live map that freezes
+ * solid during a pause is no longer live. The route survives the stop: the last written
+ * position becomes a red END dot, the camera snaps to it, and the shape stays on both maps
+ * until the next START replaces it. That is why the map is mounted for a route, not for an
+ * open file: a closed drive that vanished the moment it closed was the one picture the
+ * owner actually wanted to keep.
+ *
+ * **The line is drawn as it happens** (2026-11-18). A fix a second used to mean a line that
+ * grew in car-length jumps, and a cap of 256 points per piece used to mean a drive that
+ * degenerated into chords before it reached its second highway exit. So a piece is now thinned
+ * by geometry instead of by count - a position is dropped only when a straight line between its
+ * neighbours already covers it - which keeps 1000 km of route as true as the GPS that wrote
+ * it, and the newest position is held back from the polyline and drawn by a two-point tail
+ * reaching to the gliding arrow, so what grows is the line under the arrow at the arrow's
+ * speed.
  *
  * A finger still wins, and now it wins the moment it moves: the map view's own
  * `onTouchEvent` treats travel past the touch slop as "this camera is mine",
@@ -69,29 +90,49 @@ import kotlin.math.sqrt
  *
  * The Trips row's 72 dp thumbnail opts out of the whole gesture surface
  * (`interactive = false`): it is a status picture of the drive that takes no touch at
- * all — every gesture that starts on it belongs to the page, not to the map.
+ * all â€” every gesture that starts on it belongs to the page, not to the map.
  *
  * Degradation is the detail map's, unchanged: no tiles and the vector route plus
  * the dots still render - the route is our recorded data, not the tile server's.
- * And it is built only while a trip file is open, so an idle app never fetches a
+ * And it is built only while a route exists, so an idle app never fetches a
  * basemap for a drive that does not exist.
  */
 @Composable
 fun LiveRouteMap(
-    points: List<TrackPoint>,
+    route: LiveRoute,
+    /**
+     * Where the vehicle is: the newest positions the frame lane heard, recorded or not
+     * ([com.alefinot.dashboardpp.trips.CursorTrail]). The arrow sits on the last of them and
+     * points along the last few hundred metres of them - which is why a pause leaves it
+     * moving and turning, and why a drive that has ended can keep an arrow at all.
+     */
+    trail: List<TrackPoint>,
+    /**
+     * True while a piece of this drive is actually being written - recording, not paused,
+     * not closed. It decides one thing: whether the blue line is allowed to reach forward.
+     * While a piece is open, the newest recorded position is drawn by the gliding tail rather
+     * than by the polyline, so the line grows under the arrow at the arrow's speed instead of
+     * jumping a whole fix once a second. While paused or after a stop, nothing is being
+     * written, and a line that grew toward the arrow would draw ground the file never saw.
+     */
+    writing: Boolean,
     modifier: Modifier = Modifier,
     /** Labels beside the markers; too wide for the 72 dp row map, useful on the card. */
     showLabels: Boolean = true,
     /**
      * False makes the map a picture of the drive: no pan, no pinch or double-tap zoom,
-     * no +/− control — the view refuses every touch at its dispatch door, so the
+     * no +/âˆ’ control â€” the view refuses every touch at its dispatch door, so the
      * gesture belongs to the page and the map never even sees it.
      */
     interactive: Boolean = true,
 ) {
     OsmdroidSetup.ensure(LocalContext.current)
     val holder = remember { LiveMapHolder(showLabels, interactive) }
-    val geo = remember(points) { points.map { GeoPoint(it.lat, it.lon) } }
+    // The newest position the vehicle reported, and the history its direction is measured
+    // across. Both are keyed by identity: the frame lane hands out a new trail list once a
+    // second and the same one in between, so a card that recomposes at frame rate for its
+    // gliding figures costs this map nothing.
+    val cursor = remember(trail) { trail.lastOrNull()?.let { GeoPoint(it.lat, it.lon) } }
     // The pager keeps its neighbours composed, and a map nobody can look at has no
     // business taking a frame callback away from the page that is on screen - the same
     // rule the trip clock follows (LiveTab). In view is also the only moment a glide
@@ -103,7 +144,7 @@ fun LiveRouteMap(
             // paints its basemap over everything the canvas holds, not just its slot.
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx -> holder.build(ctx) },
-            update = { map -> holder.applyTrack(map, points, geo, inView) },
+            update = { map -> holder.applyRoute(map, route, cursor, trail, writing, inView) },
         )
         val following by holder.following
         if (!following) {
@@ -133,16 +174,20 @@ fun LiveRouteMap(
 /**
  * The map's camera, overlays and glide between frames.
  *
- * The overlays are added once and then moved: at one update a second there is
- * nothing to gain from rebuilding a [Polyline] and its markers every time, and
- * the START dot relies on [com.alefinot.dashboardpp.trips.TrackPreview]'s rule
- * that the first position never moves - so it is placed once and never touched
- * again.
+ * The overlays are created once per drive and then moved: at one update a second there is
+ * nothing to gain from rebuilding a [Polyline] and its markers every time, and each
+ * segment's first position never moves ([com.alefinot.dashboardpp.trips.LiveTrack]'s rule),
+ * so its START dot is placed once and never touched again. A polyline is *appended* to rather
+ * than re-set â€” see [mirrors] for why osmdroid makes that a rule and not a preference.
  *
  * The arrow is the exception that proves the rule: it is also placed once and then only
  * turned, and the turn is a float on its icon, so the frame ticker never builds anything.
  * The heading it turns to is opened per fix in [advance] and interpolated per frame in
  * [glide], which keeps the head's rotation on the same clock as the dot's travel.
+ *
+ * The blue line rides that same clock: while a piece is open its newest fix is held back from
+ * the polyline and drawn by [tail] out to the gliding dot, so the line is generated under the
+ * arrow instead of ahead of it ([tail]'s note has the arithmetic).
  *
  * The glide state is a handful of fields and one Runnable: the segment's start and
  * end, when it began, how long it may take, and the two headings the arrow turns
@@ -154,14 +199,47 @@ private class LiveMapHolder(
     private val interactive: Boolean,
 ) {
     private var map: MapView? = null
-    private var track: List<GeoPoint> = emptyList()
-    private var line: Polyline? = null
-    private var startMarker: Marker? = null
+    private var driveId = 0L
+
+    /** One polyline per recorded piece, created once per drive. */
+    private val lines = ArrayList<Polyline>()
+
+    /**
+     * The map's own copy of each piece, in the geometry osmdroid draws.
+     *
+     * It exists because a polyline's points may only be touched through [Polyline.setPoints]
+     * and [Polyline.addPoint]: osmdroid caches a piece's projected pixel coordinates and its
+     * bounding box and invalidates them from those two methods alone, so writing into the list
+     * `getPoints()` hands back (a direct link to its internals) leaves the line frozen in the
+     * shape it had when the cache was filled. A mirror lets an update append the new fix or
+     * two instead of handing 40 000 of them back every second.
+     */
+    private val mirrors = ArrayList<ArrayList<GeoPoint>>()
+
+    private val starts = ArrayList<Marker?>()
+
+    /**
+     * One dot per pause of this drive, in the order the pauses happened. They are never moved
+     * and never removed while the drive is on the maps: each one marks the place the owner
+     * stopped writing, and a third pause of a drive reads as three dots, not as the last one
+     * (2026-11-18).
+     */
+    private val pauses = ArrayList<Marker>()
+    private var endMarker: Marker? = null
     private var liveArrow: HeadingMarker? = null
     private var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
-    /** The point list already consumed, by identity - see [applyTrack]. */
-    private var lastRaw: List<GeoPoint>? = null
+    /** The route already consumed, by identity - see [applyRoute]. */
+    private var lastRoute: LiveRoute? = null
+
+    /** The vehicle's trail already consumed, by identity - see [applyRoute]. */
+    private var lastTrail: List<TrackPoint>? = null
+
+    /** True once a closed drive's END dot has been parked under the camera. */
+    private var endSnapped = false
+
+    /** True once that parking has really moved the camera - the view may have been unmeasured. */
+    private var endCentered = false
 
     /** False once a finger takes the camera; drives the RE-CENTER pill's visibility. */
     val following = mutableStateOf(true)
@@ -171,6 +249,32 @@ private class LiveMapHolder(
 
     /** The newest fix - the segment's end, and where the dot lands at t = 1. */
     private var segTo = GeoPoint(0.0, 0.0)
+
+    /**
+     * The piece being written, drawn forward to wherever the arrow has got to.
+     *
+     * The route reaches the phone one fix a second, and a polyline handed that fix grows a
+     * whole car-length in one frame: the owner's words were "the blue route should generate
+     * under the arrow and smoothly like the arrow so the generation is not visible"
+     * (2026-11-18). So while a piece is open the polyline deliberately stops one position short
+     * of the drive's newest fix and this two-point line covers the rest, ending exactly at the
+     * gliding dot - the same ink, the same width, joined at the point the polyline already
+     * holds. When the next fix lands, that held-back position moves into the polyline and the
+     * tail moves on with the arrow. Nothing jumps, because the tail's end and the dot are the
+     * same number.
+     *
+     * Only while a piece is open. A pause or a stop writes nothing, and a line that carried on
+     * growing toward a moving arrow would draw ground the file never saw.
+     */
+    private var tail: Polyline? = null
+
+    /** The tail's two ends, reused every frame: where the polyline stops, and the dot. */
+    private val tailStart = GeoPoint(0.0, 0.0)
+    private val tailTo = GeoPoint(0.0, 0.0)
+    private val tailPoints = arrayListOf(tailStart, tailTo)
+
+    /** Whether the last update was told a piece is being written; drives [syncTail]. */
+    private var writingNow = false
 
     /** Has a fix landed at all? Until one does, there is nothing to glide to. */
     private var hasFix = false
@@ -268,6 +372,13 @@ private class LiveMapHolder(
             )
             liveArrow?.marker?.setPosition(dot)
             liveArrow?.setBearing(heading)
+            // The blue line's forward edge travels with the dot, so the growth the eye can
+            // see is the arrow's own, not one jump a second. setPoints on two points is a
+            // couple of assignments; this is the only per-frame cost the tail has.
+            tail?.let {
+                tailTo.setCoords(dot.latitude, dot.longitude)
+                it.setPoints(tailPoints)
+            }
             // A finger that took the camera keeps it: only the dot keeps riding the route.
             if (following.value) view.controller.setCenter(GeoPoint(dot))
             drawn = GeoPoint(dot)
@@ -373,7 +484,7 @@ private class LiveMapHolder(
         if (interactive) {
             view.setMultiTouchControls(true)
         } else {
-            // Show-only: no pinch or double-tap zoom from the gesture detector, no +/−
+            // Show-only: no pinch or double-tap zoom from the gesture detector, no +/âˆ’
             // control (on a thumbnail it paints two slabs over the drive anyway), and
             // dispatchTouchEvent above refuses the touch so the page keeps the gesture.
             // The camera is the follow's alone.
@@ -390,31 +501,46 @@ private class LiveMapHolder(
     }
 
     /**
-     * One update of the drive's shape: [fixes] is what the recorder holds, [geo] the same
-     * positions as map points. Both are handed over because the arrow needs the drive as the
-     * recorder made it - its direction is a distance walked back through real fixes - while
-     * everything that gets painted works in projected points.
+     * One update of the route: [geo] is every recorded piece as map points, [cursor] the
+     * newest fix (recorded or not), and [route] the dots the pieces end at.
+     *
+     * The cards around this map recompose at frame rate while their figures glide
+     * (ui/components/HudFlow.kt), and AndroidView re-runs this lambda on every one
+     * of those passes. The geometry is remembered by identity upstream, so the
+     * reference test below is the whole filter: re-walking every point sixty times
+     * a second to conclude "same drive" is exactly the step this file exists to avoid.
+     * Coming back into view is the one change that has to get through the filter.
      */
-    fun applyTrack(view: MapView, fixes: List<TrackPoint>, geo: List<GeoPoint>, inView: Boolean) {
-        // The cards around this map recompose at frame rate while their figures glide
-        // (ui/components/HudFlow.kt), and AndroidView re-runs this lambda on every one
-        // of those passes. The point list is remembered by identity upstream, so the
-        // reference test below is the whole filter: re-walking 256 points sixty times
-        // a second to conclude "same drive" is exactly the step this file exists to avoid.
-        // Coming back into view is the one change that has to get through the filter.
+    fun applyRoute(
+        view: MapView,
+        route: LiveRoute,
+        cursor: GeoPoint?,
+        trail: List<TrackPoint>,
+        writing: Boolean,
+        inView: Boolean,
+    ) {
         val woke = inView && !active
         active = inView
         if (!active) stopTicker(view)
-        if (geo === lastRaw && !woke) return
-        lastRaw = geo
-        val usable = MapFit.usable(geo)
-        if (!sameAs(usable)) {
-            val restart = newDrive(usable)
-            track = usable
-            ensureLine(view)
-            line?.setPoints(track)
-            ensureMarkers(view)
-            advance(fixes, restart)
+        val newDrive = route.driveId != driveId
+        if (newDrive) reset(view, route.driveId)
+        // Both inputs are compared by identity: the recorder and the frame lane hand out a new
+        // route / a new trail once a second and the same objects in between, so a page that
+        // recomposes at frame rate for its gliding figures costs this map a reference check.
+        // `writing` is checked by value because a PAUSE flips it with the route unchanged, and
+        // a tail left drawing across a pause is a line over ground that was never recorded.
+        val changed = newDrive || woke || route !== lastRoute || trail !== lastTrail
+        if (changed || writing != writingNow) {
+            lastRoute = route
+            lastTrail = trail
+            writingNow = writing
+            syncSegments(view, route.segments, writing)
+            syncMarkers(view, route, cursor)
+            if (cursor != null) advance(trail, cursor, newDrive)
+        }
+        if (route.closed) closeAt(view, route.endAt) else {
+            endSnapped = false
+            endCentered = false
         }
         // Overlay swaps do not invalidate the view by themselves (MapHolder lesson).
         view.invalidate()
@@ -422,22 +548,8 @@ private class LiveMapHolder(
     }
 
     /**
-     * A different drive, as opposed to this one gaining a metre.
-     *
-     * [com.alefinot.dashboardpp.trips.TrackPreview] never moves its first position, so a
-     * first point that changed is another file being recorded. Only the arrow cares: a new
-     * drive gets north back, because carrying the last drive's heading into the first metres
-     * of the next one would be a claim about a vehicle that has not moved yet.
-     */
-    private fun newDrive(next: List<GeoPoint>): Boolean {
-        val first = next.firstOrNull() ?: return false
-        val was = track.firstOrNull() ?: return true
-        return first.latitude != was.latitude || first.longitude != was.longitude
-    }
-
-    /**
      * The half of an update that needs a measured view - also what runs when the layout
-     * finally lands, which is why it is not folded into [applyTrack].
+     * finally lands, which is why it is not folded into [applyRoute].
      */
     private fun frameAndRun(view: MapView) {
         if (view.width == 0 || view.height == 0) {
@@ -450,9 +562,32 @@ private class LiveMapHolder(
             // travels, and a zoom that came along every second would be the punch
             // this file exists to prevent.
             view.controller.setZoom(FOLLOW_ZOOM)
+            if (!endSnapped) snapCamera(view)
+        }
+        if (endSnapped && !endCentered) {
+            // The stop is the one camera move nobody is chasing: land the view on the END dot.
+            // It is a landing, not a lid - a drive that keeps being watched (the app is open,
+            // so the frame lane is) keeps moving from here, and the next fix takes the camera
+            // with it. Parking the view for good was the old behaviour, and it is what made a
+            // stopped drive's map look dead (2026-11-18).
+            endCentered = true
             snapCamera(view)
         }
         if (active) startTicker(view)
+    }
+
+    /** The drive closed: park the arrow on the END dot and let the camera land there. */
+    private fun closeAt(view: MapView, end: TrackPoint?) {
+        if (endSnapped || end == null) return
+        stopTicker(view)
+        dot.setCoords(end.lat, end.lon)
+        segFrom.setCoords(end.lat, end.lon)
+        segTo.setCoords(end.lat, end.lon)
+        hasFix = true
+        drawn = GeoPoint(dot)
+        following.value = true
+        endSnapped = true
+        endCentered = false
     }
 
     /**
@@ -477,24 +612,73 @@ private class LiveMapHolder(
             onDetach()
         }
         map = null
-        track = emptyList()
-        line = null
-        startMarker = null
+        lines.clear()
+        mirrors.clear()
+        starts.clear()
+        pauses.clear()
+        endMarker = null
         liveArrow = null
-        lastRaw = null
+        tail = null
+        lastRoute = null
+        lastTrail = null
+        writingNow = false
         hasFix = false
         framed = false
+        endSnapped = false
+        endCentered = false
         drawn = null
         heading = 0f
         headingFrom = 0f
         headingTo = 0f
     }
 
-    /** Decimation can drop a middle point, but the newest one says what moved. */
-    private fun sameAs(points: List<GeoPoint>): Boolean =
-        points.size == track.size &&
-            points.lastOrNull()?.latitude == track.lastOrNull()?.latitude &&
-            points.lastOrNull()?.longitude == track.lastOrNull()?.longitude
+    /**
+     * A different drive, as opposed to this one gaining a metre: every overlay is thrown
+     * away and the next fix reframes the view. A route that merely went from open to closed
+     * keeps its pieces - that is the whole point of the END dot.
+     */
+    private fun reset(view: MapView, id: Long) {
+        stopTicker(view)
+        for (line in lines) view.overlayManager.remove(line)
+        hideTail(view)
+        for (marker in starts) marker?.let { view.overlayManager.remove(it) }
+        for (marker in pauses) view.overlayManager.remove(marker)
+        endMarker?.let { view.overlayManager.remove(it) }
+        liveArrow?.let { view.overlayManager.remove(it.marker) }
+        lines.clear()
+        mirrors.clear()
+        starts.clear()
+        pauses.clear()
+        endMarker = null
+        liveArrow = null
+        driveId = id
+        lastRoute = null
+        lastTrail = null
+        writingNow = false
+        hasFix = false
+        framed = false
+        endSnapped = false
+        endCentered = false
+        drawn = null
+        heading = 0f
+        headingFrom = 0f
+        headingTo = 0f
+        following.value = true
+    }
+
+    /**
+     * The few hundred metres the arrow's direction is measured across: the newest of the
+     * positions the vehicle reported, oldest first.
+     *
+     * This used to walk the *recorded* route, which is a good compass only while the recorder
+     * is writing. A pause freezes the route and not the car, so the bearing came to be taken
+     * from the pause dot to wherever the car had got to - a head that points back at a decision
+     * instead of down the road (2026-11-18). The trail moves when the car moves, in every state
+     * a drive can be in, which is the only rule a compass should obey.
+     */
+    private fun headingPoints(trail: List<TrackPoint>): List<TrackPoint> =
+        if (trail.size <= HEADING_POINTS) trail
+        else trail.subList(trail.size - HEADING_POINTS, trail.size)
 
     /**
      * Open a new segment for the newest fix, starting from where the dot stands now.
@@ -502,8 +686,8 @@ private class LiveMapHolder(
      * Starting from the previous *fix* would jump the dot backwards whenever a frame
      * arrives before the last segment finished - which is what jitter does. Starting
      * from the dot makes the motion continuous in both directions, at the cost of the
-     * dot never quite catching the recorder: it is at most one frame behind, which is
-     * the whole price of smooth and the right thing to pay on a dash.
+     * dot never quite catching the fix: it is at most one frame behind, which is the
+     * whole price of smooth and the right thing to pay on a dash.
      *
      * The segment's length is the arrival interval that was actually measured, not a
      * constant: the unit streams at 1 Hz but the radio delivers when it likes, and a
@@ -513,8 +697,7 @@ private class LiveMapHolder(
      * direction, and the segment that carries the dot is what decides how long the head has
      * to get round to it.
      */
-    private fun advance(fixes: List<TrackPoint>, restart: Boolean) {
-        val newest = track.lastOrNull() ?: return
+    private fun advance(trail: List<TrackPoint>, newest: GeoPoint, restart: Boolean) {
         val now = SystemClock.uptimeMillis()
         if (lastArrivalMs > 0L) segMs = (now - lastArrivalMs).coerceIn(SEG_MIN_MS, SEG_MAX_MS)
         lastArrivalMs = now
@@ -527,7 +710,7 @@ private class LiveMapHolder(
         segTo.setCoords(newest.latitude, newest.longitude)
         segStartMs = now
         hasFix = true
-        turnHeading(fixes, restart)
+        turnHeading(trail, restart)
     }
 
     /**
@@ -538,7 +721,7 @@ private class LiveMapHolder(
      * honest answer for a vehicle that has not gone anywhere - and the safe one, because a
      * heading read out of receiver noise is an arrow that slowly circles a parked drive.
      */
-    private fun turnHeading(fixes: List<TrackPoint>, restart: Boolean) {
+    private fun turnHeading(trail: List<TrackPoint>, restart: Boolean) {
         if (restart) {
             heading = 0f
             headingFrom = 0f
@@ -546,7 +729,7 @@ private class LiveMapHolder(
             liveArrow?.setBearing(0f)
             return
         }
-        val bearing = LiveHeading.of(fixes) ?: return
+        val bearing = LiveHeading.of(headingPoints(trail)) ?: return
         // From where the head actually is, not where the last segment meant to put it: an
         // arrival early on its segment means the previous turn is still in progress, and a
         // turn that restarts mid-sweep is continuous; one that restarts from the endpoint is
@@ -581,8 +764,181 @@ private class LiveMapHolder(
         if (following.value) following.value = false
     }
 
-    private fun ensureLine(view: MapView) {
-        if (line != null) return
+    /**
+     * One polyline per recorded piece. New lines are inserted under the markers and the
+     * arrow, so a segment that starts later can never paint over the live position - the
+     * overlay manager draws in list order, and the order of the pieces among themselves
+     * does not matter because they share one ink.
+     *
+     * An update only ever feeds a line what it has not seen: a piece grows at its end, and
+     * [LiveTrack] rewrites its middle only when it re-examines it, which is rare and shows up
+     * as the piece having become shorter. That one test tells an append from a rebuild, and an
+     * append is [Polyline.addPoint] on a fix or two instead of [Polyline.setPoints] on all of
+     * them - osmdroid rebuilds a polyline's projected coordinates either way, and making a
+     * 1000 km drive do that every second was the cost this avoids.
+     */
+    private fun syncSegments(
+        view: MapView,
+        segments: List<List<TrackPoint>>,
+        writing: Boolean,
+    ) {
+        while (lines.size < segments.size) {
+            val poly = newLine(view)
+            view.overlayManager.add(0, poly)
+            lines.add(poly)
+            mirrors.add(ArrayList())
+        }
+        for (i in segments.indices) {
+            val src = segments[i]
+            val mirror = mirrors[i]
+            // While a piece is open its newest position belongs to the tail, not to the line.
+            val target = if (writing && i == segments.size - 1) src.size - 1 else src.size
+            if (target < mirror.size) {
+                mirror.clear()
+                for (j in 0 until target) mirror.add(GeoPoint(src[j].lat, src[j].lon))
+                lines[i].setPoints(mirror)
+            } else {
+                for (j in mirror.size until target) {
+                    val point = GeoPoint(src[j].lat, src[j].lon)
+                    mirror.add(point)
+                    lines[i].addPoint(point)
+                }
+            }
+            if (src.isNotEmpty()) ensureStart(view, i, src[0])
+        }
+        syncTail(view, mirrors.lastOrNull())
+    }
+
+    /**
+     * Point the tail at the newest gliding position, or take it away.
+     *
+     * A tail needs a recorded position to grow out of: the last point the polyline holds. With
+     * a piece's very first fix there is no such point, and inventing one - growing out of where
+     * the arrow came from - would draw straight across a pause gap, which is the one thing this
+     * map refuses to do. So the first fix of a piece shows its START dot and waits a second.
+     */
+    private fun syncTail(view: MapView, mirror: ArrayList<GeoPoint>?) {
+        val from = mirror?.lastOrNull()
+        if (!writingNow || from == null) {
+            hideTail(view)
+            return
+        }
+        val line = tail ?: newLine(view).also {
+            view.overlayManager.add(0, it)
+            tail = it
+        }
+        tailStart.setCoords(from.latitude, from.longitude)
+        tailTo.setCoords(from.latitude, from.longitude)
+        line.setPoints(tailPoints)
+    }
+
+    private fun hideTail(view: MapView) {
+        tail?.let { view.overlayManager.remove(it) }
+        tail = null
+    }
+
+    /**
+     * The dots.
+     *
+     * START is one per recorded piece, placed once and never moved - a drive that paused twice
+     * says so with two STARTs, because each piece really did begin somewhere. PAUSE is one per
+     * pause, kept for the whole life of the drive: they used to be a single dot that a resume
+     * deleted, which left a drive that stopped three times showing one pause and a mystery
+     * (2026-11-18). END marks where a closed drive's last sample was written.
+     *
+     * The arrow is the vehicle, not the drive, so it is shown for as long as the phone is being
+     * told where the vehicle is - through a pause, and after a stop while the app is watching.
+     * The one position it does not need is the END dot itself: parked at the end of a drive with
+     * nothing new coming, the dart would just be a second mark on a place the red dot already
+     * claims.
+     */
+    private fun syncMarkers(view: MapView, route: LiveRoute, cursor: GeoPoint?) {
+        val atTheEnd = cursor != null && route.endAt != null &&
+            cursor.latitude == route.endAt!!.lat && cursor.longitude == route.endAt!!.lon
+        if (cursor != null && !atTheEnd) {
+            if (liveArrow == null) {
+                // Created pointing north; the first fix with six metres behind it aims it.
+                val arrow = MapMarkers.heading(
+                    view, cursor, HudColors.Green.toArgb(), if (showLabels) "LIVE" else "",
+                )
+                liveArrow = arrow
+                view.overlayManager.add(arrow.marker)
+            }
+        } else if (liveArrow != null) {
+            view.overlayManager.remove(liveArrow!!.marker)
+            liveArrow = null
+        }
+        syncPauses(view, route.pauses)
+        endMarker = syncDot(view, endMarker, route.endAt, HudColors.Red.toArgb(), "END")
+    }
+
+    /**
+     * One orange dot per pause of this drive.
+     *
+     * Created in order and never repositioned: each marks a place the owner chose and the
+     * recorder wrote, so the only pause dot that could ever move is the one that is still in
+     * progress - and that one is appended here as soon as it stops moving. Extra dots are the
+     * list having been replaced under us (a new drive), and they come off with the rest.
+     */
+    private fun syncPauses(view: MapView, points: List<TrackPoint>) {
+        while (pauses.size > points.size) {
+            view.overlayManager.remove(pauses.removeAt(pauses.size - 1))
+        }
+        for (i in points.indices) {
+            if (i < pauses.size) continue
+            val created = MapMarkers.labelled(
+                view,
+                GeoPoint(points[i].lat, points[i].lon),
+                HudColors.Amber.toArgb(),
+                if (showLabels) "PAUSE" else "",
+            )
+            view.overlayManager.add(created)
+            pauses.add(created)
+        }
+    }
+
+    /**
+     * Create, move or remove one named dot. Created last so it sits over the line it marks;
+     * moved in place so a dot that follows a moving thing does not build a marker a second.
+     */
+    private fun syncDot(
+        view: MapView,
+        marker: Marker?,
+        at: TrackPoint?,
+        color: Int,
+        label: String,
+    ): Marker? {
+        if (at == null) {
+            marker?.let { view.overlayManager.remove(it) }
+            return null
+        }
+        val point = GeoPoint(at.lat, at.lon)
+        val existing = marker
+        if (existing == null) {
+            val created = MapMarkers.labelled(
+                view, point, color, if (showLabels) label else "",
+            )
+            view.overlayManager.add(created)
+            return created
+        }
+        existing.position = point
+        return existing
+    }
+
+    private fun ensureStart(view: MapView, index: Int, first: TrackPoint) {
+        while (starts.size <= index) starts.add(null)
+        if (starts[index] != null) return
+        // The piece's first position never moves (LiveTrack's rule), so this dot is
+        // placed once when the piece appears and never repositioned.
+        val marker = MapMarkers.labelled(
+            view, GeoPoint(first.lat, first.lon), HudColors.Green.toArgb(),
+            if (showLabels) "START" else "",
+        )
+        starts[index] = marker
+        view.overlayManager.add(marker)
+    }
+
+    private fun newLine(view: MapView): Polyline {
         val poly = Polyline()
         // setPoints(), not getPoints().add() - see the MapHolder note: the old
         // accessor hands back a copy and the line draws nothing at all.
@@ -592,31 +948,7 @@ private class LiveMapHolder(
         paint.strokeWidth = 5f * density
         paint.strokeCap = android.graphics.Paint.Cap.ROUND
         paint.strokeJoin = android.graphics.Paint.Join.ROUND
-        line = poly
-        view.getOverlayManager().add(poly)
-    }
-
-    private fun ensureMarkers(view: MapView) {
-        val last = track.lastOrNull() ?: return
-        if (liveArrow == null) {
-            // The arrow, not a dot: this is the one marker on these maps that stands for a
-            // vehicle rather than a place, so it gets the head that says which way it is
-            // facing. Created pointing north; the first fix with six metres behind it aims it.
-            val arrow = MapMarkers.heading(
-                view, last, HudColors.Green.toArgb(), if (showLabels) "LIVE" else "",
-            )
-            liveArrow = arrow
-            view.getOverlayManager().add(arrow.marker)
-        }
-        // The first position never moves (TrackPreview's rule), so this dot is
-        // placed once when the route becomes a line and never repositioned.
-        val first = track.firstOrNull()
-        if (startMarker == null && first != null && track.size >= 2) {
-            startMarker = MapMarkers.labelled(
-                view, first, HudColors.Green.toArgb(), if (showLabels) "START" else "",
-            )
-            view.getOverlayManager().add(startMarker)
-        }
+        return poly
     }
 
     private fun awaitSize(view: MapView) {
@@ -654,5 +986,8 @@ private class LiveMapHolder(
 
         /** Longer than this and the stream has stopped; freeze rather than crawl. */
         private const val SEG_MAX_MS = 3000L
+
+        /** Enough positions for a six-metre heading baseline, and no more per fix. */
+        private const val HEADING_POINTS = 64
     }
 }

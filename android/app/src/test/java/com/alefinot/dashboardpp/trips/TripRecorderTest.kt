@@ -3,6 +3,7 @@ package com.alefinot.dashboardpp.trips
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -168,43 +169,58 @@ class TripRecorderTest {
         assertEquals(null, SessionCodec.decode("10.0.0.5", "garbage|nope"))
     }
 
-    // ---- the live route the maps draw (live route plan §1) ---------------------
+    // ---- the live route the maps draw (live route plan §1, 2.0.7/179) -----------
     //
     // Every fixture here carries `fix = 1`: a position without a fix is not a
     // position, and the recorder is allowed to forget it (Snapshot.hasPosition).
 
     @Test
-    fun liveTrackFollowsTheOpenTrip() {
+    fun liveRouteFollowsTheOpenTrip() {
         recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
         now += 1_000L
         recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
-        val pts = recorder.liveTrackPoints()
+        val route = recorder.liveRoute()
+        assertEquals(1, route.segments.size)
+        val pts = route.segments.single()
         assertEquals(2, pts.size)
         assertEquals(45.6201, pts.last().lat, 1e-9)
         assertEquals(9.2801, pts.last().lon, 1e-9)
+        // The map's identity is the open trip's start, and nothing has been paused yet.
+        assertEquals(recorder.openTrip?.startMs, route.driveId)
+        assertNull(route.endAt)
+        assertTrue(route.pauses.isEmpty())
     }
 
     @Test
-    fun liveTrackIgnoresSamplesWithoutAFix() {
+    fun liveRouteIgnoresSamplesWithoutAFix() {
         // 0,0 is the unit declining a position, not a place in the Gulf of Guinea.
         recorder.onSnapshot("10.0.0.5", snap(up = 100))
-        assertTrue(recorder.liveTrackPoints().isEmpty())
+        assertTrue(recorder.liveRoute().recordedPoints.isEmpty())
         // And a box full of coordinates with `fix` still 0 is the same decline.
         now += 1_000L
         recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.62, lon = 9.28, fix = 0))
-        assertTrue(recorder.liveTrackPoints().isEmpty())
+        assertTrue(recorder.liveRoute().recordedPoints.isEmpty())
     }
 
     @Test
-    fun aSealedTripHasNoLiveTrack() {
+    fun aStoppedTripKeepsItsRouteAndEndsAtTheLastWrittenPoint() {
         recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
         now += TripPolicy.SEAL_AFTER_MS + 1_000L
         assertEquals(TripEvent.SEALED, recorder.onTick())
-        assertTrue(recorder.liveTrackPoints().isEmpty())
+        // The file is closed, the picture is not (the owner asked for exactly this):
+        // the shape stays with a red END dot at the last written position.
+        val route = recorder.liveRoute()
+        assertTrue(route.hasTrack)
+        assertTrue(route.closed)
+        assertEquals(2, route.recordedPoints.size)
+        assertEquals(TrackPoint(45.6201, 9.2801), route.endAt)
+        assertTrue(route.pauses.isEmpty())
     }
 
     @Test
-    fun reopeningSeedsTheLiveTrackFromTheFile() {
+    fun reopeningSeedsTheLiveRouteFromTheFile() {
         recorder.onSnapshot(
             "10.0.0.5",
             snap(up = 500, spd = 20.0, max = 40.0, lat = 45.62, lon = 9.28, fix = 1),
@@ -226,18 +242,22 @@ class TripRecorderTest {
                 snap(up = 1112, spd = 30.0, max = 41.0, lat = 45.622, lon = 9.282, fix = 1),
             ),
         )
-        val pts = recorder.liveTrackPoints()
+        val route = recorder.liveRoute()
+        assertEquals(1, route.segments.size)
+        val pts = route.recordedPoints
         assertEquals(3, pts.size)
         assertEquals(45.62, pts.first().lat, 1e-9)
         assertEquals(45.622, pts.last().lat, 1e-9)
+        assertNull(route.endAt)
     }
 
     @Test
-    fun aRebootSplitStartsAFreshLiveTrack() {
+    fun aRebootSplitStartsAFreshLiveRoute() {
         recorder.onSnapshot(
             "10.0.0.5",
             snap(up = 500, spd = 20.0, max = 40.0, lat = 45.62, lon = 9.28, fix = 1),
         )
+        val firstDrive = recorder.liveRoute().driveId
         now += 1_000L
         assertEquals(
             TripEvent.SEALED_THEN_OPENED,
@@ -247,9 +267,132 @@ class TripRecorderTest {
             ),
         )
         // Two devices' histories do not merge into one route (same rule as the files).
-        val pts = recorder.liveTrackPoints()
+        val route = recorder.liveRoute()
+        assertEquals(1, route.segments.size)
+        val pts = route.recordedPoints
         assertEquals(1, pts.size)
         assertEquals(45.70, pts.first().lat, 1e-9)
+        assertTrue(route.driveId > firstDrive)
+    }
+
+    @Test
+    fun aFinishedRouteIsReplacedOnlyByTheNextDrive() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        recorder.stop()
+        val ended = recorder.liveRoute()
+        assertTrue(ended.closed)
+        // The route survives until a *new* drive starts, not just until the seal.
+        assertEquals(ended.endAt, recorder.liveRoute().endAt)
+        now += 60_000L
+        assertEquals(
+            TripEvent.OPENED,
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(up = 12, spd = 4.0, max = 4.0, lat = 45.70, lon = 9.20, fix = 1),
+            ),
+        )
+        val fresh = recorder.liveRoute()
+        assertFalse(fresh.closed)
+        assertNull(fresh.endAt)
+        assertEquals(1, fresh.recordedPoints.size)
+        assertEquals(TrackPoint(45.70, 9.20), fresh.recordedPoints.single())
+        assertTrue(fresh.driveId > ended.driveId)
+    }
+
+    @Test
+    fun aPausedDriveFreezesTheRouteButNotTheArrow() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
+        recorder.pause()
+        now += 1_000L
+        // The link stays live: the pause sees the frame but writes nothing.
+        assertEquals(
+            TripEvent.NONE,
+            recorder.onSnapshot("10.0.0.5", snap(up = 102, lat = 45.6215, lon = 9.2815, fix = 1)),
+        )
+        val route = recorder.liveRoute()
+        assertEquals(1, route.segments.size)
+        assertEquals(2, route.segments.single().size)
+        // The recorded line stops at the amber dot, and the live fix that came after the
+        // pause belongs to the arrow, not to the drive's shape.
+        assertEquals(listOf(TrackPoint(45.6201, 9.2801)), route.pauses)
+        assertTrue(route.recordedPoints.none { it.lat == 45.6215 })
+        assertNull(route.endAt)
+    }
+
+    @Test
+    fun aResumeStartsASecondSegmentThatIsNotLinkedToTheFirst() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
+        recorder.pause()
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 102, lat = 45.6215, lon = 9.2815, fix = 1))
+        recorder.resume()
+        now += 1_000L
+        assertEquals(
+            TripEvent.APPENDED,
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(up = 103, spd = 10.0, max = 10.0, lat = 45.623, lon = 9.283, fix = 1),
+            ),
+        )
+        val route = recorder.liveRoute()
+        assertEquals(2, route.segments.size)
+        assertEquals(2, route.segments[0].size)
+        assertEquals(1, route.segments[1].size)
+        assertEquals(TrackPoint(45.623, 9.283), route.segments[1].single())
+        // A resume does not erase the pause it ends. The orange dot is the record of where
+        // the owner stopped writing, and it stays for the life of the drive (2026-11-18).
+        assertEquals(listOf(TrackPoint(45.6201, 9.2801)), route.pauses)
+        // No line joins the pieces: the resume starts where the first fix after it is,
+        // not where the old piece ended.
+        assertTrue(route.segments[0].last() != route.segments[1].first())
+    }
+
+    @Test
+    fun everyPauseOfADriveKeepsItsOwnDot() {
+        // Three stops, three orange dots, three pieces of route: a single dot that the next
+        // resume deleted left a drive that stopped twice reading as a drive that stopped once.
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        recorder.pause()
+        recorder.resume()
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.621, lon = 9.281, fix = 1))
+        recorder.pause()
+        recorder.resume()
+        now += 1_000L
+        assertEquals(
+            TripEvent.APPENDED,
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(up = 102, spd = 10.0, max = 10.0, lat = 45.622, lon = 9.282, fix = 1),
+            ),
+        )
+        val route = recorder.liveRoute()
+        assertEquals(3, route.segments.size)
+        assertEquals(
+            listOf(TrackPoint(45.62, 9.28), TrackPoint(45.621, 9.281)),
+            route.pauses,
+        )
+        assertNull(route.endAt)
+    }
+
+    @Test
+    fun aStopWhilePausedTurnsThePauseDotIntoTheEndDot() {
+        recorder.onSnapshot("10.0.0.5", snap(up = 100, lat = 45.62, lon = 9.28, fix = 1))
+        now += 1_000L
+        recorder.onSnapshot("10.0.0.5", snap(up = 101, lat = 45.6201, lon = 9.2801, fix = 1))
+        recorder.pause()
+        assertEquals(TripEvent.SEALED, recorder.stop())
+        val route = recorder.liveRoute()
+        assertEquals(1, route.segments.size)
+        assertTrue(route.closed)
+        assertEquals(TrackPoint(45.6201, 9.2801), route.endAt)
+        // The pause command is over: its dot has become the drive's END dot.
+        assertTrue(route.pauses.isEmpty())
+        assertFalse(recorder.isPaused)
     }
 
     // ─── pause / resume (owner controls, 2026-11-17) ─────────────────────────────
@@ -308,7 +451,10 @@ class TripRecorderTest {
 
     @Test
     fun aGenuinelySilentPausedRecorderStillSeals() {
-        recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0))
+        recorder.onSnapshot(
+            "10.0.0.5",
+            snap(up = 100, spd = 10.0, lat = 45.62, lon = 9.28, fix = 1),
+        )
         recorder.pause()
         now += TripPolicy.SEAL_AFTER_MS + 1_000L
         assertEquals(TripEvent.SEALED, recorder.onTick())
@@ -316,6 +462,11 @@ class TripRecorderTest {
         assertFalse(recorder.isRecording)
         // The pause survives the seal: RESUME is what starts the next file, not a frame.
         assertTrue(recorder.isPaused)
+        // But the route's orange dot does not survive it: a closed drive wears END at the
+        // position it last wrote, even though the owner's pause is still remembered.
+        val route = recorder.liveRoute()
+        assertTrue(route.pauses.isEmpty())
+        assertEquals(TrackPoint(45.62, 9.28), route.endAt)
     }
 
     @Test
@@ -338,6 +489,8 @@ class TripRecorderTest {
         assertEquals(TripEvent.NONE, recorder.onSnapshot("10.0.0.5", snap(up = 100, spd = 10.0)))
         assertTrue(writer.files.isEmpty())
         assertFalse(recorder.isRecording)
+        // No file, no recorded point, no orange dot - the pause has nothing to mark yet.
+        assertTrue(recorder.liveRoute().pauses.isEmpty())
         recorder.resume()
         now += 1_000L
         assertEquals(TripEvent.OPENED, recorder.onSnapshot("10.0.0.5", snap(up = 101, spd = 10.0)))
@@ -387,7 +540,7 @@ class TripRecorderTest {
     }
 
     @Test
-    fun theLiveTrackStaysBoundedOverAlongDrive() {
+    fun theLiveRouteKeepsEveryFixOfADriveShortOfItsFirstThinning() {
         for (i in 0 until 600) {
             recorder.onSnapshot(
                 "10.0.0.5",
@@ -398,10 +551,31 @@ class TripRecorderTest {
             )
             now += 1_000L
         }
-        val pts = recorder.liveTrackPoints()
-        // TrackPreview's invariant: halve at the cap, then append - so never more
-        // than one point over it, whatever the drive's length.
-        assertTrue("live track grew to ${pts.size}", pts.size <= 257)
-        assertEquals(45.6 + 599 * 1e-5, pts.last().lat, 1e-9)
+        recorder.pause()
+        recorder.resume()
+        for (i in 600 until 1200) {
+            recorder.onSnapshot(
+                "10.0.0.5",
+                snap(
+                    up = 100L + i, spd = 40.0, max = 40.0,
+                    lat = 45.6 + i * 1e-5, lon = 9.2 + i * 1e-5, fix = 1,
+                ),
+            )
+            now += 1_000L
+        }
+        val route = recorder.liveRoute()
+        assertEquals(2, route.segments.size)
+        // Twenty minutes of driving is kept fix for fix. The expectation used to be "at most
+        // 257 per piece" - four minutes, after which every other position was thrown away and
+        // the line on the map started cutting corners the drive did not cut. Thinning is now a
+        // question of geometry, not of count: see LiveRouteTest.
+        assertEquals(600, route.segments[0].size)
+        assertEquals(600, route.segments[1].size)
+        // And the piece's newest position is the drive's newest position: the map's tip and
+        // the recorder's file agree about where the car is.
+        assertEquals(
+            TrackPoint(45.6 + 1199 * 1e-5, 9.2 + 1199 * 1e-5),
+            route.segments[1].last(),
+        )
     }
 }

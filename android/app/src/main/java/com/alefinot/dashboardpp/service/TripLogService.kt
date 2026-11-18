@@ -21,6 +21,8 @@ import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.trips.CsvTripWriter
+import com.alefinot.dashboardpp.trips.CursorTrail
+import com.alefinot.dashboardpp.trips.LiveRoute
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TelemetryFeed
 import com.alefinot.dashboardpp.trips.TripEvent
@@ -68,6 +70,21 @@ class TripLogService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var feedJob: Job? = null
     private var recorder: TripRecorder? = null
+
+    /**
+     * Where the vehicle is, as far as this lane has heard: every position the stream
+     * reported, written to a file or not (2.0.7/179). The live arrow rides it, so it belongs
+     * to the frame lane rather than to a recorder - a pause must not freeze the arrow, and a
+     * stop must not take the car off the map.
+     */
+    private val trail = CursorTrail()
+
+    /**
+     * True while this lane follows the stream for the display alone: no recorder, no file, no
+     * wake lock, no foreground notification. See [TripRuntimeState.watching].
+     */
+    private var watching = false
+
     private var writer: CsvTripWriter? = null
     private var store: TripStore? = null
     private var settings: RecorderSettings? = null
@@ -122,13 +139,36 @@ class TripLogService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_WATCH -> {
+                // Keep a finished drive's live map moving (2.0.7/179): the owner asked for it
+                // to keep working while the app is open, and after a stop nothing else in the
+                // app reads the unit. This is that reading - the same frame lane with no
+                // recorder behind it. It deliberately does NOT go foreground: "while the app
+                // is open" is the whole promise, a plain started service lives exactly that
+                // long, and an ongoing notification for a drive that already ended would be a
+                // permanent alarm about nothing. MainActivity puts this down on the way to the
+                // background, which is where the picture starts freezing on purpose.
+                if (recorder != null || feedJob?.isActive == true) return START_STICKY
+                val key = TripRuntime.state.value.deviceKey
+                if (key.isNullOrEmpty() || !TripRuntime.state.value.liveRoute.hasTrack) {
+                    // Nothing to watch: no link to follow, or no drive on the maps to keep alive.
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                deviceKey = key
+                watching = true
+                TripRuntime.update { it.copy(watching = true, deviceKey = key) }
+                beginFeeding()
+                return START_STICKY
+            }
             ACTION_STOP -> {
                 // The shade's Stop is the owner's: it also turns auto-start off, so the
                 // next connection cannot quietly start another drive behind their back.
+                val keep = intent.getBooleanExtra(EXTRA_KEEP_DISPLAY, true)
                 if (intent.getBooleanExtra(EXTRA_DISABLE_AUTO, false)) {
-                    stopAndDisableAuto()
+                    stopAndDisableAuto(keep)
                 } else {
-                    shutdown()
+                    shutdown(keepDisplay = keep)
                 }
                 return START_NOT_STICKY
             }
@@ -167,6 +207,29 @@ class TripLogService : Service() {
         vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
         vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
         eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
+        // The owner's START begins a new drive, so the finished one it replaces leaves the
+        // maps now, not at the first sample a second later (2.0.7/179). A recorder that is
+        // already writing keeps its route: nothing replaces a drive that is still open. The
+        // trail goes with it: it is the arrow's history, and a new drive's arrow has no
+        // history until its first fix - pointing it back down the old drive's road would be
+        // the first thing the new picture got wrong.
+        if (manualStart && recorder?.isRecording != true) {
+            TripRuntime.update { it.copy(liveRoute = LiveRoute(), liveTrail = emptyList()) }
+            trail.clear()
+        }
+        // A lane that was following the stream for the display (no recorder) has to be handed
+        // to a recorder now: [beginFeeding] keeps an already-running lane as it is, so a START
+        // that landed on a watching service would announce itself in the shade and then write
+        // nothing at all.
+        if (recorder == null && feedJob?.isActive == true) {
+            feedJob?.cancel()
+            feedJob = null
+        }
+        watching = false
+        // Published, not just remembered: `watching` is one of the five facts the pages read to
+        // decide what a press means, and a stale true here would make the window before the
+        // first sample offer START again instead of the STOP that backs out of it.
+        TripRuntime.update { it.copy(watching = false) }
         // A recorder already running from an earlier command keeps the file it is
         // inside - re-pointing only changes the tag of the next file it creates.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
@@ -185,20 +248,41 @@ class TripLogService : Service() {
         super.onDestroy()
     }
 
-    fun shutdown() {
+    /**
+     * Tear the lane down: seal, publish, stop.
+     *
+     * [keepDisplay] is the owner's Stop, and it means "the drive is over, the picture is not":
+     * with the app on screen, the same lane is asked back with no recorder behind it so a
+     * finished drive's map keeps living (2.0.7/179). It is asked only of a foreground app,
+     * because the lane that follows the stream for the display is put down by
+     * [com.alefinot.dashboardpp.MainActivity.onStop] - a Stop pressed from the shade with the
+     * app behind it has nobody looking at a map, and a lane nobody puts down would stream for
+     * the rest of the day.
+     */
+    fun shutdown(keepDisplay: Boolean = false) {
         feedJob?.cancel()
         feedJob = null
         pausedByUser = false
-        recorder?.stop()
+        val finishing = recorder
+        finishing?.stop()
+        // Read the route after the stop: [TripRecorder.stop] is what turns a paused drive's
+        // orange dot into the red END dot, and the shape stays on the maps after the service
+        // is gone (2.0.7/179) - it is replaced by the next START, not by a service ending.
+        val keptRoute = finishing?.liveRoute()
         recorder = null
         writer?.closeAll()
         writer = null
         releaseWake()
+        val route = keptRoute ?: TripRuntime.state.value.liveRoute
         TripRuntime.update {
-            it.copy(polling = false, recording = false, paused = false, pausedAtMs = 0L)
+            it.copy(
+                polling = false, recording = false, paused = false, pausedAtMs = 0L,
+                watching = false, liveRoute = route,
+            )
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+        if (keepDisplay && appForeground && route.hasTrack) watch(applicationContext)
     }
 
     /**
@@ -206,7 +290,7 @@ class TripLogService : Service() {
      * write happens before the shutdown so the next launch (and the App Settings switch)
      * agree that nothing should record until the owner says so again.
      */
-    private fun stopAndDisableAuto() {
+    private fun stopAndDisableAuto(keepDisplay: Boolean = true) {
         val app = applicationContext
         scope.launch {
             try {
@@ -214,7 +298,7 @@ class TripLogService : Service() {
             } catch (e: Exception) {
                 // The drive still ends; a lost preference write is not a lost file.
             }
-            shutdown()
+            shutdown(keepDisplay = keepDisplay)
         }
     }
 
@@ -223,6 +307,7 @@ class TripLogService : Service() {
      * at the press, so the trip clock freezes where the owner stopped it.
      */
     private fun publishPaused(paused: Boolean) {
+        val route = recorder?.liveRoute()
         TripRuntime.update {
             it.copy(
                 paused = paused,
@@ -231,6 +316,7 @@ class TripLogService : Service() {
                     it.paused && it.pausedAtMs > 0L -> it.pausedAtMs
                     else -> System.currentTimeMillis()
                 },
+                liveRoute = route ?: it.liveRoute,
             )
         }
     }
@@ -254,7 +340,7 @@ class TripLogService : Service() {
     private fun beginFeeding() {
         if (feedJob?.isActive == true) return
         feedJob = scope.launch {
-            if (!awaitRecorder()) return@launch
+            if (!watching && !awaitRecorder()) return@launch
             val link = BleRuntime.link(this@TripLogService)
             val api = BleApi(link)
             var lastUp = -1L
@@ -285,10 +371,11 @@ class TripLogService : Service() {
                 }
                 recorder?.onTick()?.let { ev ->
                     if (ev == TripEvent.SEALED) {
+                        val route = recorder?.liveRoute()
                         TripRuntime.update {
                             it.copy(
                                 recording = false, tripPath = null, summary = null,
-                                liveTrack = emptyList(),
+                                liveRoute = route ?: it.liveRoute,
                             )
                         }
                         persistSession()
@@ -319,10 +406,25 @@ class TripLogService : Service() {
         return System.currentTimeMillis() - state.lastOkMs > TripPolicy.IDLE_RETRY_MS
     }
 
-    /** One accepted sample: append it, publish it, show it. */
+    /** One accepted sample: publish it, and append it if a recorder is running. */
     private fun handleSnapshot(s: Snapshot) {
         noteWeatherFrame(s)
-        val rec = recorder ?: return
+        if (s.hasPosition) trail.add(s.lat, s.lon)
+        val heard = trail.snapshot()
+        val rec = recorder
+        if (rec == null) {
+            // The watching lane (2.0.7/179): the picture moves, nothing is written. The route
+            // stays as the finished drive left it - only the vehicle's position advances.
+            TripRuntime.update {
+                it.copy(
+                    snapshot = s,
+                    liveTrail = heard,
+                    lastOkMs = System.currentTimeMillis(),
+                    lastError = null,
+                )
+            }
+            return
+        }
         val event = rec.onSnapshot(deviceKey, s)
         val summary = rec.summary()
         val now = System.currentTimeMillis()
@@ -330,7 +432,8 @@ class TripLogService : Service() {
             it.copy(
                 snapshot = s,
                 summary = summary,
-                liveTrack = rec.liveTrackPoints(),
+                liveRoute = rec.liveRoute(),
+                liveTrail = heard,
                 lastOkMs = now,
                 recording = rec.isRecording,
                 paused = rec.isPaused,
@@ -580,12 +683,18 @@ class TripLogService : Service() {
         const val ACTION_STOP = "com.alefinot.dashboardpp.action.STOP_TRIPS"
         const val ACTION_PAUSE = "com.alefinot.dashboardpp.action.PAUSE_TRIPS"
         const val ACTION_RESUME = "com.alefinot.dashboardpp.action.RESUME_TRIPS"
+
+        /** Follow the stream for the display, with no recorder behind it (see [watch]). */
+        const val ACTION_WATCH = "com.alefinot.dashboardpp.action.WATCH_TRIPS"
         const val EXTRA_DEVICE_KEY = "device_key"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_LIVE = "live"
 
         /** The shade's Stop: also turn the auto-start preference off. */
         const val EXTRA_DISABLE_AUTO = "disable_auto_start"
+
+        /** False means "and take the display-only reader with you" - see [stop]. */
+        private const val EXTRA_KEEP_DISPLAY = "keep_display"
 
         /**
          * A start the owner asked for (the pages' START), not the shell's auto-start
@@ -604,6 +713,23 @@ class TripLogService : Service() {
         /** How often the frame stream may wake the weather feed (see [noteWeatherFrame]). */
         private const val WEATHER_WAKE_INTERVAL_MS = 10_000L
         private const val WAKE_TAG = "dashboardpp:trip"
+
+        /**
+         * Whether the app's own window is up - [com.alefinot.dashboardpp.MainActivity]'s
+         * onStart and onStop say so. It is the whole life span of a display-only lane: what
+         * the finished drive's map promises is "while the app is open", so a Stop pressed from
+         * the shade with the app behind it re-arms nothing, and a lane that nobody puts down
+         * would stream for the rest of the day. Written on the UI thread, read from the
+         * service's IO scope.
+         */
+        @Volatile
+        private var appForeground = false
+
+        /** Tell the recorder's lane that the app came to the front, or went away from it. */
+        fun setAppForeground(foreground: Boolean) {
+            appForeground = foreground
+        }
+
         /**
          * Point the recorder at a dashboard. No address in the signature anywhere: the
          * link is the process-wide one ([BleRuntime]), and what a trip file needs is the
@@ -627,8 +753,32 @@ class TripLogService : Service() {
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun stop(context: Context) {
-            val intent = Intent(context, TripLogService::class.java).apply { action = ACTION_STOP }
+        /**
+         * Follow the unit's stream for the display, writing nothing, so a finished drive's live
+         * map keeps moving while the app is open (2.0.7/179). A plain `startService`, not
+         * `startForegroundService`: this lane is only meant to live while the app does, so it
+         * owes nobody an ongoing notification, and it must never be started from the background.
+         */
+        fun watch(context: Context) {
+            val intent = Intent(context, TripLogService::class.java).apply { action = ACTION_WATCH }
+            try {
+                context.startService(intent)
+            } catch (e: Exception) {
+                // No lane to keep alive; the finished route stays on the maps as a still.
+            }
+        }
+
+        /**
+         * End the drive. [keepDisplay] is the difference between an owner pressing STOP while
+         * looking at the map and the app being put away: the first leaves a finished drive on
+         * the maps and asks the lane back to keep its picture moving, the second is the very
+         * moment the picture is allowed to freeze (2.0.7/179).
+         */
+        fun stop(context: Context, keepDisplay: Boolean = true) {
+            val intent = Intent(context, TripLogService::class.java).apply {
+                action = ACTION_STOP
+                putExtra(EXTRA_KEEP_DISPLAY, keepDisplay)
+            }
             try {
                 context.startService(intent)
             } catch (e: Exception) {

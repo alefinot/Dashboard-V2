@@ -176,35 +176,44 @@ class LivePageReadoutsTest {
     }
 
     /**
-     * The open drive draws its route while it is being made (live route plan, 2026-11-15):
-     * the Live card and the Trips RECORDING row both render the live map, and both only
-     * while a trip file is open - a map outside `recording` would fetch a basemap for a
-     * drive that does not exist. The map itself follows the newest position; it must
-     * never frame the point set, which on a growing track means a zoom-punch on every
-     * metre the drive makes.
+     * A drive's route is drawn while it is being made (live route plan, 2026-11-15) and it
+     * stays after the stop (2.0.7/179): the recorded line freezes at an amber PAUSE dot while
+     * paused, the arrow keeps riding the newest GPS fix, and a closed drive keeps its shape
+     * with a red END dot until the next START replaces it. The map itself follows the newest
+     * position; it must never frame the point set, which on a growing track means a
+     * zoom-punch on every metre the drive makes.
      */
     @Test
-    fun theRecordingTripDrawsItsRouteLive() {
+    fun theLiveRouteStaysDrawnThroughPauseAndStop() {
         val page = codeOnly("LiveTab.kt")
         assertTrue(
             "the THIS TRIP card stopped drawing the live route",
-            Regex("LiveRouteMap\\(state\\.liveTrack").containsMatchIn(page),
+            Regex("LiveRouteMap\\(\\s*route").containsMatchIn(page),
         )
         assertTrue(
-            "the live map escaped the recording gate: with no file open there is no route, " +
-                "and a bare map is tiles bought for nothing",
-            Regex("if \\(state\\.recording\\)[\\s\\S]{0,600}?LiveRouteMap\\(state\\.liveTrack").containsMatchIn(page),
+            "the live map went back behind the open file: a paused drive and the drive that " +
+                "just stopped both have a route to show, and losing it on stop is exactly the " +
+                "picture the owner asked to keep",
+            Regex(
+                "if \\(state\\.recording \\|\\| route\\.hasTrack\\)" +
+                    "[\\s\\S]{0,1400}?LiveRouteMap\\(\\s*route"
+            ).containsMatchIn(page),
         )
         val row = codeOnly("TripsTab.kt")
         assertTrue(
             "the RECORDING row stopped drawing the live route - the live drive should look " +
                 "like the card it becomes",
-            Regex("LiveRouteMap\\(\\s*state\\.liveTrack").containsMatchIn(row),
+            Regex("LiveRouteMap\\(\\s*route").containsMatchIn(row),
+        )
+        assertTrue(
+            "the recording row went back to a map that vanishes when the file closes; it " +
+                "draws whenever the route has a shape",
+            Regex("if \\(route\\.hasTrack\\)").containsMatchIn(row),
         )
         assertTrue(
             "the row map drifted back to the right of the numbers: the sketch belongs on the " +
                 "left, the corner the sealed card this drive becomes wears it in",
-            row.indexOf("state.liveTrack") < row.indexOf("\"RECORDING\""),
+            row.indexOf("state.liveRoute") < row.indexOf("\"RECORDING\""),
         )
         assertTrue(
             "the row map started swallowing gestures again: the thumbnail is a status " +
@@ -226,6 +235,40 @@ class LivePageReadoutsTest {
             "the live map grew a fit: framing a point set that gains a point every second " +
                 "zoom-punches the view; the camera follows instead",
             !Regex("zoomToBoundingBox").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the map lost its pause/end vocabulary: a paused route must stop at the amber " +
+                "PAUSE dots it reports, and a closed one must land on the red END dot",
+            Regex("route\\.pauses").containsMatchIn(mapCode) &&
+                Regex("route\\.endAt").containsMatchIn(mapCode) &&
+                Regex("\"PAUSE\"").containsMatchIn(mapCode) &&
+                Regex("\"END\"").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the map's arrow went back to reading the recorded route for its heading: a pause " +
+                "freezes the route and not the car, so the head ended up pointing back at the " +
+                "pause dot instead of down the road (2026-11-18) - the trail is the compass",
+            Regex("headingPoints\\(trail\\)").containsMatchIn(mapCode) &&
+                Regex("liveTrail").containsMatchIn(codeOnly("LiveTab.kt")),
+        )
+        assertTrue(
+            "the blue line went back to appearing one fix at a time: while a piece is open its " +
+                "newest position is held from the polyline and drawn by the gliding tail, so " +
+                "the line generates under the arrow at the arrow's speed (owner, 2026-11-18)",
+            Regex("syncTail\\(").containsMatchIn(mapCode) &&
+                Regex("tail\\?\\.let").containsMatchIn(mapCode) &&
+                Regex("writing && i == segments\\.size - 1").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the frame lane stopped keeping the arrow's history: the last minute of positions " +
+                "is what the head turns on, and a recorder's route is not it - after a stop " +
+                "there is no recorder at all, and the map still has to be able to turn",
+            Regex("CursorTrail\\(\\)").containsMatchIn(codeOnly("../../service/TripLogService.kt")),
+        )
+        assertTrue(
+            "the map stopped drawing one polyline per recorded piece: a pause is a gap, and " +
+                "a single line would draw across ground the file never saw",
+            Regex("syncSegments\\(").containsMatchIn(mapCode),
         )
         assertTrue(
             "the show-only rule lost its teeth: the map must refuse the touch at " +
@@ -391,6 +434,64 @@ class LivePageReadoutsTest {
         assertTrue(
             "the window no longer drops its oldest point, so the cap is decorative",
             Regex("while \\(window\\.size > cap\\) window\\.removeFirst\\(\\)").containsMatchIn(page),
+        )
+    }
+
+    @Test
+    fun everyIdleWordWearsTheNotRecordingLook() {
+        val page = codeOnly("LiveTab.kt")
+        // Two words say the same thing - nothing is recording: the fresh idle pill, and the one
+        // the display-only lane wears while a finished drive's map keeps moving. Both draw the
+        // red hairline and wash; a pill that offers START in a link-coloured skin reads as a
+        // readout, which is the mistake this guards.
+        for (word in listOf("LOGGING IDLE", "NOT RECORDING")) {
+            val chip = page.substringAfter("\"$word\"", "")
+            assertTrue("the \"$word\" pill left the status chip", chip.isNotEmpty())
+            val recipe = chip.take(600)
+            assertTrue(
+                "\"$word\" went back to a plain hairline: a recording surface that is not " +
+                    "recording wears red",
+                Regex("edge = HudColors\\.Red").containsMatchIn(recipe),
+            )
+            assertTrue(
+                "\"$word\" lost its red wash",
+                Regex("washAlpha = 0\\.12f").containsMatchIn(recipe),
+            )
+        }
+        // ...and neither word is a dead end: the state that turns a press into START reads the
+        // display-only lane, which is why LOGGING IDLE can be left at all (2026-11-18).
+        assertTrue(
+            "the status chip stopped reading the display-only lane: a lane kept alive for the " +
+                "map is idle, and its press must start a drive rather than stop a lane that is " +
+                "put straight back up again",
+            Regex("watching = state\\.watching").containsMatchIn(page),
+        )
+        // The Trips page's card is the other half of the same sentence, so it wears the same
+        // skin: the recipe lives on the card's `stopped` flag, which is what the display-only
+        // lane resolves to once the lane is read.
+        val card = codeOnly("TripsTab.kt")
+        assertTrue(
+            "the Trips card's idle edge stopped being the warning's red - the page a swipe away " +
+                "would say the same thing in a different colour",
+            Regex("edge = if \\(stopped\\) HudColors\\.Red").containsMatchIn(card),
+        )
+        assertTrue(
+            "the Trips card's idle hairline drifted off the pill's 55%",
+            Regex("borderAlpha = if \\(stopped\\) 0\\.55f").containsMatchIn(card),
+        )
+        assertTrue(
+            "the Trips card's idle wash drifted off the pill's 12%",
+            Regex("washAlpha = if \\(stopped\\) 0\\.12f").containsMatchIn(card),
+        )
+        assertTrue(
+            "the card stopped treating a display-only lane as idle: `stopped` must cover the " +
+                "START state, which is what that lane resolves to",
+            Regex("stopped = control == RecordingControlState\\.START").containsMatchIn(card),
+        )
+        assertTrue(
+            "the Trips card stopped reading the display-only lane and went back to calling it " +
+                "STARTING, a word whose only press is a STOP the app undoes a moment later",
+            Regex("watching = state\\.watching").containsMatchIn(card),
         )
     }
 

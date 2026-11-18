@@ -1,4 +1,4 @@
-﻿package com.alefinot.dashboardpp.ui.screens
+package com.alefinot.dashboardpp.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -182,6 +182,7 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                 recording = state.recording,
                 paused = state.paused,
                 polling = state.polling,
+                watching = state.watching,
                 canRecord = actions.canRecord,
             )
             if (control == RecordingControlState.UNAVAILABLE && actions.blocked.isNotEmpty()) {
@@ -557,8 +558,9 @@ private fun TraceOr(
  * — which is what the file itself records, because `TripSummary.durationMs` is the span from
  * the first sample to the last and the pause is a gap inside it.
  *
- * While the file is open the card also carries the live route map: the drive's shape,
- * drawing itself as the recorder appends it (live route plan §4).
+ * While a drive exists the card also carries the live route map: the shape drawing itself as
+ * the recorder appends it (live route plan §4), freezing at an amber PAUSE dot while paused,
+ * and staying with its red END dot after a stop until the next START replaces it.
  */
 @Composable
 private fun TripCard(
@@ -620,12 +622,14 @@ private fun TripCard(
         // does not need a second row of buttons under them to say the same thing twice.
         // The drive's route, drawn while it is being made (live route plan §4): the
         // same tile map the sealed drive gets a detail page for, following the newest
-        // position. Only a recording gets one - with no file open there is no route
-        // to draw, and an idle map is tiles bought for nothing. The space is held
-        // before the first fix so the page does not jump when the fix lands.
-        if (state.recording) {
+        // position. It stays for a paused drive (the recorded line freezes at its PAUSE
+        // dot, the arrow keeps moving) and for the drive that just stopped (its END dot
+        // is the finished picture) - it is replaced by the next START, not by the file
+        // closing. The space is held before the first fix so the page does not jump.
+        val route = state.liveRoute
+        if (state.recording || route.hasTrack) {
             Spacer(Modifier.height(6.dp))
-            if (state.liveTrack.isEmpty()) {
+            if (!route.hasTrack) {
                 Box(
                     Modifier.fillMaxWidth().height(LiveMapBox),
                     contentAlignment = Alignment.CenterStart,
@@ -637,7 +641,14 @@ private fun TripCard(
                     )
                 }
             } else {
-                LiveRouteMap(state.liveTrack, Modifier.fillMaxWidth().height(LiveMapBox))
+                LiveRouteMap(
+                    route,
+                    state.liveTrail,
+                    // Only the follow map grows its line under the arrow; the thumbnail is a
+                    // picture of the drive and takes its newest fix as drawn.
+                    writing = state.recording && !state.paused,
+                    Modifier.fillMaxWidth().height(LiveMapBox),
+                )
             }
         }
     }
@@ -985,6 +996,7 @@ private fun StatusChip(
         recording = state.recording,
         paused = state.paused,
         polling = state.polling,
+        watching = state.watching,
         canRecord = actions.canRecord,
     )
     val tap = control.tap()
@@ -1042,14 +1054,26 @@ private fun StatusChip(
                 active = active,
             )
             state.polling -> HudStateChip(
+                // Streaming, and writing nothing: the same warning about the drive that
+                // NOT RECORDING carries, so it wears the same red hairline and wash
+                // (2.0.7/179). The word and the mark stay cyan because that half is a true
+                // sentence about the link, and a tap here starts a drive.
                 "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Cyan,
                 active = active,
+                edge = HudColors.Red,
+                borderAlpha = 0.55f,
+                washAlpha = 0.12f,
             )
             else -> HudStateChip(
                 // The recorder's own state in the not-running ink: the same mark, so
-                // a dim pill cannot claim a second meaning for the dot.
+                // a dim pill cannot claim a second meaning for the dot. The hairline and
+                // wash are red (2.0.7/179): "nothing is recording" is a warning about the
+                // drive, and the word stays dim because it is not a claim about the link.
                 "NOT RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.TextDim,
                 active = active,
+                edge = HudColors.Red,
+                borderAlpha = 0.55f,
+                washAlpha = 0.12f,
             )
         }
     }

@@ -40,11 +40,28 @@ data class TripRuntimeState(
     /** Running summary of the open trip; null until the first sample lands. */
     val summary: TripSummary? = null,
     /**
-     * The open trip's route so far, decimated for drawing (live route plan §2).
-     * Empty when nothing is recording - the live maps exist exactly as long as the
-     * trip file they are drawing does.
+     * The drive's route as the live maps draw it (live route plan §2): every recorded
+     * stretch and the pause/end dots. It outlives the file on purpose (2.0.7/179): a
+     * stopped drive keeps its shape on both maps until the next START replaces it. Empty
+     * when no position has been recorded in this app run.
      */
-    val liveTrack: List<TrackPoint> = emptyList(),
+    val liveRoute: LiveRoute = LiveRoute(),
+    /**
+     * Where the vehicle is: the newest positions the frame lane heard, recorded or not,
+     * oldest first, and the newest of them is what the live arrow sits on (2.0.7/179).
+     *
+     * Not part of [liveRoute] because it is not part of the drive: a pause freezes the file
+     * and not the car, and after a stop there is no recorder at all while the car is still
+     * parked on the map. The frame lane owns it, so it outlives both.
+     */
+    val liveTrail: List<TrackPoint> = emptyList(),
+    /**
+     * True while the frame lane is following the stream for the display alone - no file, no
+     * recorder, no foreground notification. That is what keeps a finished drive's live map
+     * moving while the app is open (2.0.7/179), and it is what the app stops on its way to
+     * the background, leaving the picture frozen on the drive it kept.
+     */
+    val watching: Boolean = false,
     val lastOkMs: Long = 0L,
     val lastError: String? = null,
 ) {
