@@ -77,4 +77,26 @@ class RecordingControlsTest {
         }
         assertEquals(RecordingControlState.entries.toSet(), seen)
     }
+
+    @Test
+    fun `one press means what the state says`() {
+        // The pill and the card are the controls now, so this is the whole gesture grammar:
+        // idle starts, a live drive pauses, a paused drive resumes, the window before the
+        // first sample backs out, and nothing is a state where the press is not offered.
+        assertEquals(RecordingTap.START, RecordingControlState.START.tap())
+        assertEquals(RecordingTap.PAUSE, RecordingControlState.RECORDING.tap())
+        assertEquals(RecordingTap.RESUME, RecordingControlState.PAUSED.tap())
+        assertEquals(RecordingTap.STOP, RecordingControlState.WAITING.tap())
+        assertEquals(RecordingTap.NONE, RecordingControlState.UNAVAILABLE.tap())
+    }
+
+    @Test
+    fun `only a drive that exists can be stopped by holding`() {
+        // A three-second red fill that ends in "there was nothing to stop" is a control that
+        // lied about its own state; START and the empty states get a plain press.
+        assertEquals(
+            setOf(RecordingControlState.RECORDING, RecordingControlState.PAUSED),
+            RecordingControlState.entries.filter { it.canHold() }.toSet(),
+        )
+    }
 }

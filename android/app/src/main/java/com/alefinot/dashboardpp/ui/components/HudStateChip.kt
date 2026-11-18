@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
@@ -65,8 +66,13 @@ private const val CHIP_PULSE_STEP_MS = 60L
  * unified grammar (icon plan P8, D2) says a state is said twice: the tint it has
  * always worn, and the mark the ledger owns for that state - `Record` while it
  * records, the link marks while it does not, `Warn` when data went stale. The word
- * stays because a pill is not a control: it is read, never pressed, and the sentence
- * is what the a11y node already carries.
+ * stays because a pill is read before it is touched: the sentence is what the a11y
+ * node carries, and what the owner reads to know what a press would do.
+ *
+ * The pill is also the recorder's control now (2.0.7/178): in the states that have
+ * something to do it takes a press, and [hold] is the red countdown of the press that
+ * would stop the drive. The component stays a *state* chip - a call site with nothing
+ * to offer passes no gesture and no [hold], and the pill goes back to being a readout.
  *
  * The pill keeps the page's `.ip-banner` shape and `.msg-*` tint recipe: [ink] at 8%
  * behind the glass, the same ink at 30% for the hairline, and in both the mark and
@@ -81,6 +87,7 @@ fun HudStateChip(
     modifier: Modifier = Modifier,
     pulse: Boolean = false,
     active: Boolean = true,
+    hold: () -> Float = { 0f },
 ) {
     // The state changes without the user touching anything (the recorder starts,
     // the page takes the connection, data goes stale), so both halves of the pill
@@ -132,6 +139,21 @@ fun HudStateChip(
             )
             .background(color.copy(alpha = 0.08f), HudRadius.PillShape),
     ) {
+        // The hold's countdown, under the word rather than over it: a pill that fills red and
+        // hides what it is filling for is a pill you have to remember. Read inside the draw
+        // lambda, so a frame of the sweep costs no recomposition of the pill or the header.
+        Canvas(Modifier.matchParentSize()) {
+            val p = hold()
+            if (p > 0f) {
+                drawRect(
+                    HudColors.Red.copy(alpha = 0.45f),
+                    size = Size(
+                        width = size.width * p.coerceIn(0f, 1f),
+                        height = size.height,
+                    ),
+                )
+            }
+        }
         Crossfade(label, animationSpec = tween(HudMotion.SWITCH_MS), label = "chipText") { word ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,

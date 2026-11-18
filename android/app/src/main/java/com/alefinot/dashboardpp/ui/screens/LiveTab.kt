@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +39,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.api.Snapshot
+import com.alefinot.dashboardpp.trips.RecordingControlState
+import com.alefinot.dashboardpp.trips.RecordingTap
+import com.alefinot.dashboardpp.trips.canHold
+import com.alefinot.dashboardpp.trips.tap
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.components.HudEnter
@@ -51,6 +56,7 @@ import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.flow
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.components.rememberHoldToAct
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -165,8 +171,21 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                 Text("LIVE", style = HudeSectionTitle(), color = HudColors.Cyan)
                 Spacer(Modifier.width(HudSpace.Gap))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                    StatusChip(state, active)
+                    StatusChip(state, active, actions)
                 }
+            }
+            // The pill is the control (2.0.7/178), so it only prints its reason where it
+            // cannot act: with no link, or a firmware with no trip store, the sentence that
+            // would have answered the press is the page's own line under the header. The
+            // old control row said this too; the row is gone, the sentence is not.
+            val control = RecordingControlState.of(
+                recording = state.recording,
+                paused = state.paused,
+                polling = state.polling,
+                canRecord = actions.canRecord,
+            )
+            if (control == RecordingControlState.UNAVAILABLE && actions.blocked.isNotEmpty()) {
+                Text(actions.blocked, color = HudColors.TextDim, style = HudeCfgNote())
             }
         }
 
@@ -178,7 +197,7 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
             // `pageFadeIn` per card, one stagger step apart: the stack arrives inside a
             // single page entrance.
             SpeedCard(snapshot, step = 1)
-            TripCard(state, snapshot, step = 2, actions = actions)
+            TripCard(state, snapshot, step = 2)
             PowerCard(snapshot, trends, step = 3)
             FuelCard(snapshot, step = 4)
             GnssCard(snapshot, step = 5)
@@ -546,7 +565,6 @@ private fun TripCard(
     state: TripRuntimeState,
     s: Snapshot,
     step: Int,
-    actions: TripRecordingActions,
 ) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     // Ticks while the page can be seen and a file is being written. Off-screen pages stay
@@ -598,11 +616,8 @@ private fun TripCard(
             // for the better part of a minute at demo speed and reads as a dead card.
             Figure("ODO", "", "km", num = s.odo, places = 1),
         )
-        // The recorder's controls: the card is the page's answer to "what is being written",
-        // so the buttons that start, hold and end it belong here rather than on the Trips
-        // page alone. One line, the same one the Trips page draws (TripRecordingBar).
-        Spacer(Modifier.height(6.dp))
-        TripRecordingBar(state, actions)
+        // The recorder's controls are the header pill (2.0.7/178): a card full of figures
+        // does not need a second row of buttons under them to say the same thing twice.
         // The drive's route, drawn while it is being made (live route plan §4): the
         // same tile map the sealed drive gets a detail page for, following the newest
         // position. Only a recording gets one - with no file open there is no route
@@ -948,45 +963,94 @@ private fun fmt(value: Double, places: Int = 1): String =
 
 /**
  * The run state as one [HudStateChip] pill: the mark the ledger owns for the state,
- * its word, and its ink. The mapping lives here, next to the state it reads; the
- * pill itself - the `.ip-banner` shape, the `.msg-*` tint, the breath while
- * recording - is the shared component the icon plan made of it (P8), so any other
- * page with a run state says it in the same words.
+ * its word, and its ink.
+ *
+ * The pill is also the recorder's control (2.0.7/178). A press does what the state says
+ * it does - start when idle, pause while writing, resume while paused - and a three-second
+ * hold fills it red and stops the drive ([rememberHoldToAct]). The mapping lives in
+ * `trips/RecordingControls.kt` rather than here, because the Trips page's recording card
+ * offers the same two gestures and the two pages must not drift apart.
+ *
+ * The states with nothing to toggle stay readouts: CONNECTING and NO DATA describe the
+ * link, not the recorder, and a pill that is pressable in one state and inert in the next
+ * would teach the owner that pressing it is a gamble.
  */
 @Composable
-private fun StatusChip(state: TripRuntimeState, active: Boolean) {
-    when {
-        // A paused drive is still a recording - the file is open - so it outranks the
-        // RECORDING pill rather than replacing it with a link state. Amber and no breath:
-        // nothing is being written, and a pill that breathes would claim it is.
-        state.paused -> HudStateChip(
-            "PAUSED", HudGlyphLedger.mark("readout.paused"), HudColors.Amber,
-            pulse = false, active = active,
-        )
-        state.recording -> HudStateChip(
-            "RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.Green,
-            pulse = true, active = active,
-        )
-        // Nothing has come back yet on this connection - that is not the same
-        // claim as "the dashboard stopped answering", which is what NO DATA means.
-        // It is "the link is not up yet", and that is the link-off mark, in dim.
-        state.lastOkMs == 0L -> HudStateChip(
-            "CONNECTING", HudGlyphLedger.mark("link.off"), HudColors.TextDim,
-            active = active,
-        )
-        state.polling && state.stale -> HudStateChip(
-            "NO DATA", HudGlyphLedger.mark("readout.stale"), HudColors.Red,
-            active = active,
-        )
-        state.polling -> HudStateChip(
-            "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Cyan,
-            active = active,
-        )
-        else -> HudStateChip(
-            // The recorder's own state in the not-running ink: the same mark, so
-            // a dim pill cannot claim a second meaning for the dot.
-            "NOT RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.TextDim,
-            active = active,
-        )
+private fun StatusChip(
+    state: TripRuntimeState,
+    active: Boolean,
+    actions: TripRecordingActions,
+) {
+    val control = RecordingControlState.of(
+        recording = state.recording,
+        paused = state.paused,
+        polling = state.polling,
+        canRecord = actions.canRecord,
+    )
+    val tap = control.tap()
+    val hold = rememberHoldToAct(
+        enabled = tap != RecordingTap.NONE,
+        onTap = {
+            when (tap) {
+                RecordingTap.START -> actions.onStart()
+                RecordingTap.PAUSE -> actions.onPause()
+                RecordingTap.RESUME -> actions.onResume()
+                RecordingTap.STOP -> actions.onStop()
+                RecordingTap.NONE -> Unit
+            }
+        },
+        onHold = if (control.canHold()) actions.onStop else null,
+        tapLabel = when (tap) {
+            RecordingTap.START -> "start recording a drive"
+            RecordingTap.PAUSE -> "pause recording"
+            RecordingTap.RESUME -> "resume recording"
+            RecordingTap.STOP -> "stop recording"
+            RecordingTap.NONE -> "recording unavailable"
+        },
+        holdLabel = "stop recording and seal this drive",
+    )
+    // The pill's ink stops at 29 dp; the finger does not. The gesture lives on a wrapper with
+    // a 44 dp minimum height - the smallest target a thumb can be expected to find - while
+    // the pill keeps its own size and the red fill stays inside it.
+    Box(
+        Modifier.heightIn(min = 44.dp).then(hold.modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            // A paused drive is still a recording - the file is open - so it outranks the
+            // RECORDING pill rather than replacing it with a link state. Amber and no breath:
+            // nothing is being written, and a pill that breathes would claim it is.
+            state.paused -> HudStateChip(
+                "PAUSED", HudGlyphLedger.mark("readout.paused"), HudColors.Amber,
+                pulse = false, active = active,
+                hold = hold::progress,
+            )
+            state.recording -> HudStateChip(
+                "RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.Green,
+                pulse = true, active = active,
+                hold = hold::progress,
+            )
+            // Nothing has come back yet on this connection - that is not the same
+            // claim as "the dashboard stopped answering", which is what NO DATA means.
+            // It is "the link is not up yet", and that is the link-off mark, in dim.
+            state.lastOkMs == 0L -> HudStateChip(
+                "CONNECTING", HudGlyphLedger.mark("link.off"), HudColors.TextDim,
+                active = active,
+            )
+            state.polling && state.stale -> HudStateChip(
+                "NO DATA", HudGlyphLedger.mark("readout.stale"), HudColors.Red,
+                active = active,
+            )
+            state.polling -> HudStateChip(
+                "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Cyan,
+                active = active,
+            )
+            else -> HudStateChip(
+                // The recorder's own state in the not-running ink: the same mark, so
+                // a dim pill cannot claim a second meaning for the dot.
+                "NOT RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.TextDim,
+                active = active,
+            )
+        }
     }
 }

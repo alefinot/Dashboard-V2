@@ -5,6 +5,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -33,12 +34,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.storage.StorageCopy
+import com.alefinot.dashboardpp.trips.RecordingControlState
+import com.alefinot.dashboardpp.trips.RecordingTap
+import com.alefinot.dashboardpp.trips.canHold
+import com.alefinot.dashboardpp.trips.tap
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudPage
@@ -51,6 +57,7 @@ import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.flow
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.components.rememberHoldToAct
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.RouteSketch
 import com.alefinot.dashboardpp.trips.TripRuntimeState
@@ -77,9 +84,11 @@ import java.util.Locale
 
 /**
  * Recorded drives (trip recording plan §5): newest first, one card per power
- * session. The trip being written today sits at the top as a live row — never
- * deletable, and it shows the running numbers the recorder holds in RAM rather
- * than re-reading the file it is appending to.
+ * session. The recorder itself sits at the top as the recording card — always
+ * present since 2.0.7/178, the live drive while one is being written and the
+ * page's START when none is. The live card is never deletable, and it shows the
+ * running numbers the recorder holds in RAM rather than re-reading the file it is
+ * appending to.
  */
 @Composable
 fun TripsTab(
@@ -165,52 +174,34 @@ fun TripsTab(
             Spacer(Modifier.height(8.dp))
         }
 
-        // The recorder's controls, above the live row they act on: the row is what a drive
-        // looks like while it is being written, so the buttons belong with it and not at
-        // the far end of the list. They stay here when nothing is recording - a disabled
-        // START and the reason is how the owner finds this half of the page at all.
-        TripRecordingBar(runtime, actions)
+        // The recording card is the recorder's control (2.0.7/178): a press starts, pauses
+        // or resumes the drive the card is showing, and a three-second press fills it red
+        // and stops. It sits above the list and is always there - an idle card is how the
+        // owner finds the recorder at all - and on a page with nothing to list it carries
+        // the empty page's own sentence instead of a second card saying nothing.
+        val idle = !runtime.recording && !runtime.paused && !runtime.polling
+        val chip = options.firstOrNull { it.value == filter }
+        RecordingCard(
+            state = runtime,
+            actions = actions,
+            emptyNote = when {
+                !idle || visible.isNotEmpty() -> null
+                rows.isEmpty() -> "No trips recorded yet."
+                chip == null -> "No drives match the current filter."
+                else -> "No drives filed under ${chip.label}."
+            },
+            // Files exist; the filter is what hides them. Say which chip is on, and say
+            // where the rest went, rather than presenting an empty page. The chip is always
+            // offered while it hides rows (see filterOptionsFor), so the name is always
+            // resolvable; the fallback is words rather than the filter's code, because a `?`
+            // on screen is a bug the user has to read.
+            emptyHint = if (idle && visible.isEmpty() && rows.isNotEmpty()) {
+                "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded \u00b7 pick ALL to see them."
+            } else {
+                null
+            },
+        )
         Spacer(Modifier.height(10.dp))
-
-        if (runtime.recording) {
-            LiveTripRow(runtime)
-            Spacer(Modifier.height(10.dp))
-        }
-
-        if (visible.isEmpty() && !runtime.recording) {
-            // The empty page, as one card: two lines floating on black used to be the only
-            // place on this tab with no surface under them, which made "nothing yet" look
-            // like a rendering failure rather than an answer.
-            Column(
-                Modifier.fillMaxWidth()
-                    .hudCard()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                if (rows.isEmpty()) {
-                    Text("No trips recorded yet.", color = HudColors.TextPrimary, style = HudeBody())
-                } else {
-                    // Files exist; the filter is what hides them. Say which chip is on,
-                    // and say where the rest went, rather than presenting an empty page.
-                    // The chip is always offered while it hides rows (see filterOptionsFor),
-                    // so the name is always resolvable; the fallback is words rather than the
-                    // filter's code, because a `?` on screen is a bug the user has to read.
-                    val chip = options.firstOrNull { it.value == filter }
-                    Text(
-                        if (chip == null) "No drives match the current filter."
-                        else "No drives filed under ${chip.label}.",
-                        color = HudColors.TextPrimary,
-                        style = HudeBody(),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "${rows.size} drive${if (rows.size == 1) "" else "s"} recorded \u00b7 pick ALL to see them.",
-                        color = HudColors.TextDim,
-                        style = HudeCfgNote(),
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-        }
 
         // The list of drives, with the page's own staggered reveal. It is the flexing
         // child, so the header keeps its height and the list gets the rest.
@@ -332,35 +323,96 @@ private fun TripList(
     }
 }
 
-/** The open trip, straight from the recorder's running totals. */
+/**
+ * The recorder, as the one card the Trips page shows it in.
+ *
+ * It is always present since 2.0.7/178: while a drive is being written it is the live row it
+ * always was, and while nothing is being written it is the page's START - one press opens a
+ * new file, which is the same bargain the header pill offers on the Live page. Both gestures
+ * are the same ones: a press means what `RecordingControlState.tap()` says, and a three-second
+ * press fills the card red and stops it (`rememberHoldToAct`).
+ *
+ * The card is a fixed header ABOVE the trip list, so a drag on it scrolls no list: the hold
+ * target is the card, not a row in the list that could move under the finger.
+ */
 @Composable
-private fun LiveTripRow(state: TripRuntimeState) {
+private fun RecordingCard(
+    state: TripRuntimeState,
+    actions: TripRecordingActions,
+    emptyNote: String?,
+    emptyHint: String?,
+) {
     val summary = state.summary
+    val control = RecordingControlState.of(
+        recording = state.recording,
+        paused = state.paused,
+        polling = state.polling,
+        canRecord = actions.canRecord,
+    )
+    val tap = control.tap()
+    val hold = rememberHoldToAct(
+        enabled = tap != RecordingTap.NONE,
+        onTap = {
+            when (tap) {
+                RecordingTap.START -> actions.onStart()
+                RecordingTap.PAUSE -> actions.onPause()
+                RecordingTap.RESUME -> actions.onResume()
+                RecordingTap.STOP -> actions.onStop()
+                RecordingTap.NONE -> Unit
+            }
+        },
+        onHold = if (control.canHold()) actions.onStop else null,
+        tapLabel = when (tap) {
+            RecordingTap.START -> "start recording a drive"
+            RecordingTap.PAUSE -> "pause recording"
+            RecordingTap.RESUME -> "resume recording"
+            RecordingTap.STOP -> "stop recording"
+            RecordingTap.NONE -> "recording unavailable"
+        },
+        holdLabel = "stop recording and seal this drive",
+    )
     // No page rule for a live recording row, so it borrows the page's status
     // language: `#msg` plus `.msg-success` -- emerald hairline at 30%, emerald at
-    // 8% as the wash, 8px radius.
+    // 8% as the wash, 8px radius. A paused drive is amber, the window before the first
+    // sample wears the link's cyan, and an idle card the dim ink of a thing not running.
+    val ink = when {
+        state.paused -> HudColors.Amber
+        state.recording -> HudColors.Green
+        control == RecordingControlState.WAITING -> HudColors.Cyan
+        else -> HudColors.TextDim
+    }
     Box(
         Modifier.fillMaxWidth()
-            // `#msg` + `.msg-success`: 8px corners, the status strip's own fill
-            // under an emerald wash at 8%, emerald hairline at 30%. No shadow.
-            .hudCard(
-                fill = HudColors.Msg,
-                borderColor = HudColors.Green.copy(alpha = 0.3f),
-            )
-            .background(HudColors.Green.copy(alpha = 0.08f), HudRadius.CardShape)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            // `#msg`: 8px corners, the status strip's own fill under the state's wash,
+            // its ink as the hairline at 30%. No shadow.
+            .hudCard(fill = HudColors.Msg, borderColor = ink.copy(alpha = 0.3f))
+            .background(ink.copy(alpha = 0.08f), HudRadius.CardShape)
+            .then(hold.modifier),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // The stop countdown, under the row's own content: the card is what fills, and
+        // the figures it fills over stay readable while it does. Read inside the draw
+        // lambda, so a frame of the sweep costs no recomposition of the map beside it.
+        Canvas(Modifier.matchParentSize()) {
+            val p = hold.progress()
+            if (p > 0f) {
+                drawRect(
+                    HudColors.Red.copy(alpha = 0.40f),
+                    size = Size(size.width * p.coerceIn(0f, 1f), size.height),
+                )
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             // The drive's shape, drawing itself as the recorder appends it (live route
             // plan §4) - on the LEFT, the corner the sealed card this drive becomes
             // wears its sketch in, so the row reads as the card from the first glance.
-            // The same 72 dp as that sketch; dots without labels, because a 72 dp map
-            // has no margin to spend on words - and show-only (`interactive = false`):
-            // a status picture, not a second map, so it never pans, zooms or shows the
-            // +/− slabs, and it refuses every touch at its own door, leaving the
-            // gesture to the page. Note the row is a fixed header ABOVE the trip list -
-            // a drag anywhere on it scrolls no list, map or text alike. Before the
-            // first fix there is no shape, and the numbers stand alone (live route §4).
+            // The same 72 dp as that sketch; no labels, because a 72 dp map has no
+            // margin to spend on words - and show-only (`interactive = false`): a status
+            // picture, not a second map, so it never pans, zooms or shows the +/− slabs,
+            // and it refuses every touch at its own door, leaving the gesture to the card.
+            // Before the first fix there is no shape, and the words stand alone.
             if (state.liveTrack.isNotEmpty()) {
                 LiveRouteMap(
                     state.liveTrack,
@@ -375,19 +427,46 @@ private fun LiveTripRow(state: TripRuntimeState) {
                     // `#msg`'s own 13px, at the weight the page gives a line it wants
                     // read first (`.cfg-warn`, `.card h4`).
                     Text(
-                        if (state.paused) "PAUSED" else "RECORDING",
-                        color = if (state.paused) HudColors.Amber else HudColors.Green,
+                        when {
+                            state.paused -> "PAUSED"
+                            state.recording -> "RECORDING"
+                            control == RecordingControlState.WAITING -> "STARTING"
+                            else -> "NOT RECORDING"
+                        },
+                        color = ink,
                         style = HudeSectionTitle(0f),
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        summary?.let { formatDuration(it.durationMs) } ?: "0:00:00",
-                        color = HudColors.TextPrimary,
-                        style = HudePerfValue(),
-                    )
+                    if (state.recording || state.paused) {
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            summary?.let { formatDuration(it.durationMs) } ?: "0:00:00",
+                            color = HudColors.TextPrimary,
+                            style = HudePerfValue(),
+                        )
+                    }
                 }
                 Spacer(Modifier.height(6.dp))
-                TripFlowLine(state)
+                when {
+                    control == RecordingControlState.UNAVAILABLE ->
+                        Text(actions.blocked, color = HudColors.TextDim, style = HudeCfgNote())
+                    control == RecordingControlState.START ->
+                        Text("Tap to start a drive.", color = HudColors.TextDim, style = HudeCfgNote())
+                    control == RecordingControlState.WAITING ->
+                        Text(
+                            "Waiting for the dashboard's first sample.",
+                            color = HudColors.TextDim,
+                            style = HudeCfgNote(),
+                        )
+                    else -> TripFlowLine(state)
+                }
+                if (emptyNote != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(emptyNote, color = HudColors.TextPrimary, style = HudeBody())
+                }
+                if (emptyHint != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(emptyHint, color = HudColors.TextDim, style = HudeCfgNote())
+                }
             }
         }
     }

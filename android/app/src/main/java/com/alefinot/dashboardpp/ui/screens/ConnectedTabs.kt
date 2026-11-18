@@ -376,7 +376,7 @@ fun AppShell(
         }
     }
 
-    // The trip recorder's controls, built once for both pages (see TripRecordingBar): one
+    // The trip recorder's controls, built once for both pages (see RecordingActions): one
     // set of actions means a PAUSE on the Live page and a PAUSE on the Trips page cannot
     // do two different things. START writes the switch first and lets the effect above do
     // the starting; STOP writes it off, which is the same value App Settings shows, so

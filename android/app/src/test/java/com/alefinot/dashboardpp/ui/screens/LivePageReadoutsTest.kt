@@ -212,6 +212,13 @@ class LivePageReadoutsTest {
                 "scroll that starts on it",
             Regex("interactive\\s*=\\s*false").containsMatchIn(row),
         )
+        assertTrue(
+            "the recording card lost its press grammar: since 2.0.7/178 the card is the " +
+                "control - a press starts, pauses or resumes the drive it shows, and a " +
+                "three-second press fills it red and stops it",
+            Regex("rememberHoldToAct\\(").containsMatchIn(row) &&
+                Regex("hold\\.modifier").containsMatchIn(row),
+        )
         val map = File("src/main/java/com/alefinot/dashboardpp/ui/map/LiveRouteMap.kt")
         assertTrue("missing LiveRouteMap.kt", map.exists())
         val mapCode = codeOnly("../map/LiveRouteMap.kt")
@@ -399,7 +406,16 @@ class LivePageReadoutsTest {
         assertTrue(
             "the run state stopped being drawn - the chip is the header's other half, and it is " +
                 "the half that was worth the height",
-            Regex("StatusChip\\(state, active\\)").containsMatchIn(page),
+            Regex("StatusChip\\(state, active, actions\\)").containsMatchIn(page),
+        )
+        // Since 2.0.7/178 the pill is also the recorder's control: the header is where the
+        // drive is started, paused, resumed and stopped from, and this is the guard that keeps
+        // it from drifting back into a readout nobody can press.
+        assertTrue(
+            "the run-state pill went back to being a readout: a press must do what the state " +
+                "says, and a three-second press must fill it red and stop the drive",
+            Regex("rememberHoldToAct\\(").containsMatchIn(page) &&
+                Regex("hold = hold::progress").containsMatchIn(page),
         )
         assertTrue(
             "the stack stopped scrolling; six cards plus the header is taller than the bench " +

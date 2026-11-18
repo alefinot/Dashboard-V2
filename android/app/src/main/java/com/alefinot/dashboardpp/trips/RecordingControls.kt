@@ -50,3 +50,49 @@ enum class RecordingControlState {
         }
     }
 }
+
+/**
+ * What one press of the recording pill (or the Trips recording card) means in a state.
+ *
+ * The controls are no longer a row of buttons: the pill that names the state *is* the control,
+ * and the card that shows the drive *is* the control. That makes the meaning of a press part of
+ * the state rather than part of a layout, so it lives here where both screens read it and where
+ * it can be tested without a screen - the same reason [RecordingControlState] lives here.
+ *
+ * [NONE] is not a disabled button: it is a pill with nothing to offer (no link, or a firmware
+ * with no trip store), and a press must not do anything at all, least of all start a service
+ * that has nowhere to write.
+ */
+enum class RecordingTap {
+    /** Open a new file and turn auto-start on (`START`). */
+    START,
+
+    /** Hold the open file at this instant (`RECORDING`). */
+    PAUSE,
+
+    /** Carry on appending to the same file (`PAUSED`). */
+    RESUME,
+
+    /** Back out of a service that has not opened a file yet (`WAITING`). */
+    STOP,
+
+    /** Nothing to do. */
+    NONE,
+}
+
+/** What a single press of the control does in this state. */
+fun RecordingControlState.tap(): RecordingTap = when (this) {
+    RecordingControlState.START -> RecordingTap.START
+    RecordingControlState.RECORDING -> RecordingTap.PAUSE
+    RecordingControlState.PAUSED -> RecordingTap.RESUME
+    RecordingControlState.WAITING -> RecordingTap.STOP
+    RecordingControlState.UNAVAILABLE -> RecordingTap.NONE
+}
+
+/**
+ * Whether this state has anything to stop, and therefore whether the press has a second,
+ * longer meaning. A drive that is not being written has nothing to seal: filling a control red
+ * over three seconds to conclude "nothing happened" is a control that lied about its own state.
+ */
+fun RecordingControlState.canHold(): Boolean =
+    this == RecordingControlState.RECORDING || this == RecordingControlState.PAUSED
