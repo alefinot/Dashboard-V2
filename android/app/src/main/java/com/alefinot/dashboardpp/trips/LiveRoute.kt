@@ -52,6 +52,25 @@ data class LiveRoute(
 }
 
 /**
+ * Which route the live maps should draw now that [incoming] came from the recorder.
+ *
+ * A finished drive's shape leaves the maps only when the drive that replaces it has a position
+ * of its own. It used to leave at the moment of the press, because `START` cleared the picture
+ * on its way in — and since the new drive has nothing recorded until its first fix lands, the
+ * page spent that whole sample period showing no map at all ("when the recording is stopped and
+ * you press to start it the live map disappears for a moment", owner, 2026-11-18). Handing the
+ * change over on the incoming route's first point makes it atomic: the old shape is drawn on
+ * every frame up to the new drive's first, and the new drive's `driveId` is what tells the map
+ * to drop its overlays and reframe on that same frame.
+ *
+ * The rule is written on `driveId`, not on emptiness alone, so a same-drive publish that
+ * happens to be empty — it cannot happen today, and a rule that trusts that is the one that
+ * strands an old route when it does — still reaches the map.
+ */
+fun routeToShow(current: LiveRoute, incoming: LiveRoute): LiveRoute =
+    if (!incoming.hasTrack && current.hasTrack && incoming.driveId != current.driveId) current else incoming
+
+/**
  * The newest positions the phone has heard, recorded or not, oldest first.
  *
  * This is the arrow's whole life: the position it sits on, and the few hundred metres of

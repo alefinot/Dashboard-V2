@@ -153,6 +153,46 @@ class LiveRouteTest {
         assertTrue(trail.snapshot().isEmpty())
     }
 
+    // ─── routeToShow: a finished drive's shape leaves only when the next one can be drawn ───
+
+    @Test
+    fun aDriveWithNothingDrawnYetNeverErasesTheDriveBeforeIt() {
+        // The press that begins a drive used to clear the map on its way in, and the new drive
+        // has no position for a whole sample period - so the page went blank for a second
+        // (owner, 2026-11-18: "the live map disappears for a moment").
+        val finished = LiveRoute(
+            driveId = 1_000L,
+            segments = listOf(listOf(TrackPoint(45.6, 9.2), TrackPoint(45.6001, 9.2002))),
+            endAt = TrackPoint(45.6001, 9.2002),
+        )
+        val started = LiveRoute(driveId = 2_000L)
+        assertSame(finished, routeToShow(current = finished, incoming = started))
+    }
+
+    @Test
+    fun theNewDriveTakesTheMapTheMomentItHasItsFirstPosition() {
+        // Keeping the old shape must not mean keeping it for the drive: one recorded point is a
+        // shape, and that frame is where the handover happens.
+        val finished = LiveRoute(
+            driveId = 1_000L,
+            segments = listOf(listOf(TrackPoint(45.6, 9.2))),
+            endAt = TrackPoint(45.6, 9.2),
+        )
+        val driving = LiveRoute(driveId = 2_000L, segments = listOf(listOf(TrackPoint(45.7, 9.3))))
+        assertEquals(driving, routeToShow(current = finished, incoming = driving))
+    }
+
+    @Test
+    fun aDriveStillBeingWrittenIsNeverHeldBackByItself() {
+        // The rule is keyed on `driveId` so it cannot strand a route: the same drive publishing
+        // an empty track - it cannot happen today, and this is the day it does - still reaches
+        // the map.
+        val open = LiveRoute(driveId = 3_000L, segments = listOf(listOf(TrackPoint(45.6, 9.2))))
+        assertEquals(LiveRoute(driveId = 3_000L), routeToShow(current = open, incoming = LiveRoute(driveId = 3_000L)))
+        // And with nothing drawn at all, an empty incoming route is simply the truth.
+        assertEquals(LiveRoute(driveId = 4_000L), routeToShow(current = LiveRoute(), incoming = LiveRoute(driveId = 4_000L)))
+    }
+
     /** One piece, asserted to be one piece: almost every case here builds exactly one. */
     private fun LiveTrack.singlePiece(): List<TrackPoint> {
         val pieces = snapshot()

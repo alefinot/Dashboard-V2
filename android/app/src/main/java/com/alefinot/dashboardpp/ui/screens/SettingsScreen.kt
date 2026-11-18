@@ -319,9 +319,10 @@ fun SettingsScreen(
             }
             Spacer(Modifier.height(2.dp))
             Text(
-                // The controls on the Live and Trips pages write this same switch, so a STOP
-                // here and a STOP there mean one thing: nothing records until the owner asks.
-                "The START and STOP controls on the Live and Trips pages set this same switch.",
+                // Only START writes this switch (2.0.7/180): ending a drive is a decision about
+                // the one that just finished, while this row decides what the next connection
+                // does - so the STOP that turned it off was switching off the next ride.
+                "START on the Live and Trips pages sets this switch. STOP only ends the drive.",
                 color = HudColors.TextDim,
                 style = HudeCfgNote(),
             )

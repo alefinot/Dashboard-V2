@@ -22,7 +22,6 @@ import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.trips.CsvTripWriter
 import com.alefinot.dashboardpp.trips.CursorTrail
-import com.alefinot.dashboardpp.trips.LiveRoute
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TelemetryFeed
 import com.alefinot.dashboardpp.trips.TripEvent
@@ -33,6 +32,7 @@ import com.alefinot.dashboardpp.trips.TripStore
 import com.alefinot.dashboardpp.weather.HostFrames
 import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.trips.TripSummary
+import com.alefinot.dashboardpp.trips.routeToShow
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -162,14 +162,12 @@ class TripLogService : Service() {
                 return START_STICKY
             }
             ACTION_STOP -> {
-                // The shade's Stop is the owner's: it also turns auto-start off, so the
-                // next connection cannot quietly start another drive behind their back.
+                // Ending a drive says nothing about auto-start (owner, 2026-11-18): the switch
+                // means "record when a dashboard connects", which is a decision about the *next*
+                // ride, while STOP answers "end this one". Every stop - pill, card or shade - is
+                // therefore just a stop, and the switch keeps whatever the owner left it.
                 val keep = intent.getBooleanExtra(EXTRA_KEEP_DISPLAY, true)
-                if (intent.getBooleanExtra(EXTRA_DISABLE_AUTO, false)) {
-                    stopAndDisableAuto(keep)
-                } else {
-                    shutdown(keepDisplay = keep)
-                }
+                shutdown(keepDisplay = keep)
                 return START_NOT_STICKY
             }
             ACTION_PAUSE -> {
@@ -207,14 +205,16 @@ class TripLogService : Service() {
         vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
         vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
         eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
-        // The owner's START begins a new drive, so the finished one it replaces leaves the
-        // maps now, not at the first sample a second later (2.0.7/179). A recorder that is
-        // already writing keeps its route: nothing replaces a drive that is still open. The
-        // trail goes with it: it is the arrow's history, and a new drive's arrow has no
-        // history until its first fix - pointing it back down the old drive's road would be
-        // the first thing the new picture got wrong.
+        // The owner's START does NOT blank the maps (owner, 2026-11-18: "when the recording is
+        // stopped and you press to start it the live map disappears for a moment"). Clearing the
+        // finished drive's shape here left the page with nothing to draw for a whole sample
+        // period; the shape now leaves when the drive that replaces it has a position of its own
+        // - see [routeToShow], which is what makes that handover atomic. The trail does go,
+        // straight away: it is the arrow's history, and a new drive's arrow has none until its
+        // first fix - pointing it back down the old drive's road would be the first thing the
+        // new picture got wrong.
         if (manualStart && recorder?.isRecording != true) {
-            TripRuntime.update { it.copy(liveRoute = LiveRoute(), liveTrail = emptyList()) }
+            TripRuntime.update { it.copy(liveTrail = emptyList()) }
             trail.clear()
         }
         // A lane that was following the stream for the display (no recorder) has to be handed
@@ -277,29 +277,12 @@ class TripLogService : Service() {
         TripRuntime.update {
             it.copy(
                 polling = false, recording = false, paused = false, pausedAtMs = 0L,
-                watching = false, liveRoute = route,
+                watching = false, liveRoute = routeToShow(it.liveRoute, route),
             )
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         if (keepDisplay && appForeground && route.hasTrack) watch(applicationContext)
-    }
-
-    /**
-     * The owner's Stop: end the drive and turn auto-start off, then stop. The preference
-     * write happens before the shutdown so the next launch (and the App Settings switch)
-     * agree that nothing should record until the owner says so again.
-     */
-    private fun stopAndDisableAuto(keepDisplay: Boolean = true) {
-        val app = applicationContext
-        scope.launch {
-            try {
-                RecorderSettings(app).setRecordingEnabled(false)
-            } catch (e: Exception) {
-                // The drive still ends; a lost preference write is not a lost file.
-            }
-            shutdown(keepDisplay = keepDisplay)
-        }
     }
 
     /**
@@ -316,7 +299,7 @@ class TripLogService : Service() {
                     it.paused && it.pausedAtMs > 0L -> it.pausedAtMs
                     else -> System.currentTimeMillis()
                 },
-                liveRoute = route ?: it.liveRoute,
+                liveRoute = routeToShow(it.liveRoute, route ?: it.liveRoute),
             )
         }
     }
@@ -375,7 +358,7 @@ class TripLogService : Service() {
                         TripRuntime.update {
                             it.copy(
                                 recording = false, tripPath = null, summary = null,
-                                liveRoute = route ?: it.liveRoute,
+                                liveRoute = routeToShow(it.liveRoute, route ?: it.liveRoute),
                             )
                         }
                         persistSession()
@@ -432,7 +415,7 @@ class TripLogService : Service() {
             it.copy(
                 snapshot = s,
                 summary = summary,
-                liveRoute = rec.liveRoute(),
+                liveRoute = routeToShow(it.liveRoute, rec.liveRoute()),
                 liveTrail = heard,
                 lastOkMs = now,
                 recording = rec.isRecording,
@@ -599,9 +582,8 @@ class TripLogService : Service() {
         val stopIntent = Intent(this, TripLogService::class.java).apply {
             action = ACTION_STOP
             putExtra(EXTRA_DEVICE_KEY, deviceKey)
-            // The shade's Stop is the owner's: it ends the drive and turns auto-start
-            // off. The shell's own stop (link lost) uses the plain action and leaves it.
-            putExtra(EXTRA_DISABLE_AUTO, true)
+            // The shade's Stop ends this drive and nothing else: it leaves the auto-start
+            // switch as the owner left it, exactly like the pill's and the card's.
         }
         val stopPending = PendingIntent.getService(
             this, 1, stopIntent,
@@ -689,9 +671,6 @@ class TripLogService : Service() {
         const val EXTRA_DEVICE_KEY = "device_key"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_LIVE = "live"
-
-        /** The shade's Stop: also turn the auto-start preference off. */
-        const val EXTRA_DISABLE_AUTO = "disable_auto_start"
 
         /** False means "and take the display-only reader with you" - see [stop]. */
         private const val EXTRA_KEEP_DISPLAY = "keep_display"

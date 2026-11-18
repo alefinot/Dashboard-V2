@@ -645,8 +645,12 @@ private fun TripCard(
                     route,
                     state.liveTrail,
                     // Only the follow map grows its line under the arrow; the thumbnail is a
-                    // picture of the drive and takes its newest fix as drawn.
-                    writing = state.recording && !state.paused,
+                    // picture of the drive and takes its newest fix as drawn. `!route.closed`
+                    // matters in the second after a START: the finished drive's shape is still
+                    // what is on screen while the new one waits for its first fix, and holding
+                    // that shape's newest point back to the moving arrow would draw the one
+                    // line across a drive that is over - the link the owner asked to never see.
+                    writing = state.recording && !state.paused && !route.closed,
                     Modifier.fillMaxWidth().height(LiveMapBox),
                 )
             }
@@ -1054,11 +1058,12 @@ private fun StatusChip(
                 active = active,
             )
             state.polling -> HudStateChip(
-                // Streaming, and writing nothing: the same warning about the drive that
-                // NOT RECORDING carries, so it wears the same red hairline and wash
-                // (2.0.7/179). The word and the mark stay cyan because that half is a true
-                // sentence about the link, and a tap here starts a drive.
-                "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Cyan,
+                // Streaming, and writing nothing: the whole pill is the warning about the drive
+                // that NOT RECORDING carries - hairline, wash, word and mark all in the red
+                // (2.0.7/179, the word following on 2.0.7/180 at the maintainer's request). A
+                // tap here starts a drive, which is the other half of why it must not be drawn
+                // in the link's own cyan: cyan is what the radio wears when it is doing well.
+                "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Red,
                 active = active,
                 edge = HudColors.Red,
                 borderAlpha = 0.55f,

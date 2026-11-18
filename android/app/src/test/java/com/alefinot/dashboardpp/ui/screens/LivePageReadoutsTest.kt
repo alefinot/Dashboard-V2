@@ -18,11 +18,15 @@ import org.junit.Test
  */
 class LivePageReadoutsTest {
 
-    private val screens = File("src/main/java/com/alefinot/dashboardpp/ui/screens")
+    private val main = File("src/main/java/com/alefinot/dashboardpp")
+    private val screens = File(main, "ui/screens")
 
-    private fun codeOnly(name: String): String {
-        val f = File(screens, name)
-        assertTrue("missing $name", f.exists())
+    private fun codeOnly(name: String): String = codeOnlyIn("ui/screens", name)
+
+    /** [codeOnly] for a file in another package - the recorder's shell has friends in `service`. */
+    private fun codeOnlyIn(pkg: String, name: String): String {
+        val f = File(File(main, pkg), name)
+        assertTrue("missing $pkg/$name", f.exists())
         var s = f.readText()
         Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL).findAll(s).forEach { m -> s = s.replace(m.value, " ") }
         return s.replace(Regex("//[^\n]*"), "")
@@ -466,6 +470,20 @@ class LivePageReadoutsTest {
                 "put straight back up again",
             Regex("watching = state\\.watching").containsMatchIn(page),
         )
+        // LOGGING IDLE wears the red all the way through (2.0.7/180): its word and its mark are
+        // the warning's red too, not the link's cyan. NOT RECORDING keeps its dim word, because
+        // that one is not a claim about the radio at all.
+        assertTrue(
+            "\"LOGGING IDLE\" went back to the link's cyan for its word: a pill that offers " +
+                "START in a healthy-link colour reads as a readout, and the maintainer asked " +
+                "for the red",
+            Regex("LOGGING IDLE\", HudGlyphLedger\\.mark\\(\"link\\.on\"\\), HudColors\\.Red").containsMatchIn(page),
+        )
+        assertFalse(
+            "\"NOT RECORDING\" took the red word - its ink is deliberately not a claim about " +
+                "the link, only its hairline and wash are the warning",
+            Regex("NOT RECORDING\", HudGlyphLedger\\.mark\\(\"readout\\.recording\"\\), HudColors\\.Red").containsMatchIn(page),
+        )
         // The Trips page's card is the other half of the same sentence, so it wears the same
         // skin: the recipe lives on the card's `stopped` flag, which is what the display-only
         // lane resolves to once the lane is read.
@@ -522,6 +540,58 @@ class LivePageReadoutsTest {
             "the stack stopped scrolling; six cards plus the header is taller than the bench " +
                 "phone's window, so a clipped page is what a missing scroll gives",
             Regex("verticalScroll\\(rememberScrollState\\(\\)\\)").containsMatchIn(page),
+        )
+    }
+
+    @Test
+    fun stoppingADriveLeavesTheAutoStartSwitchAlone() {
+        // Owner, 2026-11-18: "when the recording is stopped it should keep the auto start on
+        // connect on". The switch is a decision about the *next* ride; STOP answers a question
+        // about this one. START still turns it on, so the only thing that turns it off is the
+        // owner, on the App Settings page.
+        val shell = codeOnly("ConnectedTabs.kt")
+        assertFalse(
+            "a stop from the pill or the card started switching auto-start off again - pressing " +
+                "STOP for this drive silently cancelled the next one",
+            Regex("setRecordingEnabled\\(false\\)").containsMatchIn(shell),
+        )
+        assertTrue(
+            "START stopped turning auto-start on: with STOP no longer writing the switch, this " +
+                "is the only place that turns it on, and the recorder would never start by " +
+                "itself again",
+            Regex("setRecordingEnabled\\(true\\)").containsMatchIn(shell),
+        )
+        val service = codeOnlyIn("service", "TripLogService.kt")
+        assertFalse(
+            "the shade's STOP grew a preference write back: every stop has to end only the drive",
+            Regex("EXTRA_DISABLE_AUTO|stopAndDisableAuto").containsMatchIn(service),
+        )
+    }
+
+    @Test
+    fun pressingStartNeverBlanksTheLiveMap() {
+        // The finished drive's shape is what the page draws between the START press and the new
+        // drive's first fix; the service publishes it through `routeToShow` rather than clearing
+        // it on the way in (owner, 2026-11-18: "the live map disappears for a moment").
+        val service = codeOnlyIn("service", "TripLogService.kt")
+        assertTrue(
+            "the START path went back to clearing the map itself: it empties the route a whole " +
+                "sample period before the new drive has a position to put there",
+            !Regex("liveRoute = LiveRoute\\(").containsMatchIn(service),
+        )
+        assertTrue(
+            "the published route stopped going through the handover rule, so an empty new drive " +
+                "erases the drive that just finished",
+            Regex("liveRoute = routeToShow\\(").containsMatchIn(service),
+        )
+        // And the map must not treat that leftover shape as one it is drawing under the arrow:
+        // a route with an END dot belongs to a finished drive, and holding its newest point back
+        // to a live cursor would draw a line across a drive that is over.
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the follow map started growing a live tail on a finished drive's shape - while a " +
+                "new drive waits for its first fix the picture on screen is the OLD drive's",
+            Regex("writing = state\\.recording && !state\\.paused && !route\\.closed").containsMatchIn(page),
         )
     }
 }

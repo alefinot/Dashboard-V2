@@ -401,14 +401,12 @@ fun AppShell(
         },
         onPause = { TripLogService.pause(context) },
         onResume = { TripLogService.resume(context) },
-        onStop = {
-            storeScope.launch {
-                // The owner's stop: the next connection must not record by itself, and the
-                // App Settings switch must agree with the button that was just pressed.
-                settings.setRecordingEnabled(false)
-                TripLogService.stop(context)
-            }
-        },
+        // STOP ends this drive and touches no preference (owner, 2026-11-18). The switch means
+        // "record when a dashboard connects", which is a decision about the *next* ride, while
+        // the press answers a question about this one; turning auto-start off here switched off
+        // the next journey because of how this one ended. START still turns the switch on, so
+        // the only way it goes off is the owner turning it off.
+        onStop = { TripLogService.stop(context) },
     )
 
     // Two different questions, and collapsing them is what made the app sluggish.
