@@ -178,6 +178,10 @@ internal fun sparkScale(
  * Radial speedometer, drawn the way the ESP's own gauge reads: a 270° sweep with
  * the number in the middle. The arc is vector-drawn, so it stays crisp at any
  * screen size and costs no bitmaps.
+ *
+ * [note] is a second, quieter line under [unit] - the SPEED card puts its measurement source
+ * there. It used to be spelled into the unit's own string ("km/h · HALL"), which read as one
+ * five-word unit; a source is a fact about the reading, so it gets the line under it.
  */
 @Composable
 fun HudGauge(
@@ -187,6 +191,7 @@ fun HudGauge(
     unit: String,
     modifier: Modifier = Modifier,
     accent: Color = HudColors.Cyan,
+    note: String? = null,
 ) {
     val clamped = max(0.0, min(value, fullScale))
     // A new figure arrives once a second, so the gauge glides for exactly that long and at
@@ -261,6 +266,9 @@ fun HudGauge(
                 style = HudeMetric(),
             )
             Text(unit, color = HudColors.TextMuted, style = HudeMetricUnit())
+            if (note != null) {
+                Text(note, color = HudColors.TextDim, style = HudeMetricUnit())
+            }
         }
     }
 }

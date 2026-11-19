@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -58,23 +59,24 @@ import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.components.rememberHoldToAct
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
+import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudSpace
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
+import com.alefinot.dashboardpp.ui.theme.HudeHeading
 import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
-import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlinx.coroutines.delay
 
 /**
  * The gauge's box, square. The page's own gauge filled a `#live-display` panel; the
  * app drew it 200 dp tall and the Live page needed three scrolls for what the unit's
- * 3.2" screen shows at a glance. 132 dp is the largest box that still leaves the GNSS
- * card on the first screen of a 393x776 dp window - the mock that settled the layout
+ * 3.2" screen shows at a glance. 132 dp is the largest box that still leaves the last card
+ * on the first screen of a 393x776 dp window - the mock that settled the layout
  * (phone-layout plan §4a) drew 148, and the last 16 dp went to the trace, which shows
  * more in the same height. `HudGauge` derives its stroke from the box (9% of the
  * shorter side), so the smaller circle is not a thinner drawing, only a smaller one.
@@ -120,9 +122,10 @@ private val LiveMapBox = 150.dp
  * The layout is the phone card stack of the phone-layout plan (§4a), and it is a stack
  * rather than a wall of stat cells for a measured reason: the two-up cells were a 68 dp
  * pitch for two readings, so speed, fuel, GNSS and unit health together needed three
- * scrolls on the bench phone. Six cards carry the same nineteen readings in one screen,
+ * scrolls on the bench phone. Four cards carry the same nineteen readings in one screen,
  * because a figure with no empty cell around it costs about a third of the height - and a
- * trace answers the one question a snapshot cannot: was it always that hot?
+ * trace answers the one question a snapshot cannot: was it always that hot? The GNSS card
+ * was the fifth and became the bottom strip of THIS TRIP on 2026-11-19.
  */
 @Composable
 fun LiveTab(active: Boolean, actions: TripRecordingActions) {
@@ -163,12 +166,16 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
             // `.header` was the page's centred 26 px h2 with a subtitle under it - 85 dp
             // measured on the bench phone, spent on a word the tab bar has already said.
             // The run state is the half worth keeping, so: the name at the left, the chip
-            // at the right, one 52 dp row.
+            // at the right, one 52 dp row. The name itself is still the app's `h2`
+            // (`HudPageHeader` draws it on Vehicles, Trips and App Settings), because the
+            // 13 sp caps label this row used to wear was the one page title in the app a
+            // band smaller than its neighbours (owner, 2026-11-19) - same size and brush
+            // as the other menus, none of the height.
             Row(
                 Modifier.fillMaxWidth().height(52.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("LIVE", style = HudeSectionTitle(), color = HudColors.Cyan)
+                Text("LIVE", style = HudeHeading().copy(brush = HudBrushes.title))
                 Spacer(Modifier.width(HudSpace.Gap))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
                     StatusChip(state, active, actions)
@@ -199,9 +206,8 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
             // single page entrance.
             SpeedCard(snapshot, step = 1)
             TripCard(state, snapshot, step = 2)
-            PowerCard(snapshot, trends, step = 3)
+            BatteryCard(snapshot, trends, step = 3)
             FuelCard(snapshot, step = 4)
-            GnssCard(snapshot, step = 5)
         } else {
             // The page is here, the link may be up, and nothing has been
             // measured yet. Say that and nothing more: the reason a frame is
@@ -239,8 +245,6 @@ private fun LiveCard(
     meta: String? = null,
     /** The card's readout mark, from the ledger (`readout.speed`, `readout.fuel`, …). */
     mark: ImageVector? = null,
-    /** A mark worn by the meta note - `Warn` beside a `NO FIX`, and nothing else today. */
-    metaMark: ImageVector? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     HudEnter(modifier = Modifier.fillMaxWidth(), delayMs = step * HudMotion.STAGGER_MS) {
@@ -270,14 +274,6 @@ private fun LiveCard(
                 Text(title, style = HudeSectionCaps(), color = HudColors.Cyan)
                 if (meta != null) {
                     Spacer(Modifier.width(HudSpace.Gap))
-                    if (metaMark != null) {
-                        Image(
-                            metaMark,
-                            null,
-                            modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 4.dp),
-                            colorFilter = ColorFilter.tint(HudColors.Amber),
-                        )
-                    }
                     Text(
                         meta,
                         style = HudeCfgNote(),
@@ -291,8 +287,8 @@ private fun LiveCard(
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
             content()
-            // 8 dp, not the page's 12: five of these stacked inside one 748 dp screen is the
-            // whole difference between the GNSS card landing above the tab bar and needing a
+            // 8 dp, not the page's 12: four of these stacked inside one 748 dp screen is the
+            // whole difference between the last card landing above the tab bar and needing a
             // scroll (measured on the bench, 2026-11-08, and still true with the UNIT card
             // gone on 2026-11-12 - the page got shorter, the gap stayed the reason it fits).
             Spacer(Modifier.height(HudSpace.Gap))
@@ -409,7 +405,7 @@ private fun FigureText(
  * asked for the graph out on 2026-11-15, and the card stopped sampling for it — the card's
  * caption spoke of the trace's window and point count, so it went with the trace rather than
  * stay a sentence about a graph that is no longer there. Volts and temp keep their windows:
- * POWER's trend rows still draw them.
+ * BATTERY's trend rows still draw them.
  */
 @Composable
 private fun SpeedCard(s: Snapshot, step: Int) {
@@ -426,7 +422,11 @@ private fun SpeedCard(s: Snapshot, step: Int) {
                 value = s.spd,
                 fullScale = speedScale(s),
                 label = "SPEED",
-                unit = "km/h · ${sourceLabel(s.src)}",
+                unit = "km/h",
+                // The source is a fact about the reading, not a unit, so it takes a line of
+                // its own under the unit instead of trailing it after a middot (owner,
+                // 2026-11-19): "km/h · HALL" read as one long unit.
+                note = sourceLabel(s.src),
                 modifier = Modifier.size(GaugeBox),
                 accent = if (s.spd > 0.0) HudColors.Cyan else HudColors.CyanDim,
             )
@@ -453,7 +453,58 @@ private fun SpeedCard(s: Snapshot, step: Int) {
     }
 }
 
-/** AVG / MAX / TIMER beside the gauge: the page's `.perf-row` pair, turned right. */
+/**
+ * The width of the unit gutter beside AVG, MAX and TIMER.
+ *
+ * The unit used to ride inside the figure's own string ("12.5 km/h", "3.42 s"), so it was the
+ * *string* that right-aligned: AVG's digits stopped a whole "km/h" short of the card's edge
+ * while the timer's stopped one "s" short, and the three numbers the owner compares down this
+ * column never lined up under each other. A gutter gives every figure one right edge and every
+ * unit one left edge; 30 dp holds "km/h" at the 10 sp the units are drawn at, with the
+ * [HudSpace.Hair] gap before it keeping the figure off the unit's first glyph (measured on the
+ * bench, 2026-11-19: without it the row read "62.9km/h").
+ */
+private val SideUnitGutter = 30.dp
+
+/**
+ * One label / figure / unit row, beside the gauge: the page's `.perf-row` pair, turned right.
+ *
+ * [unit] is drawn in its own fixed gutter rather than appended to the figure, which is what
+ * keeps the digits of AVG, MAX and TIMER on one line (see [SideUnitGutter]). The gutter is
+ * reserved even when the unit is empty - READY keeps the timer's figure where a running timer
+ * would have put it.
+ */
+@Composable
+private fun SideRow(
+    label: String,
+    unit: String,
+    figure: @Composable (Modifier) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(
+            label,
+            style = HudeSectionCaps(),
+            color = HudColors.TextDim,
+            fontSize = 10.sp,
+            modifier = Modifier.alignByBaseline(),
+        )
+        Spacer(Modifier.width(HudSpace.Gap))
+        figure(Modifier.weight(1f).alignByBaseline())
+        Spacer(Modifier.width(HudSpace.Hair))
+        Text(
+            unit,
+            style = HudePerfValue(),
+            color = HudColors.TextDim,
+            fontSize = 10.sp,
+            maxLines = 1,
+            // `widthIn`, not `width`: at a large accessibility font scale a longer unit grows
+            // the gutter instead of being clipped, which costs the alignment and keeps the word.
+            modifier = Modifier.widthIn(min = SideUnitGutter).alignByBaseline(),
+        )
+    }
+}
+
+/** AVG / MAX / TIMER beside the gauge, as a word: the figure's [SideRow] keeps its edges. */
 @Composable
 private fun SideFigure(
     label: String,
@@ -461,19 +512,8 @@ private fun SideFigure(
     unit: String = "",
     color: Color = HudColors.TextPrimary,
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Text(label, style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 10.sp)
-        Spacer(Modifier.width(HudSpace.Gap))
-        FigureText(
-            value,
-            unit,
-            color,
-            modifier = Modifier.weight(1f),
-            align = TextAlign.End,
-        )
+    SideRow(label, unit) { m ->
+        FigureText(value, "", color, modifier = m, align = TextAlign.End)
     }
 }
 
@@ -486,20 +526,8 @@ private fun SideNum(
     unit: String = "",
     color: Color = HudColors.TextPrimary,
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Text(label, style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 10.sp)
-        Spacer(Modifier.width(HudSpace.Gap))
-        FlowFigureText(
-            num,
-            places,
-            unit,
-            color,
-            modifier = Modifier.weight(1f),
-            align = TextAlign.End,
-        )
+    SideRow(label, unit) { m ->
+        FlowFigureText(num, places, "", color, modifier = m, align = TextAlign.End)
     }
 }
 
@@ -550,7 +578,7 @@ private fun TraceOr(
  * that is the only honest start of an elapsed figure. The card keeps that clock itself rather
  * than borrowing the 1 Hz frame: a stopwatch that stops when the link goes quiet - or that only
  * moves when the minute rolls over - is not a stopwatch. The tick is scoped to this card, so
- * the other four are not redrawn for it.
+ * the other three are not redrawn for it.
  *
  * A pause freezes the figure where the owner pressed PAUSE ([TripRuntimeState.pausedAtMs]) and
  * stops the tick: a stopwatch that keeps climbing while the file gets nothing is a lie about
@@ -561,6 +589,10 @@ private fun TraceOr(
  * While a drive exists the card also carries the live route map: the shape drawing itself as
  * the recorder appends it (live route plan §4), freezing at an amber PAUSE dot while paused,
  * and staying with its red END dot after a stop until the next START replaces it.
+ *
+ * Since 2026-11-19 it also carries the GNSS strip (FIX / SATS / HDOP / ALT) and the position
+ * line under the map, and the standalone GNSS card is gone: a fix is a fact about the drive
+ * being counted here, not a fifth subject for the page (owner).
  */
 @Composable
 private fun TripCard(
@@ -655,11 +687,74 @@ private fun TripCard(
                 )
             }
         }
+        // GNSS, merged into this card (owner, 2026-11-19): the fix, its birds, its precision
+        // and its altitude are facts about the drive this card is already counting, and the
+        // page's fifth card was one strip of four figures wearing a header of its own. The
+        // strip sits UNDER the map - the shape is the drive's picture, the numbers are its
+        // detail - and the position line under the strip keeps the card's last fact readable.
+        // The hairline is the strip's own; the strip brings its 7 dp of padding either side of
+        // it, so no gap has to be added for the case with no map.
+        Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.CardHairline))
+        Strip(
+            Figure(
+                "FIX",
+                if (s.fix == 1) "3D" else "NO",
+                color = if (s.fix == 1) HudColors.Green else HudColors.Amber,
+            ),
+            // SATS and FIX stay steps - they are counts and states, and they change in
+            // steps honestly. HDOP and altitude are the continuous kind, and both keep
+            // the em dash for a declined value rather than gliding through one: `num`
+            // null is the dash, and the glide then lives in the figure's own leaf.
+            Figure("SATS", s.sats.toString(), color = if (s.fix == 1) HudColors.Green else HudColors.Amber),
+            Figure("HDOP", "—", num = if (s.hdop >= 0) s.hdop else null, places = 1),
+            Figure(
+                "ALT",
+                "—",
+                if (s.alt >= 0) "m" else "",
+                num = if (s.alt >= 0) s.alt.toDouble() else null,
+                places = 0,
+            ),
+        )
+        GnssPositionLine(s)
     }
 }
 
 /**
- * Battery and coolant, each over the five minutes the page remembers.
+ * The fix's two coordinates, or the word for a fix that has none: the trip card's last line
+ * since the GNSS card was folded into it (2026-11-19).
+ *
+ * It reads [Snapshot.hasPosition] rather than `fix` alone. A fix without a valid coordinate
+ * pair is what the receiver reports before it has settled, and "0.00000, 0.00000" is a claim
+ * about a place in the Gulf of Guinea - the firmware sends -1/0 rather than inventing a
+ * position, and this line declines the same way.
+ */
+@Composable
+private fun GnssPositionLine(s: Snapshot) {
+    val has = s.hasPosition
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Image(
+            // The ledger already owns both marks: the position's own sky mark while there is
+            // a position to read, and the stale/absent mark for the fix that is not there.
+            HudGlyphLedger.mark(if (has) "readout.gnss" else "readout.stale"),
+            null,
+            modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 6.dp),
+            colorFilter = ColorFilter.tint(if (has) HudColors.TextDim else HudColors.Amber),
+        )
+        Text(
+            if (has) "${fmt(s.lat, 5)}, ${fmt(s.lon, 5)}" else "NO FIX",
+            style = HudeCfgNote(),
+            color = if (has) HudColors.TextDim else HudColors.Amber,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Battery and temperature, each over the five minutes the page remembers.
  *
  * Both are drawn against a fixed scale with a dashed rule at the limit, not scaled to
  * themselves: the useful question about either one is "how far from where it should be, and
@@ -667,11 +762,15 @@ private fun TripCard(
  * it makes a sagging battery look flat and a cold engine look urgent. The rules are the same
  * figures the stat cells coloured themselves on (11.5 V, 105 °C), so the trace and the number
  * agree about what counts as a problem.
+ *
+ * The card is named BATTERY · TEMPERATURE since 2026-11-19 (owner): `POWER` was this card's
+ * word for the electrical system and `COOLANT` its word for a temperature, so the two halves of
+ * one title were a system and a fluid instead of the two readings the rows print.
  */
 @Composable
-private fun PowerCard(s: Snapshot, trends: LiveTrends, step: Int) {
+private fun BatteryCard(s: Snapshot, trends: LiveTrends, step: Int) {
     LiveCard(
-        title = "POWER · COOLANT",
+        title = "BATTERY · TEMPERATURE",
         step = step,
         mark = HudGlyphLedger.mark("readout.power"),
         meta = trends.windowLabel(),
@@ -837,47 +936,6 @@ private fun FlowBar(percent: Double, color: Color) {
                 .fillMaxWidth(fraction)
                 .fillMaxHeight()
                 .background(color, HudRadius.PillShape),
-        )
-    }
-}
-
-/**
- * The GNSS fix, and the position it produced.
- *
- * HDOP and altitude arrive as -1 when the fix did not carry them, which is the firmware
- * declining to invent a value; the figure says so in the same dim ink rather than drawing
- * "0.0", which would read as a superb fix.
- */
-@Composable
-private fun GnssCard(s: Snapshot, step: Int) {
-    LiveCard(
-        title = "GNSS",
-        step = step,
-        mark = HudGlyphLedger.mark("readout.gnss"),
-        meta = if (s.hasPosition) "${fmt(s.lat, 5)}, ${fmt(s.lon, 5)}" else "NO FIX",
-        // The declined position is a warning the page used to spell in three letters; the
-        // ledger already owns the mark for a stale/absent reading, so it wears that.
-        metaMark = if (s.hasPosition) null else HudGlyphLedger.mark("readout.stale"),
-    ) {
-        Strip(
-            Figure(
-                "FIX",
-                if (s.fix == 1) "3D" else "NO",
-                color = if (s.fix == 1) HudColors.Green else HudColors.Amber,
-            ),
-            // SATS and FIX stay steps - they are counts and states, and they change in
-            // steps honestly. HDOP and altitude are the continuous kind, and both keep
-            // the em dash for a declined value rather than gliding through one: `num`
-            // null is the dash, and the glide then lives in the figure's own leaf.
-            Figure("SATS", s.sats.toString(), color = if (s.fix == 1) HudColors.Green else HudColors.Amber),
-            Figure("HDOP", "—", num = if (s.hdop >= 0) s.hdop else null, places = 1),
-            Figure(
-                "ALT",
-                "—",
-                if (s.alt >= 0) "m" else "",
-                num = if (s.alt >= 0) s.alt.toDouble() else null,
-                places = 0,
-            ),
         )
     }
 }
