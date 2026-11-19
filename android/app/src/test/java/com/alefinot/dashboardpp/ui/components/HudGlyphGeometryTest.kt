@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.alefinot.dashboardpp.ui.components.HudGlyphLedger.glyphOf
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.sqrt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,6 +43,7 @@ class HudGlyphGeometryTest {
         "Bolt" to HudIcons.Bolt,
         "Record" to HudIcons.Record,
         "Warn" to HudIcons.Warn,
+        "Eye" to HudIcons.Eye,
     )
 
     /** Marks filled as a body, keyed by the outline identifier in HudIcons. */
@@ -55,6 +57,7 @@ class HudGlyphGeometryTest {
         "RecordData" to HudIcons.RecordData,
         "WarnData" to HudIcons.WarnData,
         "SignalDot" to HudIcons.SignalDot,
+        "EyePupil" to HudIcons.EyePupil,
     )
 
     /** Marks drawn as a line, keyed by the stroke identifier in HudIcons. */
@@ -66,6 +69,7 @@ class HudGlyphGeometryTest {
         "PauseData" to HudIcons.PauseData,
         "FrameData" to HudIcons.FrameData,
         "SignalArcs" to HudIcons.SignalArcs,
+        "EyeLid" to HudIcons.EyeLid,
     )
 
     private val data: Map<String, String> = bodies + lines
@@ -198,18 +202,82 @@ class HudGlyphGeometryTest {
         val source = iconsSource()
         for ((id, datum) in lines) {
             assertTrue("$id closes its interior, so a fill can shut it", !datum.contains("Z"))
-            // Every line mark but the GNSS arcs is stroked by the set's shared builder, which is what
-            // gives the whole vocabulary one weight. The arcs are one path inside a two-path mark.
+            // Every line mark but the two halves of a two-path mark is stroked by the set's shared
+            // builder, which is what gives the whole vocabulary one weight. A two-path mark has to
+            // add its own path with the stroke spelled out — the GNSS arcs and the eye's lens — and
+            // each one still uses the set's W.
             val mark = id.removeSuffix("Data")
             assertTrue(
                 "$id is not stroked by the shared builder, so it does not carry the set's weight",
-                id == "SignalArcs" || Regex("""stroked\("$mark",\s*$id""").containsMatchIn(source),
+                id in twoPathLines ||
+                    Regex("""stroked\("$mark",\s*$id""").containsMatchIn(source),
             )
             val subs = subpaths(datum)
             for ((i, sub) in subs.withIndex()) {
                 assertTrue("$id stroke $i has no line to stroke", contourPoints(sub).size >= 2)
             }
         }
+        // And the two-path marks really do carry the set's weight by hand: same builder constant,
+        // round ends, or they are a second line language on the grid.
+        for (name in listOf("Signal", "Eye")) {
+            val body = source.substringAfter("val $name: ImageVector").substringBefore("internal val")
+            assertTrue("$name is stroked at a weight of its own",
+                Regex("strokeLineWidth = W").containsMatchIn(body))
+            assertTrue("$name has square line ends",
+                Regex("StrokeCap\\.Round").containsMatchIn(body))
+        }
+    }
+
+    /** Line data that lives inside a two-path mark, and so cannot go through `stroked(...)`. */
+    private val twoPathLines = setOf("SignalArcs", "EyeLid")
+
+    /**
+     * The EYE on the Live page's rail: a lens of two arcs with a pupil inside it, and the two
+     * things that can go wrong are the lens closing on the pupil and the mark forgetting to be an
+     * eye. Both are measurable on the path data, so both are asserted here.
+     *
+     * The daylight is measured from the true crown of the arc, not from the three points the path
+     * spells out: an arc's endpoints are its corners, and the corner of an eye is on its own
+     * centre line. R and the chord between the corners give the sagitta, and the sagitta is the
+     * top of the lens.
+     */
+    @Test
+    fun `the eye keeps its pupil clear of its lens and stays an eye`() {
+        val lid = HudIcons.EyeLid
+        assertEquals("one path for the whole lens", 1, subpaths(lid).size)
+        val arcs = Regex("""A([\d.]+),[\d.]+ 0 0 1 ([\d.]+),([\d.]+)""").findAll(lid).toList()
+        assertEquals("two lids, both the short way round", 2, arcs.size)
+        val radius = arcs.map { it.groupValues[1].toFloat() }
+        assertEquals("the two lids are not the same curve", radius[0], radius[1], 0.01f)
+        val r = radius[0]
+
+        // Corners on the grid's centre line, symmetric about x = 12: the first arc ends at the
+        // right corner, the second comes back to the left one.
+        val rightCorner = Offset(arcs[0].groupValues[2].toFloat(), arcs[0].groupValues[3].toFloat())
+        val leftCorner = Offset(arcs[1].groupValues[2].toFloat(), arcs[1].groupValues[3].toFloat())
+        assertEquals("a lid corner is off the centre line", 12f, rightCorner.y, 0.01f)
+        assertEquals("a lid corner is off the centre line", 12f, leftCorner.y, 0.01f)
+        val halfChord = (rightCorner.x - leftCorner.x) / 2f
+        assertEquals("the lens is not centred on the grid", 12f, (rightCorner.x + leftCorner.x) / 2f, 0.01f)
+        val width = halfChord * 2f
+
+        val pupil = circle(subpaths(HudIcons.EyePupil).first())
+        assertEquals("the pupil is off the eye's axis", 12f, pupil.centre.x, 0.01f)
+        assertEquals("the pupil is off the eye's axis", 12f, pupil.centre.y, 0.01f)
+        assertTrue("a r${pupil.radius} pupil is a hair at 18 dp", pupil.radius >= 2.0f)
+
+        val crown = 12f - (r - sqrt(r * r - halfChord * halfChord))
+        val height = (12f - crown) * 2f
+        // The daylight, on both sides at once: the drawn lid's inner edge is half the stroke
+        // inside the crown, and the pupil is a body that reaches all the way to its radius.
+        val daylight = (12f - pupil.radius) - (crown + 1.9f / 2f)
+        assertTrue(
+            "the lens closes on the pupil: $daylight units of daylight at r$r on a $width chord " +
+                "is less than the 2.0 this set will not go below",
+            daylight >= 2.0f,
+        )
+        assertTrue("an eye $width wide and $height tall is a circle with a dot in it", width >= 1.4f * height)
+        assertTrue("the lens reaches outside the grid at its crown: $crown", crown - 1.9f / 2f >= 0f)
     }
 
     /**
@@ -393,7 +461,7 @@ class HudGlyphGeometryTest {
         val unmeasured = glyphOf.values.map { it.name.removePrefix("Hud") }.filter {
             it in setOf(
                 "Close", "Check", "Plus", "Minus", "Play", "Stop", "Pause", "File", "Camera",
-                "Frame", "Droplet", "Signal", "Bolt", "Record", "Warn",
+                "Frame", "Droplet", "Signal", "Bolt", "Record", "Warn", "Eye",
             ) && it !in names
         }
         assertTrue("the ledger points at a mark this test does not measure: $unmeasured",

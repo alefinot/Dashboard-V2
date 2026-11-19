@@ -72,11 +72,13 @@ import kotlinx.coroutines.delay
  * also draws a map or a trace. The body recomposes at the unit's 1 Hz; the leaves
  * animate at frame rate on top of it.
  *
- * The third member of the family is the [ZoomRail], which is glass for the same reason
- * and reports its bounds for the same reason the shelves do. All three are drawn as tight
- * as they read: the bottom shelf is one row rather than three, the strips' figures are
- * 14 sp instead of 17 and the gauge is 96 dp instead of 132, because the owner asked for
- * the map back (2026-11-19) and every dp of shelf is a dp of road not shown.
+ * The third member of the family is the [HudRail], which is glass for the same reason and
+ * reports its bounds for the same reason the shelves do - and which is the one piece of glass
+ * that stays up when the shelves are switched off, because a page that can hide its readings
+ * has to keep the way back. All three are drawn as tight as they read: the bottom shelf is
+ * one row rather than three, the strips' figures are 14 sp instead of 17, and the gauge is
+ * 96 dp instead of 132 and says no word over its figure, because the owner asked for the map
+ * back (2026-11-19) and every dp of glass is a dp of road not shown.
  */
 
 /**
@@ -229,7 +231,8 @@ internal fun BottomShelf(
         HudGauge(
             value = s.spd,
             fullScale = speedScale(s),
-            label = "SPEED",
+            // No label: the dial is the page's speed, and inside 96 dp the word took a line
+            // of the circle it was drawn in for nothing (HudGauge, 2026-11-19).
             unit = "km/h",
             // The source is a fact about the reading, not a unit, so it keeps its line under
             // the unit rather than trailing it after a middot.
@@ -273,33 +276,57 @@ private fun SpeedStrip(s: Snapshot) {
 }
 
 /**
- * The zoom rail: the map's two stepper presses, in the one place a control can live.
+ * The page's rail over the map: the readings off and on, and the map's two stepper presses,
+ * in the one place a control can live.
  *
  * It is glass on the page, not a widget in the map, for the reason the whole page is
- * arranged around: a Compose control over an osmdroid `AndroidView` receives nothing
- * unless the map refuses the touch under it (`LiveTab`'s door). So the rail reports its
- * bounds to the page like the two shelves do, and the map declines the DOWN.
+ * arranged around: a Compose control over an osmdroid `AndroidView` receives nothing unless
+ * the map refuses the touch under it (`LiveTab`'s door). So the rail reports its bounds to
+ * the page like the two shelves do, and the map declines the DOWN.
  *
- * The marks are the ledger's steppers (`action.step-up` / `action.step-down`): zooming a
+ * It is also the only glass that stays when the shelves are put away. A page that can hide
+ * its readings has to leave the hand that brings them back somewhere visible, and the eye is
+ * that hand - which is why it sits at the top of the rail, in the thumb's first reach, and
+ * not under the zoom steps.
+ *
+ * The zoom marks are the ledger's steppers (`action.step-up` / `action.step-down`): zooming a
  * map one level is a stepper press, and drawing a second pair of plus and minus shapes for
- * a map would be the second meaning the ledger exists to catch. Typed `+` and `−` are not
- * an option at all (`TypedPseudoGlyphTest`).
+ * a map would be the second meaning the ledger exists to catch. Typed `+` and `−` are not an
+ * option at all (`TypedPseudoGlyphTest`). The top mark is `action.hud-visibility` - one mark
+ * for one act in two voices, the way the pill is one mark for the recorder: cyan says the
+ * glass is up and the press takes it away, dim says it is away and the press brings it back.
+ * A slashed eye was not drawn, because a line crossing a line at 22 dp is a smudge and not a
+ * "hidden" (see `HudIcons.Eye`), so the state rides on the ink and on the sentence the node
+ * carries.
  *
- * The rail sits in the band of open map between the shelves, on the right, where a thumb
- * reaches it without covering the car.
+ * The rail sits on the right - between the shelves when they are up, in the middle of the
+ * whole page when they are not - where a thumb finds it without standing over the car.
  */
 @Composable
-internal fun ZoomRail(
+internal fun HudRail(
+    hudVisible: Boolean,
+    onToggleHud: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The one sentence the button cannot print at 22 dp, said to the node instead. It names
+    // the act the press performs, not the state the page is in, so the same words that TalkBack
+    // reads are the words the owner would use to ask for it.
+    val eyeSentence = if (hudVisible) "hide the telemetry HUD" else "show the telemetry HUD"
     Column(
         modifier
             .hudGlass(shape = HudRadius.PillShape, elevation = 10.dp)
             .padding(vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        HudGlyphAction(
+            glyph = HudGlyphLedger.mark("action.hud-visibility"),
+            description = eyeSentence,
+            ink = if (hudVisible) HudColors.Cyan else HudColors.TextDim,
+            onClick = onToggleHud,
+        )
+        Box(Modifier.width(26.dp).height(1.dp).background(HudColors.CardHairline))
         HudGlyphAction(
             glyph = HudGlyphLedger.mark("action.step-up"),
             description = "zoom the map in",

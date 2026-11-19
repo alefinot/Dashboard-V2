@@ -366,8 +366,8 @@ class LivePageReadoutsTest {
     fun theRoundGaugeSurvivedTheRedesign() {
         // The maintainer asked for the gauge to stay when the map HUD was approved: it is the
         // one element that answers "how fast" without being read. It shrank to 96 dp when the
-        // page was compacted (2026-11-19) and moved into the bottom shelf's single row, beside
-        // the traces and the fuel rail rather than under them.
+        // page was compacted (2026-11-19), moved into the bottom shelf's single row beside the
+        // traces and the fuel rail, and lost the word over its figure the same day.
         val page = livePage()
         assertTrue(
             "HudGauge is gone from the Live page; the approved HUD keeps it and shrinks the " +
@@ -378,6 +378,14 @@ class LivePageReadoutsTest {
             "the gauge box drifted off its 96 dp anchor: it is sized by GaugeBox, measured so " +
                 "the gauge, the traces and the fuel rail share one row",
             Regex("private val GaugeBox = (9[0-9]|10[0-5])\\.dp").containsMatchIn(page),
+        )
+        val gaugeParams = codeOnlyIn("ui/components", "HudCharts.kt")
+            .substringAfter("fun HudGauge(").substringBefore(") {")
+        assertTrue(
+            "the dial grew its word back. SPEED over a 96 dp figure is a line taken out of the " +
+                "circle the number lives in, for a word the page has no use for - the dial IS the " +
+                "speed (maintainer, 2026-11-19). HudGauge has no label parameter to pass",
+            !page.contains("\"SPEED\"") && !gaugeParams.contains("label"),
         )
     }
 
@@ -430,7 +438,7 @@ class LivePageReadoutsTest {
     }
 
     /**
-     * The zoom rail: two stepper presses, on the right of the open band of map.
+     * The rail over the map: the eye that puts the two shelves away, and the two zoom steps.
      *
      * It is glass on the page and not a widget inside the map for the same reason the pill
      * is: a Compose control over the osmdroid view receives nothing unless the map refuses
@@ -439,9 +447,25 @@ class LivePageReadoutsTest {
      * `+` or `−` is not a glyph this app allows (`TypedPseudoGlyphTest`).
      */
     @Test
-    fun theMapHasAZoomRailTheMapLetsThrough() {
+    fun theRailOverTheMapCarriesTheEyeAndTheMapLetsItThrough() {
         val hud = codeOnly("LiveHud.kt")
-        val rail = hud.substringAfter("internal fun ZoomRail").substringBefore("// ───")
+        val rail = hud.substringAfter("internal fun HudRail").substringBefore("// ───")
+        assertTrue(
+            "the rail lost its eye - the one control that can put the readings off the map, and " +
+                "the only glass that stays up when they are off",
+            Regex("HudGlyphLedger\\.mark\\(\"action\\.hud-visibility\"\\)").containsMatchIn(rail) &&
+                Regex("onToggleHud").containsMatchIn(rail),
+        )
+        assertTrue(
+            "the eye stopped saying which way the press goes. It is one mark for one act in two " +
+                "voices (see HudIcons.Eye), so the sentence on the node and the ink are the whole " +
+                "state - a glyph-only control without a description is invisible to TalkBack",
+            Regex("hide the telemetry HUD").containsMatchIn(rail) &&
+                Regex("show the telemetry HUD").containsMatchIn(rail) &&
+                Regex("description = eyeSentence").containsMatchIn(rail) &&
+                Regex("ink = if \\(hudVisible\\) HudColors\\.Cyan else HudColors\\.TextDim")
+                    .containsMatchIn(rail),
+        )
         assertTrue(
             "the zoom rail lost its stepper marks - they are the ledger's, because zooming a " +
                 "map one level IS a step and a second pair of plus/minus shapes is the second " +
@@ -471,12 +495,29 @@ class LivePageReadoutsTest {
         assertTrue(
             "the rail stopped reporting its bounds: the map would take the DOWN and the " +
                 "buttons would do nothing at all",
-            Regex("zoomRail != next\\) zoomRail = next").containsMatchIn(page) &&
-                Regex("listOf\\(topShelf, bottomShelf, zoomRail\\)").containsMatchIn(page),
+            Regex("hudRail != next\\) hudRail = next").containsMatchIn(page) &&
+                Regex("listOf\\(hudRail\\) \\+ listOfNotNull\\(").containsMatchIn(page),
         )
         assertTrue(
             "the rail is offered while there is no map to zoom",
-            Regex("if \\(hasPosition\\) \\{\\s*ZoomRail\\(").containsMatchIn(page),
+            Regex("if \\(hasPosition\\) \\{\\s*HudRail\\(").containsMatchIn(page),
+        )
+        assertTrue(
+            "a shelf that has been put away is still refusing touches where it used to be. It " +
+                "keeps its last measured bounds in state, so the refusal has to be switched off " +
+                "with the shelf - otherwise a hidden shelf eats pans over ground nobody covers, " +
+                "and the page can never be cleared by the eye",
+            Regex("topShelf\\.takeIf \\{ hudVisible \\}").containsMatchIn(page) &&
+                Regex("bottomShelf\\.takeIf \\{ hudVisible \\}").containsMatchIn(page) &&
+                Regex("if \\(hudVisible && bottomShelf\\.height > 0f\\)").containsMatchIn(page),
+        )
+        assertTrue(
+            "the eye is drawing the shelves back through a path that would also stop the " +
+                "recorder, or remembering a clean map across a restart: the toggle is one " +
+                "remember{} in the page, session-only by the maintainer's call (2026-11-19), and " +
+                "hiding the numbers does not touch the trip file",
+            Regex("var hudVisible by remember \\{ mutableStateOf\\(true\\) \\}").containsMatchIn(page) &&
+                Regex("onToggleHud = \\{ hudVisible = !hudVisible \\}").containsMatchIn(page),
         )
         val mapCode = codeOnly("../map/LiveRouteMap.kt")
         assertTrue(
@@ -511,6 +552,17 @@ class LivePageReadoutsTest {
                 "stand this frame instead of from where the travel is heading - three fast " +
                 "presses would be worth one and a half levels",
             Regex("if \\(zoomTo\\.isNaN\\(\\)\\) view\\.zoomLevelDouble else zoomTo").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the travel went back to a one-sided curve. The maintainer asked for an easy ease " +
+                "(2026-11-19): an ease-out launches at full speed on the first frame, which " +
+                "reads as a shove. The level now leaves and arrives gently, so the frame is " +
+                "shaped by easeEase - a cubic in two mirror halves - and nothing else",
+            Regex("setZoomLevel\\(zoomFrom \\+ \\(zoomTo - zoomFrom\\) \\* easeEase\\(t\\)\\)")
+                .containsMatchIn(mapCode) &&
+                Regex("if \\(t < 0\\.5\\) 4\\.0 \\* t \\* t \\* t else 1\\.0 - \\(-2\\.0 \\* t \\+ 2\\.0\\)\\.pow\\(3\\) / 2\\.0")
+                    .containsMatchIn(mapCode) &&
+                !Regex("1\\.0 - k \\* k \\* k").containsMatchIn(mapCode),
         )
     }
 

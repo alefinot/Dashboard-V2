@@ -179,7 +179,13 @@ internal fun sparkScale(
  * the number in the middle. The arc is vector-drawn, so it stays crisp at any
  * screen size and costs no bitmaps.
  *
- * [note] is a second, quieter line under [unit] - the SPEED card puts its measurement source
+ * It says no name. It used to carry a `label` over the figure, and on the Live page - where
+ * it is the only thing inside a 96 dp dial in a shelf over a map - `SPEED` was the one word
+ * the page had no use for: the dial is the page's speed, and the word took a line of the
+ * circle it was drawn inside (maintainer, 2026-11-19). Three lines are left, and they are
+ * all facts about the reading: the figure, its [unit], and [note] under it.
+ *
+ * [note] is the quieter line under [unit] - the Live page puts its measurement source
  * there. It used to be spelled into the unit's own string ("km/h · HALL"), which read as one
  * five-word unit; a source is a fact about the reading, so it gets the line under it.
  */
@@ -187,7 +193,6 @@ internal fun sparkScale(
 fun HudGauge(
     value: Double,
     fullScale: Double,
-    label: String,
     unit: String,
     modifier: Modifier = Modifier,
     accent: Color = HudColors.Cyan,
@@ -253,11 +258,6 @@ fun HudGauge(
             horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
         ) {
-            Text(
-                label,
-                color = HudColors.Cyan,
-                style = HudeSectionTitle(0.2f / 13f),
-            )
             Text(
                 // `.speed-value` - the 44px monospace figure the dashboard itself
                 // puts in the middle of its gauge, in the accent colour.

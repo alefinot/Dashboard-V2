@@ -33,6 +33,7 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
@@ -311,9 +312,9 @@ private class LiveMapHolder(
      * press of a fast run would simply be dropped (checked against the 6.1.20 source,
      * 2026-11-19). Here a press during a travel re-aims the travel instead.
      *
-     * The easing is an ease-out: the ground starts moving on the frame the button went down
-     * - the press has to feel connected to the map - and settles into the level instead of
-     * stopping dead on it.
+     * The shape of the travel is [easeEase] - an ease-in-out, the "easy ease" asked for on
+     * 2026-11-19: the level leaves the old value gently, crosses the middle at its fastest
+     * and is caught at the new one.
      */
     private val zoomRamp = object : Runnable {
         override fun run() {
@@ -321,8 +322,7 @@ private class LiveMapHolder(
             if (zoomFrom.isNaN() || zoomTo.isNaN()) return
             val t = ((SystemClock.uptimeMillis() - zoomStartMs).toDouble() / ZOOM_RAMP_MS)
                 .coerceIn(0.0, 1.0)
-            val k = 1.0 - t
-            view.setZoomLevel(zoomFrom + (zoomTo - zoomFrom) * (1.0 - k * k * k))
+            view.setZoomLevel(zoomFrom + (zoomTo - zoomFrom) * easeEase(t))
             view.invalidate()
             if (t < 1.0) {
                 view.postOnAnimation(this)
@@ -1163,3 +1163,26 @@ private class LiveMapHolder(
         private const val HEADING_POINTS = 64
     }
 }
+
+/**
+ * The shape of a zoom step: **ease-in-out** — what the maintainer called the "easy ease"
+ * (2026-11-19).
+ *
+ * The level leaves the value it is on gently, crosses the middle of the step at its fastest,
+ * and is caught at the value it was asked for. The first curve was one-sided (ease-out): it
+ * launched at full speed on the first frame and only braked at the end, which reads as a
+ * shove rather than as a lens being pushed. A cubic in two mirror halves — the same
+ * acceleration into the step as out of it — is the shape of a pressed control: the eye gets
+ * time at both ends, and the step has a beginning and an ending instead of a start.
+ *
+ * This is deliberately NOT the telemetry figures' rule. Those flow across one sample period
+ * **linearly and on purpose** (see `ui/components/HudFlow.kt`): a wall of twelve numbers
+ * easing in step reads as one pulse with dead air after it. A camera is not a wall of
+ * numbers — it is a single object the owner just pushed, and a push has a wind-up.
+ *
+ * `internal`, not `private`, so `ZoomEaseTest` can measure the shape - the two exact
+ * ends, the mirror halves, the slow start and the slow landing - instead of trusting that a
+ * cubic written on a screen is the curve that draws.
+ */
+internal fun easeEase(t: Double): Double =
+    if (t < 0.5) 4.0 * t * t * t else 1.0 - (-2.0 * t + 2.0).pow(3) / 2.0

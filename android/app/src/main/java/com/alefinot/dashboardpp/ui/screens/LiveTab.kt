@@ -60,8 +60,10 @@ import kotlin.math.hypot
  * slot's touches at the ViewGroup level, and an interop filter never sees a consumed DOWN
  * (bench-proven, 2026-11-15). So the shelves hand the map their bounds and the map
  * refuses a DOWN inside them ([LiveRouteMap]'s `touchRefusals`), which is what lets the
- * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The zoom rail
- * over the open middle of the map hands its bounds to the same list, for the same reason.
+ * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The rail over
+ * the open middle of the map - the eye that puts both shelves away, and the two zoom steps
+ * that travel ([LiveHud]'s [HudRail]) - hands its bounds to the same list, for the same
+ * reason, and it is the one glass that stays when the shelves are gone.
  */
 @Composable
 fun LiveTab(active: Boolean, actions: TripRecordingActions) {
@@ -93,7 +95,7 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // there is - both surfaces live in the same root and the map fills its slot.
     var topShelf by remember { mutableStateOf(Rect.Zero) }
     var bottomShelf by remember { mutableStateOf(Rect.Zero) }
-    var zoomRail by remember { mutableStateOf(Rect.Zero) }
+    var hudRail by remember { mutableStateOf(Rect.Zero) }
     var mapOrigin by remember { mutableStateOf(Offset.Zero) }
 
     // The zoom rail's two presses, as counts: the map only ever acts on the difference
@@ -102,10 +104,24 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     var zoomIn by remember { mutableIntStateOf(0) }
     var zoomOut by remember { mutableIntStateOf(0) }
 
+    // Whether the two glass shelves are on the page. The rail's eye is the only way to
+    // change it, and it is deliberately not remembered (2026-11-19): the readings are the
+    // page's reason, so a clean map is something the owner asks for on a particular drive,
+    // not a preference the app wakes up in. Nothing is written to storage, and the trip
+    // keeps recording while the glass is away - hiding the numbers hides the numbers, not
+    // the recorder.
+    var hudVisible by remember { mutableStateOf(true) }
+
     val density = LocalDensity.current
-    val refusals = remember(topShelf, bottomShelf, zoomRail, mapOrigin) {
-        listOf(topShelf, bottomShelf, zoomRail)
-            .filter { it.width > 0f && it.height > 0f }
+    val refusals = remember(topShelf, bottomShelf, hudRail, mapOrigin, hudVisible) {
+        // A shelf that is not on the page must not keep refusing touches with the rectangle
+        // it had the last time it was: the state holds its last measured bounds, and the map
+        // would go on declining a DOWN over ground the shelf does not cover.
+        val onScreen = listOf(hudRail) + listOfNotNull(
+            topShelf.takeIf { hudVisible },
+            bottomShelf.takeIf { hudVisible },
+        )
+        onScreen.filter { it.width > 0f && it.height > 0f }
             .map {
                 Rect(
                     it.left - mapOrigin.x,
@@ -117,9 +133,9 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     }
     // The RE-CENTER label is drawn by the map, so "above the bottom shelf" is an inset the
     // page has to hand it: the shelf's measured height, the page's own bottom inset, and
-    // the gap the label keeps from the glass. Before the shelf is measured it stays at the
-    // map's default - there is nothing under it yet.
-    val recenterBottom = if (bottomShelf.height > 0f) {
+    // the gap the label keeps from the glass. Before the shelf is measured - or once it is
+    // put away - it sits at the map's own default, because there is nothing under it.
+    val recenterBottom = if (hudVisible && bottomShelf.height > 0f) {
         with(density) { bottomShelf.height.toDp() } + LiveEdge + 8.dp
     } else {
         6.dp
@@ -185,24 +201,27 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
         // bottom, and two halves of one overlay fading in sequence would read as a stutter.
         HudEnter(modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(horizontal = LiveShelfInset)) {
-                TopShelf(
-                    state = state,
-                    active = active,
-                    actions = actions,
-                    s = snapshot,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = LiveEdge)
-                        .onGloballyPositioned { layout ->
-                            val next = layout.boundsInRoot()
-                            if (topShelf != next) topShelf = next
-                        },
-                )
-                // The open map: everything the shelves do not cover. The zoom rail floats in
-                // it, on the right and midway down, because that is where a thumb finds it
+                if (hudVisible) {
+                    TopShelf(
+                        state = state,
+                        active = active,
+                        actions = actions,
+                        s = snapshot,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = LiveEdge)
+                            .onGloballyPositioned { layout ->
+                                val next = layout.boundsInRoot()
+                                if (topShelf != next) topShelf = next
+                            },
+                    )
+                }
+                // The open map: everything the shelves do not cover. The rail floats in it,
+                // on the right and midway down, because that is where a thumb finds it
                 // without standing over the car - and because a control that lives in the
                 // map's slot has to be handed the touch by the map, so it reports its bounds
-                // to the same list the shelves do.
+                // to the same list the shelves do. With the shelves put away this row is the
+                // whole page, so the rail stays exactly where the thumb left it.
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -211,17 +230,19 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                 ) {
                     Spacer(Modifier.weight(1f))
                     if (hasPosition) {
-                        ZoomRail(
+                        HudRail(
+                            hudVisible = hudVisible,
+                            onToggleHud = { hudVisible = !hudVisible },
                             onZoomIn = { zoomIn++ },
                             onZoomOut = { zoomOut++ },
                             modifier = Modifier.onGloballyPositioned { layout ->
                                 val next = layout.boundsInRoot()
-                                if (zoomRail != next) zoomRail = next
+                                if (hudRail != next) hudRail = next
                             },
                         )
                     }
                 }
-                if (snapshot != null) {
+                if (hudVisible && snapshot != null) {
                     BottomShelf(
                         s = snapshot,
                         trends = trends,

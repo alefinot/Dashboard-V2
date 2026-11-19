@@ -57,6 +57,12 @@ object HudGlyphLedger {
         "action.photo-take" to HudIcons.Camera,
         "action.photo-frame" to HudIcons.Frame,
         "action.system-panel" to HudIcons.Cog,
+        // The Live page's rail over the map: show the readings, or take them off the map.
+        // One id, one mark, for what is one act seen from its two sides - which way the press
+        // goes is said by the ink (cyan up, dim down) and by the sentence on the node, exactly
+        // as the pill's tint says what the recorder is doing. A slashed twin would be a line
+        // crossing a line at 22 dp, which is why it was not drawn (see HudIcons.Eye).
+        "action.hud-visibility" to HudIcons.Eye,
 
         // ── Files, in both directions. ──
         "file.in" to HudIcons.ImportFile,

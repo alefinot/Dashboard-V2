@@ -712,6 +712,57 @@ object HudIcons {
     internal val MinusData: String = "M5.5,12 L18.5,12"
 
     /**
+     * **EYE** — the readings are on the page; one press takes them off, one press puts them
+     * back. It sits on the Live page's rail over the map (`ui/screens/LiveHud.kt`), and the
+     * ink carries which way the press goes: cyan while the glass is up, dim while the map is
+     * clean (the same idiom as the run-state pill — the tint is the state, the mark is the act).
+     *
+     * Two parts, and each one is a kind this file says survives 22 dp: the lens is **a line**
+     * (one path, two arcs, the shared W stroke, round ends) and the pupil is **a body** (a
+     * filled disc). What the file forbids is a stroked outline with a stroked thing inside it,
+     * and that is exactly why there is no slashed twin of this mark: an eye with a strike
+     * through it is a line crossing a line with a dot behind it, which at this size reads as a
+     * smudge and not as "hidden". The state rides on the ink instead.
+     *
+     * The lens is 18 units wide and 11.6 tall — rounder than an eye by taste, and the
+     * measurement says why it has to be. The lids are drawn at W = 1.9, so they spend 0.95 of
+     * their height on each side of the almond; the pupil has to keep the set's 2.0-unit floor of
+     * daylight clear of both. At the shallow almond this file would rather draw (18 × 9) the
+     * opening left over is 1.55 units of radius, and a pupil that small is a hair on the bench
+     * phone — so the lens opens up until the pupil, the stroke and the daylight all fit.
+     * `HudGlyphGeometryTest` measures that arithmetic on the path data, so the mark cannot be
+     * "improved" back into a smudge.
+     */
+    val Eye: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudEye", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(EyeLid).toNodes(),
+            stroke = SolidColor(HudColors.Cyan), strokeLineWidth = W,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        ).addPath(
+            PathParser().parsePathString(EyePupil).toNodes(),
+            fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    /**
+     * The two lids, one path: the upper arc bulges up from the left corner to the right, the
+     * lower arc runs back under, both sweep 1 (the clockwise direction of this y-down grid) and
+     * both the short way round. No `Z`, because this is a line mark and a closed interior is
+     * what the line rule in `HudGlyphGeometryTest` refuses — the path happens to come back to
+     * where it started, which is not the same thing.
+     *
+     * Corners at x = 3 and x = 21 on the grid's own centre line, and R = 9.88 on an 18-unit
+     * chord, which is the 5.80-unit sagitta that opens the lens to 11.6 units.
+     */
+    internal val EyeLid: String = "M3,12 A9.88,9.88 0 0 1 21,12 A9.88,9.88 0 0 1 3,12"
+
+    /** The pupil: a filled disc of ink, 2.5 units — 12 px on the bench phone. */
+    internal val EyePupil: String = disc12(2.5f, true)
+
+    /**
      * **PLAY** — begin, or begin again: an OTA install, a self-test, a light capture.
      *
      * One solid triangle, no border, no plate behind it: a body is what survives 22 dp. The apex
