@@ -66,6 +66,7 @@ import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.HudPage
 import com.alefinot.dashboardpp.ui.components.HudPageHeader
 import com.alefinot.dashboardpp.ui.components.HudSelectMenu
+import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.hudPage
@@ -130,6 +131,11 @@ fun SettingsScreen(
     val recordingEnabled by settings.recordingEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     val motionOn by settings.motionEnabled.collectAsStateWithLifecycle(initialValue = true)
+    // The route quality slider. `routeDrag` holds the figure mid-drag: the store is only
+    // written when the thumb is released, so a drag cannot rewrite the DataStore on every
+    // frame, while the label beside the rail still follows the finger.
+    val routeQuality by settings.routeQuality.collectAsStateWithLifecycle(initialValue = 100)
+    var routeDrag by remember { mutableStateOf<Int?>(null) }
     // The weather feed has its own store and its own coordinator: the switch and the
     // typed city are the owner's, the schedule belongs to the process-wide feed that the
     // link and the trip service are also waking (one schedule, or the unit gets two).
@@ -332,6 +338,48 @@ fun SettingsScreen(
                 on = motionOn,
                 toggleLabel = "motion",
             ) { on -> scope.launch { settings.setMotionEnabled(on) } }
+
+            Spacer(Modifier.height(16.dp))
+            // How much of the drive's line the LIVE map keeps thinning away on a long ride
+            // (maintainer, 2026-11-19: "make it go full quality up to 10000km at max
+            // quality"). It touches nothing that is written down: every trip file holds
+            // every fix, and a sealed drive's detail page draws from the file. The store
+            // is written on release, not per frame - the drag lives in `routeDrag` until
+            // the thumb lifts.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "ROUTE QUALITY",
+                    color = HudColors.Cyan,
+                    style = HudeFormLabel(),
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${routeDrag ?: routeQuality} %",
+                    color = HudColors.TextPrimary,
+                    style = HudePerfValue(),
+                )
+            }
+            HudSlider(
+                value = (routeDrag ?: routeQuality).toFloat(),
+                onValueChange = { routeDrag = it.toInt() },
+                valueRange = 0f..100f,
+                steps = 19,
+                onValueChangeFinished = {
+                    val dragged = routeDrag
+                    if (dragged != null && dragged != routeQuality) {
+                        scope.launch { settings.setRouteQuality(dragged) }
+                    }
+                    routeDrag = null
+                },
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Full keeps the live line at full detail up to 10 000 km of driving. " +
+                    "Lower thins a long drive's line sooner to spare memory. Trip files " +
+                    "always hold every point, and the setting applies to the next drive.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
 
             Spacer(Modifier.height(16.dp))
             Text("STORAGE", color = HudColors.Cyan, style = HudeFormLabel())

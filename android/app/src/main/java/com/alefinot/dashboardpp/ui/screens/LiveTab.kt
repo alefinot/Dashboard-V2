@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -147,7 +148,14 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // map that arrives at the first fix does not shift anything when it does.
     val hasPosition = trail.isNotEmpty() || route.hasTrack
 
-    Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
+    // The page clips to itself. The shelves' slide is a graphicsLayer translation, and
+    // nothing between them and the window clipped at the page edge - so on the way out the
+    // glass was painted over the tab bar below instead of under it (maintainer, 2026-11-19:
+    // "fix the bottom ui panel animation, it should go under the 5 icons menu bar"). With
+    // the page edge as the clip line, the bottom shelf slides down and vanishes behind the
+    // bar's hairline and rises back out from under it; the top one does the same at the
+    // status-bar edge. Scoped here, so nothing outside the Live page can lose an overdraw.
+    Box(Modifier.fillMaxSize().clipToBounds().background(HudColors.Bg)) {
         Box(
             Modifier
                 .fillMaxSize()

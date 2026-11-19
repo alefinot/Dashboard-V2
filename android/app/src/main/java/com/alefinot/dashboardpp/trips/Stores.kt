@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.io.File
@@ -186,6 +187,15 @@ class RecorderSettings(context: Context) {
             .map { it[KEY_NOTIFICATION] ?: true }
 
     /**
+     * The route quality slider (0..100, default full). It decides only how long the live
+     * map's line stays full detail before the recorder lets RAM buy relief - trip files
+     * always hold every fix (see [TrackQuality.fromQuality] for what the ends mean).
+     */
+    val routeQuality: Flow<Int> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_ROUTE_QUALITY] ?: 100 }
+
+    /**
      * Which vehicles the Trips list is narrowed to: `ALL`, `UNKNOWN`, or a vehicle
      * id. A deleted vehicle's id stays a legal value — the list then shows that
      * vehicle's drives, which is the whole point of tagging trips by id [plan §6].
@@ -215,6 +225,7 @@ class RecorderSettings(context: Context) {
         motionEnabled.first()
         notificationEnabled.first()
         tripFilter.first()
+        routeQuality.first()
     }
 
     /** The persisted session per device, so a trip survives an app restart. */
@@ -270,6 +281,12 @@ class RecorderSettings(context: Context) {
         store.edit { it[KEY_NOTIFICATION] = enabled }
     }
 
+    /** Store one slider press; the value is clamped here so no caller can write nonsense. */
+    suspend fun setRouteQuality(quality: Int) {
+        val clamped = quality.coerceIn(TrackQuality.MIN, TrackQuality.MAX)
+        store.edit { it[KEY_ROUTE_QUALITY] = clamped }
+    }
+
     suspend fun setBatteryPromptShown() {
         store.edit { it[KEY_BATTERY_PROMPT] = true }
     }
@@ -280,6 +297,7 @@ class RecorderSettings(context: Context) {
         private val KEY_NOTIFICATION = booleanPreferencesKey("notification_enabled")
         private val KEY_BATTERY_PROMPT = booleanPreferencesKey("battery_prompt_shown")
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
+        private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
 
         /** The filter value meaning "no filter". */
         const val FILTER_ALL = "ALL"

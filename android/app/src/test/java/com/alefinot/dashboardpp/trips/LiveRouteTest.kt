@@ -113,6 +113,74 @@ class LiveRouteTest {
         assertNotSame(before, track.snapshot().single())
     }
 
+    // ─── TrackQuality: the app's ROUTE QUALITY slider, in dials ───────────────────
+
+    /**
+     * The slider's two ends, pinned as numbers (maintainer, 2026-11-19: "make it go full
+     * quality up to 10000km at max quality"). Full quality is the promise the whole
+     * redundancy scheme was built for - a two-metre tolerance that never climbs - and its
+     * budget has to outlive 10 000 km of driving, which at a real road's thinning rate is
+     * a couple of hundred thousand held positions. The cheap end thins early on purpose.
+     */
+    @Test
+    fun theQualitySliderHasItsTwoEnds() {
+        val full = TrackQuality.fromQuality(100)
+        assertEquals(2.0, full.baseToleranceM, 1e-9)
+        assertEquals(
+            "max quality that lets the tolerance climb is not full quality",
+            2.0, full.maxToleranceM, 1e-9,
+        )
+        assertEquals(1_000_000, full.totalThinAt)
+        val cheap = TrackQuality.fromQuality(0)
+        assertEquals(4.0, cheap.baseToleranceM, 1e-9)
+        assertEquals(64.0, cheap.maxToleranceM, 1e-9)
+        assertEquals(30_000, cheap.totalThinAt)
+        // The store may be handed nonsense and the slider may be dragged at its ends;
+        // both clamp rather than produce a negative budget.
+        assertEquals(TrackQuality.fromQuality(0), TrackQuality.fromQuality(-40))
+        assertEquals(TrackQuality.fromQuality(100), TrackQuality.fromQuality(9999))
+    }
+
+    @Test
+    fun moreQualityIsAlwaysMoreLine() {
+        val coarse = TrackQuality.fromQuality(20)
+        val fine = TrackQuality.fromQuality(80)
+        assertTrue(coarse.totalThinAt < fine.totalThinAt)
+        assertTrue(coarse.baseToleranceM > fine.baseToleranceM)
+        assertTrue(coarse.maxToleranceM > fine.maxToleranceM)
+    }
+
+    /**
+     * The promise the slider's top end makes, observed as behaviour: a shape no chord can
+     * represent holds every single position at full quality - the tolerance is not allowed
+     * to climb, so nothing is ever declared redundant - while the cheap end, handed the
+     * same shape, widens its net and throws the wiggles away. This is the one test that
+     * says "full quality" means something beyond a constant in a table.
+     */
+    @Test
+    fun atFullQualityTheToleranceNeverClimbs() {
+        // A tight zigzag: every fix about twenty metres to one side of the line its
+        // neighbours would draw. Nothing here is restatement at two metres.
+        fun zigzag(track: LiveTrack, n: Int) {
+            for (i in 0 until n) {
+                val swing = if (i % 2 == 0) 0.0002 else -0.0002
+                track.add(45.6 + swing, 9.2 + i * 0.0002)
+            }
+        }
+        val full = LiveTrack(firstThinAt = 6, toleranceM = 2.0, maxToleranceM = 2.0, totalThinAt = 12)
+        zigzag(full, 90)
+        assertEquals(
+            "full quality dropped points a chord does not cover",
+            90, full.singlePiece().size,
+        )
+        val cheap = LiveTrack(firstThinAt = 6, toleranceM = 4.0, maxToleranceM = 64.0, totalThinAt = 12)
+        zigzag(cheap, 90)
+        assertTrue(
+            "the cheap setting never widened its net - the budget and ceiling are decoration",
+            cheap.singlePiece().size < 90,
+        )
+    }
+
     // ─── CursorTrail: the minute of movement the arrow's heading is read from ──────
 
     @Test

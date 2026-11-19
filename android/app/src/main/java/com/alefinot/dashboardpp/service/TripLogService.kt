@@ -29,6 +29,7 @@ import com.alefinot.dashboardpp.trips.TripPolicy
 import com.alefinot.dashboardpp.trips.TripRecorder
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.trips.TripStore
+import com.alefinot.dashboardpp.trips.TrackQuality
 import com.alefinot.dashboardpp.weather.HostFrames
 import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.trips.TripSummary
@@ -493,6 +494,13 @@ class TripLogService : Service() {
         } catch (e: Exception) {
             true
         }
+        // The live line's quality, read once for this recorder's life: the slider takes
+        // effect on the next drive, never under a running one's feet.
+        val routeQuality = try {
+            appSettings.routeQuality.first()
+        } catch (e: Exception) {
+            TrackQuality.MAX
+        }
         if (!wanted && !manualStart) {
             TripRuntime.update { it.copy(lastError = "disabled-by-user") }
             shutdown()
@@ -508,7 +516,7 @@ class TripLogService : Service() {
         }
         recorder = TripRecorder(csvWriter, { startMs -> tripStore.newName(startMs) }, {
             System.currentTimeMillis()
-        }, prior)
+        }, prior, routeQuality)
         // The identity arrives on the intent, the recorder is built later (this is
         // the first place it can be built): hand it over before the first sample.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)

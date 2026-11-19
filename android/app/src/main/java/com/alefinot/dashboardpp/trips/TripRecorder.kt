@@ -40,6 +40,8 @@ class TripRecorder(
     private val pathFor: (startMs: Long) -> String,
     private val nowMs: () -> Long = System::currentTimeMillis,
     initialSession: SessionRecord? = null,
+    /** The app's ROUTE QUALITY slider (0..100), read once at start-up. */
+    private val routeQuality: Int = TrackQuality.MAX,
 ) {
     var openTrip: TripRef? = null
         private set
@@ -72,7 +74,23 @@ class TripRecorder(
      * The route is segmented because a pause is a real gap in it (2.0.7/179): a resume
      * starts a new piece, and no map draws a line across the ground the file never saw.
      */
-    private var liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+    private var liveTrack = newLiveTrack()
+
+    /**
+     * A fresh [LiveTrack] at the app's current route-quality setting: the slider decides how
+     * long the live line stays full detail before RAM buys itself relief (maintainer,
+     * 2026-11-19). Built here rather than at each call site so a drive, a re-opened drive
+     * and its seeding pass all run the same dials.
+     */
+    private fun newLiveTrack(): LiveTrack {
+        val q = TrackQuality.fromQuality(routeQuality)
+        return LiveTrack(
+            firstThinAt = LIVE_TRACK_FIRST_THIN_AT,
+            toleranceM = q.baseToleranceM,
+            maxToleranceM = q.maxToleranceM,
+            totalThinAt = q.totalThinAt,
+        )
+    }
 
     /**
      * Where each pause of the open drive froze the recorded line, oldest first.
@@ -262,7 +280,7 @@ class TripRecorder(
                 val path = pathFor(now)
                 writer.create(path, tag)
                 accumulator = TripAccumulator()
-                liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+                liveTrack = newLiveTrack()
                 pauseMarks.clear()
                 endedAt = null
                 driveId = now
@@ -352,7 +370,7 @@ class TripRecorder(
      */
     private fun seedAccumulator(path: String, startMs: Long) {
         accumulator = TripAccumulator()
-        liveTrack = LiveTrack(LIVE_TRACK_FIRST_THIN_AT)
+        liveTrack = newLiveTrack()
         pauseMarks.clear()
         endedAt = null
         driveId = startMs

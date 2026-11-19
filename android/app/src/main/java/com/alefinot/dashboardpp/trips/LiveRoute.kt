@@ -2,6 +2,8 @@ package com.alefinot.dashboardpp.trips
 
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.pow
+import kotlin.math.roundToInt
 
 /**
  * The route a live map draws, including the pieces a pause leaves behind.
@@ -160,11 +162,23 @@ private fun isRealPosition(lat: Double, lon: Double): Boolean {
  * across a whole drive.
  *
  * A piece's first position is never dropped, which is what lets a map place its START dot once
- * and leave it. The snapshot handed to [LiveRoute] caches each segment's list until that
+ * and leave it. The snapshot handed to [LiveTrack]'s owner caches each segment's list until that
  * segment changes, so a map can compare references and skip a redraw of a piece that did not
  * move. Only the outer list is rebuilt per call; the pieces themselves are shared.
+ *
+ * The three dials below a piece's length - [toleranceM] where redundancy starts, [maxToleranceM]
+ * where it stops climbing, and [totalThinAt] for the whole drive - are constructor parameters
+ * rather than constants because of the app's ROUTE QUALITY slider (maintainer, 2026-11-19:
+ * "add a quality slider for the route, make it go full quality up to 10000km at max quality").
+ * [TrackQuality.fromQuality] turns the slider into their values; the defaults here are today's
+ * constants, so anything built without a quality setting behaves exactly as it did before it.
  */
-class LiveTrack(private val firstThinAt: Int = FIRST_THIN_AT) {
+class LiveTrack(
+    private val firstThinAt: Int = FIRST_THIN_AT,
+    private val toleranceM: Double = TOLERANCE_M,
+    private val maxToleranceM: Double = MAX_TOLERANCE_M,
+    private val totalThinAt: Int = TOTAL_THIN_AT,
+) {
 
     private class Segment {
         val points = ArrayList<TrackPoint>(1024)
@@ -186,7 +200,12 @@ class LiveTrack(private val firstThinAt: Int = FIRST_THIN_AT) {
 
     /** Begin another recorded stretch; the first point of it gets its own START dot. */
     fun startSegment() {
-        segments.add(Segment().apply { nextThinAt = firstThinAt })
+        segments.add(
+            Segment().apply {
+                nextThinAt = firstThinAt
+                toleranceM = this@LiveTrack.toleranceM
+            },
+        )
     }
 
     fun add(lat: Double, lon: Double) {
@@ -202,7 +221,7 @@ class LiveTrack(private val firstThinAt: Int = FIRST_THIN_AT) {
         seg.points.add(TrackPoint(lat, lon))
         seg.view = null
         total++
-        if (total > TOTAL_THIN_AT) {
+        if (total > totalThinAt) {
             // The drive as a whole has outgrown its budget - many short pieces, most likely.
             // Examine every piece; each one's tolerance climbs if examining it frees nothing,
             // so this cannot go on firing without making progress.
@@ -261,7 +280,7 @@ class LiveTrack(private val firstThinAt: Int = FIRST_THIN_AT) {
             size--
         }
         seg.view = null
-        if (kept + 1 >= n && seg.toleranceM < MAX_TOLERANCE_M) {
+        if (kept + 1 >= n && seg.toleranceM < maxToleranceM) {
             // Nothing was redundant at this width. Widen the net for the next pass instead of
             // letting the piece grow without bound.
             seg.toleranceM *= 2
@@ -287,6 +306,69 @@ class LiveTrack(private val firstThinAt: Int = FIRST_THIN_AT) {
 
         /** Positions a whole drive may hold before every piece is examined again. */
         const val TOTAL_THIN_AT = 60_000
+    }
+}
+
+/**
+ * The [LiveTrack] dials derived from the app's ROUTE QUALITY slider (App Settings →
+ * Trips & Storage; maintainer, 2026-11-19: "add a quality slider for the route, make it go
+ * full quality up to 10000km at max quality").
+ *
+ * The slider only ever decides *how much of the drive's line the live map keeps*. What is
+ * written to the trip file is untouched - the CSV carries every fix whatever the slider
+ * says - and a sealed drive's detail page draws from that file, not from here.
+ *
+ * At the top end the tolerance never climbs at all: the drawn line stays within
+ * [LiveTrack.TOLERANCE_M] - two metres, under the GPS noise - for the whole drive. A real
+ * road thinned at that width holds on the order of 10-25 positions per km, so a 10 000 km
+ * drive is a couple of hundred thousand held positions: inside [MAX_TOTAL_THIN_AT] with
+ * room to spare. That budget is the honest worst-case ceiling - positions a many-day drive
+ * may sit in RAM before the tolerance is allowed to climb to save itself.
+ *
+ * At the bottom end the net starts coarser (four metres) and may climb to the old
+ * [LiveTrack.MAX_TOLERANCE_M] once a mere 30 000 positions are held: a smaller line for a
+ * phone that would rather spend its RAM on the map tiles. Between the anchors every dial
+ * moves geometrically, so each press of the slider buys the same *factor*, not the same
+ * number of metres nobody can feel.
+ */
+data class TrackQuality(
+    /** Where redundancy starts, in metres. */
+    val baseToleranceM: Double,
+    /** The ceiling the tolerance may climb to; equal to the base at full quality. */
+    val maxToleranceM: Double,
+    /** Positions a whole drive may hold before every piece is examined again. */
+    val totalThinAt: Int,
+) {
+    companion object {
+        /** The slider's own range, as the app stores it. */
+        const val MIN = 0
+        const val MAX = 100
+
+        /** The full-quality budget: see the class doc for why this covers 10 000 km. */
+        const val MAX_TOTAL_THIN_AT = 1_000_000
+
+        /** The cheapest setting's budget, in positions. */
+        const val MIN_TOTAL_THIN_AT = 30_000
+
+        /** Turn one slider press (0..100, clamped) into the three [LiveTrack] dials. */
+        fun fromQuality(quality: Int): TrackQuality {
+            val q = quality.coerceIn(MIN, MAX) / 100.0
+            val down = 1.0 - q
+            return TrackQuality(
+                // 2 m at full quality, 4 m at the cheapest: the slider cannot make the line
+                // *coarser than fine*, it can only decide how soon it starts saving RAM.
+                baseToleranceM = 2.0 * 2.0.pow(down),
+                // 2 m (never climbs) at full quality, up to the old 64 m ceiling at the
+                // cheapest. Four doublings' worth of room is the whole span.
+                maxToleranceM = 2.0 * 2.0.pow(5.0 * down),
+                // Geometric between the two budgets, so half the slider is the square root
+                // of the span, not the midpoint nobody would guess.
+                totalThinAt = (
+                    MIN_TOTAL_THIN_AT *
+                        (MAX_TOTAL_THIN_AT.toDouble() / MIN_TOTAL_THIN_AT).pow(q)
+                    ).roundToInt(),
+            )
+        }
     }
 }
 
