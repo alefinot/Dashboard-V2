@@ -365,7 +365,21 @@ fun AppShell(
                 manual = beginNewFile,
             )
         } else {
-            TripLogService.stop(context)
+            if (owner == null) {
+                // Nothing is linked, so nothing may outlive it: put the display reader down
+                // with the drive instead of asking it back.
+                TripLogService.stop(context, keepDisplay = false)
+            } else {
+                // The switch is off (or this firmware cannot write trips), but a dashboard is
+                // linked. End any drive, then keep the display lane on this owner: since the
+                // Live page became a map, that lane is the page's normal reader - no file, no
+                // notification - and it is what makes the map, the HUD and the traces live
+                // before the first START. `watch` is asked even when a lane is already running,
+                // because this may be a different unit: a lane carries the key it was started
+                // with, and only stopping it re-points it.
+                TripLogService.stop(context, keepDisplay = false)
+                TripLogService.watch(context, owner.deviceKey)
+            }
             // A page the firmware cannot serve is snapped out of, not animated to: the
             // user did not ask to go anywhere. With no device the trips page is the
             // phone's own, so the offline shell leaves the user on it.

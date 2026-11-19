@@ -57,9 +57,11 @@ data class TripRuntimeState(
     val liveTrail: List<TrackPoint> = emptyList(),
     /**
      * True while the frame lane is following the stream for the display alone - no file, no
-     * recorder, no foreground notification. That is what keeps a finished drive's live map
-     * moving while the app is open (2.0.7/179), and it is what the app stops on its way to
-     * the background, leaving the picture frozen on the drive it kept.
+     * recorder, no foreground notification. It is the Live page's normal reader: the shell
+     * starts it whenever a dashboard is linked and the app is in the foreground, so the map,
+     * the HUD and the traces are live before anybody presses START (and a finished drive's map
+     * keeps moving, 2.0.7/179). It is also what the app stops on its way to the background,
+     * leaving the last picture on screen as a still.
      */
     val watching: Boolean = false,
     val lastOkMs: Long = 0L,

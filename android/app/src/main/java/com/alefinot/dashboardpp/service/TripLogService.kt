@@ -140,18 +140,23 @@ class TripLogService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_WATCH -> {
-                // Keep a finished drive's live map moving (2.0.7/179): the owner asked for it
-                // to keep working while the app is open, and after a stop nothing else in the
-                // app reads the unit. This is that reading - the same frame lane with no
-                // recorder behind it. It deliberately does NOT go foreground: "while the app
-                // is open" is the whole promise, a plain started service lives exactly that
-                // long, and an ongoing notification for a drive that already ended would be a
-                // permanent alarm about nothing. MainActivity puts this down on the way to the
+                // The display-only reader: the same frame lane with no recorder behind it.
+                // Since 2.0.7/179 it keeps a finished drive's live map moving; since the
+                // Live page became a map it is also what makes the page live before anybody
+                // presses START - the app opens, a dashboard is linked, and the map, the HUD
+                // and the traces follow the unit's 1 Hz stream with no file on disk. It
+                // deliberately does NOT go foreground: "while the app is open" is the whole
+                // promise, a plain started service lives exactly that long, and an ongoing
+                // notification for a drive that is not being written would be a permanent
+                // alarm about nothing. MainActivity puts this down on the way to the
                 // background, which is where the picture starts freezing on purpose.
                 if (recorder != null || feedJob?.isActive == true) return START_STICKY
-                val key = TripRuntime.state.value.deviceKey
-                if (key.isNullOrEmpty() || !TripRuntime.state.value.liveRoute.hasTrack) {
-                    // Nothing to watch: no link to follow, or no drive on the maps to keep alive.
+                val key = intent.getStringExtra(EXTRA_DEVICE_KEY)
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: TripRuntime.state.value.deviceKey
+                if (key.isNullOrEmpty()) {
+                    // No link to follow. The shell starts this lane from the owner it just
+                    // resolved, so an empty key means the link went away in between.
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -252,9 +257,9 @@ class TripLogService : Service() {
      * Tear the lane down: seal, publish, stop.
      *
      * [keepDisplay] is the owner's Stop, and it means "the drive is over, the picture is not":
-     * with the app on screen, the same lane is asked back with no recorder behind it so a
-     * finished drive's map keeps living (2.0.7/179). It is asked only of a foreground app,
-     * because the lane that follows the stream for the display is put down by
+     * with the app on screen, the same lane is asked back with no recorder behind it so the map
+     * keeps living (2.0.7/179). It is asked only of a foreground app, because the lane that
+     * follows the stream for the display is put down by
      * [com.alefinot.dashboardpp.MainActivity.onStop] - a Stop pressed from the shade with the
      * app behind it has nobody looking at a map, and a lane nobody puts down would stream for
      * the rest of the day.
@@ -282,7 +287,11 @@ class TripLogService : Service() {
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        if (keepDisplay && appForeground && route.hasTrack) watch(applicationContext)
+        // With the app on screen a Stop leaves the display lane running - a finished drive's
+        // map is still worth watching, and since the Live page became a map, so is a drive
+        // that never started. Only the foreground window changes that: a lane nobody puts
+        // down would stream for the rest of the day.
+        if (keepDisplay && appForeground) watch(applicationContext)
     }
 
     /**
@@ -733,17 +742,26 @@ class TripLogService : Service() {
         }
 
         /**
-         * Follow the unit's stream for the display, writing nothing, so a finished drive's live
-         * map keeps moving while the app is open (2.0.7/179). A plain `startService`, not
-         * `startForegroundService`: this lane is only meant to live while the app does, so it
-         * owes nobody an ongoing notification, and it must never be started from the background.
+         * Follow the unit's stream for the display, writing nothing, so the live map keeps
+         * moving while the app is open (2.0.7/179). Since the Live page became a map this is
+         * the page's normal reader: it runs whenever a dashboard is linked and the app is in
+         * the foreground, whether a drive was ever started or not. A plain `startService`,
+         * not `startForegroundService`: this lane is only meant to live while the app does,
+         * so it owes nobody an ongoing notification, and it must never be started from the
+         * background.
+         *
+         * [deviceKey] is the dashboard the caller resolved a moment ago; omitted, the service
+         * falls back to the key already published in [TripRuntime].
          */
-        fun watch(context: Context) {
-            val intent = Intent(context, TripLogService::class.java).apply { action = ACTION_WATCH }
+        fun watch(context: Context, deviceKey: String? = null) {
+            val intent = Intent(context, TripLogService::class.java).apply {
+                action = ACTION_WATCH
+                if (!deviceKey.isNullOrEmpty()) putExtra(EXTRA_DEVICE_KEY, deviceKey)
+            }
             try {
                 context.startService(intent)
             } catch (e: Exception) {
-                // No lane to keep alive; the finished route stays on the maps as a still.
+                // No lane to keep alive; the last picture stays on the maps as a still.
             }
         }
 

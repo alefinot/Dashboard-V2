@@ -76,20 +76,21 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The live map of a drive that has already ended (2.0.7/179).
+     * The display lane (2.0.7/179, widened 2026-11-19).
      *
-     * A stop keeps the drive on the maps, and the owner wants that map to go on living while
-     * they are looking at it — which needs a reader of the unit's stream, and the recording
-     * service just released the link. So the app asks for one back on the way in: no file, no
-     * wake lock, no notification, and nothing asked for at all unless there is a finished
-     * drive to show. [onStop] puts it down again, because "while the app is open" is the
+     * The app comes to the front and asks the recording service for a reader of the unit's
+     * stream: no file, no wake lock, no notification. That is what keeps a finished drive's
+     * map moving, and it is also what makes the Live page live before anybody presses START -
+     * the map, the HUD and the five-minute traces all follow the unit while the app is open.
+     * Nothing is asked for without a link: [TripLogService.watch] is a no-op when there is no
+     * device key, and [onStop] puts the lane down again, because "while the app is open" is the
      * promise that keeps this from costing battery the rest of the day.
      */
     override fun onStart() {
         super.onStart()
         TripLogService.setAppForeground(true)
         val state = TripRuntime.state.value
-        if (!state.recording && !state.paused && !state.polling && state.liveRoute.hasTrack) {
+        if (!state.recording && !state.paused && !state.polling) {
             TripLogService.watch(this)
         }
     }

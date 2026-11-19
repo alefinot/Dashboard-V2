@@ -15,8 +15,9 @@ package com.alefinot.dashboardpp.trips
  *    "connect a dashboard" would be the one moment the control is needed most.
  *  - **A live service is never "unavailable".** `polling` with no open file is the
  *    window between START and the first sample; STOP is what backs out of it. The one
- *    exception is a lane kept alive for the display alone (`watching`): that drive is
- *    over, the picture is still moving, and the honest offer is START again.
+ *    exception is a lane kept alive for the display alone (`watching`): nothing is being
+ *    written there - a drive that finished or one that never started - the picture is still
+ *    moving, and the honest offer is START again.
  *  - **`canRecord` only decides START vs unavailable**, because it is the one state that
  *    needs a link to act on.
  */
@@ -44,9 +45,10 @@ enum class RecordingControlState {
             polling: Boolean,
             canRecord: Boolean,
             /**
-             * True when the frame lane is running for the display alone (2.0.7/179): a drive
-             * has finished, the app is open, and the lane is kept alive only so the live map
-             * goes on moving. See [TripRuntimeState.watching].
+             * True when the frame lane is running for the display alone (2.0.7/179): no trip
+             * file is open - a drive finished, or none was ever started - the app is open, and
+             * the lane is kept alive only so the live page goes on moving. See
+             * [TripRuntimeState.watching].
              */
             watching: Boolean = false,
         ): RecordingControlState = when {

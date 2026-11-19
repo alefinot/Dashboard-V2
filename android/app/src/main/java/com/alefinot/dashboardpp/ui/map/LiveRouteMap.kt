@@ -16,8 +16,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.alefinot.dashboardpp.trips.LiveRoute
@@ -94,8 +96,9 @@ import kotlin.math.sqrt
  *
  * Degradation is the detail map's, unchanged: no tiles and the vector route plus
  * the dots still render - the route is our recorded data, not the tile server's.
- * And it is built only while a route exists, so an idle app never fetches a
- * basemap for a drive that does not exist.
+ * It is built while there is a position to draw - a recorded piece, a finished
+ * drive, or (since the Live page became a map) a cursor-only trail with no file
+ * open at all. An app with no position still fetches no basemap.
  */
 @Composable
 fun LiveRouteMap(
@@ -125,6 +128,31 @@ fun LiveRouteMap(
      * gesture belongs to the page and the map never even sees it.
      */
     interactive: Boolean = true,
+    /**
+     * View-local rectangles the HUD glass owns. A touch that starts inside one belongs to
+     * Compose, not to the map: the Live page's shelves report their bounds here so the
+     * recorder pill, the fuel rail and a swipe across a shelf keep their gestures. Only a
+     * DOWN is refused; a pan that began on the open map keeps the whole stream.
+     */
+    touchRefusals: List<Rect> = emptyList(),
+    /**
+     * How far the RE-CENTER label sits off the bottom of the map slot. The Live page's
+     * bottom shelf covers the map's bottom edge, so the label is lifted above it; on the
+     * Trips thumbnail this stays at its 6 dp.
+     */
+    recenterBottom: Dp = 6.dp,
+    /**
+     * The page's zoom rail, as two counts. Pressing **+** raises [zoomInTicks] by one and
+     * the map travels one level in; the map only ever acts on the difference since the last
+     * pass, so a card that recomposes at frame rate for its gliding figures asks for no
+     * zoom at all. Counters rather than callbacks because the map view is created inside
+     * this composable and the buttons live outside it, over it - and a control painted over
+     * a platform view cannot reach into it any other way than by being handed the request.
+     * The travel itself is the holder's (`ZOOM_RAMP_MS`), not the library's animated zoom,
+     * which would drop every press that lands while another is still moving.
+     */
+    zoomInTicks: Int = 0,
+    zoomOutTicks: Int = 0,
 ) {
     OsmdroidSetup.ensure(LocalContext.current)
     val holder = remember { LiveMapHolder(showLabels, interactive) }
@@ -144,7 +172,11 @@ fun LiveRouteMap(
             // paints its basemap over everything the canvas holds, not just its slot.
             modifier = Modifier.fillMaxSize().clipToBounds(),
             factory = { ctx -> holder.build(ctx) },
-            update = { map -> holder.applyRoute(map, route, cursor, trail, writing, inView) },
+            update = { map ->
+                holder.touchRefusals = touchRefusals
+                holder.zoom(map, zoomInTicks, zoomOutTicks)
+                holder.applyRoute(map, route, cursor, trail, writing, inView)
+            },
         )
         val following by holder.following
         if (!following) {
@@ -155,7 +187,7 @@ fun LiveRouteMap(
             // level, and an interop filter never sees a consumed DOWN either.
             // Both were bench-proven wrong, 2026-11-15.)
             Box(
-                Modifier.fillMaxSize().padding(6.dp),
+                Modifier.fillMaxSize().padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = recenterBottom),
                 contentAlignment = Alignment.BottomEnd,
             ) {
                 Box(
@@ -243,6 +275,116 @@ private class LiveMapHolder(
 
     /** False once a finger takes the camera; drives the RE-CENTER pill's visibility. */
     val following = mutableStateOf(true)
+
+    /**
+     * View-local rectangles the HUD glass owns (see [LiveRouteMap]'s `touchRefusals`).
+     * Read only from the view's touch door, on DOWN; the list is replaced on layout.
+     */
+    var touchRefusals: List<Rect> = emptyList()
+
+    /** True when a touch starting at [x],[y] belongs to Compose, not to this map. */
+    fun refusesAt(x: Float, y: Float): Boolean {
+        for (r in touchRefusals) {
+            if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true
+        }
+        return false
+    }
+
+    /** The rail's step counts already consumed. Negative until the first pass, which only learns them. */
+    private var zoomInSeen = -1
+    private var zoomOutSeen = -1
+
+    /** The level a rail step is travelling to, and the level it started from. NaN when settled. */
+    private var zoomTo = Double.NaN
+    private var zoomFrom = Double.NaN
+
+    /** When the current leg started. */
+    private var zoomStartMs = 0L
+
+    /**
+     * One frame of a zoom step, and the next one, until the level is reached.
+     *
+     * The holder owns this travel because the camera has one authority in this file. The
+     * library's own animated form (`controller.zoomTo(level, duration)`) is a second
+     * authority, and it is also a silent one: `MapController.zoomToFixing` returns `false`
+     * and does nothing at all while its animator is still running, so the second and third
+     * press of a fast run would simply be dropped (checked against the 6.1.20 source,
+     * 2026-11-19). Here a press during a travel re-aims the travel instead.
+     *
+     * The easing is an ease-out: the ground starts moving on the frame the button went down
+     * - the press has to feel connected to the map - and settles into the level instead of
+     * stopping dead on it.
+     */
+    private val zoomRamp = object : Runnable {
+        override fun run() {
+            val view = map ?: return
+            if (zoomFrom.isNaN() || zoomTo.isNaN()) return
+            val t = ((SystemClock.uptimeMillis() - zoomStartMs).toDouble() / ZOOM_RAMP_MS)
+                .coerceIn(0.0, 1.0)
+            val k = 1.0 - t
+            view.setZoomLevel(zoomFrom + (zoomTo - zoomFrom) * (1.0 - k * k * k))
+            view.invalidate()
+            if (t < 1.0) {
+                view.postOnAnimation(this)
+            } else {
+                zoomFrom = Double.NaN
+                zoomTo = Double.NaN
+            }
+        }
+    }
+
+    /**
+     * One level of zoom per step the page's rail has asked for since the last pass, travelled
+     * to over [ZOOM_RAMP_MS] rather than jumped to.
+     *
+     * Only the difference is applied, so the map never zooms on a recomposition that asked
+     * for nothing - the cards around it glide their figures at frame rate and this lambda
+     * runs with them. The level is clamped to the bounds [build] gives the view (4 to 19),
+     * so twenty presses at the edge of the world leave the map where it already was instead
+     * of asking osmdroid for a level it has no tiles for.
+     *
+     * A step never touches [following] - asking for more detail is not the same claim as
+     * taking the camera.
+     */
+    fun zoom(view: MapView, zoomInTicks: Int, zoomOutTicks: Int) {
+        if (zoomInSeen < 0) {
+            zoomInSeen = zoomInTicks
+            zoomOutSeen = zoomOutTicks
+            return
+        }
+        val steps = (zoomInTicks - zoomInSeen) - (zoomOutTicks - zoomOutSeen)
+        zoomInSeen = zoomInTicks
+        zoomOutSeen = zoomOutTicks
+        if (steps == 0) return
+        // The new target is measured from where the travel is HEADING, not from where the
+        // view stands this frame: three fast presses are three levels, not one and a half.
+        val base = if (zoomTo.isNaN()) view.zoomLevelDouble else zoomTo
+        val level = base.plusClamped(steps, view)
+        val from = view.zoomLevelDouble
+        view.removeCallbacks(zoomRamp)
+        if (level == from) {
+            // At the edge of the world: there is nothing to travel to, and a travel already
+            // in flight was asked for by a press that had somewhere to go.
+            zoomFrom = Double.NaN
+            zoomTo = Double.NaN
+            return
+        }
+        zoomFrom = from
+        zoomTo = level
+        zoomStartMs = SystemClock.uptimeMillis()
+        view.postOnAnimation(zoomRamp)
+    }
+
+    /** The rail's travel is over: it stops mid-frame, and the level it reached is kept. */
+    private fun cancelZoomRamp(view: MapView) {
+        view.removeCallbacks(zoomRamp)
+        zoomFrom = Double.NaN
+        zoomTo = Double.NaN
+    }
+
+    /** [other] zoom levels away, held inside the levels this view can actually draw. */
+    private fun Double.plusClamped(other: Int, view: MapView): Double =
+        (this + other).coerceIn(view.minZoomLevel, view.maxZoomLevel)
 
     /** Where the dot stands when the newest fix landed - the segment's start. */
     private var segFrom = GeoPoint(0.0, 0.0)
@@ -445,6 +587,16 @@ private class LiveMapHolder(
                     // hit path unconsumed and the map never sees another event.
                     return false
                 }
+                if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+                    holder.refusesAt(event.x, event.y)
+                ) {
+                    // The HUD shelf under this point owns the gesture. Same door as the
+                    // show-only refusal above: Compose's hit path gets the DOWN, so the
+                    // recorder pill can be pressed and a swipe across a shelf pages.
+                    // Only DOWN is checked - a pan that began on the open map keeps the
+                    // rest of its stream even when it crosses glass.
+                    return false
+                }
                 return super.dispatchTouchEvent(event)
             }
 
@@ -561,6 +713,12 @@ private class LiveMapHolder(
             // One zoom, once, at the drive's first fix: after that the camera only
             // travels, and a zoom that came along every second would be the punch
             // this file exists to prevent.
+            // The drive's one zoom outranks a rail travel: this is the camera being placed,
+            // once, at the first fix. A press that landed in the frame or two before this
+            // asked for detail on a view that did not know where the car was yet, so it is
+            // dropped - and dropped cleanly, with no half-finished travel left to fight the
+            // level set here.
+            cancelZoomRamp(view)
             view.controller.setZoom(FOLLOW_ZOOM)
             if (!endSnapped) snapCamera(view)
         }
@@ -757,6 +915,9 @@ private class LiveMapHolder(
     private fun stopTicker(view: MapView) {
         ticking = false
         view.removeCallbacks(glide)
+        // A parked page animates nothing. The level a half-finished travel reached is kept;
+        // only the next frame of it is refused.
+        cancelZoomRamp(view)
     }
 
     /** A finger moved the map: the camera is the user's until they ask for the car back. */
@@ -977,6 +1138,17 @@ private class LiveMapHolder(
     companion object {
         /** A drive's corner while it happens: streets readable, a few blocks deep. */
         private const val FOLLOW_ZOOM = 15.0
+
+        /**
+         * How long one step of the zoom rail takes to travel.
+         *
+         * "Make the zoom smooth" (2026-11-19) is not a taste note: a level set outright
+         * replaces every tile on screen in a single frame, which reads as the picture
+         * changing rather than as the owner asking for detail. 260 ms is the shortest travel
+         * that still lets the eye see which way the ground went, and short enough that a run
+         * of presses does not feel like a queue.
+         */
+        private const val ZOOM_RAMP_MS = 260L
 
         /** A sample period. The unit streams at 1 Hz (trip plan: one frame a second). */
         private const val SEG_MS = 1000L

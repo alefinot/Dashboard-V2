@@ -1,131 +1,67 @@
 package com.alefinot.dashboardpp.ui.screens
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.alefinot.dashboardpp.api.Snapshot
-import com.alefinot.dashboardpp.trips.RecordingControlState
-import com.alefinot.dashboardpp.trips.RecordingTap
-import com.alefinot.dashboardpp.trips.canHold
-import com.alefinot.dashboardpp.trips.tap
 import com.alefinot.dashboardpp.trips.TripRuntime
-import com.alefinot.dashboardpp.trips.TripRuntimeState
 import com.alefinot.dashboardpp.ui.components.HudEnter
-import com.alefinot.dashboardpp.ui.components.HudGauge
-import com.alefinot.dashboardpp.ui.components.HudGlyphLedger
-import com.alefinot.dashboardpp.ui.components.HudGlyphSize
-import com.alefinot.dashboardpp.ui.components.HudPage
-import com.alefinot.dashboardpp.ui.components.HudStateChip
-import com.alefinot.dashboardpp.ui.components.LocalEnterActive
-import com.alefinot.dashboardpp.ui.components.Sparkline
-import com.alefinot.dashboardpp.ui.components.flow
-import com.alefinot.dashboardpp.ui.components.hudDuration
-import com.alefinot.dashboardpp.ui.components.hudPage
-import com.alefinot.dashboardpp.ui.components.rememberHoldToAct
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
-import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudColors
-import com.alefinot.dashboardpp.ui.theme.HudMotion
-import com.alefinot.dashboardpp.ui.theme.HudRadius
-import com.alefinot.dashboardpp.ui.theme.HudSpace
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
-import com.alefinot.dashboardpp.ui.theme.HudeHeading
-import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
-import com.alefinot.dashboardpp.ui.theme.hudCard
-import kotlinx.coroutines.delay
+import kotlin.math.hypot
 
 /**
- * The gauge's box, square. The page's own gauge filled a `#live-display` panel; the
- * app drew it 200 dp tall and the Live page needed three scrolls for what the unit's
- * 3.2" screen shows at a glance. 132 dp is the largest box that still leaves the last card
- * on the first screen of a 393x776 dp window - the mock that settled the layout
- * (phone-layout plan §4a) drew 148, and the last 16 dp went to the trace, which shows
- * more in the same height. `HudGauge` derives its stroke from the box (9% of the
- * shorter side), so the smaller circle is not a thinner drawing, only a smaller one.
- */
-private val GaugeBox = 132.dp
-
-/**
- * How often the trip card reads its own clock while a recording is open.
+ * The Live page: a full-screen live map, with every reading in the app's glass over it.
  *
- * The unit pushes a frame a second, and the elapsed figure must not be the only thing on the
- * page that dies with the link: four reads a second keeps the seconds flipping close to the
- * real second without recomposing the card for every frame the display draws.
- */
-private const val TRIP_CLOCK_TICK_MS = 250L
-
-/**
- * The height of the live route map inside the THIS TRIP card (live route plan §4).
- * Chosen so the card still answers the four figures at a glance first: the strip
- * keeps its full height and the map is the second thing the eye reaches. It also
- * holds while no position exists yet, so the page cannot jump when the fix lands.
- */
-private val LiveMapBox = 150.dp
-
-/**
- * The native live view: the same data the unit's deleted web page rendered, drawn
- * natively so the app can chart and log it (trip recording plan §5). It is read-only
- * by design - configuration belongs to the settings page, so there is only ever one
- * writer of the unit's state and no second implementation of the config logic to drift.
+ * The page used to be a header and four cards in a scroll, with the drive's map inside the
+ * third one (phone-layout plan §4a). It is a map now, at the maintainer's request: the
+ * shape is the subject - where the car is, where it has been, where it is going - and the
+ * figures are what a cockpit puts *around* the map rather than under it. Nothing the cards
+ * drew is dropped ([LiveHud] carries all of it); what went is the 52 dp title, the four
+ * card headers, the card gaps and the scroll, which together were most of a screen spent
+ * on chrome.
  *
- * It reads [TripRuntime] and nothing else. That used to be an optimisation - "one
- * poller only" - and now it is the whole design: the unit pushes one frame a second on
- * its own characteristic, the recording service follows that stream, and this page renders
- * what the service published. A page that fetched for itself would be a second reader of
- * one link, which is how the HTTP version of this app needed a lane to arbitrate.
+ * The map is not a thumbnail any more, either. It pans and zooms (it always could), a drag
+ * takes the camera and stops the follow, and a tap gives the car back. It is mounted at
+ * the first position rather than at the first *recorded* one: since the shell keeps a
+ * display-only frame lane open whenever a dashboard is linked and the app is on screen
+ * (2.0.7/179), the page is live before anybody presses START.
  *
- * So there is no address in the signature, and there is no fallback path. Over the old
- * transport this page had to cope with a device that answered `/api/live` but not
- * `/api/snapshot` - firmware from before that endpoint existed - which meant a second
- * data model, a "limited data" notice and a whole branch of the layout. A unit this app
- * can pair with answers `snapshot`; anything else is a link that did not come up, and the
- * state says so in one place.
- *
- * The layout is the phone card stack of the phone-layout plan (§4a), and it is a stack
- * rather than a wall of stat cells for a measured reason: the two-up cells were a 68 dp
- * pitch for two readings, so speed, fuel, GNSS and unit health together needed three
- * scrolls on the bench phone. Four cards carry the same nineteen readings in one screen,
- * because a figure with no empty cell around it costs about a third of the height - and a
- * trace answers the one question a snapshot cannot: was it always that hot? The GNSS card
- * was the fifth and became the bottom strip of THIS TRIP on 2026-11-19.
+ * The one piece of engineering this layout needs is the touch door. A Compose control
+ * painted over an osmdroid `AndroidView` receives nothing - the platform view owns the
+ * slot's touches at the ViewGroup level, and an interop filter never sees a consumed DOWN
+ * (bench-proven, 2026-11-15). So the shelves hand the map their bounds and the map
+ * refuses a DOWN inside them ([LiveRouteMap]'s `touchRefusals`), which is what lets the
+ * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The zoom rail
+ * over the open middle of the map hands its bounds to the same list, for the same reason.
  */
 @Composable
 fun LiveTab(active: Boolean, actions: TripRecordingActions) {
@@ -152,992 +88,193 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
         }
     }
 
-    Column(
-        Modifier.hudPage()
-            // `html { background-color: #000000 }`, `body { background-color:
-            // --bg-base }`: the page's ground is flat black, with no gradient and
-            // no glow anywhere. Nothing is added here - the cards' translucent
-            // fills do the modelling, exactly as they do on the page.
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = HudPage.Gutter)
-            .padding(top = 6.dp, bottom = 24.dp),
-    ) {
-        HudEnter(modifier = Modifier.fillMaxWidth()) {
-            // `.header` was the page's centred 26 px h2 with a subtitle under it - 85 dp
-            // measured on the bench phone, spent on a word the tab bar has already said.
-            // The run state is the half worth keeping, so: the name at the left, the chip
-            // at the right, one 52 dp row. The name itself is still the app's `h2`
-            // (`HudPageHeader` draws it on Vehicles, Trips and App Settings), because the
-            // 13 sp caps label this row used to wear was the one page title in the app a
-            // band smaller than its neighbours (owner, 2026-11-19) - same size and brush
-            // as the other menus, none of the height.
-            Row(
-                Modifier.fillMaxWidth().height(52.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("LIVE", style = HudeHeading().copy(brush = HudBrushes.title))
-                Spacer(Modifier.width(HudSpace.Gap))
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                    StatusChip(state, active, actions)
-                }
-            }
-            // The pill is the control (2.0.7/178), so it only prints its reason where it
-            // cannot act: with no link, or a firmware with no trip store, the sentence that
-            // would have answered the press is the page's own line under the header. The
-            // old control row said this too; the row is gone, the sentence is not.
-            val control = RecordingControlState.of(
-                recording = state.recording,
-                paused = state.paused,
-                polling = state.polling,
-                watching = state.watching,
-                canRecord = actions.canRecord,
-            )
-            if (control == RecordingControlState.UNAVAILABLE && actions.blocked.isNotEmpty()) {
-                Text(actions.blocked, color = HudColors.TextDim, style = HudeCfgNote())
-            }
-        }
+    // The HUD shelves' rectangles, in root pixels, and the map's own root origin. The
+    // refusal list the map wants is view-local, so the difference is all the conversion
+    // there is - both surfaces live in the same root and the map fills its slot.
+    var topShelf by remember { mutableStateOf(Rect.Zero) }
+    var bottomShelf by remember { mutableStateOf(Rect.Zero) }
+    var zoomRail by remember { mutableStateOf(Rect.Zero) }
+    var mapOrigin by remember { mutableStateOf(Offset.Zero) }
 
-        val snapshot = state.snapshot
-        if (snapshot != null) {
-            // `.card`, unmodified: rgba(22,30,46,.6), a 5% hairline, 8px corners, no
-            // shadow - so the cyan on this screen comes from the gauge and the card
-            // headings, exactly as the page lets its headings do the talking.
-            // `pageFadeIn` per card, one stagger step apart: the stack arrives inside a
-            // single page entrance.
-            SpeedCard(snapshot, step = 1)
-            TripCard(state, snapshot, step = 2)
-            BatteryCard(snapshot, trends, step = 3)
-            FuelCard(snapshot, step = 4)
-        } else {
-            // The page is here, the link may be up, and nothing has been
-            // measured yet. Say that and nothing more: the reason a frame is
-            // missing belongs to the link, and the vehicles page already shows
-            // it. Two pages inventing two explanations is how "no data" used to
-            // turn into a walk through four screens.
-            Spacer(Modifier.height(HudSpace.Gap))
-            HudEnter(modifier = Modifier.fillMaxWidth(), delayMs = HudMotion.STAGGER_MS) {
-                Text(
-                    "Waiting for the dashboard…",
-                    color = HudColors.TextMuted,
-                    style = HudeCfgHelp(),
+    // The zoom rail's two presses, as counts: the map only ever acts on the difference
+    // since its last pass (LiveRouteMap.zoom), so nothing zooms when a card recomposes for
+    // a gliding figure and the rail asked for nothing.
+    var zoomIn by remember { mutableIntStateOf(0) }
+    var zoomOut by remember { mutableIntStateOf(0) }
+
+    val density = LocalDensity.current
+    val refusals = remember(topShelf, bottomShelf, zoomRail, mapOrigin) {
+        listOf(topShelf, bottomShelf, zoomRail)
+            .filter { it.width > 0f && it.height > 0f }
+            .map {
+                Rect(
+                    it.left - mapOrigin.x,
+                    it.top - mapOrigin.y,
+                    it.right - mapOrigin.x,
+                    it.bottom - mapOrigin.y,
                 )
             }
-        }
     }
-}
-
-// ─── The card recipe ────────────────────────────────────────────────────────────
-
-/**
- * The `.card` every Live panel is built from: the page's fill, hairline and 8 px corners,
- * and inside it the pairing every Dashboard++ Settings card wears - a cyan caps heading, a dim
- * note to its right, a `--border-color` hairline under both, then the content.
- *
- * The settings cards use `.perf-card`'s denser fill; these are the wider `.card`, because
- * the Live page puts one card across the window and is read at arm's length rather than
- * scanned as a grid.
- */
-@Composable
-private fun LiveCard(
-    title: String,
-    step: Int,
-    modifier: Modifier = Modifier,
-    meta: String? = null,
-    /** The card's readout mark, from the ledger (`readout.speed`, `readout.fuel`, …). */
-    mark: ImageVector? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    HudEnter(modifier = Modifier.fillMaxWidth(), delayMs = step * HudMotion.STAGGER_MS) {
-        Column(
-            modifier
-                .fillMaxWidth()
-                .padding(top = HudSpace.Gap)
-                .hudCard()
-                .padding(horizontal = 10.dp),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // D2: the header says the card twice, the way every other card does - the
-                // mark the ledger owns for the reading, at the row size, in the title's own
-                // cyan. It names the card; it is not pressed, so the word next to it is
-                // what the a11y node reads and the picture carries no sentence of its own.
-                if (mark != null) {
-                    Image(
-                        mark,
-                        null,
-                        modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 6.dp),
-                        colorFilter = ColorFilter.tint(HudColors.Cyan),
-                    )
-                }
-                Text(title, style = HudeSectionCaps(), color = HudColors.Cyan)
-                if (meta != null) {
-                    Spacer(Modifier.width(HudSpace.Gap))
-                    Text(
-                        meta,
-                        style = HudeCfgNote(),
-                        color = HudColors.TextDim,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.End,
-                    )
-                }
-            }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
-            content()
-            // 8 dp, not the page's 12: four of these stacked inside one 748 dp screen is the
-            // whole difference between the last card landing above the tab bar and needing a
-            // scroll (measured on the bench, 2026-11-08, and still true with the UNIT card
-            // gone on 2026-11-12 - the page got shorter, the gap stayed the reason it fits).
-            Spacer(Modifier.height(HudSpace.Gap))
-        }
-    }
-}
-
-/**
- * One label / figure pair in a card's strip.
- *
- * A figure is either a word (a state, a clock, a declined "—") or a number that
- * [flows][com.alefinot.dashboardpp.ui.components.flow] - the numeric form carries the raw
- * reading so the glide happens inside the number's own little composable, and a card's
- * sparkline or gauge is never dragged into frame-rate recomposition by it.
- */
-private data class Figure(
-    val label: String,
-    val value: String,
-    val unit: String = "",
-    val color: Color = HudColors.TextPrimary,
-    /** Not null for a flowing number; [value] is then unused. */
-    val num: Double? = null,
-    val places: Int = 1,
-)
-
-/**
- * The strip: two to four figures across the card, a `--border-color` hairline between them,
- * the label in `.section-title`'s caps at `--text-dim` and the figure in the page's mono.
- *
- * This replaced [com.alefinot.dashboardpp.ui.components.StatCell] pairs on this page. A cell
- * wore the page's 12 px of padding on all four sides of one figure and 44 px of
- * `#live-display` type: on the bench phone, two of them made a 68 dp row for two readings. A
- * strip draws the same two figures in 48 dp and fits two more beside them - which is what let
- * nineteen readings fit one screen. The figure is 17 sp rather than `.perf-value`'s 13: four
- * columns of 13 sp produced wrapped figures at the widest value each column can hold.
- */
-@Composable
-private fun Strip(vararg figures: Figure) {
-    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-        figures.forEachIndexed { i, f ->
-            if (i > 0) {
-                Box(Modifier.width(1.dp).fillMaxHeight().background(HudColors.CardHairline))
-            }
-            Column(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 7.dp)) {
-                Text(
-                    f.label,
-                    style = HudeSectionCaps(),
-                    color = HudColors.TextDim,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(1.dp))
-                if (f.num != null) {
-                    FlowFigureText(f.num, f.places, f.unit, f.color)
-                } else {
-                    FigureText(f.value, f.unit, f.color)
-                }
-            }
-        }
-    }
-}
-
-/** The numeric face of [FigureText]: the reading glides, and only this text moves. */
-@Composable
-private fun FlowFigureText(
-    num: Double,
-    places: Int,
-    unit: String,
-    color: Color,
-    size: Int = 17,
-    modifier: Modifier = Modifier,
-    align: TextAlign = TextAlign.Start,
-) {
-    FigureText(fmt(flow(num), places), unit, color, size, modifier, align)
-}
-
-/** A mono figure with its unit in dim ink at a size that does not compete with it. */
-@Composable
-private fun FigureText(
-    value: String,
-    unit: String,
-    color: Color,
-    size: Int = 17,
-    modifier: Modifier = Modifier,
-    align: TextAlign = TextAlign.Start,
-) {
-    Text(
-        buildAnnotatedString {
-            withStyle(SpanStyle(color = color, fontWeight = FontWeight.W600)) { append(value) }
-            if (unit.isNotEmpty()) {
-                withStyle(SpanStyle(color = HudColors.TextDim, fontSize = 10.sp)) { append(" $unit") }
-            }
-        },
-        style = HudePerfValue(),
-        fontSize = size.sp,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-        textAlign = align,
-    )
-}
-
-// ─── The cards ─────────────────────────────────────────────────────────────────
-
-/**
- * Speed.
- *
- * The round gauge stayed, because it is the one element here that answers "how fast am I
- * going" without being read - the question a phone at the handlebars exists to answer - and
- * the figures it cannot carry (AVG, MAX, the acceleration timer) sit beside it rather than
- * under it, so the row costs the gauge's height and nothing else. A five-minute speed trace
- * used to run under the row, with a `window · peak · pts` caption to match; the maintainer
- * asked for the graph out on 2026-11-15, and the card stopped sampling for it — the card's
- * caption spoke of the trace's window and point count, so it went with the trace rather than
- * stay a sentence about a graph that is no longer there. Volts and temp keep their windows:
- * BATTERY's trend rows still draw them.
- */
-@Composable
-private fun SpeedCard(s: Snapshot, step: Int) {
-    LiveCard(
-        title = "SPEED",
-        step = step,
-        mark = HudGlyphLedger.mark("readout.speed"),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            HudGauge(
-                value = s.spd,
-                fullScale = speedScale(s),
-                label = "SPEED",
-                unit = "km/h",
-                // The source is a fact about the reading, not a unit, so it takes a line of
-                // its own under the unit instead of trailing it after a middot (owner,
-                // 2026-11-19): "km/h · HALL" read as one long unit.
-                note = sourceLabel(s.src),
-                modifier = Modifier.size(GaugeBox),
-                accent = if (s.spd > 0.0) HudColors.Cyan else HudColors.CyanDim,
-            )
-            Column(Modifier.weight(1f).padding(start = HudSpace.Tile)) {
-                SideNum("AVG", s.avg, 1, "km/h")
-                SideNum("MAX", s.max, 1, "km/h")
-                if (s.tmrSt == 0) {
-                    SideFigure("TIMER", "READY", "")
-                } else {
-                    SideNum(
-                        "TIMER",
-                        s.tmrS,
-                        2,
-                        "s",
-                        color = when (s.tmrSt) {
-                            1 -> HudColors.Amber
-                            2 -> HudColors.Green
-                            else -> HudColors.TextPrimary
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The width of the unit gutter beside AVG, MAX and TIMER.
- *
- * The unit used to ride inside the figure's own string ("12.5 km/h", "3.42 s"), so it was the
- * *string* that right-aligned: AVG's digits stopped a whole "km/h" short of the card's edge
- * while the timer's stopped one "s" short, and the three numbers the owner compares down this
- * column never lined up under each other. A gutter gives every figure one right edge and every
- * unit one left edge; 30 dp holds "km/h" at the 10 sp the units are drawn at, with the
- * [HudSpace.Hair] gap before it keeping the figure off the unit's first glyph (measured on the
- * bench, 2026-11-19: without it the row read "62.9km/h").
- */
-private val SideUnitGutter = 30.dp
-
-/**
- * One label / figure / unit row, beside the gauge: the page's `.perf-row` pair, turned right.
- *
- * [unit] is drawn in its own fixed gutter rather than appended to the figure, which is what
- * keeps the digits of AVG, MAX and TIMER on one line (see [SideUnitGutter]). The gutter is
- * reserved even when the unit is empty - READY keeps the timer's figure where a running timer
- * would have put it.
- */
-@Composable
-private fun SideRow(
-    label: String,
-    unit: String,
-    figure: @Composable (Modifier) -> Unit,
-) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Text(
-            label,
-            style = HudeSectionCaps(),
-            color = HudColors.TextDim,
-            fontSize = 10.sp,
-            modifier = Modifier.alignByBaseline(),
-        )
-        Spacer(Modifier.width(HudSpace.Gap))
-        figure(Modifier.weight(1f).alignByBaseline())
-        Spacer(Modifier.width(HudSpace.Hair))
-        Text(
-            unit,
-            style = HudePerfValue(),
-            color = HudColors.TextDim,
-            fontSize = 10.sp,
-            maxLines = 1,
-            // `widthIn`, not `width`: at a large accessibility font scale a longer unit grows
-            // the gutter instead of being clipped, which costs the alignment and keeps the word.
-            modifier = Modifier.widthIn(min = SideUnitGutter).alignByBaseline(),
-        )
-    }
-}
-
-/** AVG / MAX / TIMER beside the gauge, as a word: the figure's [SideRow] keeps its edges. */
-@Composable
-private fun SideFigure(
-    label: String,
-    value: String,
-    unit: String = "",
-    color: Color = HudColors.TextPrimary,
-) {
-    SideRow(label, unit) { m ->
-        FigureText(value, "", color, modifier = m, align = TextAlign.End)
-    }
-}
-
-/** The flowing-number sibling of [SideFigure]: the glide lives inside this row, alone. */
-@Composable
-private fun SideNum(
-    label: String,
-    num: Double,
-    places: Int,
-    unit: String = "",
-    color: Color = HudColors.TextPrimary,
-) {
-    SideRow(label, unit) { m ->
-        FlowFigureText(num, places, "", color, modifier = m, align = TextAlign.End)
-    }
-}
-
-/**
- * A sparkline, or, before it can be drawn, a line saying what it is waiting for.
- *
- * [fill] is a parameter rather than always-on because of what it does to a bounded trace: a
- * steady 13.4 V line on a 10-16 V scale has an area under it that is most of the box, and filled,
- * that row became a solid green slab with a hairline on top (seen on the bench, 2026-11-08). An
- * unbounded scale hides that, because the trace always touches the bottom of its own box.
- */
-@Composable
-private fun TraceOr(
-    values: List<Double>,
-    height: androidx.compose.ui.unit.Dp,
-    color: Color,
-    empty: String,
-    domain: ClosedFloatingPointRange<Double>? = null,
-    mark: Double? = null,
-    fill: Color? = color,
-) {
-    if (values.size > 1) {
-        Sparkline(
-            values = values,
-            modifier = Modifier.fillMaxWidth().height(height),
-            line = color,
-            fill = fill,
-            strokeWidth = 1.5f,
-            domain = domain,
-            mark = mark,
-        )
+    // The RE-CENTER label is drawn by the map, so "above the bottom shelf" is an inset the
+    // page has to hand it: the shelf's measured height, the page's own bottom inset, and
+    // the gap the label keeps from the glass. Before the shelf is measured it stays at the
+    // map's default - there is nothing under it yet.
+    val recenterBottom = if (bottomShelf.height > 0f) {
+        with(density) { bottomShelf.height.toDp() } + LiveEdge + 8.dp
     } else {
-        // An empty graph reads as a bug, not as a fact. Say what fills it and how long
-        // that takes, in the space the graph would have taken.
-        Box(
-            Modifier.fillMaxWidth().height(height),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(empty, style = HudeCfgNote(), color = HudColors.TextDim)
-        }
+        6.dp
     }
-}
 
-/**
- * The run this phone is recording.
- *
- * TIME is the app's clock, not the unit's: the recorder opened the file at `tripStartMs`, so
- * that is the only honest start of an elapsed figure. The card keeps that clock itself rather
- * than borrowing the 1 Hz frame: a stopwatch that stops when the link goes quiet - or that only
- * moves when the minute rolls over - is not a stopwatch. The tick is scoped to this card, so
- * the other three are not redrawn for it.
- *
- * A pause freezes the figure where the owner pressed PAUSE ([TripRuntimeState.pausedAtMs]) and
- * stops the tick: a stopwatch that keeps climbing while the file gets nothing is a lie about
- * the drive. On RESUME the clock is read from wall time again, so it jumps forward by the pause
- * — which is what the file itself records, because `TripSummary.durationMs` is the span from
- * the first sample to the last and the pause is a gap inside it.
- *
- * While a drive exists the card also carries the live route map: the shape drawing itself as
- * the recorder appends it (live route plan §4), freezing at an amber PAUSE dot while paused,
- * and staying with its red END dot after a stop until the next START replaces it.
- *
- * Since 2026-11-19 it also carries the GNSS strip (FIX / SATS / HDOP / ALT) and the position
- * line under the map, and the standalone GNSS card is gone: a fix is a fact about the drive
- * being counted here, not a fifth subject for the page (owner).
- */
-@Composable
-private fun TripCard(
-    state: TripRuntimeState,
-    s: Snapshot,
-    step: Int,
-) {
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    // Ticks while the page can be seen and a file is being written. Off-screen pages stay
-    // composed in this pager, and a hidden card has nothing to keep current for anybody; a
-    // paused drive has nothing arriving, so its clock is frozen by definition.
-    val inView = LocalEnterActive.current
-    LaunchedEffect(state.recording, state.paused, state.tripStartMs, inView) {
-        if (!state.recording || state.paused || state.tripStartMs <= 0L || !inView) return@LaunchedEffect
-        while (true) {
-            nowMs = System.currentTimeMillis()
-            delay(TRIP_CLOCK_TICK_MS)
-        }
-    }
-    // Paused: the figure is the pause instant, not now. A pause that began before the open
-    // file (the service can be paused while it waits for the first sample) has no pause
-    // instant to show yet, so the clock reads zero rather than a negative span.
-    val elapsedMs = when {
-        state.paused -> if (state.pausedAtMs > 0L) state.pausedAtMs - state.tripStartMs else 0L
-        else -> nowMs - state.tripStartMs
-    }
-    LiveCard(
-        title = "THIS TRIP",
-        step = step,
-        mark = HudGlyphLedger.mark("readout.trip"),
-        meta = when {
-            state.paused && elapsedMs >= 0L -> "paused ${hudDuration(elapsedMs)}"
-            state.recording && elapsedMs >= 0L -> "recording ${hudDuration(elapsedMs)}"
-            else -> when {
-                state.lastOkMs == 0L -> "connecting"
-                state.stale -> "no data"
-                else -> "not recording"
-            }
-        },
-    ) {
-        Strip(
-            Figure("DIST", "", "km", num = s.trpKm, places = 2),
-            Figure(
-                "TIME",
-                if (state.recording && elapsedMs >= 0L) {
-                    // Seconds, like the note above: the figure used to drop them, so a card
-                    // that ticked every second still looked frozen for a minute at a time.
-                    hudDuration(elapsedMs)
-                } else {
-                    "—"
-                },
-            ),
-            Figure("AVG", "", "km/h", num = s.avg, places = 1),
-            // One decimal, because the unit sends two: a whole-kilometre figure sits still
-            // for the better part of a minute at demo speed and reads as a dead card.
-            Figure("ODO", "", "km", num = s.odo, places = 1),
-        )
-        // The recorder's controls are the header pill (2.0.7/178): a card full of figures
-        // does not need a second row of buttons under them to say the same thing twice.
-        // The drive's route, drawn while it is being made (live route plan §4): the
-        // same tile map the sealed drive gets a detail page for, following the newest
-        // position. It stays for a paused drive (the recorded line freezes at its PAUSE
-        // dot, the arrow keeps moving) and for the drive that just stopped (its END dot
-        // is the finished picture) - it is replaced by the next START, not by the file
-        // closing. The space is held before the first fix so the page does not jump.
-        val route = state.liveRoute
-        if (state.recording || route.hasTrack) {
-            Spacer(Modifier.height(6.dp))
-            if (!route.hasTrack) {
-                Box(
-                    Modifier.fillMaxWidth().height(LiveMapBox),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        "The route map opens at the first position.",
-                        style = HudeCfgNote(),
-                        color = HudColors.TextDim,
-                    )
-                }
-            } else {
-                LiveRouteMap(
-                    route,
-                    state.liveTrail,
-                    // Only the follow map grows its line under the arrow; the thumbnail is a
-                    // picture of the drive and takes its newest fix as drawn. `!route.closed`
-                    // matters in the second after a START: the finished drive's shape is still
-                    // what is on screen while the new one waits for its first fix, and holding
-                    // that shape's newest point back to the moving arrow would draw the one
-                    // line across a drive that is over - the link the owner asked to never see.
-                    writing = state.recording && !state.paused && !route.closed,
-                    Modifier.fillMaxWidth().height(LiveMapBox),
-                )
-            }
-        }
-        // GNSS, merged into this card (owner, 2026-11-19): the fix, its birds, its precision
-        // and its altitude are facts about the drive this card is already counting, and the
-        // page's fifth card was one strip of four figures wearing a header of its own. The
-        // strip sits UNDER the map - the shape is the drive's picture, the numbers are its
-        // detail - and the position line under the strip keeps the card's last fact readable.
-        // The hairline is the strip's own; the strip brings its 7 dp of padding either side of
-        // it, so no gap has to be added for the case with no map.
-        Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.CardHairline))
-        Strip(
-            Figure(
-                "FIX",
-                if (s.fix == 1) "3D" else "NO",
-                color = if (s.fix == 1) HudColors.Green else HudColors.Amber,
-            ),
-            // SATS and FIX stay steps - they are counts and states, and they change in
-            // steps honestly. HDOP and altitude are the continuous kind, and both keep
-            // the em dash for a declined value rather than gliding through one: `num`
-            // null is the dash, and the glide then lives in the figure's own leaf.
-            Figure("SATS", s.sats.toString(), color = if (s.fix == 1) HudColors.Green else HudColors.Amber),
-            Figure("HDOP", "—", num = if (s.hdop >= 0) s.hdop else null, places = 1),
-            Figure(
-                "ALT",
-                "—",
-                if (s.alt >= 0) "m" else "",
-                num = if (s.alt >= 0) s.alt.toDouble() else null,
-                places = 0,
-            ),
-        )
-        GnssPositionLine(s)
-    }
-}
+    val snapshot = state.snapshot
+    val route = state.liveRoute
+    val trail = state.liveTrail
+    // A map with no position has nothing to put a basemap under: 0,0 is a place in the
+    // Gulf of Guinea, not "where the car is", and the old card held its 150 dp with a
+    // sentence for exactly that reason. Here the sentence holds the whole page, so the
+    // map that arrives at the first fix does not shift anything when it does.
+    val hasPosition = trail.isNotEmpty() || route.hasTrack
 
-/**
- * The fix's two coordinates, or the word for a fix that has none: the trip card's last line
- * since the GNSS card was folded into it (2026-11-19).
- *
- * It reads [Snapshot.hasPosition] rather than `fix` alone. A fix without a valid coordinate
- * pair is what the receiver reports before it has settled, and "0.00000, 0.00000" is a claim
- * about a place in the Gulf of Guinea - the firmware sends -1/0 rather than inventing a
- * position, and this line declines the same way.
- */
-@Composable
-private fun GnssPositionLine(s: Snapshot) {
-    val has = s.hasPosition
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Image(
-            // The ledger already owns both marks: the position's own sky mark while there is
-            // a position to read, and the stale/absent mark for the fix that is not there.
-            HudGlyphLedger.mark(if (has) "readout.gnss" else "readout.stale"),
-            null,
-            modifier = Modifier.size(HudGlyphSize.Row.dp).padding(end = 6.dp),
-            colorFilter = ColorFilter.tint(if (has) HudColors.TextDim else HudColors.Amber),
-        )
-        Text(
-            if (has) "${fmt(s.lat, 5)}, ${fmt(s.lon, 5)}" else "NO FIX",
-            style = HudeCfgNote(),
-            color = if (has) HudColors.TextDim else HudColors.Amber,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
- * Battery and temperature, each over the five minutes the page remembers.
- *
- * Both are drawn against a fixed scale with a dashed rule at the limit, not scaled to
- * themselves: the useful question about either one is "how far from where it should be, and
- * which way is it going", and a 12.4-12.7 V window stretched across the box answers neither -
- * it makes a sagging battery look flat and a cold engine look urgent. The rules are the same
- * figures the stat cells coloured themselves on (11.5 V, 105 °C), so the trace and the number
- * agree about what counts as a problem.
- *
- * The card is named BATTERY · TEMPERATURE since 2026-11-19 (owner): `POWER` was this card's
- * word for the electrical system and `COOLANT` its word for a temperature, so the two halves of
- * one title were a system and a fluid instead of the two readings the rows print.
- */
-@Composable
-private fun BatteryCard(s: Snapshot, trends: LiveTrends, step: Int) {
-    LiveCard(
-        title = "BATTERY · TEMPERATURE",
-        step = step,
-        mark = HudGlyphLedger.mark("readout.power"),
-        meta = trends.windowLabel(),
-    ) {
-        Spacer(Modifier.height(HudSpace.Gap))
-        TrendRow(
-            label = "BATT",
-            values = trends.values("volts"),
-            domain = 10.0..16.0,
-            mark = 11.5,
-            line = HudColors.Green,
-            num = s.volts,
-            places = 2,
-            unit = "V",
-            // The colour decides on the truth, not on the gliding display figure.
-            color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
-            everyMs = trends.everyMs,
-        )
-        Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.CardHairline))
-        TrendRow(
-            label = "TEMP",
-            values = trends.values("temp"),
-            domain = 0.0..130.0,
-            mark = 105.0,
-            line = HudColors.Amber,
-            num = s.temp,
-            places = 1,
-            unit = "°C",
-            color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
-            everyMs = trends.everyMs,
-        )
-        Spacer(Modifier.height(4.dp))
-    }
-}
-
-/** One sparkline row: a dim caps label, the trace, and the figure it is standing on. */
-@Composable
-private fun TrendRow(
-    label: String,
-    values: List<Double>,
-    domain: ClosedFloatingPointRange<Double>,
-    mark: Double,
-    line: Color,
-    num: Double,
-    places: Int,
-    unit: String,
-    color: Color,
-    everyMs: Long,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 10.sp)
-        Spacer(Modifier.width(HudSpace.Gap))
-        Box(Modifier.weight(1f)) {
-            TraceOr(
-                values = values,
-                height = 26.dp,
-                color = line,
-                empty = "collecting - one point every ${everyMs / 1000L} s",
-                domain = domain,
-                mark = mark,
-                // No area fill here: on a fixed scale a steady reading is a slab, and the slab
-                // swallows both the trace and the rule it is measured against.
-                fill = null,
-            )
-        }
-        Spacer(Modifier.width(HudSpace.Gap))
-        FlowFigureText(num, places, unit, color, size = 16, align = TextAlign.End)
-    }
-}
-
-/**
- * Fuel: the level as a bar, everything else as one strip.
- *
- * A bar is the right shape for a sender the rider cannot calibrate from the seat - what
- * matters is roughly how much is left and which way it is going, not a third decimal. The
- * state of the input used to be its own cell; it is the card's note now, because it is a
- * sentence and not a reading.
- */
-@Composable
-private fun FuelCard(s: Snapshot, step: Int) {
-    val barColor = when {
-        s.fuelSt != 1 -> HudColors.TextDim
-        s.fuelPct <= 10 -> HudColors.Red
-        s.fuelPct <= 25 -> HudColors.Amber
-        else -> HudColors.Cyan
-    }
-    LiveCard(
-        title = "FUEL",
-        step = step,
-        mark = HudGlyphLedger.mark("readout.fuel"),
-        // The caption is raw, and that is the rule, not an oversight: a card's caption is
-        // built in the card's own body, so gliding it recomposes the body sixty times a
-        // second - and every body on this page holds something expensive (the speed trace,
-        // this card's strip and bar). The figures are the numbers; the note above them is
-        // a note. The speed card's peak steps for the same reason plus one: a record is
-        // not a reading, it is the largest figure the window ever held.
-        meta = "${fmt(s.trpL, 2)} L used · ${if (s.akml > 0.0) fmt(s.akml, 1) else "—"} km/L avg",
-    ) {
-        Spacer(Modifier.height(HudSpace.Gap))
-        FlowBar(s.fuelPct.toDouble(), barColor)
-        Spacer(Modifier.height(6.dp))
-        Strip(
-            Figure("LEVEL", "", "%", num = s.fuelPct.toDouble(), places = 0, color = barColor),
-            Figure("TANK", "", "L", num = s.fuelL, places = 2),
-            Figure(
-                "INST",
-                if (s.ikml > 0.0) "" else "—",
-                "km/L",
-                num = s.ikml.takeIf { it > 0.0 },
-                places = 1,
-            ),
-            Figure(
-                "INPUT",
-                fuelStateLabel(s.fuelSt),
-                color = when (s.fuelSt) {
-                    1 -> HudColors.Green
-                    0 -> HudColors.TextDim
-                    else -> HudColors.Red
-                },
-            ),
-        )
-        if (s.fuelSt != 1) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                when (s.fuelSt) {
-                    0 -> "Sender not wired - the unit reports no fuel input (fuel_st 0)."
-                    2 -> "Fuel input open circuit - the reading cannot be trusted (fuel_st 2)."
-                    3 -> "Fuel input shorted - the reading cannot be trusted (fuel_st 3)."
-                    else -> "Fuel input state ${s.fuelSt} - the reading cannot be trusted."
-                },
-                style = HudeCfgNote(),
-                color = HudColors.Amber,
-            )
-        }
-    }
-}
-
-/**
- * The tank as a pill, and the only part of the fuel card that moves between frames.
- *
- * The sender's 1 % jump is real, but a bar that snaps a whole percentage across the card
- * reads as broken even when the jump is honest - so the fraction it paints is glided
- * here, inside the one Box that needs it, rather than in the card's body. A [flow] call
- * in a card's body is a card that recomposes sixty times a second: the figures beside
- * this bar would rebuild themselves for a bar's motion, and the map two cards up the
- * page would run its update lambda with them. Bench-measured, that cost was the whole
- * frame budget on the bench phone.
- */
-@Composable
-private fun FlowBar(percent: Double, color: Color) {
-    val fraction = (flow(percent).coerceIn(0.0, 100.0) / 100.0).toFloat()
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(8.dp)
-            .background(HudColors.Track, HudRadius.PillShape),
-    ) {
+    Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         Box(
             Modifier
-                .fillMaxWidth(fraction)
-                .fillMaxHeight()
-                .background(color, HudRadius.PillShape),
-        )
+                .fillMaxSize()
+                .onGloballyPositioned {
+                    val next = it.boundsInRoot().topLeft
+                    if (mapOrigin != next) mapOrigin = next
+                },
+        ) {
+            if (hasPosition) {
+                LiveRouteMap(
+                    route = route,
+                    trail = trail,
+                    // Only the follow map grows its line under the arrow; a finished drive's
+                    // shape is not extended by the display lane. `!route.closed` matters in the
+                    // second after a START: the finished drive's shape is still what is on
+                    // screen while the new one waits for its first fix.
+                    writing = state.recording && !state.paused && !route.closed,
+                    modifier = Modifier.fillMaxSize(),
+                    touchRefusals = refusals,
+                    recenterBottom = recenterBottom,
+                    zoomInTicks = zoomIn,
+                    zoomOutTicks = zoomOut,
+                )
+            } else {
+                WaitingForPosition(hasFrame = snapshot != null)
+            }
+            // The cockpit wash: a flat tint and a vignette over the tiles, so the map reads
+            // as the ground the glass floats on rather than as a second bright surface
+            // competing with the figures. Deliberately cheap - two full-screen rects, no
+            // shader, no per-frame work - and deliberately static: a wash that moved with
+            // the camera would be a second thing to keep in step with the glide.
+            Box(
+                Modifier.fillMaxSize().drawBehind {
+                    drawRect(Color.Black.copy(alpha = 0.18f))
+                    drawRect(
+                        Brush.radialGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                            center = center,
+                            radius = hypot(size.width, size.height) / 2f,
+                        ),
+                    )
+                },
+            )
+        }
+
+        // The HUD, one entrance for the glass rather than a stagger per block: the cards
+        // that used to arrive one step apart are one shelf at the top and one at the
+        // bottom, and two halves of one overlay fading in sequence would read as a stutter.
+        HudEnter(modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(horizontal = LiveShelfInset)) {
+                TopShelf(
+                    state = state,
+                    active = active,
+                    actions = actions,
+                    s = snapshot,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = LiveEdge)
+                        .onGloballyPositioned { layout ->
+                            val next = layout.boundsInRoot()
+                            if (topShelf != next) topShelf = next
+                        },
+                )
+                // The open map: everything the shelves do not cover. The zoom rail floats in
+                // it, on the right and midway down, because that is where a thumb finds it
+                // without standing over the car - and because a control that lives in the
+                // map's slot has to be handed the touch by the map, so it reports its bounds
+                // to the same list the shelves do.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    if (hasPosition) {
+                        ZoomRail(
+                            onZoomIn = { zoomIn++ },
+                            onZoomOut = { zoomOut++ },
+                            modifier = Modifier.onGloballyPositioned { layout ->
+                                val next = layout.boundsInRoot()
+                                if (zoomRail != next) zoomRail = next
+                            },
+                        )
+                    }
+                }
+                if (snapshot != null) {
+                    BottomShelf(
+                        s = snapshot,
+                        trends = trends,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = LiveEdge)
+                            .onGloballyPositioned { layout ->
+                                val next = layout.boundsInRoot()
+                                if (bottomShelf != next) bottomShelf = next
+                            },
+                    )
+                }
+            }
+        }
     }
 }
-
-// ─── History ────────────────────────────────────────────────────────────────────
 
 /**
- * The five minutes the Live page draws, one bounded window per figure.
+ * The page before its first position: the map's slot, held at full size.
  *
- * A single frame cannot show a coolant temperature creeping up or a battery that sags only
- * under load, and the unit keeps no history of its own - so the app holds the window. It is
- * sampled every [everyMs] rather than every frame: sixty 5 s points span five minutes and
- * hold sixty boxes per figure, where one point a second needs three hundred for the same
- * span, and three hundred segments across a 341 dp card is more line than the screen has
- * pixels.
- *
- * The window is capped, so the cost does not grow with the length of a ride, and a change of
- * dashboard clears it: the previous unit's warm-up is not this unit's history.
- */
-class LiveTrends(val cap: Int = 60, val everyMs: Long = 5_000L) {
-
-    // `spd` was the third entry until 2026-11-15: the SPEED card's five-minute trace came
-    // out at the maintainer's request and the page had no other speed-history reader, so
-    // keeping the window would have been a queue that only grew and never drew.
-    private val extractors: Map<String, (Snapshot) -> Double> = linkedMapOf(
-        "volts" to { it.volts },
-        "temp" to { it.temp },
-    )
-
-    private val windows: Map<String, ArrayDeque<Double>> =
-        extractors.keys.associateWith { ArrayDeque<Double>(cap.coerceAtLeast(1)) }
-
-    private var lastSampleMs = Long.MIN_VALUE
-    private var deviceKey: String? = null
-
-    /**
-     * Records one point per figure, at most once per [everyMs]. Returns true when this frame
-     * was far enough past the last one to be stored - the page draws the same either way, but
-     * a test can assert the cadence instead of a wall clock.
-     */
-    fun sample(nowMs: Long, unitKey: String?, s: Snapshot): Boolean {
-        if (unitKey != deviceKey) {
-            deviceKey = unitKey
-            clear()
-        }
-        if (lastSampleMs != Long.MIN_VALUE && nowMs - lastSampleMs < everyMs) return false
-        lastSampleMs = nowMs
-        for ((name, extract) in extractors) {
-            val window = windows[name] ?: continue
-            window.addLast(extract(s))
-            while (window.size > cap) window.removeFirst()
-        }
-        return true
-    }
-
-    /** Oldest first, so a trace's right edge is now. Empty before the first sample. */
-    fun values(name: String): List<Double> = windows[name]?.toList() ?: emptyList()
-
-    /** The span the window covers, as a card note wants it ("5 min"). */
-    fun windowLabel(): String {
-        val seconds = cap.toLong() * everyMs / 1000L
-        return if (seconds % 60L == 0L) "${seconds / 60L} min" else "${seconds} s"
-    }
-
-    fun clear() {
-        windows.values.forEach { it.clear() }
-        lastSampleMs = Long.MIN_VALUE
-    }
-}
-
-// ─── Formatting and state labels ────────────────────────────────────────────────
-
-/** Gauge scale: quiet drive gets 60, highway gets 180, anything past that gets 240. */
-private fun speedScale(s: Snapshot): Double = when {
-    s.max > 200.0 || s.spd > 200.0 -> 240.0
-    s.max > 120.0 || s.spd > 120.0 -> 180.0
-    s.max > 60.0 || s.spd > 60.0 -> 120.0
-    else -> 60.0
-}
-
-private fun sourceLabel(src: Int): String = when (src) {
-    0 -> "HALL"
-    1 -> "GPS"
-    2 -> "FUSED"
-    else -> "SRC$src"
-}
-
-private fun fuelStateLabel(st: Int): String = when (st) {
-    0 -> "OFF"
-    1 -> "OK"
-    2 -> "OPEN"
-    3 -> "SHORT"
-    else -> "ST$st"
-}
-
-private fun fmt(value: Double, places: Int = 1): String =
-    String.format(java.util.Locale.US, "%.${places}f", value)
-
-/**
- * The run state as one [HudStateChip] pill: the mark the ledger owns for the state,
- * its word, and its ink.
- *
- * The pill is also the recorder's control (2.0.7/178). A press does what the state says
- * it does - start when idle, pause while writing, resume while paused - and a three-second
- * hold fills it red and stops the drive ([rememberHoldToAct]). The mapping lives in
- * `trips/RecordingControls.kt` rather than here, because the Trips page's recording card
- * offers the same two gestures and the two pages must not drift apart.
- *
- * The states with nothing to toggle stay readouts: CONNECTING and NO DATA describe the
- * link, not the recorder, and a pill that is pressable in one state and inert in the next
- * would teach the owner that pressing it is a gamble.
+ * Two different waits, said differently because they are different facts. With no frame
+ * at all the page is waiting for the dashboard the tab bar already names; with a frame in
+ * hand and no coordinate in it, the unit is talking and the receiver is the thing that has
+ * not settled. The second sentence is the one that keeps the map honest: the firmware
+ * sends -1/0 rather than inventing a position, and a compass rose over the Gulf of Guinea
+ * is the picture this page refuses to draw.
  */
 @Composable
-private fun StatusChip(
-    state: TripRuntimeState,
-    active: Boolean,
-    actions: TripRecordingActions,
-) {
-    val control = RecordingControlState.of(
-        recording = state.recording,
-        paused = state.paused,
-        polling = state.polling,
-        watching = state.watching,
-        canRecord = actions.canRecord,
-    )
-    val tap = control.tap()
-    val hold = rememberHoldToAct(
-        enabled = tap != RecordingTap.NONE,
-        onTap = {
-            when (tap) {
-                RecordingTap.START -> actions.onStart()
-                RecordingTap.PAUSE -> actions.onPause()
-                RecordingTap.RESUME -> actions.onResume()
-                RecordingTap.STOP -> actions.onStop()
-                RecordingTap.NONE -> Unit
-            }
-        },
-        onHold = if (control.canHold()) actions.onStop else null,
-        tapLabel = when (tap) {
-            RecordingTap.START -> "start recording a drive"
-            RecordingTap.PAUSE -> "pause recording"
-            RecordingTap.RESUME -> "resume recording"
-            RecordingTap.STOP -> "stop recording"
-            RecordingTap.NONE -> "recording unavailable"
-        },
-        holdLabel = "stop recording and seal this drive",
-    )
-    // The pill's ink stops at 29 dp; the finger does not. The gesture lives on a wrapper with
-    // a 44 dp minimum height - the smallest target a thumb can be expected to find - while
-    // the pill keeps its own size and the red fill stays inside it.
-    Box(
-        Modifier.heightIn(min = 44.dp).then(hold.modifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        when {
-            // A paused drive is still a recording - the file is open - so it outranks the
-            // RECORDING pill rather than replacing it with a link state. Amber and no breath:
-            // nothing is being written, and a pill that breathes would claim it is.
-            state.paused -> HudStateChip(
-                "PAUSED", HudGlyphLedger.mark("readout.paused"), HudColors.Amber,
-                pulse = false, active = active,
-                hold = hold::progress,
+private fun WaitingForPosition(hasFrame: Boolean) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                if (hasFrame) "WAITING FOR GNSS FIX" else "Waiting for the dashboard…",
+                style = HudeSectionCaps(),
+                color = if (hasFrame) HudColors.Amber else HudColors.TextDim,
+                textAlign = TextAlign.Center,
             )
-            state.recording -> HudStateChip(
-                "RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.Green,
-                pulse = true, active = active,
-                hold = hold::progress,
-            )
-            // Nothing has come back yet on this connection - that is not the same
-            // claim as "the dashboard stopped answering", which is what NO DATA means.
-            // It is "the link is not up yet", and that is the link-off mark, in dim.
-            state.lastOkMs == 0L -> HudStateChip(
-                "CONNECTING", HudGlyphLedger.mark("link.off"), HudColors.TextDim,
-                active = active,
-            )
-            state.polling && state.stale -> HudStateChip(
-                "NO DATA", HudGlyphLedger.mark("readout.stale"), HudColors.Red,
-                active = active,
-            )
-            state.polling -> HudStateChip(
-                // Streaming, and writing nothing: the whole pill is the warning about the drive
-                // that NOT RECORDING carries - hairline, wash, word and mark all in the red
-                // (2.0.7/179, the word following on 2.0.7/180 at the maintainer's request). A
-                // tap here starts a drive, which is the other half of why it must not be drawn
-                // in the link's own cyan: cyan is what the radio wears when it is doing well.
-                "LOGGING IDLE", HudGlyphLedger.mark("link.on"), HudColors.Red,
-                active = active,
-                edge = HudColors.Red,
-                borderAlpha = 0.55f,
-                washAlpha = 0.12f,
-            )
-            else -> HudStateChip(
-                // The recorder's own state in the not-running ink: the same mark, so
-                // a dim pill cannot claim a second meaning for the dot. The hairline and
-                // wash are red (2.0.7/179): "nothing is recording" is a warning about the
-                // drive, and the word stays dim because it is not a claim about the link.
-                "NOT RECORDING", HudGlyphLedger.mark("readout.recording"), HudColors.TextDim,
-                active = active,
-                edge = HudColors.Red,
-                borderAlpha = 0.55f,
-                washAlpha = 0.12f,
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (hasFrame) {
+                    "The map opens at the first position."
+                } else {
+                    "The live view follows the dashboard's own one-a-second stream."
+                },
+                style = if (hasFrame) HudeCfgNote() else HudeCfgHelp(),
+                color = HudColors.TextMuted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 32.dp),
             )
         }
     }
 }
+
+/** The page's inset from the window edge: 10 dp across, 6 dp above and below. */
+private val LiveShelfInset = 10.dp
+private val LiveEdge = 6.dp

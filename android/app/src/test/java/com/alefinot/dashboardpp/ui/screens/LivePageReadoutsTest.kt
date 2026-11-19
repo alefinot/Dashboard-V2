@@ -6,15 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The Live page was re-composed for the phone (phone-layout plan §4a): the wall of two-up stat
- * cells became cards with traces. That is a layout change, and a layout change on the one
- * page whose job is to show *everything* is exactly where a reading gets quietly dropped - so
- * the guard here is on the data, not on the wording: every figure the old page drew has to be
- * read by the new one, or has to be named below as something the page no longer claims.
+ * The Live page is a map now (2026-11-19): the header and the four scrolling cards became one
+ * full-bleed live map with two glass shelves over it, and the page split in two files - the map
+ * stage (`LiveTab.kt`) and the shelves and their vocabulary (`LiveHud.kt`). A layout change on
+ * the one page whose job is to show *everything* is exactly where a reading gets quietly
+ * dropped, so the guard here is on the data, not on the wording: every figure the card stack
+ * drew has to be read by the shelves, or has to be named below as something the page no longer
+ * claims.
  *
- * Labels were renamed where the old name only made sense beside its neighbours ("AVG ECO" next
- * to "INST ECO" became "INST"/"AVG" inside a card already titled FUEL), which is why these
- * assertions match the `Snapshot` field behind each figure instead of its caption.
+ * Because one guard can span both files (the clock lives in the ribbon, the pill in the chip),
+ * [livePage] is the two sources concatenated - a regex proven against it cannot be satisfied by
+ * moving a reading from one half of the page to the other.
  */
 class LivePageReadoutsTest {
 
@@ -32,14 +34,17 @@ class LivePageReadoutsTest {
         return s.replace(Regex("//[^\n]*"), "")
     }
 
+    /** The page is the map stage plus the shelves: one page, two files. */
+    private fun livePage(): String = codeOnly("LiveTab.kt") + "\n" + codeOnly("LiveHud.kt")
+
     /**
-     * Every reading the stat-cell page drew, by the field it came from. A card that stops
-     * reading one of these does not look wrong in a screenshot of a parked bike - it looks
-     * wrong on a ride, which is the only time it matters.
+     * Every reading the card stack drew, by the field it came from. A shelf that stops reading
+     * one of these does not look wrong in a screenshot of a parked bike - it looks wrong on a
+     * ride, which is the only time it matters.
      */
     @Test
     fun everyFigureTheStatCellsDrewIsStillOnThePage() {
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         val readings = listOf(
             "spd" to "the gauge",
             "src" to "the speed source in the gauge's unit line",
@@ -92,21 +97,10 @@ class LivePageReadoutsTest {
      */
     @Test
     fun theUnitCardIsGoneAndItsThreeReadingsLiveWhereTheyAreMeasured() {
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         assertFalse(
-            "the Live page draws a UNIT card again",
+            "the Live page draws a UNIT shelf again",
             Regex("title = \"UNIT\"").containsMatchIn(page),
-        )
-        // The five cards, counting call sites: `fun LiveCard(` is the declaration, not a card,
-        // and it used to sit inside the count because the POWER call happened to fit one line.
-        // All five calls are wrapped now (icon plan P8 gave every card its mark), so the
-        // declaration must be excluded or the cap means six.
-        val cards = Regex("(?<!fun )LiveCard\\(\\s").findAll(page).count()
-        assertTrue(
-            "the Live page grew past the five cards it is allowed to hold ($cards LiveCard calls) - " +
-                "the sixth, UNIT, came out on 2026-11-12: fps and heap belong to the Performance " +
-                "Monitor and the light ADC to the Auto Brightness card",
-            cards <= 5,
         )
         for (field in listOf("fps", "heap", "amb")) {
             assertFalse(
@@ -134,47 +128,47 @@ class LivePageReadoutsTest {
     }
 
     /**
-     * THIS TRIP's elapsed figure is the app's clock, and it has to keep running between the
-     * unit's one-frame-a-second updates. The card used to read `System.currentTimeMillis()`
-     * once per composition and print hours and minutes, so a link that went quiet froze it
-     * and a healthy link still showed the same value for sixty seconds at a time - a
-     * stopwatch that only moves on the minute is indistinguishable from a stuck one.
+     * The trip ribbon's elapsed figure is the app's clock, and it has to keep running between
+     * the unit's one-frame-a-second updates. The ribbon is a third of the top shelf now, so the
+     * tick has to be scoped to it: a clock that recomposed the whole HUD - gauge, traces and the
+     * map's update lambda with it - four times a second would spend the page's frame budget on
+     * a stopwatch.
      */
     @Test
-    fun theTripCardClockTicksBetweenFrames() {
-        val page = codeOnly("LiveTab.kt")
+    fun theTripRibbonClockTicksBetweenFrames() {
+        val page = livePage()
         assertTrue(
-            "the trip card is back on the frame clock: its elapsed figure must read the card's " +
-                "own ticking clock (nowMs), not System.currentTimeMillis() at composition time",
+            "the ribbon is back on the frame clock: its elapsed figure must read its own ticking " +
+                "clock (nowMs), not System.currentTimeMillis() at composition time",
             Regex("""nowMs - state\.tripStartMs""").containsMatchIn(page),
         )
         assertTrue(
-            "the trip card stopped ticking between frames - the elapsed figure would freeze " +
+            "the ribbon stopped ticking between frames - the elapsed figure would freeze " +
                 "whenever the link goes quiet, which is exactly when it is the only live number",
             Regex("""delay\(TRIP_CLOCK_TICK_MS\)""").containsMatchIn(page),
         )
         assertTrue(
             "the clock no longer follows the pager's viewport flag: every page stays composed " +
-                "in this pager, so a card nobody can see would tick four times a second for " +
+                "in this pager, so a ribbon nobody can see would tick four times a second for " +
                 "nobody and redraw itself all the way through a ride",
             Regex("""LaunchedEffect\(state\.recording, state\.paused, state\.tripStartMs, inView\)""")
                 .containsMatchIn(page),
         )
         assertTrue(
-            "the TIME figure and its meta note no longer share the H:MM:SS format; without " +
-                "seconds the card sits on one value for a minute",
-            Regex("""hudDuration\(elapsedMs\)""").findAll(page).count() >= 2,
+            "the TIME figure went back to hours and minutes: without seconds the ribbon sits " +
+                "on one value for a minute at a time",
+            Regex("""hudDuration\(elapsedMs\)""").containsMatchIn(page),
         )
         // The owner's PAUSE (2026-11-17): a frozen stopwatch, not one that keeps climbing while
         // the file receives nothing. The paused figure has to come from the pause instant.
         assertTrue(
             "the trip clock runs through a pause again: the elapsed figure must freeze at " +
-                "state.pausedAtMs, or the card claims time the file never got",
+                "state.pausedAtMs, or the ribbon claims time the file never got",
             Regex("""state\.pausedAtMs - state\.tripStartMs""").containsMatchIn(page),
         )
         assertTrue(
             "the tick no longer stops while paused - a frozen figure must not recompose the " +
-                "card four times a second for a clock that cannot move",
+                "ribbon four times a second for a clock that cannot move",
             Regex("""if \(!state\.recording \|\| state\.paused""").containsMatchIn(page),
         )
     }
@@ -191,17 +185,8 @@ class LivePageReadoutsTest {
     fun theLiveRouteStaysDrawnThroughPauseAndStop() {
         val page = codeOnly("LiveTab.kt")
         assertTrue(
-            "the THIS TRIP card stopped drawing the live route",
-            Regex("LiveRouteMap\\(\\s*route").containsMatchIn(page),
-        )
-        assertTrue(
-            "the live map went back behind the open file: a paused drive and the drive that " +
-                "just stopped both have a route to show, and losing it on stop is exactly the " +
-                "picture the owner asked to keep",
-            Regex(
-                "if \\(state\\.recording \\|\\| route\\.hasTrack\\)" +
-                    "[\\s\\S]{0,1400}?LiveRouteMap\\(\\s*route"
-            ).containsMatchIn(page),
+            "the Live page stopped drawing the live route",
+            Regex("LiveRouteMap\\(\\s*route = route").containsMatchIn(page),
         )
         val row = codeOnly("TripsTab.kt")
         assertTrue(
@@ -253,7 +238,7 @@ class LivePageReadoutsTest {
                 "freezes the route and not the car, so the head ended up pointing back at the " +
                 "pause dot instead of down the road (2026-11-18) - the trail is the compass",
             Regex("headingPoints\\(trail\\)").containsMatchIn(mapCode) &&
-                Regex("liveTrail").containsMatchIn(codeOnly("LiveTab.kt")),
+                Regex("liveTrail").containsMatchIn(page),
         )
         assertTrue(
             "the blue line went back to appearing one fix at a time: while a piece is open its " +
@@ -267,7 +252,7 @@ class LivePageReadoutsTest {
             "the frame lane stopped keeping the arrow's history: the last minute of positions " +
                 "is what the head turns on, and a recorder's route is not it - after a stop " +
                 "there is no recorder at all, and the map still has to be able to turn",
-            Regex("CursorTrail\\(\\)").containsMatchIn(codeOnly("../../service/TripLogService.kt")),
+            Regex("CursorTrail\\(\\)").containsMatchIn(codeOnlyIn("service", "TripLogService.kt")),
         )
         assertTrue(
             "the map stopped drawing one polyline per recorded piece: a pause is a gap, and " +
@@ -313,18 +298,18 @@ class LivePageReadoutsTest {
                 "of 1 Hz figures read as flowing instead of as a pulse with dead air between beats",
             Regex("tween\\(FLOW_MS,\\s*easing = LinearEasing").containsMatchIn(glide),
         )
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         // No continuous *figure* may reach fmt() raw any more; it has to pass through flow().
         val raw = listOf(
             "avg", "max", "odo", "volts", "temp", "trpKm", "fuelL",
-            "ikml", "tmrS", "hdop", "alt",
+            "ikml", "akml", "trpL", "tmrS", "hdop", "alt",
         ).filter { Regex("fmt\\(s\\.$it\\b").containsMatchIn(page) }
         assertTrue("these Live-page figures are back on raw 1 Hz steps: $raw", raw.isEmpty())
         // A caption is a different animal, and the rule is worth writing down because the
-        // obvious edit breaks it: a card's caption is built in the card's body, so a glide
-        // there recomposes the whole body - trace, strip, bar and the live map beside it -
-        // at frame rate to smooth one line of small dim text. Bench-measured, that was the
-        // Live page's entire frame budget. So the figures flow, the notes step.
+        // obvious edit breaks it: a shelf's body holds the gauge, the traces, the fuel rail and
+        // the map's AndroidView update lambda, so a glide there would rebuild all of it at frame
+        // rate to smooth one line of small dim text. Bench-measured, that was the Live page's
+        // entire frame budget. So the figures flow in their own leaves, the notes step.
         val captionFlow = page.lines().filter { it.contains("flow(") && it.contains('"') }
         assertTrue(
             "a caption started gliding again: $captionFlow - move the reading into a leaf " +
@@ -379,18 +364,153 @@ class LivePageReadoutsTest {
 
     @Test
     fun theRoundGaugeSurvivedTheRedesign() {
-        // The maintainer asked for the gauge to stay when the card stack was approved: it is
-        // the one element that answers "how fast" without being read.
-        val page = codeOnly("LiveTab.kt")
+        // The maintainer asked for the gauge to stay when the map HUD was approved: it is the
+        // one element that answers "how fast" without being read. It shrank to 96 dp when the
+        // page was compacted (2026-11-19) and moved into the bottom shelf's single row, beside
+        // the traces and the fuel rail rather than under them.
+        val page = livePage()
         assertTrue(
-            "HudGauge is gone from the Live page; the approved design keeps it and shrinks the " +
+            "HudGauge is gone from the Live page; the approved HUD keeps it and shrinks the " +
                 "box instead of deleting it",
             Regex("HudGauge\\(").containsMatchIn(page),
         )
         assertTrue(
-            "the gauge box grew past what the first screen can hold: it is sized by GaugeBox, " +
-                "measured so GNSS still lands on screen",
-            Regex("private val GaugeBox = (1[0-3][0-9]|9[0-9])\\.dp").containsMatchIn(page),
+            "the gauge box drifted off its 96 dp anchor: it is sized by GaugeBox, measured so " +
+                "the gauge, the traces and the fuel rail share one row",
+            Regex("private val GaugeBox = (9[0-9]|10[0-5])\\.dp").containsMatchIn(page),
+        )
+    }
+
+    /**
+     * The shelves are as tight as they are legible, because the page is the map and every dp
+     * of glass is a dp of road the owner cannot see (2026-11-19: "compact the UI more"). The
+     * numbers below are not taste - they are the measurement the compaction was priced
+     * against, and a shelf that quietly grows back to a card's padding undoes it.
+     */
+    @Test
+    fun theShelvesStayCompensatedForTheMapTheyCover() {
+        val hud = codeOnly("LiveHud.kt")
+        assertTrue(
+            "a shelf went back to a card's 12 dp of air - glass over a map pays less for its " +
+                "padding, and this is the whole compaction in one line",
+            Regex("padding\\(horizontal = ShelfPadX, vertical = ShelfPadY\\)").findAll(hud).count() >= 1,
+        )
+        assertTrue(
+            "the shelf padding tokens disappeared",
+            Regex("private val ShelfPadX = (8|9|10)\\.dp").containsMatchIn(hud) &&
+                Regex("private val ShelfPadY = (4|5|6)\\.dp").containsMatchIn(hud),
+        )
+        assertTrue(
+            "the strip figures grew past the compact size - four of them have to fit beside a " +
+                "gauge, which is what the second compaction bought",
+            Regex("private const val StripFigure = (1[2-5])").containsMatchIn(hud),
+        )
+        assertTrue(
+            "the traces got tall again: a five-minute shape needs a trend, not a chart",
+            Regex("private val TraceHeight = 1[0-6]\\.dp").containsMatchIn(hud),
+        )
+        // The bottom shelf is ONE row: readings in a column, the gauge beside them. That is
+        // where the map came from - three stacked rows of glass became one.
+        val shelf = hud.substringAfter("internal fun BottomShelf").substringBefore("@Composable")
+        assertTrue(
+            "the bottom shelf went back to stacked rows instead of one row of glass",
+            Regex("Column\\(\\s*\\n?\\s*modifier\\s*\\n?\\s*\\.hudGlass").containsMatchIn(shelf).not(),
+        )
+        assertTrue(
+            "the bottom shelf's readings left the column beside the gauge",
+            Regex("Column\\(Modifier\\.weight\\(1f\\)\\)").containsMatchIn(shelf) &&
+                Regex("HudGauge\\(").containsMatchIn(shelf),
+        )
+        assertTrue(
+            "the old side-of-gauge row vocabulary is back next to the dial: AVG/MAX/TIMER are a " +
+                "strip now, which is what let the row collapse",
+            listOf("SideNum(", "SideFigure(", "SideRow(")
+                .none { needle -> Regex(Regex.escape(needle)).containsMatchIn(hud) },
+        )
+    }
+
+    /**
+     * The zoom rail: two stepper presses, on the right of the open band of map.
+     *
+     * It is glass on the page and not a widget inside the map for the same reason the pill
+     * is: a Compose control over the osmdroid view receives nothing unless the map refuses
+     * the DOWN under it, so the rail reports its bounds to the same list the shelves do. And
+     * its marks come from the ledger: a map that zooms one level is a stepper, and a typed
+     * `+` or `−` is not a glyph this app allows (`TypedPseudoGlyphTest`).
+     */
+    @Test
+    fun theMapHasAZoomRailTheMapLetsThrough() {
+        val hud = codeOnly("LiveHud.kt")
+        val rail = hud.substringAfter("internal fun ZoomRail").substringBefore("// ───")
+        assertTrue(
+            "the zoom rail lost its stepper marks - they are the ledger's, because zooming a " +
+                "map one level IS a step and a second pair of plus/minus shapes is the second " +
+                "meaning the ledger exists to catch",
+            Regex("HudGlyphLedger\\.mark\\(\"action\\.step-up\"\\)").containsMatchIn(rail) &&
+                Regex("HudGlyphLedger\\.mark\\(\"action\\.step-down\"\\)").containsMatchIn(rail),
+        )
+        assertTrue(
+            "the rail's buttons lost the sentence they are known by (a glyph-only control " +
+                "without a description is invisible to TalkBack)",
+            Regex("description = \"zoom the map in\"").containsMatchIn(rail) &&
+                Regex("description = \"zoom the map out\"").containsMatchIn(rail),
+        )
+        assertTrue(
+            "the rail is no longer glass: it floats over the map, so it wears the overlay " +
+                "family like the shelves, not a flat card fill",
+            Regex("hudGlass\\(").containsMatchIn(rail),
+        )
+        for (typed in listOf("\"+\"", "\"−\"", "\"-\"")) {
+            assertTrue(
+                "a typed $typed is being drawn as a mark - the app draws its plus and minus " +
+                    "(HudIcons.Plus / HudIcons.Minus), it does not type them",
+                !hud.contains(typed) && !codeOnly("LiveTab.kt").contains(typed),
+            )
+        }
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the rail stopped reporting its bounds: the map would take the DOWN and the " +
+                "buttons would do nothing at all",
+            Regex("zoomRail != next\\) zoomRail = next").containsMatchIn(page) &&
+                Regex("listOf\\(topShelf, bottomShelf, zoomRail\\)").containsMatchIn(page),
+        )
+        assertTrue(
+            "the rail is offered while there is no map to zoom",
+            Regex("if \\(hasPosition\\) \\{\\s*ZoomRail\\(").containsMatchIn(page),
+        )
+        val mapCode = codeOnly("../map/LiveRouteMap.kt")
+        assertTrue(
+            "the rail's presses no longer reach the map",
+            Regex("holder\\.zoom\\(map, zoomInTicks, zoomOutTicks\\)").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the map stopped treating the rail as a difference of counters: its update lambda " +
+                "runs at frame rate while the figures glide, and re-applying the same zoom " +
+                "every frame would pin the level against the owner's fingers",
+            Regex("\\(zoomInTicks - zoomInSeen\\) - \\(zoomOutTicks - zoomOutSeen\\)").containsMatchIn(mapCode) &&
+                Regex("if \\(steps == 0\\) return").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the map's zoom step jumped again. The owner asked for a smooth zoom (2026-11-19): " +
+                "the travel is the holder's own, one frame at a time, over ZOOM_RAMP_MS",
+            Regex("view\\.postOnAnimation\\(zoomRamp\\)").containsMatchIn(mapCode) &&
+                Regex("setZoomLevel\\(zoomFrom \\+ \\(zoomTo - zoomFrom\\)").containsMatchIn(mapCode) &&
+                Regex("private const val ZOOM_RAMP_MS = (2[0-9]{2}|300)L").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the rail started using the library's animated zoom (zoomTo/animateTo). That is a " +
+                "second authority over a camera this file keeps one of, and it is also a silent " +
+                "one: MapController.zoomToFixing returns false while its animator is running, so " +
+                "the second and third press of a fast run do nothing at all (6.1.20 source read " +
+                "2026-11-19)",
+            !Regex("controller\\.zoomTo\\(").containsMatchIn(mapCode) &&
+                !Regex("animateTo").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "a press during a travel measures its new target from wherever the view happens to " +
+                "stand this frame instead of from where the travel is heading - three fast " +
+                "presses would be worth one and a half levels",
+            Regex("if \\(zoomTo\\.isNaN\\(\\)\\) view\\.zoomLevelDouble else zoomTo").containsMatchIn(mapCode),
         )
     }
 
@@ -403,7 +523,7 @@ class LivePageReadoutsTest {
      */
     @Test
     fun thePowerTracesArePinnedToAScaleAndDrawTheirLimit() {
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         assertTrue(
             "the battery trace lost its pinned scale (domain) - on its own scale a flat " +
                 "13.4 V trace is indistinguishable from a sagging one",
@@ -429,7 +549,7 @@ class LivePageReadoutsTest {
 
     @Test
     fun thePageKeepsItsHistoryBounded() {
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         assertTrue(
             "the traces are no longer fed by a bounded window; an unbounded history grows with " +
                 "the ride and redraws every point on every frame",
@@ -443,10 +563,10 @@ class LivePageReadoutsTest {
 
     @Test
     fun everyIdleWordWearsTheNotRecordingLook() {
-        val page = codeOnly("LiveTab.kt")
+        val page = livePage()
         // Two words say the same thing - nothing is recording: the fresh idle pill, and the one
-        // the display-only lane wears while a finished drive's map keeps moving. Both draw the
-        // red hairline and wash; a pill that offers START in a link-coloured skin reads as a
+        // the display-only lane wears while the live page goes on moving. Both draw the red
+        // hairline and wash; a pill that offers START in a link-coloured skin reads as a
         // readout, which is the mistake this guards.
         for (word in listOf("LOGGING IDLE", "NOT RECORDING")) {
             val chip = page.substringAfter("\"$word\"", "")
@@ -513,8 +633,14 @@ class LivePageReadoutsTest {
         )
     }
 
+    /**
+     * The page is the map. The header, the four cards and the page scroll are gone, and this is
+     * the guard that keeps a redesign from quietly becoming a card stack with a backdrop again:
+     * a gallery of figures over a map is a different screen from a gallery of figures, and the
+     * owner asked for the first one.
+     */
     @Test
-    fun theHeaderStoppedSpendingTwoThirdsOfAScreenOnAWord() {
+    fun thePageIsAMapNotACardStack() {
         val page = codeOnly("LiveTab.kt")
         assertFalse(
             "the Live page went back to the page's desktop header: that is a centred 26 sp " +
@@ -522,24 +648,211 @@ class LivePageReadoutsTest {
                 "bar already says",
             Regex("HudPageHeader\\(").containsMatchIn(page),
         )
-        assertTrue(
-            "the run state stopped being drawn - the chip is the header's other half, and it is " +
-                "the half that was worth the height",
-            Regex("StatusChip\\(state, active, actions\\)").containsMatchIn(page),
+        assertFalse(
+            "a LiveCard came back: the four cards are the shelves now, and a card floating over " +
+                "a map is a second surface competing with the glass",
+            Regex("LiveCard\\(").containsMatchIn(page),
         )
-        // Since 2.0.7/178 the pill is also the recorder's control: the header is where the
-        // drive is started, paused, resumed and stopped from, and this is the guard that keeps
-        // it from drifting back into a readout nobody can press.
+        assertFalse(
+            "the page started scrolling again - the window is the map, and a scroller over it " +
+                "steals the drags the map exists to answer",
+            Regex("verticalScroll").containsMatchIn(page),
+        )
+        assertFalse(
+            "the old 150 dp map box is back: the map fills the page now",
+            Regex("LiveMapBox").containsMatchIn(page),
+        )
+        assertTrue(
+            "the map stopped filling its slot: a full-bleed map is the page, and a smaller box " +
+                "would put the HUD over the page's ground instead of over the map",
+            Regex("modifier = Modifier\\.fillMaxSize\\(\\)").containsMatchIn(page),
+        )
+        assertTrue(
+            "the page root went back to a padded content column: the map has to reach every edge",
+            page.contains("Box(Modifier.fillMaxSize().background(HudColors.Bg))"),
+        )
+        // The shelves are the overlay family, not the flat card one: they sit ON something.
+        val hud = codeOnly("LiveHud.kt")
+        assertTrue(
+            "the shelves stopped being glass - two flat card fills over a moving map read as " +
+                "holes cut in it, and the overlay family's shadow is what makes them float",
+            Regex("hudGlass\\(").findAll(hud).count() >= 2,
+        )
+        assertTrue(
+            "the run-state pill left the page: the shelf carries it where the header did",
+            Regex("StatusChip\\(").containsMatchIn(livePage()),
+        )
+        // Since 2.0.7/178 the pill is also the recorder's control, and the shelf is where the
+        // drive is started, paused, resumed and stopped from. This keeps it from drifting back
+        // into a readout nobody can press.
         assertTrue(
             "the run-state pill went back to being a readout: a press must do what the state " +
                 "says, and a three-second press must fill it red and stop the drive",
-            Regex("rememberHoldToAct\\(").containsMatchIn(page) &&
-                Regex("hold = hold::progress").containsMatchIn(page),
+            Regex("rememberHoldToAct\\(").containsMatchIn(hud) &&
+                Regex("hold = hold::progress").containsMatchIn(hud),
+        )
+    }
+
+    /**
+     * The map opens at the first *position*, not at the first recorded one. Since the shell keeps
+     * a display-only frame lane open whenever a dashboard is linked, a drive that was never
+     * started still has a trail - and a full-screen map is the page's whole point, so waiting for
+     * a file would leave the page a poster until the owner pressed START. A map with no position
+     * at all is not mounted: 0,0 is a place in the Gulf of Guinea, not "where the car is".
+     */
+    @Test
+    fun theMapMountsForTheTrailNotOnlyForTheRoute() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the map went back to mounting only for an open file or a recorded route: the trail " +
+                "is where the vehicle is, and it is the one input every state has",
+            Regex("val hasPosition = trail\\.isNotEmpty\\(\\) \\|\\| route\\.hasTrack").containsMatchIn(page),
         )
         assertTrue(
-            "the stack stopped scrolling; six cards plus the header is taller than the bench " +
-                "phone's window, so a clipped page is what a missing scroll gives",
-            Regex("verticalScroll\\(rememberScrollState\\(\\)\\)").containsMatchIn(page),
+            "the map is drawn before there is a position to draw: the placeholder has to hold " +
+                "the slot until the first fix, or the tile view opens on a made-up place",
+            Regex("if \\(hasPosition\\)[\\s\\S]{0,600}?LiveRouteMap\\(\\s*route").containsMatchIn(page),
+        )
+        for (promise in listOf("Waiting for the dashboard…", "WAITING FOR GNSS FIX", "The map opens at the first position.")) {
+            assertTrue("the no-position promise \"$promise\" is gone from the page", page.contains(promise))
+        }
+    }
+
+    /**
+     * The touch door (bench, 2026-11-15): a Compose control painted over an osmdroid
+     * `AndroidView` receives nothing at all - the platform view owns the slot's touches at the
+     * ViewGroup level and an interop filter never sees a consumed DOWN. So the shelves hand
+     * their bounds to the map and the map refuses a DOWN that lands inside them; that refusal is
+     * what lets the recorder pill be pressed and a swipe across a shelf page the tabs. Only a
+     * DOWN is refused: a pan that began on the open map keeps the whole stream.
+     */
+    @Test
+    fun theShelvesHandTheirBoundsToTheMap() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the shelves stopped reporting their bounds - without them the map owns every touch " +
+                "in its slot and the pill cannot be pressed",
+            Regex("touchRefusals = refusals").containsMatchIn(page),
+        )
+        assertTrue(
+            "the shelf bounds are no longer measured from the same root the map is placed in, so " +
+                "the refusal rectangles would be offset from the glass they protect",
+            Regex("boundsInRoot\\(\\)").findAll(page).count() >= 2,
+        )
+        val mapCode = codeOnly("../map/LiveRouteMap.kt")
+        assertTrue(
+            "the map lost the refusal line: a touch that starts on the HUD has to reach Compose",
+            Regex("holder\\.refusesAt\\(event\\.x, event\\.y\\)").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the refusal stopped being DOWN-only: re-checking it on every MOVE would steal a " +
+                "pan the moment it crossed a shelf's edge",
+            Regex("event\\.actionMasked == MotionEvent\\.ACTION_DOWN &&").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the show-only refusal must stay the first door (the Trips thumbnail), before the " +
+                "HUD's rectangles are consulted",
+            mapCode.indexOf("if (!holder.interactive)") in 0 until mapCode.indexOf("holder.refusesAt"),
+        )
+        assertTrue(
+            "the interactive map lost its pinch/double-tap zoom: the full-screen map is the " +
+                "page, and the owner asked to be able to pan and zoom it",
+            Regex("setMultiTouchControls\\(true\\)").containsMatchIn(mapCode),
+        )
+    }
+
+    /**
+     * RE-CENTER is drawn by the map, not by the page - a Compose pill over the map would receive
+     * nothing (see [theShelvesHandTheirBoundsToTheMap]) - so the page has to tell the map how
+     * much of its bottom edge the instrument shelf covers. A hard-coded inset would put the
+     * label under the glass on the first font scale that grew the shelf.
+     */
+    @Test
+    fun theRecenterPillClearsTheBottomShelf() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the page stopped passing the shelf inset: RE-CENTER lands under the fuel rail",
+            Regex("recenterBottom = recenterBottom").containsMatchIn(page),
+        )
+        assertTrue(
+            "the inset stopped coming from the measured shelf - a magic number cannot follow a " +
+                "font scale, a fuel fault sentence or a wrapped row",
+            Regex("bottomShelf\\.height\\.toDp\\(\\)").containsMatchIn(page),
+        )
+        val mapCode = codeOnly("../map/LiveRouteMap.kt")
+        assertTrue(
+            "the map stopped applying the inset to its label",
+            Regex("bottom = recenterBottom").containsMatchIn(mapCode),
+        )
+        assertTrue(
+            "the inset's default (the Trips thumbnail's 6 dp) is gone, so every other caller " +
+                "would have to know about a shelf it does not have",
+            Regex("recenterBottom: Dp = 6\\.dp").containsMatchIn(mapCode),
+        )
+    }
+
+    /**
+     * The display lane owes no file. Since the Live page became a map it is the page's normal
+     * reader: the shell starts it from the owner it just resolved, before any drive exists, and
+     * the service is not allowed to demand that a route be on the maps first - that condition
+     * was exactly what kept the page a poster until START. It is foreground-only, because a lane
+     * nobody puts down would stream for the rest of the day.
+     */
+    @Test
+    fun theDisplayLaneNeedsNoDrive() {
+        val service = codeOnlyIn("service", "TripLogService.kt")
+        assertFalse(
+            "the watch lane went back to requiring a route: a display lane with no drive is the " +
+                "live page's normal state now",
+            Regex("hasTrack").containsMatchIn(service),
+        )
+        val branch = service.substringAfter("ACTION_WATCH ->").substringBefore("ACTION_STOP ->")
+        assertTrue("the ACTION_WATCH branch disappeared", branch.isNotEmpty())
+        assertTrue(
+            "the watch lane stopped reading the caller's device key: the shell resolved an owner " +
+                "a moment ago and the runtime may not have published one on a cold start",
+            Regex("EXTRA_DEVICE_KEY").containsMatchIn(branch),
+        )
+        assertFalse(
+            "the display lane went foreground: it promises nothing beyond \"the app is open\", " +
+                "and an ongoing notification for a drive that is not being written is an alarm " +
+                "about nothing",
+            Regex("startForeground").containsMatchIn(branch),
+        )
+        assertFalse(
+            "the display lane started holding the CPU awake",
+            Regex("applyWake").containsMatchIn(branch),
+        )
+        assertFalse(
+            "the display lane started posting a notification of its own",
+            Regex("\\bnotify\\(").containsMatchIn(branch),
+        )
+        assertTrue(
+            "watch() lost the device-key extra the shell hands it",
+            Regex("fun watch\\(context: Context, deviceKey: String\\? = null\\)").containsMatchIn(service),
+        )
+        val activity = codeOnlyIn(".", "MainActivity.kt")
+        assertFalse(
+            "the app's onStart went back to asking for a finished route before it would start the " +
+                "display lane",
+            Regex("hasTrack").containsMatchIn(activity),
+        )
+        assertTrue(
+            "onStart stopped starting the display lane",
+            Regex("TripLogService\\.watch\\(this\\)").containsMatchIn(activity),
+        )
+        val shell = codeOnly("ConnectedTabs.kt")
+        assertTrue(
+            "the shell stopped starting the display lane from the owner it resolved, so the Live " +
+                "page arrives dead and only START wakes it",
+            Regex("TripLogService\\.watch\\(context, owner\\.deviceKey\\)").containsMatchIn(shell),
+        )
+        assertTrue(
+            "a lane kept alive for the display is idle, not waiting: its press must offer START " +
+                "rather than a STOP the app undoes a moment later",
+            Regex("polling && !watching -> WAITING").containsMatchIn(
+                codeOnlyIn("trips", "RecordingControls.kt"),
+            ),
         )
     }
 
