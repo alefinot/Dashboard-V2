@@ -75,27 +75,25 @@ import kotlinx.coroutines.delay
  * reports its bounds for the same reason the shelves do - and which is the one piece of glass
  * that stays up when the shelves are switched off, because a page that can hide its readings
  * has to keep the way back. All three are drawn as tight as they read: the bottom shelf is
- * one row of four zones - fuel, power, speed, the dial - rather than a column of stacked
- * strips, and the gauge is 96 dp instead of 132 and says no word over its figure, because
- * the owner asked for the map back (2026-11-19) and every dp of glass is a dp of road not
- * shown.
+ * one row rather than three, the strips' figures are 14 sp instead of 17, and the gauge is
+ * 96 dp instead of 132 and says no word over its figure, because the owner asked for the map
+ * back (2026-11-19) and every dp of glass is a dp of road not shown.
  *
- * The two shelves name their sections - GNSS and TRIP on the top one, FUEL, SPEED and the
- * power figures on the bottom one - so a glance can find a figure by its section before it
- * reads any of them (maintainer, 2026-11-19). The five-minute BATT and TEMP traces went the
- * same day ("the battery and temp graphs are useless"); their figures, thresholds and colours
- * stayed, each figure now riding a fill bar on the scale its trace used (2026-11-19, the
- * reorganisation).
+ * The two shelves name their sections - GNSS and TRIP on the top one, SPEED on the bottom one
+ * beside the FUEL line it already carried - so a glance can find a figure by its section
+ * before it reads any of them (maintainer, 2026-11-19). The five-minute BATT and TEMP traces
+ * went the same day ("the battery and temp graphs are useless"); their figures, thresholds and
+ * colours stayed.
  */
 
 /**
  * The gauge's box, square.
  *
- * 96 dp is what the shelf can pay for it now that the gauge shares its row with the fuel,
- * power and speed zones instead of owning a row of its own: the page is the map, and every
- * dp of shelf is dp the owner asked for back (2026-11-19). It is still the largest circle
- * the dial can be read at with its three lines - the figure, `km/h` and the source -
- * without the numbers touching the ring.
+ * 96 dp is what the shelf can pay for it now that the gauge shares its row with the power
+ * figures, the fuel rail and the three speed figures instead of owning a row of its own: the
+ * page is the map, and every dp of shelf is dp the owner asked for back (2026-11-19). It is
+ * still the largest circle the dial can be read at with its four lines - SPEED, the figure,
+ * `km/h` and the source - without the numbers touching the ring.
  */
 private val GaugeBox = 96.dp
 
@@ -105,9 +103,6 @@ private val ShelfPadY = 6.dp
 
 /** The figures in a compact strip: big enough to read at arm's length, small enough to fit four. */
 private const val StripFigure = 14
-
-/** The fuel level's headline figure - the zone's eye-word, and the page's one oversized strip number. */
-private const val FuelFigure = 18
 
 /**
  * How often the trip ribbon reads its own clock while a recording is open.
@@ -179,21 +174,16 @@ internal fun TopShelf(
 }
 
 /**
- * Bottom shelf: one row of four zones - fuel, power, the speed figures, and the gauge.
+ * Bottom shelf: one row - the readings in a column on the left, the gauge on the right.
  *
- * The readings used to be one narrow column stacked to the left of the dial: seven figures
- * deep, four of them in one strip, at sizes that apologised for taking room (2026-11-19,
- * the reorganisation: "reorganize the elements to make the LIVE UI more readable"). They
- * are four zones now, each with a domain and its own air: fuel owns the left, the battery
- * and coolant figures - each over a fill bar on the scale its retired trace used - own the
- * middle, the speed strip owns the rest of the width, and the dial finally has its space
- * alone on the right. The glass is still one shelf and the map still shows through the same
- * rectangle, so the touch refusals, the slide and the RE-CENTER inset never noticed.
- *
- * The INPUT/`OK` cell is gone (maintainer, 2026-11-19: "remove the input ok part"). A
- * healthy sender shows nothing, which was the cell's whole message. A broken one has not
- * gone quiet: the FUEL title itself goes red and names the fault, and the amber sentence
- * under the bar still says what to do about it.
+ * The gauge used to own a row of the shelf and the traces another; that is two rows of
+ * glass where one column of figures beside the dial does the same job for a third less of
+ * the map. The order inside the left column is the order the questions arrive in: is the
+ * bike healthy, how fast have I been going, how much fuel is left. The five-minute traces
+ * under BATT and TEMP are gone (maintainer, 2026-11-19: "the battery and temp graphs are
+ * useless") - what is left of them is the two figures, the same thresholds and the same
+ * colours they used to colour themselves on. Each section wears its caps word: SPEED over
+ * the strip, and FUEL already names its own line.
  */
 @Composable
 internal fun BottomShelf(
@@ -206,11 +196,31 @@ internal fun BottomShelf(
             .padding(horizontal = ShelfPadX, vertical = ShelfPadY),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FuelZone(s, Modifier.weight(1.0f))
-        Spacer(Modifier.width(HudSpace.Gap))
-        PowerZone(s, Modifier.weight(0.95f))
-        Spacer(Modifier.width(HudSpace.Gap))
-        SpeedZone(s, Modifier.weight(0.9f))
+        Column(Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                PowerCell(
+                    label = "BATT",
+                    num = s.volts,
+                    places = 2,
+                    unit = "V",
+                    // The colour decides on the truth, not on the gliding display figure.
+                    color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(HudSpace.Gap))
+                PowerCell(
+                    label = "TEMP",
+                    num = s.temp,
+                    places = 1,
+                    unit = "°C",
+                    color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            SectionTitle("SPEED")
+            SpeedStrip(s)
+            FuelRail(s)
+        }
         Spacer(Modifier.width(HudSpace.Gap))
         Box(Modifier.width(1.dp).height(GaugeBox).background(HudColors.CardHairline))
         Spacer(Modifier.width(HudSpace.Gap))
@@ -230,184 +240,35 @@ internal fun BottomShelf(
 }
 
 /**
- * Fuel: the level as a headline figure, the tank bar under it, and the economy figures as
- * quiet rows.
+ * AVG / MAX / TIMER, the three figures that used to stand beside the gauge in a column.
  *
- * The level is the figure a rider actually asks for, so it is the biggest number in the
- * zone and wears the title's line. The litres ride the bar's line rather than the
- * headline's - both say "how much", and squeezing them onto one baseline ellipsized both
- * (bench, 2026-11-19). INST and AVG get a row each instead of strip cells: a cell's hair
- * line and padding were half of a zone this narrow, and the units - km/L is the one
- * reading the rider cannot eyeball - survive the trip when they have the row to themselves.
- *
- * The sender's health used to have its own cell reading `OK`. Now nothing extra is printed
- * when the sender is healthy; when it is not, the zone's own title takes the fault -
- * `FUEL · OPEN` in red - because a fault that only shows in a corner cell of a strip is a
- * fault read at a glance as an `OK` that stopped being there.
+ * They are a strip now, because a column of three rows costs the shelf three times the
+ * height a row of three cells does, and the shelf sits on the map. TIMER is the one cell
+ * that is a word most of the time - `READY` before the unit has measured a launch - and
+ * [Figure] already draws words and flowing numbers in the same cell.
  */
 @Composable
-private fun FuelZone(s: Snapshot, modifier: Modifier = Modifier) {
-    val fault = s.fuelSt != 1
-    val barColor = when {
-        fault -> HudColors.TextDim
-        s.fuelPct <= 10 -> HudColors.Red
-        s.fuelPct <= 25 -> HudColors.Amber
-        else -> HudColors.Cyan
-    }
-    Column(modifier) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                if (fault) "FUEL · ${fuelStateLabel(s.fuelSt)}" else "FUEL",
-                style = HudeSectionCaps(),
-                color = if (fault) HudColors.Red else HudColors.TextDim,
-                fontSize = 9.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.alignByBaseline(),
-            )
-            Spacer(Modifier.width(HudSpace.Hair))
-            FlowFigureText(
-                s.fuelPct.toDouble(),
-                0,
-                "%",
-                barColor,
-                size = FuelFigure,
-                modifier = Modifier.alignByBaseline(),
-            )
-        }
-        Spacer(Modifier.height(3.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { FlowBar(s.fuelPct.toDouble(), barColor) }
-            Spacer(Modifier.width(HudSpace.Hair))
-            FlowFigureText(s.fuelL, 2, "L", HudColors.TextPrimary, size = 12)
-        }
-        Spacer(Modifier.height(2.dp))
-        ReadoutRow("INST", s.ikml.takeIf { it > 0.0 }, 1, "km/L")
-        ReadoutRow("AVG", s.akml.takeIf { it > 0.0 }, 1, "km/L")
-        ReadoutRow("USED", s.trpL, 2, "L", size = 12)
-        if (fault) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                when (s.fuelSt) {
-                    0 -> "Sender not wired - the unit reports no fuel input (fuel_st 0)."
-                    2 -> "Fuel input open circuit - the reading cannot be trusted (fuel_st 2)."
-                    3 -> "Fuel input shorted - the reading cannot be trusted (fuel_st 3)."
-                    else -> "Fuel input state ${s.fuelSt} - the reading cannot be trusted."
-                },
-                style = HudeCfgNote(),
-                color = HudColors.Amber,
-            )
-        }
-    }
-}
-
-/**
- * BATT and TEMP as two figures over fill bars.
- *
- * Their five-minute traces went first ("the battery and temp graphs are useless",
- * 2026-11-19); what came back in their place, at the maintainer's word, is a fill bar for
- * each figure - the shape of a reading without a chart. The bars run on the scales those
- * traces were pinned to (battery 10-16 V, coolant 0-130 °C, never autoscaled), and out of
- * range the bar tints with the number: red at the 11.5 V floor and the 15.0 V ceiling, red
- * past 105 °C. A healthy reading and a mid-scale bar say the same sentence twice, which is
- * the point of a fill bar over a map.
- */
-@Composable
-private fun PowerZone(s: Snapshot, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        ReadoutRow(
-            label = "BATT",
-            num = s.volts,
-            places = 2,
-            unit = "V",
-            // The colour decides on the truth, not on the gliding display figure.
-            color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
-        )
-        Spacer(Modifier.height(2.dp))
-        // 10-16 V: the scale the retired trace was pinned to.
-        FlowBar(
-            (s.volts - 10.0) / 6.0 * 100.0,
-            if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.Cyan,
-        )
-        Spacer(Modifier.height(8.dp))
-        ReadoutRow(
-            label = "TEMP",
-            num = s.temp,
-            places = 1,
-            unit = "°C",
-            color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
-        )
-        Spacer(Modifier.height(2.dp))
-        // 0-130 °C: the same promise, one scale up.
-        FlowBar(
-            s.temp / 1.3,
-            if (s.temp > 105.0) HudColors.Red else HudColors.Cyan,
-        )
-    }
-}
-
-/**
- * MAX / AVG over the launch TIMER, the figures the dial cannot show.
- *
- * Three rows rather than a strip's cells: this zone is a third of the shelf, and a cell's
- * hair line and padding stole more of it than the units the figures need. Stacked, every
- * row wears its unit and none of them ellipsize, and the dial they sit beside spells the
- * same one out in the middle of the band.
- */
-@Composable
-private fun SpeedZone(s: Snapshot, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        SectionTitle("SPEED")
-        Spacer(Modifier.height(1.dp))
-        ReadoutRow("MAX", s.max, 1, "km/h")
-        ReadoutRow("AVG", s.avg, 1, "km/h")
+private fun SpeedStrip(s: Snapshot) {
+    Strip(
+        Figure("AVG", "", "km/h", num = s.avg, places = 1),
+        Figure("MAX", "", "km/h", num = s.max, places = 1),
         if (s.tmrSt == 0) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                SectionTitle("TIMER", Modifier.alignByBaseline())
-                Spacer(Modifier.width(HudSpace.Hair))
-                FigureText("READY", "", HudColors.TextPrimary, size = StripFigure, modifier = Modifier.alignByBaseline())
-            }
+            Figure("TIMER", "READY")
         } else {
-            ReadoutRow(
-                label = "TIMER",
-                num = s.tmrS,
-                places = 2,
-                unit = "s",
+            Figure(
+                "TIMER",
+                "",
+                "s",
                 color = when (s.tmrSt) {
                     1 -> HudColors.Amber
                     2 -> HudColors.Green
                     else -> HudColors.TextPrimary
                 },
+                num = s.tmrS,
+                places = 2,
             )
-        }
-    }
-}
-
-/**
- * One caps label and its flowing figure on a shared baseline - the strip cell's content
- * without the cell. The bottom band's zones are a third of the shelf each, and at that
- * width a cell's hair line and padding cost more than the figure's unit did. A declined
- * reading (null) draws the same em dash the strip cells used to.
- */
-@Composable
-private fun ReadoutRow(
-    label: String,
-    num: Double?,
-    places: Int,
-    unit: String,
-    modifier: Modifier = Modifier,
-    color: Color = HudColors.TextPrimary,
-    size: Int = StripFigure,
-) {
-    Row(modifier, verticalAlignment = Alignment.Bottom) {
-        SectionTitle(label, Modifier.alignByBaseline())
-        Spacer(Modifier.width(HudSpace.Hair))
-        if (num != null) {
-            FlowFigureText(num, places, unit, color, size, Modifier.alignByBaseline())
-        } else {
-            FigureText("—", unit, color, size, Modifier.alignByBaseline())
-        }
-    }
+        },
+    )
 }
 
 /**
@@ -631,6 +492,118 @@ private fun TripRibbon(state: TripRuntimeState, s: Snapshot) {
         // for the better part of a minute at demo speed and reads as a dead ribbon.
         Figure("ODO", "", "km", num = s.odo, places = 1),
     )
+}
+
+// ─── Bottom shelf pieces ──────────────────────────────────────────────────────
+
+/**
+ * One power figure - the battery or the coolant - as its label and its number.
+ *
+ * The five-minute trace that used to sit under each of them is gone (maintainer, 2026-11-19:
+ * "the battery and temp graphs are useless"); the figures stayed, and with them the same
+ * thresholds the figures colour themselves on (11.5 V / 15.0 V, 105 °C). A rider who wants
+ * the shape of the last five minutes gets it from the sealed trip file, where the samples
+ * live whole.
+ */
+@Composable
+private fun PowerCell(
+    label: String,
+    num: Double,
+    places: Int,
+    unit: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier.padding(vertical = 1.dp), verticalAlignment = Alignment.Bottom) {
+        Text(
+            label,
+            style = HudeSectionCaps(),
+            color = HudColors.TextDim,
+            fontSize = 9.sp,
+            maxLines = 1,
+            modifier = Modifier.alignByBaseline(),
+        )
+        Spacer(Modifier.width(HudSpace.Hair))
+        FlowFigureText(
+            num,
+            places,
+            unit,
+            color,
+            size = StripFigure,
+            modifier = Modifier.alignByBaseline(),
+        )
+    }
+}
+
+/**
+ * Fuel: the level as a bar, everything else as one strip.
+ *
+ * A bar is the right shape for a sender the rider cannot calibrate from the seat - what
+ * matters is roughly how much is left and which way it is going, not a third decimal. The
+ * six figures the old card carried stay: level and tank on the bar's line, instant,
+ * average, used and the input's state under it.
+ */
+@Composable
+private fun FuelRail(s: Snapshot) {
+    val barColor = when {
+        s.fuelSt != 1 -> HudColors.TextDim
+        s.fuelPct <= 10 -> HudColors.Red
+        s.fuelPct <= 25 -> HudColors.Amber
+        else -> HudColors.Cyan
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(top = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("FUEL", style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 9.sp)
+        Spacer(Modifier.width(HudSpace.Hair))
+        FlowFigureText(s.fuelPct.toDouble(), 0, "%", barColor, size = StripFigure)
+        Spacer(Modifier.width(HudSpace.Hair))
+        Box(Modifier.weight(1f)) {
+            FlowBar(s.fuelPct.toDouble(), barColor)
+        }
+        Spacer(Modifier.width(HudSpace.Hair))
+        FlowFigureText(s.fuelL, 2, "L", HudColors.TextPrimary, size = StripFigure)
+    }
+    Strip(
+        Figure(
+            "INST",
+            if (s.ikml > 0.0) "" else "—",
+            "km/L",
+            num = s.ikml.takeIf { it > 0.0 },
+            places = 1,
+        ),
+        Figure(
+            "AVG",
+            if (s.akml > 0.0) "" else "—",
+            "km/L",
+            num = s.akml.takeIf { it > 0.0 },
+            places = 1,
+        ),
+        Figure("USED", "", "L", num = s.trpL, places = 2),
+        Figure(
+            "INPUT",
+            fuelStateLabel(s.fuelSt),
+            color = when (s.fuelSt) {
+                1 -> HudColors.Green
+                0 -> HudColors.TextDim
+                else -> HudColors.Red
+            },
+        ),
+    )
+    if (s.fuelSt != 1) {
+        Spacer(Modifier.height(2.dp))
+        Text(
+            when (s.fuelSt) {
+                0 -> "Sender not wired - the unit reports no fuel input (fuel_st 0)."
+                2 -> "Fuel input open circuit - the reading cannot be trusted (fuel_st 2)."
+                3 -> "Fuel input shorted - the reading cannot be trusted (fuel_st 3)."
+                else -> "Fuel input state ${s.fuelSt} - the reading cannot be trusted."
+            },
+            style = HudeCfgNote(),
+            color = HudColors.Amber,
+        )
+    }
 }
 
 // ─── The figure vocabulary (moved from the card stack) ──────────────────────

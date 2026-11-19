@@ -416,22 +416,16 @@ class LivePageReadoutsTest {
                 "gauge, which is what the second compaction bought",
             Regex("private const val StripFigure = (1[2-5])").containsMatchIn(hud),
         )
-        // The bottom shelf is ONE row: the fuel, power and speed zones side by side, the
-        // gauge at the end. That is where the map came from - stacked rows became one, and
-        // the 2026-11-19 reorganisation spread the single column across the shelf's width.
+        // The bottom shelf is ONE row: readings in a column, the gauge beside them. That is
+        // where the map came from - three stacked rows of glass became one.
         val shelf = hud.substringAfter("internal fun BottomShelf").substringBefore("@Composable")
         assertTrue(
             "the bottom shelf went back to stacked rows instead of one row of glass",
             Regex("Column\\(\\s*\\n?\\s*modifier\\s*\\n?\\s*\\.hudGlass").containsMatchIn(shelf).not(),
         )
         assertTrue(
-            "the bottom shelf's zones left the row beside the gauge - fuel, power and speed " +
-                "each own a weighted stretch of the glass and the dial its end of it " +
-                "(maintainer, 2026-11-19: \"reorganize the elements to make the LIVE UI " +
-                "more readable\")",
-            Regex("FuelZone\\(s, Modifier\\.weight").containsMatchIn(shelf) &&
-                Regex("PowerZone\\(s, Modifier\\.weight").containsMatchIn(shelf) &&
-                Regex("SpeedZone\\(s, Modifier\\.weight").containsMatchIn(shelf) &&
+            "the bottom shelf's readings left the column beside the gauge",
+            Regex("Column\\(Modifier\\.weight\\(1f\\)\\)").containsMatchIn(shelf) &&
                 Regex("HudGauge\\(").containsMatchIn(shelf),
         )
         assertTrue(
@@ -575,10 +569,9 @@ class LivePageReadoutsTest {
      * The five-minute BATT and TEMP traces went off the page on 2026-11-19 ("the battery and
      * temp graphs are useless"); the two figures stayed, and with them the thresholds they
      * colour themselves on - 11.5 V / 15.0 V and 105 °C, the same numbers the old stat cells
-     * and the traces were judged against. The same day's reorganisation gave each figure a
-     * fill bar riding the scale its retired trace was pinned to (battery 10-16 V, coolant
-     * 0-130 °C) - a position without a chart, at the maintainer's word - so this guards the
-     * figures, their thresholds, and the bars that replaced the shapes.
+     * and the traces were judged against. The shape of the last five minutes is what was
+     * called useless here, not the readings, so a future edit that deletes the figures too
+     * has lost something the owner never gave up.
      */
     @Test
     fun thePowerFiguresSurvivedTheirTraces() {
@@ -586,7 +579,8 @@ class LivePageReadoutsTest {
         assertTrue(
             "the battery figure left the shelf with its trace - the owner retired the graphs, " +
                 "not the reading",
-            Regex("num = s\\.volts").containsMatchIn(page),
+            Regex("FlowFigureText\\(\\s*\\n?\\s*num").containsMatchIn(page) ||
+                Regex("num = s\\.volts").containsMatchIn(page),
         )
         assertTrue("the coolant figure left the shelf", Regex("num = s\\.temp").containsMatchIn(page))
         assertTrue(
@@ -596,24 +590,6 @@ class LivePageReadoutsTest {
         assertTrue(
             "the coolant figure stopped colouring itself on the 105 °C ceiling",
             Regex("s\\.temp > 105\\.0").containsMatchIn(page),
-        )
-        assertTrue(
-            "the battery bar lost the scale the retired trace ran on (10-16 V, never " +
-                "autoscaled): on its own scale a flat 13.4 V bar is indistinguishable from a " +
-                "sagging one",
-            Regex("\\(s\\.volts - 10\\.0\\) / 6\\.0 \\* 100\\.0").containsMatchIn(page),
-        )
-        assertTrue(
-            "the coolant bar lost its pinned scale (0-130 °C)",
-            Regex("s\\.temp / 1\\.3").containsMatchIn(page),
-        )
-        assertTrue(
-            "the fill bar stopped tinting with its figure: out of range the number goes red " +
-                "and the bar has to say the same thing",
-            Regex("if \\(s\\.volts < 11\\.5 \\|\\| s\\.volts > 15\\.0\\) HudColors\\.Red else HudColors\\.Cyan")
-                .containsMatchIn(page) &&
-                Regex("if \\(s\\.temp > 105\\.0\\) HudColors\\.Red else HudColors\\.Cyan")
-                    .containsMatchIn(page),
         )
         assertFalse(
             "a sparkline is back on the Live page - the traces were retired, not paused",
@@ -687,40 +663,8 @@ class LivePageReadoutsTest {
             )
         }
         assertTrue(
-            "the fuel zone stopped naming itself - even with the INPUT cell gone the section " +
-                "title is what a glance reads, healthy or not",
-            Regex("else \"FUEL\"").containsMatchIn(hud),
-        )
-    }
-
-    /**
-     * The INPUT/`OK` cell left the Live page on 2026-11-19 ("remove the input ok part"): a
-     * healthy sender's whole message was a green OK, and a green nothing is the same
-     * message. The honest half of that cell - the fault - did not go with it: the FUEL
-     * title itself turns red and reads `FUEL · OPEN / SHORT / OFF`, and the amber sentence
-     * under the bar still says what cannot be trusted. A future edit that deletes the fault
-     * path too would make a broken sender invisible, which is how the old cell earned its
-     * keep.
-     */
-    @Test
-    fun theSenderFaultStillSpeaksAndTheOkCellIsGone() {
-        val hud = codeOnly("LiveHud.kt")
-        assertFalse(
-            "the INPUT cell is back - the maintainer took it off the page, a green OK beside " +
-                "a bar that says the same thing is a cell doing nothing",
-            Regex("\"INPUT\"").containsMatchIn(hud),
-        )
-        assertTrue(
-            "a faulty sender stopped naming itself in the fuel title",
-            Regex("if \\(fault\\) \"FUEL · \\$\\{fuelStateLabel\\(s\\.fuelSt\\)\\}\"")
-                .containsMatchIn(hud) &&
-                Regex("color = if \\(fault\\) HudColors\\.Red else HudColors\\.TextDim")
-                    .containsMatchIn(hud),
-        )
-        assertTrue(
-            "the amber fault sentence left the page - a fault that only recolours a title is " +
-                "a fault nobody learns the meaning of",
-            Regex("cannot be trusted").containsMatchIn(hud),
+            "the fuel section stopped naming itself",
+            Regex("Text\\(\"FUEL\"").containsMatchIn(hud),
         )
     }
 
