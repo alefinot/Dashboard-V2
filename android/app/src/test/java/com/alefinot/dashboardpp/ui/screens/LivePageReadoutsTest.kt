@@ -367,7 +367,7 @@ class LivePageReadoutsTest {
         // The maintainer asked for the gauge to stay when the map HUD was approved: it is the
         // one element that answers "how fast" without being read. It shrank to 96 dp when the
         // page was compacted (2026-11-19), moved into the bottom shelf's single row beside the
-        // traces and the fuel rail, and lost the word over its figure the same day.
+        // power figures and the fuel rail, and lost the word over its figure the same day.
         val page = livePage()
         assertTrue(
             "HudGauge is gone from the Live page; the approved HUD keeps it and shrinks the " +
@@ -376,7 +376,7 @@ class LivePageReadoutsTest {
         )
         assertTrue(
             "the gauge box drifted off its 96 dp anchor: it is sized by GaugeBox, measured so " +
-                "the gauge, the traces and the fuel rail share one row",
+                "the gauge, the power figures and the fuel rail share one row",
             Regex("private val GaugeBox = (9[0-9]|10[0-5])\\.dp").containsMatchIn(page),
         )
         val gaugeParams = codeOnlyIn("ui/components", "HudCharts.kt")
@@ -384,8 +384,11 @@ class LivePageReadoutsTest {
         assertTrue(
             "the dial grew its word back. SPEED over a 96 dp figure is a line taken out of the " +
                 "circle the number lives in, for a word the page has no use for - the dial IS the " +
-                "speed (maintainer, 2026-11-19). HudGauge has no label parameter to pass",
-            !page.contains("\"SPEED\"") && !gaugeParams.contains("label"),
+                "speed (maintainer, 2026-11-19). HudGauge has no label parameter to pass, and " +
+                "the page's own SPEED caps word stands over the AVG/MAX/TIMER strip, never over " +
+                "the dial",
+            !page.substringAfter("HudGauge(").take(320).contains("\"SPEED\"") &&
+                !gaugeParams.contains("label"),
         )
     }
 
@@ -412,10 +415,6 @@ class LivePageReadoutsTest {
             "the strip figures grew past the compact size - four of them have to fit beside a " +
                 "gauge, which is what the second compaction bought",
             Regex("private const val StripFigure = (1[2-5])").containsMatchIn(hud),
-        )
-        assertTrue(
-            "the traces got tall again: a five-minute shape needs a trend, not a chart",
-            Regex("private val TraceHeight = 1[0-6]\\.dp").containsMatchIn(hud),
         )
         // The bottom shelf is ONE row: readings in a column, the gauge beside them. That is
         // where the map came from - three stacked rows of glass became one.
@@ -567,49 +566,98 @@ class LivePageReadoutsTest {
     }
 
     /**
-     * The battery and coolant traces are drawn on a fixed scale with a dashed rule at the
-     * threshold, and that is a decision, not a style: an autoscaled five-minute battery trace
-     * stretches a 0.3 V sag across the whole box, which makes a healthy bike look urgent and a
-     * dying one look flat. Both figures also have to agree with the colour of the number beside
-     * them, which is the same 11.5 V / 105 °C the old stat cells coloured themselves on.
+     * The five-minute BATT and TEMP traces went off the page on 2026-11-19 ("the battery and
+     * temp graphs are useless"); the two figures stayed, and with them the thresholds they
+     * colour themselves on - 11.5 V / 15.0 V and 105 °C, the same numbers the old stat cells
+     * and the traces were judged against. The shape of the last five minutes is what was
+     * called useless here, not the readings, so a future edit that deletes the figures too
+     * has lost something the owner never gave up.
      */
     @Test
-    fun thePowerTracesArePinnedToAScaleAndDrawTheirLimit() {
+    fun thePowerFiguresSurvivedTheirTraces() {
         val page = livePage()
         assertTrue(
-            "the battery trace lost its pinned scale (domain) - on its own scale a flat " +
-                "13.4 V trace is indistinguishable from a sagging one",
-            Regex("""domain = 10\.0\.\.16\.0""").containsMatchIn(page),
+            "the battery figure left the shelf with its trace - the owner retired the graphs, " +
+                "not the reading",
+            Regex("FlowFigureText\\(\\s*\\n?\\s*num").containsMatchIn(page) ||
+                Regex("num = s\\.volts").containsMatchIn(page),
+        )
+        assertTrue("the coolant figure left the shelf", Regex("num = s\\.temp").containsMatchIn(page))
+        assertTrue(
+            "the battery figure stopped colouring itself on the 11.5 V floor and the 15.0 V ceiling",
+            Regex("s\\.volts < 11\\.5 \\|\\| s\\.volts > 15\\.0").containsMatchIn(page),
         )
         assertTrue(
-            "the 11.5 V floor stopped being drawn: the number beside the trace goes red at it, " +
-                "so the trace has to show it too",
-            Regex("""mark = 11\.5""").containsMatchIn(page),
+            "the coolant figure stopped colouring itself on the 105 °C ceiling",
+            Regex("s\\.temp > 105\\.0").containsMatchIn(page),
         )
-        assertTrue(
-            "the coolant trace lost its pinned scale",
-            Regex("""domain = 0\.0\.\.130\.0""").containsMatchIn(page),
+        assertFalse(
+            "a sparkline is back on the Live page - the traces were retired, not paused",
+            Regex("Sparkline\\(|TraceHeight|trends\\.values").containsMatchIn(page),
         )
-        assertTrue("the 105 °C ceiling stopped being drawn", Regex("""mark = 105\.0""").containsMatchIn(page))
-        assertTrue(
-            "the bounded traces started filling their area again: under a nearly flat line on a " +
-                "fixed scale the fill is most of the box, and it drew a green slab over the rule " +
-                "(bench, 2026-11-08)",
-            Regex("fill = null").containsMatchIn(page),
+        assertFalse(
+            "the five-minute history window is being kept again for traces nobody draws",
+            Regex("class LiveTrends").containsMatchIn(page),
         )
     }
 
+    /**
+     * The gauge's dial is the session, not a road sign: the scale is the top speed reached
+     * plus a little headroom (maintainer, 2026-11-19), so the arc answers "how close am I to
+     * the best today" instead of snapping between four fixed bands. The arc fill itself is
+     * the live figure - the needle must never run past its own dial, so MAX and the current
+     * speed both feed the scale.
+     */
     @Test
-    fun thePageKeepsItsHistoryBounded() {
-        val page = livePage()
+    fun theGaugeDialGrowsWithTheTopSpeedReached() {
+        val hud = codeOnly("LiveHud.kt")
         assertTrue(
-            "the traces are no longer fed by a bounded window; an unbounded history grows with " +
-                "the ride and redraws every point on every frame",
-            Regex("class LiveTrends\\(val cap: Int = 60, val everyMs: Long = 5_000L\\)").containsMatchIn(page),
+            "the gauge went back to a fixed band (60/120/180/240): the sweep is measured " +
+                "against the top speed this session has reached, with 10 km/h of headroom",
+            Regex("private fun speedScale\\(s: Snapshot\\): Double = max\\(s\\.max, s\\.spd\\) \\+ 10\\.0")
+                .containsMatchIn(hud),
+        )
+    }
+
+    /**
+     * Three things the maintainer asked the Live page for on 2026-11-19, all about the HUD
+     * behaving as one instrument: the rail with the eye stands still while the shelves come
+     * and go, the glass leaves through the page edges rather than blinking out, and each
+     * section of glass wears a caps word so a glance can find it.
+     */
+    @Test
+    fun theGlassSlidesTheRailStandsStillAndEverySectionIsNamed() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the rail is travelling again: it hangs off the page's Box at the vertical middle " +
+                "(align(Alignment.CenterEnd)), not off the space between the shelves - hiding " +
+                "the glass must not move its own handle",
+            Regex("Modifier\\s*\\n?\\s*\\.align\\(Alignment\\.CenterEnd\\)").containsMatchIn(page),
         )
         assertTrue(
-            "the window no longer drops its oldest point, so the cap is decorative",
-            Regex("while \\(window\\.size > cap\\) window\\.removeFirst\\(\\)").containsMatchIn(page),
+            "the shelves left their slide: AnimatedVisibility is on the page, and the shelves " +
+                "arrive and leave through the page edges (shelfEnter / shelfExit)",
+            Regex("AnimatedVisibility\\(").containsMatchIn(page) &&
+                Regex("shelfEnter\\(top = true\\)").containsMatchIn(page) &&
+                Regex("shelfExit\\(top = false\\)").containsMatchIn(page),
+        )
+        assertTrue(
+            "the slide outstays the app's motion switch - with motion off the glass has to " +
+                "simply be there and gone, the same promise HudEnter makes",
+            Regex("if \\(HudMotion\\.enabled\\)").containsMatchIn(page) &&
+                Regex("EnterTransition\\.None").containsMatchIn(page) &&
+                Regex("ExitTransition\\.None").containsMatchIn(page),
+        )
+        val hud = codeOnly("LiveHud.kt")
+        for (title in listOf("GNSS", "TRIP", "SPEED")) {
+            assertTrue(
+                "the shelf section \"$title\" lost its caps word",
+                Regex("SectionTitle\\(\"$title\"\\)").containsMatchIn(hud),
+            )
+        }
+        assertTrue(
+            "the fuel section stopped naming itself",
+            Regex("Text\\(\"FUEL\"").containsMatchIn(hud),
         )
     }
 

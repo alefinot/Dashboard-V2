@@ -1,5 +1,13 @@
 package com.alefinot.dashboardpp.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,7 +15,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,11 +35,13 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
@@ -60,33 +69,20 @@ import kotlin.math.hypot
  * slot's touches at the ViewGroup level, and an interop filter never sees a consumed DOWN
  * (bench-proven, 2026-11-15). So the shelves hand the map their bounds and the map
  * refuses a DOWN inside them ([LiveRouteMap]'s `touchRefusals`), which is what lets the
- * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The rail over
- * the open middle of the map - the eye that puts both shelves away, and the two zoom steps
- * that travel ([LiveHud]'s [HudRail]) - hands its bounds to the same list, for the same
- * reason, and it is the one glass that stays when the shelves are gone.
+ * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The rail -
+ * the eye that puts both shelves away, and the two zoom steps that travel ([LiveHud]'s
+ * [HudRail]) - hands its bounds to the same list, for the same reason, and it is the one
+ * glass that stays when the shelves slide off through the page edges. It is pinned to the
+ * vertical middle of the whole page rather than to the space between the shelves, so the
+ * eye it hides them with never moves (maintainer, 2026-11-19).
  */
 @Composable
 fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     var state by remember { mutableStateOf(TripRuntime.state.value) }
 
-    // One history for the page, kept across recompositions and filled by the collector
-    // below, not by a timer of its own: the flow is already the unit's one-frame-a-second
-    // clock, and a second timer would be a second opinion about when a sample happened.
-    val trends = remember { LiveTrends() }
-
     LaunchedEffect(active) {
         if (active) {
-            TripRuntime.state.collect { next ->
-                state = next
-                val frame = next.snapshot
-                if (frame != null) {
-                    trends.sample(
-                        android.os.SystemClock.elapsedRealtime(),
-                        next.deviceKey,
-                        frame,
-                    )
-                }
-            }
+            TripRuntime.state.collect { next -> state = next }
         }
     }
 
@@ -109,7 +105,8 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // page's reason, so a clean map is something the owner asks for on a particular drive,
     // not a preference the app wakes up in. Nothing is written to storage, and the trip
     // keeps recording while the glass is away - hiding the numbers hides the numbers, not
-    // the recorder.
+    // the recorder. The shelves take the news with a slide: each one leaves through the
+    // page edge it is parked at, and comes back the same way (maintainer, 2026-11-19).
     var hudVisible by remember { mutableStateOf(true) }
 
     val density = LocalDensity.current
@@ -199,9 +196,15 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
         // The HUD, one entrance for the glass rather than a stagger per block: the cards
         // that used to arrive one step apart are one shelf at the top and one at the
         // bottom, and two halves of one overlay fading in sequence would read as a stutter.
+        // Each shelf answers the eye with a slide: it leaves through the page edge it is
+        // parked against and comes back through the same one (maintainer, 2026-11-19).
         HudEnter(modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(horizontal = LiveShelfInset)) {
-                if (hudVisible) {
+                AnimatedVisibility(
+                    visible = hudVisible,
+                    enter = shelfEnter(top = true),
+                    exit = shelfExit(top = true),
+                ) {
                     TopShelf(
                         state = state,
                         active = active,
@@ -216,49 +219,80 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                             },
                     )
                 }
-                // The open map: everything the shelves do not cover. The rail floats in it,
-                // on the right and midway down, because that is where a thumb finds it
-                // without standing over the car - and because a control that lives in the
-                // map's slot has to be handed the touch by the map, so it reports its bounds
-                // to the same list the shelves do. With the shelves put away this row is the
-                // whole page, so the rail stays exactly where the thumb left it.
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
+                // The open map: everything the shelves do not cover.
+                Spacer(Modifier.weight(1f))
+                AnimatedVisibility(
+                    visible = hudVisible && snapshot != null,
+                    enter = shelfEnter(top = false),
+                    exit = shelfExit(top = false),
                 ) {
-                    Spacer(Modifier.weight(1f))
-                    if (hasPosition) {
-                        HudRail(
-                            hudVisible = hudVisible,
-                            onToggleHud = { hudVisible = !hudVisible },
-                            onZoomIn = { zoomIn++ },
-                            onZoomOut = { zoomOut++ },
-                            modifier = Modifier.onGloballyPositioned { layout ->
-                                val next = layout.boundsInRoot()
-                                if (hudRail != next) hudRail = next
-                            },
+                    snapshot?.let { snap ->
+                        BottomShelf(
+                            s = snap,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = LiveEdge)
+                                .onGloballyPositioned { layout ->
+                                    val next = layout.boundsInRoot()
+                                    if (bottomShelf != next) bottomShelf = next
+                                },
                         )
                     }
                 }
-                if (hudVisible && snapshot != null) {
-                    BottomShelf(
-                        s = snapshot,
-                        trends = trends,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = LiveEdge)
-                            .onGloballyPositioned { layout ->
-                                val next = layout.boundsInRoot()
-                                if (bottomShelf != next) bottomShelf = next
-                            },
-                    )
-                }
             }
+        }
+
+        // The rail is pinned to the page, not to the space between the shelves: it floats
+        // at the vertical middle of the whole page, the one spot it cannot move when the
+        // eye puts the glass away - a control that travels when the owner hides the
+        // readings makes them hunt for their own handle (maintainer, 2026-11-19). It is
+        // still glass in the map's slot, so it reports its bounds to the same refusal list
+        // the shelves do.
+        if (hasPosition) {
+            HudRail(
+                hudVisible = hudVisible,
+                onToggleHud = { hudVisible = !hudVisible },
+                onZoomIn = { zoomIn++ },
+                onZoomOut = { zoomOut++ },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = LiveShelfInset)
+                    .onGloballyPositioned { layout ->
+                        val next = layout.boundsInRoot()
+                        if (hudRail != next) hudRail = next
+                    },
+            )
         }
     }
 }
+
+/**
+ * The shelves' entrance: a slide in from the page edge the shelf is parked against - the
+ * top shelf from the top edge, the bottom shelf from the bottom one - under the page's own
+ * entrance timing. One motion for the pair, so the eye's press reads as the glass going
+ * home rather than as a switch flipped (maintainer, 2026-11-19). Motion off means no
+ * transition at all, the same promise [HudEnter] makes.
+ */
+@Composable
+private fun shelfEnter(top: Boolean): EnterTransition =
+    if (HudMotion.enabled) {
+        val slideSpec = tween<IntOffset>(HudMotion.ENTRANCE_MS, easing = HudMotion.Standard)
+        fadeIn(tween(HudMotion.ENTRANCE_MS, easing = HudMotion.Standard)) +
+            slideInVertically(slideSpec) { if (top) -it else it }
+    } else {
+        EnterTransition.None
+    }
+
+/** The way out: the same travel reversed - the glass slides back through its page edge. */
+@Composable
+private fun shelfExit(top: Boolean): ExitTransition =
+    if (HudMotion.enabled) {
+        val slideSpec = tween<IntOffset>(HudMotion.ENTRANCE_MS, easing = HudMotion.Standard)
+        fadeOut(tween(HudMotion.ENTRANCE_MS, easing = HudMotion.Standard)) +
+            slideOutVertically(slideSpec) { if (top) -it else it }
+    } else {
+        ExitTransition.None
+    }
 
 /**
  * The page before its first position: the map's slot, held at full size.

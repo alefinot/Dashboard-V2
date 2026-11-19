@@ -254,7 +254,13 @@ fun HudGauge(
             )
         }
         Column(
-            Modifier.fillMaxSize().padding(12.dp),
+            // The three lines sit a little low inside the dial on purpose: [note]'s line then
+            // lands on the line that joins the two ends of the sweep, which is where the eye
+            // reads the arc as finished (maintainer, 2026-11-19 - "the hall word stays aligned
+            // with the ends of the arc"). Centred in the ring, it parked visibly above that line.
+            Modifier
+                .fillMaxSize()
+                .padding(start = 12.dp, end = 12.dp, top = 18.dp, bottom = 6.dp),
             horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
             verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
         ) {

@@ -29,7 +29,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.alefinot.dashboardpp.api.Snapshot
@@ -43,7 +42,6 @@ import com.alefinot.dashboardpp.ui.components.HudGlyphAction
 import com.alefinot.dashboardpp.ui.components.HudGlyphLedger
 import com.alefinot.dashboardpp.ui.components.HudStateChip
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
-import com.alefinot.dashboardpp.ui.components.Sparkline
 import com.alefinot.dashboardpp.ui.components.flow
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.rememberHoldToAct
@@ -54,6 +52,7 @@ import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudePerfValue
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.hudGlass
+import kotlin.math.max
 import kotlinx.coroutines.delay
 
 /**
@@ -69,7 +68,7 @@ import kotlinx.coroutines.delay
  *
  * The one rule that keeps the map affordable is the same one the card stack had: a
  * continuous figure glides inside its own leaf (`FlowFigureText`), never in a body that
- * also draws a map or a trace. The body recomposes at the unit's 1 Hz; the leaves
+ * also draws a map. The body recomposes at the unit's 1 Hz; the leaves
  * animate at frame rate on top of it.
  *
  * The third member of the family is the [HudRail], which is glass for the same reason and
@@ -79,15 +78,21 @@ import kotlinx.coroutines.delay
  * one row rather than three, the strips' figures are 14 sp instead of 17, and the gauge is
  * 96 dp instead of 132 and says no word over its figure, because the owner asked for the map
  * back (2026-11-19) and every dp of glass is a dp of road not shown.
+ *
+ * The two shelves name their sections - GNSS and TRIP on the top one, SPEED on the bottom one
+ * beside the FUEL line it already carried - so a glance can find a figure by its section
+ * before it reads any of them (maintainer, 2026-11-19). The five-minute BATT and TEMP traces
+ * went the same day ("the battery and temp graphs are useless"); their figures, thresholds and
+ * colours stayed.
  */
 
 /**
  * The gauge's box, square.
  *
- * 96 dp is what the shelf can pay for it now that the gauge shares its row with the traces,
- * the fuel rail and the three speed figures instead of owning a row of its own: the page is
- * the map, and every dp of shelf is dp the owner asked for back (2026-11-19). It is still
- * the largest circle the dial can be read at with its four lines - SPEED, the figure,
+ * 96 dp is what the shelf can pay for it now that the gauge shares its row with the power
+ * figures, the fuel rail and the three speed figures instead of owning a row of its own: the
+ * page is the map, and every dp of shelf is dp the owner asked for back (2026-11-19). It is
+ * still the largest circle the dial can be read at with its four lines - SPEED, the figure,
  * `km/h` and the source - without the numbers touching the ring.
  */
 private val GaugeBox = 96.dp
@@ -98,9 +103,6 @@ private val ShelfPadY = 6.dp
 
 /** The figures in a compact strip: big enough to read at arm's length, small enough to fit four. */
 private const val StripFigure = 14
-
-/** The traces' height. A five-minute shape needs a trend, not a chart. */
-private val TraceHeight = 16.dp
 
 /**
  * How often the trip ribbon reads its own clock while a recording is open.
@@ -123,7 +125,8 @@ private const val TRIP_CLOCK_TICK_MS = 250L
  * It is one row of controls over one row of trip figures, at the padding glass can afford
  * rather than the 12 dp a card used to spend on its own air. That is the whole point of
  * the shelf's shape: the map is the page, so a shelf is measured in how much of it the
- * shelf does not cover (2026-11-19).
+ * shelf does not cover (2026-11-19). Each row wears the caps word of the section it
+ * belongs to - GNSS names the capsule, TRIP the ribbon (maintainer, 2026-11-19).
  */
 @Composable
 internal fun TopShelf(
@@ -164,7 +167,7 @@ internal fun TopShelf(
         }
         if (s != null) {
             Spacer(Modifier.height(HudSpace.Hair))
-            Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
+            SectionTitle("TRIP")
             TripRibbon(state, s)
         }
     }
@@ -176,12 +179,15 @@ internal fun TopShelf(
  * The gauge used to own a row of the shelf and the traces another; that is two rows of
  * glass where one column of figures beside the dial does the same job for a third less of
  * the map. The order inside the left column is the order the questions arrive in: is the
- * bike healthy, how fast have I been going, how much fuel is left.
+ * bike healthy, how fast have I been going, how much fuel is left. The five-minute traces
+ * under BATT and TEMP are gone (maintainer, 2026-11-19: "the battery and temp graphs are
+ * useless") - what is left of them is the two figures, the same thresholds and the same
+ * colours they used to colour themselves on. Each section wears its caps word: SPEED over
+ * the strip, and FUEL already names its own line.
  */
 @Composable
 internal fun BottomShelf(
     s: Snapshot,
-    trends: LiveTrends,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -194,34 +200,24 @@ internal fun BottomShelf(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 PowerCell(
                     label = "BATT",
-                    values = trends.values("volts"),
-                    domain = 10.0..16.0,
-                    mark = 11.5,
-                    line = HudColors.Green,
                     num = s.volts,
                     places = 2,
                     unit = "V",
                     // The colour decides on the truth, not on the gliding display figure.
                     color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
-                    everyMs = trends.everyMs,
                     modifier = Modifier.weight(1f),
                 )
-                Box(Modifier.width(1.dp).height(30.dp).background(HudColors.CardHairline))
-                Spacer(Modifier.width(HudSpace.Hair))
+                Spacer(Modifier.width(HudSpace.Gap))
                 PowerCell(
                     label = "TEMP",
-                    values = trends.values("temp"),
-                    domain = 0.0..130.0,
-                    mark = 105.0,
-                    line = HudColors.Amber,
                     num = s.temp,
                     places = 1,
                     unit = "°C",
                     color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
-                    everyMs = trends.everyMs,
                     modifier = Modifier.weight(1f),
                 )
             }
+            SectionTitle("SPEED")
             SpeedStrip(s)
             FuelRail(s)
         }
@@ -299,8 +295,10 @@ private fun SpeedStrip(s: Snapshot) {
  * "hidden" (see `HudIcons.Eye`), so the state rides on the ink and on the sentence the node
  * carries.
  *
- * The rail sits on the right - between the shelves when they are up, in the middle of the
- * whole page when they are not - where a thumb finds it without standing over the car.
+ * The rail sits on the right, pinned to the vertical middle of the whole page - the one
+ * place it cannot move when the shelves slide away, so the eye that hides the readings is
+ * never itself hidden from the thumb that asks for them back (maintainer, 2026-11-19). A
+ * thumb finds it there without standing over the car.
  */
 @Composable
 internal fun HudRail(
@@ -360,6 +358,7 @@ internal fun HudRail(
 private fun GnssCapsule(s: Snapshot, modifier: Modifier = Modifier) {
     val fixColor = if (s.fix == 1) HudColors.Green else HudColors.Amber
     Column(modifier) {
+        SectionTitle("GNSS")
         Row(Modifier.fillMaxWidth()) {
             GnssWord("FIX", if (s.fix == 1) "3D" else "NO", fixColor, Modifier.weight(1f))
             GnssWord("SATS", s.sats.toString(), fixColor, Modifier.weight(1f))
@@ -398,7 +397,7 @@ private fun GnssWord(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        GnssLabel(label)
+        SectionTitle(label)
         FigureText(value, "", color, size = 13)
     }
 }
@@ -413,7 +412,7 @@ private fun GnssNum(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        GnssLabel(label)
+        SectionTitle(label)
         if (num != null) {
             FlowFigureText(num, places, unit, HudColors.TextPrimary, size = 13)
         } else {
@@ -422,9 +421,14 @@ private fun GnssNum(
     }
 }
 
-/** The capsule's caption: the page's caps role, at the size four of them fit across half a shelf. */
+/**
+ * The shelf's caps word: a section's title, or one figure's label - the page's caps role at
+ * the size the compact shelves can fit. The same word is both voices on purpose: a section
+ * title here (GNSS, TRIP, SPEED, FUEL) is the same act as labelling one figure in a strip,
+ * and two sizes of the same caption over a map is one too many.
+ */
 @Composable
-private fun GnssLabel(label: String) {
+private fun SectionTitle(label: String, modifier: Modifier = Modifier) {
     Text(
         label,
         style = HudeSectionCaps(),
@@ -432,6 +436,7 @@ private fun GnssLabel(label: String) {
         fontSize = 9.sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
     )
 }
 
@@ -442,7 +447,7 @@ private fun GnssLabel(label: String) {
  * so that is the only honest start of an elapsed figure. The ribbon keeps that clock
  * itself rather than borrowing the 1 Hz frame: a stopwatch that stops when the link goes
  * quiet - or that only moves when the minute rolls over - is not a stopwatch. The tick is
- * scoped here, so the gauge and the traces are not redrawn for it.
+ * scoped here, so the gauge and the fuel rail are not redrawn for it.
  *
  * A pause freezes the figure where the owner pressed PAUSE ([TripRuntimeState.pausedAtMs])
  * and stops the tick: a stopwatch that keeps climbing while the file gets nothing is a lie
@@ -492,60 +497,40 @@ private fun TripRibbon(state: TripRuntimeState, s: Snapshot) {
 // ─── Bottom shelf pieces ──────────────────────────────────────────────────────
 
 /**
- * One half of the power row: the figure and the five minutes behind it.
+ * One power figure - the battery or the coolant - as its label and its number.
  *
- * Both traces are drawn against a fixed scale with a dashed rule at the limit, not scaled
- * to themselves: the useful question is "how far from where it should be, and which way is
- * it going", and a 12.4-12.7 V window stretched across the box makes a sagging battery
- * look flat and a cold engine look urgent. The rules are the same figures the number
- * colours itself on (11.5 V, 105 °C), so the trace and the figure agree about what counts
- * as a problem.
+ * The five-minute trace that used to sit under each of them is gone (maintainer, 2026-11-19:
+ * "the battery and temp graphs are useless"); the figures stayed, and with them the same
+ * thresholds the figures colour themselves on (11.5 V / 15.0 V, 105 °C). A rider who wants
+ * the shape of the last five minutes gets it from the sealed trip file, where the samples
+ * live whole.
  */
 @Composable
 private fun PowerCell(
     label: String,
-    values: List<Double>,
-    domain: ClosedFloatingPointRange<Double>,
-    mark: Double,
-    line: Color,
     num: Double,
     places: Int,
     unit: String,
     color: Color,
-    everyMs: Long,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.padding(vertical = 1.dp)) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                label,
-                style = HudeSectionCaps(),
-                color = HudColors.TextDim,
-                fontSize = 9.sp,
-                maxLines = 1,
-                modifier = Modifier.alignByBaseline(),
-            )
-            Spacer(Modifier.width(HudSpace.Hair))
-            FlowFigureText(
-                num,
-                places,
-                unit,
-                color,
-                size = StripFigure,
-                modifier = Modifier.alignByBaseline(),
-            )
-        }
-        Spacer(Modifier.height(2.dp))
-        TraceOr(
-            values = values,
-            height = TraceHeight,
-            color = line,
-            empty = "collecting - every ${everyMs / 1000L} s",
-            domain = domain,
-            mark = mark,
-            // No area fill: on a fixed scale a steady reading is a slab, and the slab
-            // swallows both the trace and the rule it is measured against.
-            fill = null,
+    Row(modifier.padding(vertical = 1.dp), verticalAlignment = Alignment.Bottom) {
+        Text(
+            label,
+            style = HudeSectionCaps(),
+            color = HudColors.TextDim,
+            fontSize = 9.sp,
+            maxLines = 1,
+            modifier = Modifier.alignByBaseline(),
+        )
+        Spacer(Modifier.width(HudSpace.Hair))
+        FlowFigureText(
+            num,
+            places,
+            unit,
+            color,
+            size = StripFigure,
+            modifier = Modifier.alignByBaseline(),
         )
     }
 }
@@ -717,49 +702,10 @@ private fun FigureText(
 }
 
 /**
- * A sparkline, or, before it can be drawn, a line saying what it is waiting for.
- *
- * [fill] is a parameter rather than always-on because of what it does to a bounded trace:
- * a steady 13.4 V line on a 10-16 V scale has an area under it that is most of the box -
- * filled, that row becomes a solid green slab with a hairline on top (bench, 2026-11-08).
- */
-@Composable
-private fun TraceOr(
-    values: List<Double>,
-    height: Dp,
-    color: Color,
-    empty: String,
-    domain: ClosedFloatingPointRange<Double>? = null,
-    mark: Double? = null,
-    fill: Color? = color,
-) {
-    if (values.size > 1) {
-        Sparkline(
-            values = values,
-            modifier = Modifier.fillMaxWidth().height(height),
-            line = color,
-            fill = fill,
-            strokeWidth = 1.5f,
-            domain = domain,
-            mark = mark,
-        )
-    } else {
-        // An empty graph reads as a bug, not as a fact. Say what fills it and how long
-        // that takes, in the space the graph would have taken.
-        Box(
-            Modifier.fillMaxWidth().height(height),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(empty, style = HudeCfgNote(), color = HudColors.TextDim)
-        }
-    }
-}
-
-/**
  * The tank as a pill, and the only part of the fuel rail that moves between frames.
  *
  * The fraction glides inside this one Box rather than in the shelf body: a `flow` at the
- * body's level would rebuild the gauge, the traces and both glass shelves sixty times a
+ * body's level would rebuild the gauge, the fuel rail and both glass shelves sixty times a
  * second for a bar's motion.
  */
 @Composable
@@ -780,75 +726,16 @@ private fun FlowBar(percent: Double, color: Color) {
     }
 }
 
-// ─── History ──────────────────────────────────────────────────────────────────
-
-/**
- * The five minutes the Live page draws, one bounded window per figure.
- *
- * A single frame cannot show a coolant temperature creeping up or a battery that sags only
- * under load, and the unit keeps no history of its own - so the app holds the window. It is
- * sampled every [everyMs] rather than every frame: sixty 5 s points span five minutes and
- * hold sixty boxes per figure, where one point a second needs three hundred for the same
- * span. The window is capped, so the cost does not grow with the length of a ride, and a
- * change of dashboard clears it: the previous unit's warm-up is not this unit's history.
- */
-class LiveTrends(val cap: Int = 60, val everyMs: Long = 5_000L) {
-
-    private val extractors: Map<String, (Snapshot) -> Double> = linkedMapOf(
-        "volts" to { it.volts },
-        "temp" to { it.temp },
-    )
-
-    private val windows: Map<String, ArrayDeque<Double>> =
-        extractors.keys.associateWith { ArrayDeque<Double>(cap.coerceAtLeast(1)) }
-
-    private var lastSampleMs = Long.MIN_VALUE
-    private var deviceKey: String? = null
-
-    /**
-     * Records one point per figure, at most once per [everyMs]. Returns true when this frame
-     * was far enough past the last one to be stored - the page draws the same either way, but
-     * a test can assert the cadence instead of a wall clock.
-     */
-    fun sample(nowMs: Long, unitKey: String?, s: Snapshot): Boolean {
-        if (unitKey != deviceKey) {
-            deviceKey = unitKey
-            clear()
-        }
-        if (lastSampleMs != Long.MIN_VALUE && nowMs - lastSampleMs < everyMs) return false
-        lastSampleMs = nowMs
-        for ((name, extract) in extractors) {
-            val window = windows[name] ?: continue
-            window.addLast(extract(s))
-            while (window.size > cap) window.removeFirst()
-        }
-        return true
-    }
-
-    /** Oldest first, so a trace's right edge is now. Empty before the first sample. */
-    fun values(name: String): List<Double> = windows[name]?.toList() ?: emptyList()
-
-    /** The span the window covers, as a caption wants it ("5 min"). */
-    fun windowLabel(): String {
-        val seconds = cap.toLong() * everyMs / 1000L
-        return if (seconds % 60L == 0L) "${seconds / 60L} min" else "${seconds} s"
-    }
-
-    fun clear() {
-        windows.values.forEach { it.clear() }
-        lastSampleMs = Long.MIN_VALUE
-    }
-}
-
 // ─── Formatting and state labels ─────────────────────────────────────────────
 
-/** Gauge scale: quiet drive gets 60, highway gets 180, anything past that gets 240. */
-private fun speedScale(s: Snapshot): Double = when {
-    s.max > 200.0 || s.spd > 200.0 -> 240.0
-    s.max > 120.0 || s.spd > 120.0 -> 180.0
-    s.max > 60.0 || s.spd > 60.0 -> 120.0
-    else -> 60.0
-}
+/**
+ * Gauge scale: the top speed the session has reached, plus 10 km/h of headroom (maintainer,
+ * 2026-11-19). The dial is no longer one of four fixed bands - it answers "how close am I to
+ * the best this vehicle has done today", and the fastest mark always sits a little inside a
+ * full sweep. [Snapshot.spd] is folded into the maximum because MAX moves on the unit's own
+ * cadence: a needle must never run past its own dial.
+ */
+private fun speedScale(s: Snapshot): Double = max(s.max, s.spd) + 10.0
 
 private fun sourceLabel(src: Int): String = when (src) {
     0 -> "HALL"
