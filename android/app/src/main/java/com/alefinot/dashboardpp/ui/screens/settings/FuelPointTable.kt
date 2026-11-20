@@ -1,12 +1,12 @@
 package com.alefinot.dashboardpp.ui.screens.settings
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -24,11 +23,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -42,10 +44,14 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.ui.theme.HudTouch
+import com.alefinot.dashboardpp.ui.theme.HudeButtonLabel
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeParamName
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -59,17 +65,23 @@ import kotlin.math.roundToInt
  * table as one comma-separated line; the maintainer asked for the real thing back
  * (2026-11-20), and on the same date asked for it to *look* like a table and read better
  * than the page did. So this is that grid with the page's job done properly: a header,
- * one point per row, hairlines and zebra rows, a live reading that shows where on the
- * ramp the sender actually sits, and one capture mark per row — the slot-number box is
+ * one point per row, ruled columns and zebra rows, a live reading that shows where on
+ * the ramp the sender actually sits, and one small READ per row — the slot-number box is
  * gone, since the row *is* the slot.
  *
+ * The same date's second pass retired the last two holdovers from the page: the value
+ * boxes (the 2026-11-16 rule applies here too — bare figures, like every other row in
+ * the app, with the column rules doing the structuring the boxes used to), and the
+ * manual `Refresh Table` button — the table watches the calibration-point count itself
+ * and re-reads until the unit's array agrees with it.
+ *
  * It stays the *one row* the schema says it is: `fuelCalOhms` is one array setting, and
- * every edit — one point, a fill, a capture — commits the whole array through
+ * every edit — one point, a fill, a READ — commits the whole array through
  * `ConfigStore.edit` exactly as the comma list did. What changed is the drawing and the
  * things around it, not the write.
  *
  * The two repair rules the firmware enforces (`repairFuelTable` in `src/config.cpp`,
- * issue #19) are enforced here first, for the same reason the page did: the boxes on
+ * issue #19) are enforced here first, for the same reason the page did: the figures on
  * screen should be the values the device keeps, not the values that get silently sorted
  * on the way in. Direction comes from the two ends, exactly like the firmware.
  */
@@ -103,7 +115,7 @@ fun fuelRamp(points: Int, emptyOhm: Double, fullOhm: Double): List<Double> {
  * The table sorted back into the direction its own two ends imply, or null when it is
  * already monotonic — `repairFuelTableForm` on the page and `repairFuelTable` in the
  * firmware, in Kotlin. The result counts the points that were out of order; the caller
- * says so on screen because a table whose boxes jumped is otherwise a bug report.
+ * says so on screen because a table whose figures jumped is otherwise a bug report.
  */
 fun repairFuelRamp(points: List<Double>): Pair<List<Double>, Int>? {
     if (points.size < 2) return null
@@ -212,15 +224,29 @@ fun FuelPointTable(
     }
 
     // The count row holds what was asked for; the array is what the unit still has until the
-    // next read. That gap is the rebuild the warning on the table promises, so it is drawn
-    // where it happens, and after the write has had its moment the table goes and asks for
-    // the rebuilt ramp on its own (the page's `Refresh Table`, minus the manual part).
+    // next read — the rebuild the warning below announces. There is no `Refresh Table`
+    // button any more (maintainer, 2026-11-20): the table watches that gap itself and asks
+    // the unit for the rebuilt ramp until the array agrees with the count, then stops.
+    // `collectLatest` does the stopping — every fresh (count, size) pair from the store
+    // re-decides, so one wait-and-ask runs per mismatch and the moment the rebuilt array
+    // arrives the loop is cancelled instead of polling forever.
     val rebuiltWanted = pointCount != null && points.isNotEmpty() && pointCount != points.size
-    LaunchedEffect(rebuiltWanted, enabled) {
-        if (rebuiltWanted && enabled) {
-            delay(1200)
-            onRefresh()
-        }
+    val wantCount by rememberUpdatedState(pointCount)
+    val haveSize by rememberUpdatedState(points.size)
+    val refreshNow by rememberUpdatedState(onRefresh)
+    LaunchedEffect(enabled) {
+        if (!enabled) return@LaunchedEffect
+        combine(
+            snapshotFlow { wantCount },
+            snapshotFlow { haveSize },
+        ) { want, have -> want != null && have > 0 && want != have }
+            .collectLatest { stillWaiting ->
+                while (stillWaiting) {
+                    delay(1200) // let the count write land and the unit rebuild first
+                    refreshNow()
+                    delay(2500) // and if the answer was still stale, keep asking
+                }
+            }
     }
 
     // What the sender is doing right now, in one block rather than in a dim note: the
@@ -341,7 +367,8 @@ fun FuelPointTable(
                 enabled = enabled,
                 // `action.write-to-unit`: this builds the ramp from the two end ohms and
                 // commits it to the unit in the one press — which is exactly what the page's
-                // `⤓ Fill from empty/full ohm` did, fill boxes and Save included.
+                // `⤓ Fill from empty/full ohm` did, fill boxes and Save included. The page's
+                // `↻ Refresh Table` beside it is retired: the watch above does its job.
                 glyph = HudIcons.Flush,
                 onClick = {
                     val e = emptyOhm
@@ -356,31 +383,25 @@ fun FuelPointTable(
                     }
                 },
             )
-            HudButton(
-                label = "refresh table",
-                style = HudButtonStyle.SECONDARY,
-                enabled = enabled,
-                // `list.reload`: the same arrow the page's `↻ Refresh Table` was.
-                glyph = HudIcons.Reset,
-                onClick = { onRefresh() },
-            )
         }
 
         // The table proper. The page flowed bare `#n [box]` pairs two to a line, which read
         // as a wall of numbers; this is the same array drawn the way a figure is read — a
-        // header, one point per row, fixed columns, and the hairline/zebra rule every other
-        // surface in the app already follows. The Ω cell is the one boxed control here: the
-        // 2026-11-16 rule retired value boxes across the settings form, but inside a grid a
-        // cell *is* the box, and a column of bare figures does not say "editable" the way
-        // the maintainer's own table did.
+        // header, one point per row, and ruled columns. The figures are bare like every
+        // other value in the app (2026-11-16 rule, applied here 2026-11-20): the vertical
+        // hairlines carry the grid the boxes used to, so an editable column still reads as
+        // a column and not as floating text.
         TableHeaderRow()
         points.forEachIndexed { index, value ->
             val bracketed =
                 bracket != null && (index == bracket.rowA || index == bracket.rowB)
+            // `IntrinsicSize.Min` is what lets the column rules span the whole row height:
+            // the row measures itself as tall as its tallest cell, and the rules fill that.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(IntrinsicSize.Min)
                     .then(
                         if (index % 2 == 1) Modifier.background(HudColors.CardInner)
                         else Modifier
@@ -405,6 +426,7 @@ fun FuelPointTable(
                     textAlign = TextAlign.End,
                     modifier = Modifier.width(38.dp),
                 )
+                ColumnRule()
                 // The litres cell, and the two ends named where they live — this is where
                 // the page's `#0 = empty, #N-1 = full` note goes to retire.
                 Box(Modifier.width(58.dp), contentAlignment = Alignment.Center) {
@@ -418,6 +440,7 @@ fun FuelPointTable(
                         )
                     }
                 }
+                ColumnRule()
                 Box(Modifier.weight(1f)) {
                     OhmCell(
                         index = index,
@@ -430,51 +453,37 @@ fun FuelPointTable(
                         },
                     )
                 }
-                // The row *is* the slot: one mark per point stores the live reading right
-                // here, and the page's `slot N + CAPTURE` arithmetic leaves with it.
-                Box(
-                    Modifier
-                        .width(52.dp)
-                        .heightIn(min = HudTouch.Min)
-                        .hudPressable(
-                            enabled = enabled,
-                            onClick = {
-                                val ohm = liveOhm
-                                when {
-                                    ohm == null -> note =
-                                        "waiting for a live sender reading — is the sender enabled?"
-                                    ohm >= FUEL_OPEN_CIRCUIT_OHM -> note =
-                                        "the sender reads an open circuit — capture would store a broken wire"
-                                    else -> {
-                                        val captured = captureIntoSlot(points, index, ohm)
-                                        if (captured != null) {
-                                            apply(
-                                                captured,
-                                                "slot #$index stores ${renderNumber(ohm, 1)} Ω",
-                                            )
-                                        }
-                                    }
+                ColumnRule()
+                // The row *is* the slot: one READ per point stores the live reading right
+                // here, in the same bordered-word shape the ambient calibration's READ
+                // wears — and the page's `slot N + CAPTURE` arithmetic leaves with it.
+                ReadCell(
+                    index = index,
+                    enabled = enabled,
+                    // Dims when there is nothing in front of it to store — a live-less or
+                    // broken-wire READ is offered, then refused by the note, on purpose:
+                    // the button that greys out explains nothing, the word that refuses says
+                    // why.
+                    available = enabled && liveOhm != null && !openCircuit,
+                    onClick = {
+                        val ohm = liveOhm
+                        when {
+                            ohm == null -> note =
+                                "waiting for a live sender reading — is the sender enabled?"
+                            ohm >= FUEL_OPEN_CIRCUIT_OHM -> note =
+                                "the sender reads an open circuit — READ would store a broken wire"
+                            else -> {
+                                val captured = captureIntoSlot(points, index, ohm)
+                                if (captured != null) {
+                                    apply(
+                                        captured,
+                                        "slot #$index stores ${renderNumber(ohm, 1)} Ω",
+                                    )
                                 }
-                            },
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Image(
-                        HudIcons.Check,
-                        contentDescription = "store the live sender reading in point #$index",
-                        // The mark dims when there is nothing in front of it to store —
-                        // a live-less or broken-wire capture is offered, then refused,
-                        // exactly as the slot-box version was.
-                        colorFilter = ColorFilter.tint(
-                            when {
-                                !enabled -> HudColors.TextDim
-                                liveOhm == null || openCircuit -> HudColors.TextDim
-                                else -> HudColors.Cyan
-                            },
-                        ),
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
+                            }
+                        }
+                    },
+                )
             }
             if (index != points.lastIndex) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.Hairline))
@@ -513,15 +522,19 @@ fun FuelPointTable(
 }
 
 /**
- * The table's own head. Fixed columns match the rows exactly; the capture column wears
- * the same mark the rows do, so the column says what its buttons do without a word.
+ * The table's own head. Fixed columns and rules match the rows exactly; the READ column
+ * wears the same word the rows do, so the column says what its buttons do without needing
+ * the glyph it replaced.
  */
 @Composable
 private fun TableHeaderRow() {
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 3.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(bottom = 3.dp),
         ) {
             Text(
                 "#",
@@ -530,6 +543,7 @@ private fun TableHeaderRow() {
                 textAlign = TextAlign.End,
                 modifier = Modifier.width(38.dp),
             )
+            ColumnRule()
             Text(
                 "L",
                 style = HudeCfgNote(),
@@ -537,27 +551,78 @@ private fun TableHeaderRow() {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.width(58.dp),
             )
+            ColumnRule()
             Text(
                 "Ω",
                 style = HudeCfgNote(),
                 color = HudColors.CyanDim,
                 textAlign = TextAlign.End,
-                // Ends against the Ω cells' right edge: the FIELD box keeps 10 dp of inner
-                // padding, and the figures inside end there, so the header must too.
+                // Ends against the Ω figures' right edge: the bare input keeps the field's
+                // 10 dp of inner padding, and the figures inside end there, so the header
+                // must too.
                 modifier = Modifier.weight(1f).padding(end = 10.dp),
             )
-            // Same 52 dp column as the rows' capture marks, so the header's mark sits
-            // exactly over the ones it explains.
-            Box(Modifier.width(52.dp), contentAlignment = Alignment.Center) {
-                Image(
-                    HudIcons.Check,
-                    contentDescription = null,
-                    colorFilter = ColorFilter.tint(HudColors.CyanDim),
-                    modifier = Modifier.size(16.dp),
+            ColumnRule()
+            // Same 64 dp column as the rows' READ words, so the header's sits exactly
+            // over the ones it names.
+            Box(Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "READ",
+                    style = HudeCfgNote(),
+                    color = HudColors.CyanDim,
                 )
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(HudColors.HairlineActive))
+    }
+}
+
+/** One vertical hairline between table columns — the ruling that replaced the boxes. */
+@Composable
+private fun ColumnRule() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .fillMaxHeight()
+            .padding(vertical = 6.dp)
+            .background(HudColors.Hairline),
+    )
+}
+
+/**
+ * One point's READ: the same bordered word the ambient calibration's READ is
+ * (`SettingsRow`'s capture action) — one word in a rounded rule, no glyph, so both READs
+ * in the settings say they are one act.
+ */
+@Composable
+private fun ReadCell(
+    index: Int,
+    enabled: Boolean,
+    /** Whether there is a live reading worth storing; drives the ink, never the press. */
+    available: Boolean,
+    onClick: () -> Unit,
+) {
+    val ink = if (available) HudColors.Cyan else HudColors.TextDim
+    Box(
+        Modifier
+            .width(64.dp)
+            .heightIn(min = HudTouch.Button)
+            .clip(RoundedCornerShape(HudRadius.Field))
+            .border(1.dp, ink, RoundedCornerShape(HudRadius.Field))
+            .hudPressable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = "store the live sender reading in point #$index",
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "READ",
+            style = HudeButtonLabel(),
+            color = ink,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        )
     }
 }
 
@@ -576,9 +641,10 @@ private fun EndChip(word: String) {
 }
 
 /**
- * One point of the table: the figure the page let you type, as a boxed cell.
- * The cell re-seeds from the array whenever that point's value moves — a fill, a capture
- * or a repair redraws the box exactly like the page's `dispatchEvent(new Event('input'))`.
+ * One point of the table: the figure the page let you type, as bare as every other value
+ * in the settings (2026-11-16 rule) — the column rules around it carry the grid.
+ * The cell re-seeds from the array whenever that point's value moves — a fill, a READ
+ * or a repair redraws the figure exactly like the page's `dispatchEvent(new Event('input'))`.
  */
 @Composable
 private fun OhmCell(
@@ -592,9 +658,9 @@ private fun OhmCell(
         value = text,
         onValueChange = { raw -> text = raw.filter { it.isDigit() || it == '.' } },
         modifier = Modifier.fillMaxWidth(),
-        // The box is the grid; inside a table cell it is the decision the 2026-11-16 rule
-        // asks to be written down, and this is that sentence.
-        style = HudInputStyle.FIELD,
+        // Bare like the rest of the form's values: no box, a cyan rule under the figure
+        // only while the keyboard is on it.
+        style = HudInputStyle.BARE,
         keyboardType = KeyboardType.Number,
         textAlign = TextAlign.End,
         onDone = { if (enabled) parseFuelPoint(text)?.let(onCommit) },
