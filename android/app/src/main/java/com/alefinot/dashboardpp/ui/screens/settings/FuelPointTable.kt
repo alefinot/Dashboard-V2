@@ -346,8 +346,8 @@ fun FuelPointTable(
         Text(
             when {
                 bracket != null ->
-                    "between #${bracket.rowA} (${renderNumber(points[bracket.rowA], 1)} Ω) " +
-                        "and #${bracket.rowB} (${renderNumber(points[bracket.rowB], 1)} Ω)"
+                    "between point ${bracket.rowA} (${renderNumber(points[bracket.rowA], 1)} Ω) " +
+                        "and point ${bracket.rowB} (${renderNumber(points[bracket.rowB], 1)} Ω)"
                 liveOhm == null -> "waiting for a live sender reading"
                 else -> "no level in an open circuit"
             },
@@ -419,24 +419,21 @@ fun FuelPointTable(
                     )
                     .padding(horizontal = 4.dp, vertical = 2.dp),
             ) {
-                Text(
-                    "#$index",
-                    style = HudeCfgNote(),
-                    color = if (bracketed) HudColors.Cyan else HudColors.TextDim,
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.width(38.dp),
-                )
-                ColumnRule()
-                // The litres cell, and the two ends named where they live — this is where
-                // the page's `#0 = empty, #N-1 = full` note goes to retire.
-                Box(Modifier.width(58.dp), contentAlignment = Alignment.Center) {
+                // The litres cell doubles as the point number (point n holds n litres, and
+                // the firmware walks the array by exactly that index), and the two ends are
+                // named where they live — both the page's `#n` column and its `#0 = empty,
+                // #N-1 = full` note retire into this one cell.
+                Box(
+                    Modifier.width(58.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
                     when (index) {
                         0 -> EndChip("EMPTY")
                         points.lastIndex -> EndChip("FULL")
                         else -> Text(
                             "$index",
                             style = HudeCfgNote(),
-                            color = HudColors.TextDim,
+                            color = if (bracketed) HudColors.Cyan else HudColors.TextDim,
                         )
                     }
                 }
@@ -475,10 +472,10 @@ fun FuelPointTable(
                             else -> {
                                 val captured = captureIntoSlot(points, index, ohm)
                                 if (captured != null) {
-                                    apply(
-                                        captured,
-                                        "slot #$index stores ${renderNumber(ohm, 1)} Ω",
-                                    )
+                                            apply(
+                                                captured,
+                                                "point $index stores ${renderNumber(ohm, 1)} Ω",
+                                            )
                                 }
                             }
                         }
@@ -490,15 +487,6 @@ fun FuelPointTable(
             }
         }
 
-        if (points.isNotEmpty()) {
-            Text(
-                "Points are tank slots: #n is n litres, so #0 is empty and " +
-                    "#${points.lastIndex} is full.",
-                style = HudeCfgNote(),
-                color = HudColors.TextDim,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
         if (rebuiltWanted) {
             Text(
                 "Point count is ${pointCount} and the unit still has ${points.size} points — " +
@@ -536,14 +524,10 @@ private fun TableHeaderRow() {
                 .height(IntrinsicSize.Min)
                 .padding(bottom = 3.dp),
         ) {
-            Text(
-                "#",
-                style = HudeCfgNote(),
-                color = HudColors.CyanDim,
-                textAlign = TextAlign.End,
-                modifier = Modifier.width(38.dp),
-            )
-            ColumnRule()
+            // No `#` column: the litres column *is* the point number (point n holds n
+            // litres, and the firmware walks the array by exactly that index), so the page's
+            // two-number habit retired to one column when the maintainer called the extra
+            // one out (2026-11-20).
             Text(
                 "L",
                 style = HudeCfgNote(),
@@ -612,7 +596,7 @@ private fun ReadCell(
             .hudPressable(
                 enabled = enabled,
                 role = Role.Button,
-                onClickLabel = "store the live sender reading in point #$index",
+                onClickLabel = "store the live sender reading in point $index",
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
