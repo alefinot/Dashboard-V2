@@ -356,34 +356,31 @@ fun FuelPointTable(
             modifier = Modifier.padding(top = 3.dp),
         )
 
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        HudButton(
+            label = "linear fill",
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        ) {
-            HudButton(
-                label = "fill from empty/full",
-                style = HudButtonStyle.SECONDARY,
-                enabled = enabled,
-                // `action.write-to-unit`: this builds the ramp from the two end ohms and
-                // commits it to the unit in the one press — which is exactly what the page's
-                // `⤓ Fill from empty/full ohm` did, fill boxes and Save included. The page's
-                // `↻ Refresh Table` beside it is retired: the watch above does its job.
-                glyph = HudIcons.Flush,
-                onClick = {
-                    val e = emptyOhm
-                    val f = fullOhm
-                    val n = pointCount ?: points.size
-                    when {
-                        n < 2 -> note = "set the point count first (2–20)"
-                        e == null || f == null -> note = "enter empty and full ohms first"
-                        abs(f - e) < 0.5 -> note =
-                            "empty and full ohms must differ by at least 0.5 Ω"
-                        else -> apply(fuelRamp(n, e, f))
-                    }
-                },
-            )
-        }
+            style = HudButtonStyle.SECONDARY,
+            enabled = enabled,
+            // `action.write-to-unit`: this builds the straight empty→full ramp and commits
+            // it to the unit in the one press — which is exactly what the page's
+            // `⤓ Fill from empty/full ohm` did, fill boxes and Save included. The page's
+            // `↻ Refresh Table` beside it is retired: the watch above does its job. Named
+            // for what it builds — a straight line between the two end ohms — and widened
+            // to the table's own width (maintainer, 2026-11-20).
+            glyph = HudIcons.Flush,
+            onClick = {
+                val e = emptyOhm
+                val f = fullOhm
+                val n = pointCount ?: points.size
+                when {
+                    n < 2 -> note = "set the point count first (2–20)"
+                    e == null || f == null -> note = "enter empty and full ohms first"
+                    abs(f - e) < 0.5 -> note =
+                        "empty and full ohms must differ by at least 0.5 Ω"
+                    else -> apply(fuelRamp(n, e, f))
+                }
+            },
+        )
 
         // The table proper. The page flowed bare `#n [box]` pairs two to a line, which read
         // as a wall of numbers; this is the same array drawn the way a figure is read — a
