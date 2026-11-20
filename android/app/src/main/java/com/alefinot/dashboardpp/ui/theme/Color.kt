@@ -80,6 +80,13 @@ object HudColors {
     /** `--accent-emerald` / `--accent-amber` / `--accent-rose` */
     val Green = Color(0xFF00E676)
     val Amber = Color(0xFFFF9100)
+    /**
+     * The unit's `COLOR_TEMP_WARN` default (`#ffff00`), which is also the yellow its
+     * battery digits hold between the red and green zones. The WebUI palette this file
+     * copies had no yellow — `Amber` is its orange — and the two power bars on the Live
+     * page ramp through one, so the value came off the firmware rather than off a guess.
+     */
+    val Yellow = Color(0xFFFFFF00)
     val Red = Color(0xFFFF1744)
     /** `rgba(255,23,68,.08)` - a warning strip's fill. */
     val RedDim = Color(0x14FF1744)

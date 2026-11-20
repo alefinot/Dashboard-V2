@@ -82,10 +82,11 @@ import kotlinx.coroutines.delay
  * The two shelves name their sections - GNSS and TRIP on the top one, SPEED on the bottom one
  * beside the FUEL line it already carried - so a glance can find a figure by its section
  * before it reads any of them (maintainer, 2026-11-19). The five-minute BATT and TEMP traces
- * went the same day ("the battery and temp graphs are useless"); their figures, thresholds and
- * colours stayed, and on 2026-11-20 both figures came back as fill bars on the fuel rail's own
- * shape - between the speed strip and the fuel line - so the bottom shelf reads as one
- * instrument: how fast, is the bike healthy, how much is left.
+ * went the same day ("the battery and temp graphs are useless"); their figures stayed, and on
+ * 2026-11-20 both figures came back as fill bars on the fuel rail's own shape - between the
+ * speed strip and the fuel line, drawn on the unit's own scales and through its own colour
+ * ramps ([PowerScales]), with the reading at the bar's right end - so the bottom shelf reads
+ * as one instrument: how fast, is the bike healthy, how much is left.
  */
 
 /**
@@ -105,6 +106,17 @@ private val ShelfPadY = 6.dp
 
 /** The figures in a compact strip: big enough to read at arm's length, small enough to fit four. */
 private const val StripFigure = 14
+
+/**
+ * The figure that stands at the right hand end of a bar - BATT, TEMP, the tank's litres.
+ *
+ * It is a box rather than whatever width the number happens to need because the three bars
+ * above it must end at the same x: a figure that grows from `5.4 L` to `12.73 V` would drag
+ * the end of its bar a few dp left and right as the reading moved, and a bar whose length
+ * changes with its own label cannot be read as a length. 56 dp is `12.73 V` at
+ * [StripFigure] with a little air, and the number sits right-aligned in it.
+ */
+private val BarFigureBox = 56.dp
 
 /**
  * How often the trip ribbon reads its own clock while a recording is open.
@@ -184,9 +196,10 @@ internal fun TopShelf(
  * have I been going, is the bike healthy, how much fuel is left. The five-minute traces
  * under BATT and TEMP are gone (maintainer, 2026-11-19: "the battery and temp graphs are
  * useless") - and on 2026-11-20 the two figures came back as fill bars in the fuel rail's
- * own shape, between the speed strip and the fuel line: label, figure, bar. Their scales are
- * the ones the retired traces were pinned to (10-16 V, 0-130 °C) and their thresholds are
- * the ones the figures always coloured themselves on (11.5 V / 15.0 V, 105 °C).
+ * own shape, between the speed strip and the fuel line: label, bar, reading. Their scales
+ * and colour stops are the unit's own ([PowerScales]) read over the link, and their colours
+ * are the unit's ramps - red/yellow/green for the battery, blue/yellow/red for the coolant -
+ * with the figure painted in the bar's colour the way the firmware paints its digits.
  *
  * The FUEL line keeps its label, its bar and the litres; the percentage moved down into the
  * strip's last cell, where the INPUT `OK` cell used to stand (maintainer, 2026-11-20). One
@@ -195,6 +208,7 @@ internal fun TopShelf(
 @Composable
 internal fun BottomShelf(
     s: Snapshot,
+    scales: PowerScales,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -211,21 +225,18 @@ internal fun BottomShelf(
                 num = s.volts,
                 places = 2,
                 unit = "V",
-                // 10-16 V: the scale the retired trace was pinned to, never autoscaled.
-                percent = (s.volts - 10.0) / 6.0 * 100.0,
-                barColor = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.Cyan,
-                // The colour decides on the truth, not on the gliding display figure.
-                figureColor = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
+                percent = scales.battPercent(s.volts),
+                // The unit paints its battery digits in the same colour as its icon fill,
+                // and the owner asked for the same here: one ink for bar and reading.
+                color = scales.battColor(s.volts),
             )
             PowerBar(
                 label = "TEMP",
                 num = s.temp,
                 places = 1,
                 unit = "°C",
-                // 0-130 °C: the same promise, one scale up.
-                percent = s.temp / 1.3,
-                barColor = if (s.temp > 105.0) HudColors.Red else HudColors.Cyan,
-                figureColor = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
+                percent = scales.tempPercent(s.temp),
+                color = scales.tempColor(s.temp),
             )
             FuelRail(s)
         }
@@ -505,16 +516,18 @@ private fun TripRibbon(state: TripRuntimeState, s: Snapshot) {
 // ─── Bottom shelf pieces ──────────────────────────────────────────────────────
 
 /**
- * BATT or TEMP as the fuel rail's shape: the caps label, the figure, the reading as a fill
- * bar.
+ * BATT or TEMP as the fuel rail's shape: the caps label, the reading as a fill bar, the
+ * figure at its right hand end.
  *
  * The five-minute trace that used to sit under each of them is gone (maintainer, 2026-11-19:
  * "the battery and temp graphs are useless"); the figure stayed, and on 2026-11-20 it got a
- * bar back - not a chart, just the reading on the scale the trace was pinned to, so a glance
- * answers "what is it" and "is that a lot" in one line. The thresholds are the same numbers
- * the figures always coloured themselves on (11.5 V / 15.0 V, 105 °C). A rider who wants the
- * shape of the last five minutes gets it from the sealed trip file, where the samples live
- * whole.
+ * bar back - not a chart, just the reading on the unit's own scale, so a glance answers "what
+ * is it" and "is that a lot" in one line. The reading then moved to the far side of the bar
+ * (maintainer, 2026-11-20: *"the batt and temp values should be on the right side of the
+ * bars"*), which also puts all three of the shelf's figures - volts, degrees, litres - in one
+ * column at the right. The colour is the bar's, for the same reason the firmware paints its
+ * digits in the colour of the icon beside them. A rider who wants the shape of the last five
+ * minutes gets it from the sealed trip file, where the samples live whole.
  */
 @Composable
 private fun PowerBar(
@@ -523,8 +536,7 @@ private fun PowerBar(
     places: Int,
     unit: String,
     percent: Double,
-    barColor: Color,
-    figureColor: Color,
+    color: Color,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -539,11 +551,19 @@ private fun PowerBar(
             maxLines = 1,
         )
         Spacer(Modifier.width(HudSpace.Hair))
-        FlowFigureText(num, places, unit, figureColor, size = StripFigure)
-        Spacer(Modifier.width(HudSpace.Hair))
         Box(Modifier.weight(1f)) {
-            FlowBar(percent, barColor)
+            FlowBar(percent, color)
         }
+        Spacer(Modifier.width(HudSpace.Hair))
+        FlowFigureText(
+            num,
+            places,
+            unit,
+            color,
+            size = StripFigure,
+            modifier = Modifier.width(BarFigureBox),
+            align = TextAlign.End,
+        )
     }
 }
 
@@ -575,7 +595,17 @@ private fun FuelRail(s: Snapshot) {
             FlowBar(s.fuelPct.toDouble(), barColor)
         }
         Spacer(Modifier.width(HudSpace.Hair))
-        FlowFigureText(s.fuelL, 2, "L", HudColors.TextPrimary, size = StripFigure)
+        // The same figure box the two power bars use, so the three bars start and stop at
+        // the same x and a fill can be compared by eye between them.
+        FlowFigureText(
+            s.fuelL,
+            2,
+            "L",
+            HudColors.TextPrimary,
+            size = StripFigure,
+            modifier = Modifier.width(BarFigureBox),
+            align = TextAlign.End,
+        )
     }
     Strip(
         Figure(

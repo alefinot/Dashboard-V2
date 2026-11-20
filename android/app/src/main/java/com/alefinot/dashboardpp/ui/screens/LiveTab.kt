@@ -34,11 +34,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.api.Snapshot
+import com.alefinot.dashboardpp.ble.BleApi
+import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
@@ -138,6 +141,29 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
         with(density) { bottomShelf.height.toDp() } + LiveEdge + 8.dp
     } else {
         6.dp
+    }
+
+    // The two power bars are drawn on the unit's scales, and the unit keeps those scales in
+    // its own flash (TEMP_BAR_MIN/MAX, TEMP_WARN_LOW/YEL/RED and the ramp's three inks
+    // COLOR_TEMP_NORM/WARN/CRIT - the same settings its sidebar paints itself with). They are
+    // asked for once per connection, as soon as the shell has named the dashboard, and held
+    // for as long as that dashboard is the one on screen: the bars draw the firmware's
+    // compiled defaults until the answer lands, and a unit that never answers is not a reason
+    // to stop drawing them (maintainer, 2026-11-20: "change the scale dynamically based on the
+    // scales in the ESP settings"). A forgotten unit goes back to the defaults with everything
+    // else, so a new bike never inherits the last one's bar.
+    val context = LocalContext.current
+    val api = remember { BleApi(BleRuntime.link(context)) }
+    var scales by remember { mutableStateOf(PowerScales.Default) }
+    LaunchedEffect(state.deviceKey) {
+        if (state.deviceKey == null) {
+            scales = PowerScales.Default
+            return@LaunchedEffect
+        }
+        // 10 s, not the link's own 30: this read sits in the same queue as the display lane's
+        // snapshots, so a unit that stops answering must give the frame lane back quickly.
+        val mirror = runCatching { api.config(timeoutMs = 10_000) }.getOrNull()
+        if (mirror != null) scales = PowerScales.from(mirror.values)
     }
 
     // The readings freeze when the drive ends (maintainer, 2026-11-20): STOP seals the file
@@ -263,6 +289,7 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                     snapshot?.let { snap ->
                         BottomShelf(
                             s = snap,
+                            scales = scales,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = LiveEdge)

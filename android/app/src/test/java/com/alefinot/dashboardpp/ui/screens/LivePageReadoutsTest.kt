@@ -567,11 +567,13 @@ class LivePageReadoutsTest {
 
     /**
      * The five-minute BATT and TEMP traces went off the page on 2026-11-19 ("the battery and
-     * temp graphs are useless"); the two figures stayed, and with them the thresholds they
-     * colour themselves on - 11.5 V / 15.0 V and 105 °C, the same numbers the old stat cells
-     * and the traces were judged against. The shape of the last five minutes is what was
-     * called useless here, not the readings, so a future edit that deletes the figures too
-     * has lost something the owner never gave up.
+     * temp graphs are useless"); the two figures stayed. What they are painted in moved on
+     * 2026-11-20 - the figures no longer judge themselves against private thresholds, they
+     * wear the colour of the bar beside them, and that colour comes from the unit's ramp -
+     * so what is worth pinning here is that the two readings exist at all and that the bar's
+     * colour is what paints them. The shape of the last five minutes is what was called
+     * useless here, not the readings, so a future edit that deletes the figures too has lost
+     * something the owner never gave up.
      */
     @Test
     fun thePowerFiguresSurvivedTheirTraces() {
@@ -584,12 +586,18 @@ class LivePageReadoutsTest {
         )
         assertTrue("the coolant figure left the shelf", Regex("num = s\\.temp").containsMatchIn(page))
         assertTrue(
-            "the battery figure stopped colouring itself on the 11.5 V floor and the 15.0 V ceiling",
-            Regex("s\\.volts < 11\\.5 \\|\\| s\\.volts > 15\\.0").containsMatchIn(page),
+            "the battery figure stopped wearing its bar's colour: the ramp owns it now, the way " +
+                "the unit paints its digits in the colour of the icon beside them",
+            Regex("color = scales\\.battColor\\(s\\.volts\\)").containsMatchIn(page),
         )
         assertTrue(
-            "the coolant figure stopped colouring itself on the 105 °C ceiling",
-            Regex("s\\.temp > 105\\.0").containsMatchIn(page),
+            "the coolant figure stopped wearing its bar's colour",
+            Regex("color = scales\\.tempColor\\(s\\.temp\\)").containsMatchIn(page),
+        )
+        assertFalse(
+            "the figures started judging themselves against private thresholds again - the " +
+                "ramp in PowerScales is the one verdict on the Live page",
+            Regex("s\\.volts < 11\\.5|s\\.volts > 15\\.0|s\\.temp > 105\\.0").containsMatchIn(page),
         )
         assertFalse(
             "a sparkline is back on the Live page - the traces were retired, not paused",
@@ -1024,8 +1032,8 @@ class LivePageReadoutsTest {
      *
      * Three facts, all easy to undo one at a time: the `INPUT` cell is gone and the strip's
      * fourth cell is the level; the bar's own line no longer repeats the percentage; and BATT
-     * and TEMP are two `PowerBar`s - the fuel rail's label/figure/bar row - sitting after the
-     * speed strip and before the fuel line, on the scales their retired traces used.
+     * and TEMP are two `PowerBar`s - the fuel rail's label/bar/figure row - sitting after the
+     * speed strip and before the fuel line.
      */
     @Test
     fun theFuelLevelTookTheInputCellsPlaceAndPowerRidesTheFuelRailsShape() {
@@ -1057,18 +1065,108 @@ class LivePageReadoutsTest {
         )
         assertTrue(
             "BATT and TEMP are not the fuel rail's shape any more: two PowerBars, each drawing " +
-                "its figure over the shared FlowBar",
+                "the shared FlowBar",
             Regex("PowerBar\\(").findAll(shelf).count() == 2 &&
                 Regex("private fun PowerBar\\(").containsMatchIn(hud) &&
-                Regex("FlowBar\\(percent, barColor\\)").containsMatchIn(hud),
+                Regex("FlowBar\\(percent, color\\)").containsMatchIn(hud),
+        )
+    }
+
+    /**
+     * The same day's second word on those two bars: *"the batt and temp values should be on
+     * the right side of the bars, the batt bar should go from red for low voltage, to yellow,
+     * to green for optimal voltage, the temp bar should go from blue for cold to yellow for
+     * operating temp to red for hot, basically simulating the behaviour of the display of the
+     * esp"* - and, asked whether the app's scales should stay its own, *"change the scale
+     * dynamically based on the scales in the ESP settings"*.
+     *
+     * Four things hold it in place: the reading stands after the bar in a fixed box (so all
+     * three of the shelf's bars end at the same x and the number is a column, not a wobble);
+     * the bar's colour paints it; the scales and ramps come from [PowerScales] rather than
+     * arithmetic in the shelf; and `LiveTab` fills that from `config.get`.
+     */
+    @Test
+    fun thePowerBarsRideTheUnitsOwnScalesWithTheirReadingsOnTheRight() {
+        val hud = codeOnly("LiveHud.kt")
+        val bar = hud.substringAfter("private fun PowerBar").substringAfter(") {")
+            .substringBefore("private fun FuelRail")
+        assertTrue(
+            "the reading went back in front of its bar - the owner asked for the values on the " +
+                "right side of the bars",
+            bar.indexOf("FlowBar(percent, color)") < bar.indexOf("FlowFigureText("),
         )
         assertTrue(
-            "the battery bar lost the retired trace's scale",
-            Regex("\\(s\\.volts - 10\\.0\\) / 6\\.0 \\* 100\\.0").containsMatchIn(hud),
+            "the figure lost its fixed box, so the bar's right end moves as the number's width " +
+                "moves and a fill stops being comparable between the three bars",
+            Regex("modifier = Modifier\\.width\\(BarFigureBox\\),").containsMatchIn(bar) &&
+                Regex("align = TextAlign\\.End,").containsMatchIn(bar) &&
+                Regex("private val BarFigureBox = 56\\.dp").containsMatchIn(hud),
+        )
+        // The fuel line uses the same box, which is what makes the three bars line up.
+        val fuel = hud.substringAfter("private fun FuelRail").substringBefore("private data class Figure")
+        assertTrue(
+            "the tank's litres left the figure column, so the fuel bar no longer ends where the " +
+                "two power bars do",
+            Regex("modifier = Modifier\\.width\\(BarFigureBox\\),").containsMatchIn(fuel),
+        )
+        val shelf = hud.substringAfter("internal fun BottomShelf").substringBefore("@Composable")
+        assertTrue(
+            "the shelf went back to doing its own scale arithmetic: the scales object owns the " +
+                "unit's numbers now",
+            Regex("percent = scales\\.battPercent\\(s\\.volts\\)").containsMatchIn(shelf) &&
+                Regex("percent = scales\\.tempPercent\\(s\\.temp\\)").containsMatchIn(shelf) &&
+                !Regex("/ 1\\.3|/ 6\\.0 \\* 100").containsMatchIn(shelf),
+        )
+    }
+
+    /**
+     * The unit's settings are the scales: the app asks once per connection and the bars
+     * follow, with the firmware's compiled defaults underneath. Pinned on both ends - the
+     * keys read out of `config.get`, and the constants that mirror the settings the unit has
+     * no way to change (its battery fill and its colour zones are code, not NVS).
+     */
+    @Test
+    fun theScalesComeFromTheUnitAndFallBackToItsDefaults() {
+        val page = livePage()
+        val scales = codeOnly("PowerScales.kt")
+        for (key in listOf(
+            "TEMP_BAR_MIN", "TEMP_BAR_MAX", "TEMP_WARN_LOW", "TEMP_WARN_YEL", "TEMP_WARN_RED",
+            "COLOR_TEMP_NORM", "COLOR_TEMP_WARN", "COLOR_TEMP_CRIT",
+        )) {
+            assertTrue("`$key` is no longer read off the unit", scales.contains("\"$key\""))
+        }
+        assertTrue(
+            "the page stopped asking the unit for its scales",
+            Regex("api\\.config\\(timeoutMs = 10_000\\)").containsMatchIn(page) &&
+                Regex("scales = PowerScales\\.from\\(mirror\\.values\\)").containsMatchIn(page),
         )
         assertTrue(
-            "the coolant bar lost the retired trace's scale",
-            Regex("s\\.temp / 1\\.3").containsMatchIn(hud),
+            "a forgotten unit would keep the last one's bar",
+            Regex("scales = PowerScales\\.Default").containsMatchIn(page),
+        )
+        assertTrue(
+            "the battery's compiled-in scale drifted from the firmware: drawBatteryIcon() fills " +
+                "(v - 10.5) / 4.0",
+            Regex("BATT_MIN = 10\\.5").containsMatchIn(scales) &&
+                Regex("BATT_MAX = 14\\.5").containsMatchIn(scales),
+        )
+        assertTrue(
+            "the battery's colour zones drifted from the firmware's digits: red below 11.8 V, " +
+                "green from 13.1 V",
+            Regex("BATT_LOW = 11\\.8").containsMatchIn(scales) &&
+                Regex("BATT_OPT = 13\\.1").containsMatchIn(scales),
+        )
+        assertTrue(
+            "the temp ramp stopped wearing the unit's inks and went back to the app's own palette",
+            Regex("ramp\\(tempC, tempLow, tempCold, tempYel, tempWarm, tempRed, tempHot\\)")
+                .containsMatchIn(scales),
+        )
+        assertTrue(
+            "the temp ramp's fallback cold end stopped being blue - the owner's word for cold, " +
+                "and the one place the app's palette leads the firmware's green",
+            Regex("tempCold: Color = HudColors\\.Blue").containsMatchIn(scales) &&
+                Regex("tempWarm: Color = HudColors\\.Yellow").containsMatchIn(scales) &&
+                Regex("tempHot: Color = HudColors\\.Red").containsMatchIn(scales),
         )
     }
 
