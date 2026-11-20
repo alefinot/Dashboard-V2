@@ -356,32 +356,6 @@ fun FuelPointTable(
             modifier = Modifier.padding(top = 3.dp),
         )
 
-        HudButton(
-            label = "linear fill",
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            style = HudButtonStyle.SECONDARY,
-            enabled = enabled,
-            // `action.write-to-unit`: this builds the straight empty→full ramp and commits
-            // it to the unit in the one press — which is exactly what the page's
-            // `⤓ Fill from empty/full ohm` did, fill boxes and Save included. The page's
-            // `↻ Refresh Table` beside it is retired: the watch above does its job. Named
-            // for what it builds — a straight line between the two end ohms — and widened
-            // to the table's own width (maintainer, 2026-11-20).
-            glyph = HudIcons.Flush,
-            onClick = {
-                val e = emptyOhm
-                val f = fullOhm
-                val n = pointCount ?: points.size
-                when {
-                    n < 2 -> note = "set the point count first (2–20)"
-                    e == null || f == null -> note = "enter empty and full ohms first"
-                    abs(f - e) < 0.5 -> note =
-                        "empty and full ohms must differ by at least 0.5 Ω"
-                    else -> apply(fuelRamp(n, e, f))
-                }
-            },
-        )
-
         // The table proper. The page flowed bare `#n [box]` pairs two to a line, which read
         // as a wall of numbers; this is the same array drawn the way a figure is read — a
         // header, one point per row, and ruled columns. The figures are bare like every
@@ -493,6 +467,32 @@ fun FuelPointTable(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+
+        // LINEAR FILL sits *under* the table it rewrites — the press and its result read as
+        // one gesture, top down (maintainer, 2026-11-20). It builds the straight empty→full
+        // ramp and commits it to the unit in the one press, exactly what the page's
+        // `⤓ Fill from empty/full ohm` did, fill boxes and Save included; the page's
+        // `↻ Refresh Table` is retired, the watch above does its job. The tank mark is the
+        // ledger's `action.linear-fill`: this card says fuel, not download.
+        HudButton(
+            label = "linear fill",
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            style = HudButtonStyle.SECONDARY,
+            enabled = enabled,
+            glyph = HudIcons.FuelTank,
+            onClick = {
+                val e = emptyOhm
+                val f = fullOhm
+                val n = pointCount ?: points.size
+                when {
+                    n < 2 -> note = "set the point count first (2–20)"
+                    e == null || f == null -> note = "enter empty and full ohms first"
+                    abs(f - e) < 0.5 -> note =
+                        "empty and full ohms must differ by at least 0.5 Ω"
+                    else -> apply(fuelRamp(n, e, f))
+                }
+            },
+        )
 
         val line = listOfNotNull(note, statusNote(view)).joinToString(" · ")
         if (line.isNotEmpty()) {

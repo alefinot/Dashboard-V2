@@ -44,6 +44,7 @@ class HudGlyphGeometryTest {
         "Record" to HudIcons.Record,
         "Warn" to HudIcons.Warn,
         "Eye" to HudIcons.Eye,
+        "FuelTank" to HudIcons.FuelTank,
     )
 
     /** Marks filled as a body, keyed by the outline identifier in HudIcons. */
@@ -70,6 +71,7 @@ class HudGlyphGeometryTest {
         "FrameData" to HudIcons.FrameData,
         "SignalArcs" to HudIcons.SignalArcs,
         "EyeLid" to HudIcons.EyeLid,
+        "FuelTankData" to HudIcons.FuelTankData,
     )
 
     private val data: Map<String, String> = bodies + lines

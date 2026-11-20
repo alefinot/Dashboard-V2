@@ -562,6 +562,14 @@
        "advanced": true
       },
       {
+       "key": "FUEL_FILTER_ALPHA",
+       "kind": "float",
+       "default": 0.08,
+       "label": "Smoothing Factor",
+       "min": 0.001,
+       "max": 1.0
+      },
+      {
        "key": "FUEL_TOUCH_POINTS",
        "kind": "int",
        "default": 8,
@@ -576,14 +584,6 @@
        "label": "Fuel Tank Calibration",
        "countKey": "FUEL_TOUCH_POINTS",
        "liveId": "fuel-reading"
-      },
-      {
-       "key": "FUEL_FILTER_ALPHA",
-       "kind": "float",
-       "default": 0.08,
-       "label": "Smoothing Factor",
-       "min": 0.001,
-       "max": 1.0
       }
      ]
     },

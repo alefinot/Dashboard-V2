@@ -422,6 +422,10 @@
           "advanced": true
         },
         {
+          "id": "FUEL_FILTER_ALPHA",
+          "label": "Smoothing Factor"
+        },
+        {
           "type": "note",
           "label": "<span id=\"fuel-exciter-hint\" class=\"cfg-help\"></span>"
         },
@@ -431,13 +435,7 @@
           "pointCount": "FUEL_TOUCH_POINTS",
           "pointLabel": "Calibration point count",
           "arrayId": "fuelCalOhms",
-          "liveId": "fuel-reading",
-          "rows": [
-            {
-              "id": "FUEL_FILTER_ALPHA",
-              "label": "Smoothing Factor"
-            }
-          ]
+          "liveId": "fuel-reading"
         },
         {
           "type": "card_header",

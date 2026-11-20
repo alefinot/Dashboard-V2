@@ -888,6 +888,25 @@ object HudIcons {
             "M12,12.4 A2.6,2.6 0 1 0 12,17.6 A2.6,2.6 0 1 0 12,12.4 Z"
 
     /**
+     * **FUEL TANK** — the pump, on the fuel card's LINEAR FILL.
+     *
+     * The one mark on that card that names its tank rather than its verb: the body with its
+     * base line, the hose leaving the body and falling down the right edge, and the nozzle
+     * standing under the hose's bend. No display window in the body — a 10-unit body with a
+     * stroked frame inside it closes up at an 18 dp button, the exact mush this file keeps
+     * refusing; at that size the hose and the nozzle are what say *pump* anyway. One open
+     * path through the set's stroke builder, like every other line mark.
+     */
+    val FuelTank: ImageVector by lazy { stroked("FuelTank", FuelTankData) }
+
+    /** Body, base, hose with its bend, nozzle — in that order, no closure. */
+    internal val FuelTankData: String =
+        "M4,21.4 L4,4.6 A2.4,2.4 0 0 1 6.4,2.2 L11.6,2.2 A2.4,2.4 0 0 1 14,4.6 L14,21.4 " +
+            "M2.6,21.4 L15.4,21.4 " +
+            "M14,9 L16.2,9 A2,2 0 0 1 18,10.4 L18.6,12 A2,2 0 0 0 20.5,13.3 L21.4,13.3 " +
+            "L21.4,21.4 M17.5,21.4 L17.5,17"
+
+    /**
      * **GNSS** — the sky, on the card that reports the fix.
      *
      * A dot with two arcs opening above it. It is not a satellite with solar panels: the panels hang

@@ -57,6 +57,11 @@ object HudGlyphLedger {
         "action.destroy" to HudIcons.Bin,
         "action.unit-restart" to HudIcons.Power,
         "action.write-to-unit" to HudIcons.Flush,
+        // The fuel table's LINEAR FILL: rebuild the calibration array as a straight ramp
+        // between the tank's two end ohms. A tank mark, not the generic write mark — the
+        // maintainer asked for the card to say fuel, and at a glance a down-arrow into a
+        // tray says "download" one screen too many. (2026-11-20)
+        "action.linear-fill" to HudIcons.FuelTank,
         "action.file-choose" to HudIcons.File,
         "action.photo-take" to HudIcons.Camera,
         "action.photo-frame" to HudIcons.Frame,
