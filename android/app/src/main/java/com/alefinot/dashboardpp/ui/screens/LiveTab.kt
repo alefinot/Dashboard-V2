@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
@@ -139,7 +140,32 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
         6.dp
     }
 
-    val snapshot = state.snapshot
+    // The readings freeze when the drive ends (maintainer, 2026-11-20): STOP seals the file
+    // and the figures stop with it, so the page keeps the last frame of that drive on screen
+    // instead of following the display lane, which goes on hearing the unit. START lets go -
+    // the new drive's first frame takes the place of the frozen one. The map is not held:
+    // where the car is belongs to the map, not to the file, and a finished drive's map has
+    // kept moving since 2.0.7/179. A forgotten unit clears the hold with everything else,
+    // which is why the device key is part of the key: a null key is a blank page, not a
+    // still of somebody else's ride.
+    val live = state.snapshot
+    var shown by remember { mutableStateOf<Snapshot?>(null) }
+    var holding by remember { mutableStateOf(false) }
+    LaunchedEffect(state.deviceKey, state.recording, live) {
+        when {
+            state.deviceKey == null -> {
+                shown = null
+                holding = false
+            }
+            state.recording -> {
+                holding = true
+                shown = live ?: shown
+            }
+            holding -> Unit
+            else -> shown = live
+        }
+    }
+    val snapshot = shown
     val route = state.liveRoute
     val trail = state.liveTrail
     // A map with no position has nothing to put a basemap under: 0,0 is a place in the

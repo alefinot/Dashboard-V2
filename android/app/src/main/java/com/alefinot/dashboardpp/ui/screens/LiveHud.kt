@@ -83,7 +83,9 @@ import kotlinx.coroutines.delay
  * beside the FUEL line it already carried - so a glance can find a figure by its section
  * before it reads any of them (maintainer, 2026-11-19). The five-minute BATT and TEMP traces
  * went the same day ("the battery and temp graphs are useless"); their figures, thresholds and
- * colours stayed.
+ * colours stayed, and on 2026-11-20 both figures came back as fill bars on the fuel rail's own
+ * shape - between the speed strip and the fuel line - so the bottom shelf reads as one
+ * instrument: how fast, is the bike healthy, how much is left.
  */
 
 /**
@@ -178,12 +180,17 @@ internal fun TopShelf(
  *
  * The gauge used to own a row of the shelf and the traces another; that is two rows of
  * glass where one column of figures beside the dial does the same job for a third less of
- * the map. The order inside the left column is the order the questions arrive in: is the
- * bike healthy, how fast have I been going, how much fuel is left. The five-minute traces
+ * the map. The order inside the left column is the order the questions arrive in: how fast
+ * have I been going, is the bike healthy, how much fuel is left. The five-minute traces
  * under BATT and TEMP are gone (maintainer, 2026-11-19: "the battery and temp graphs are
- * useless") - what is left of them is the two figures, the same thresholds and the same
- * colours they used to colour themselves on. Each section wears its caps word: SPEED over
- * the strip, and FUEL already names its own line.
+ * useless") - and on 2026-11-20 the two figures came back as fill bars in the fuel rail's
+ * own shape, between the speed strip and the fuel line: label, figure, bar. Their scales are
+ * the ones the retired traces were pinned to (10-16 V, 0-130 °C) and their thresholds are
+ * the ones the figures always coloured themselves on (11.5 V / 15.0 V, 105 °C).
+ *
+ * The FUEL line keeps its label, its bar and the litres; the percentage moved down into the
+ * strip's last cell, where the INPUT `OK` cell used to stand (maintainer, 2026-11-20). One
+ * percentage on the shelf, in the place a healthy sender was the only word.
  */
 @Composable
 internal fun BottomShelf(
@@ -197,28 +204,29 @@ internal fun BottomShelf(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                PowerCell(
-                    label = "BATT",
-                    num = s.volts,
-                    places = 2,
-                    unit = "V",
-                    // The colour decides on the truth, not on the gliding display figure.
-                    color = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(HudSpace.Gap))
-                PowerCell(
-                    label = "TEMP",
-                    num = s.temp,
-                    places = 1,
-                    unit = "°C",
-                    color = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-            }
             SectionTitle("SPEED")
             SpeedStrip(s)
+            PowerBar(
+                label = "BATT",
+                num = s.volts,
+                places = 2,
+                unit = "V",
+                // 10-16 V: the scale the retired trace was pinned to, never autoscaled.
+                percent = (s.volts - 10.0) / 6.0 * 100.0,
+                barColor = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.Cyan,
+                // The colour decides on the truth, not on the gliding display figure.
+                figureColor = if (s.volts < 11.5 || s.volts > 15.0) HudColors.Red else HudColors.TextPrimary,
+            )
+            PowerBar(
+                label = "TEMP",
+                num = s.temp,
+                places = 1,
+                unit = "°C",
+                // 0-130 °C: the same promise, one scale up.
+                percent = s.temp / 1.3,
+                barColor = if (s.temp > 105.0) HudColors.Red else HudColors.Cyan,
+                figureColor = if (s.temp > 105.0) HudColors.Red else HudColors.TextPrimary,
+            )
             FuelRail(s)
         }
         Spacer(Modifier.width(HudSpace.Gap))
@@ -497,41 +505,45 @@ private fun TripRibbon(state: TripRuntimeState, s: Snapshot) {
 // ─── Bottom shelf pieces ──────────────────────────────────────────────────────
 
 /**
- * One power figure - the battery or the coolant - as its label and its number.
+ * BATT or TEMP as the fuel rail's shape: the caps label, the figure, the reading as a fill
+ * bar.
  *
  * The five-minute trace that used to sit under each of them is gone (maintainer, 2026-11-19:
- * "the battery and temp graphs are useless"); the figures stayed, and with them the same
- * thresholds the figures colour themselves on (11.5 V / 15.0 V, 105 °C). A rider who wants
- * the shape of the last five minutes gets it from the sealed trip file, where the samples
- * live whole.
+ * "the battery and temp graphs are useless"); the figure stayed, and on 2026-11-20 it got a
+ * bar back - not a chart, just the reading on the scale the trace was pinned to, so a glance
+ * answers "what is it" and "is that a lot" in one line. The thresholds are the same numbers
+ * the figures always coloured themselves on (11.5 V / 15.0 V, 105 °C). A rider who wants the
+ * shape of the last five minutes gets it from the sealed trip file, where the samples live
+ * whole.
  */
 @Composable
-private fun PowerCell(
+private fun PowerBar(
     label: String,
     num: Double,
     places: Int,
     unit: String,
-    color: Color,
+    percent: Double,
+    barColor: Color,
+    figureColor: Color,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier.padding(vertical = 1.dp), verticalAlignment = Alignment.Bottom) {
+    Row(
+        modifier.fillMaxWidth().padding(top = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             label,
             style = HudeSectionCaps(),
             color = HudColors.TextDim,
             fontSize = 9.sp,
             maxLines = 1,
-            modifier = Modifier.alignByBaseline(),
         )
         Spacer(Modifier.width(HudSpace.Hair))
-        FlowFigureText(
-            num,
-            places,
-            unit,
-            color,
-            size = StripFigure,
-            modifier = Modifier.alignByBaseline(),
-        )
+        FlowFigureText(num, places, unit, figureColor, size = StripFigure)
+        Spacer(Modifier.width(HudSpace.Hair))
+        Box(Modifier.weight(1f)) {
+            FlowBar(percent, barColor)
+        }
     }
 }
 
@@ -540,8 +552,10 @@ private fun PowerCell(
  *
  * A bar is the right shape for a sender the rider cannot calibrate from the seat - what
  * matters is roughly how much is left and which way it is going, not a third decimal. The
- * six figures the old card carried stay: level and tank on the bar's line, instant,
- * average, used and the input's state under it.
+ * line keeps the level's bar and the tank's litres; the percentage moved into the strip's
+ * last cell on 2026-11-20, where the sender's health used to print `OK` (maintainer: "remove
+ * the input ok field and turn it into fuel percentage"). A broken sender is not silent: the
+ * bar and the percentage go dim, and the amber sentence under the strip names the fault.
  */
 @Composable
 private fun FuelRail(s: Snapshot) {
@@ -556,8 +570,6 @@ private fun FuelRail(s: Snapshot) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("FUEL", style = HudeSectionCaps(), color = HudColors.TextDim, fontSize = 9.sp)
-        Spacer(Modifier.width(HudSpace.Hair))
-        FlowFigureText(s.fuelPct.toDouble(), 0, "%", barColor, size = StripFigure)
         Spacer(Modifier.width(HudSpace.Hair))
         Box(Modifier.weight(1f)) {
             FlowBar(s.fuelPct.toDouble(), barColor)
@@ -581,15 +593,7 @@ private fun FuelRail(s: Snapshot) {
             places = 1,
         ),
         Figure("USED", "", "L", num = s.trpL, places = 2),
-        Figure(
-            "INPUT",
-            fuelStateLabel(s.fuelSt),
-            color = when (s.fuelSt) {
-                1 -> HudColors.Green
-                0 -> HudColors.TextDim
-                else -> HudColors.Red
-            },
-        ),
+        Figure("PCT", "", "%", barColor, num = s.fuelPct.toDouble(), places = 0),
     )
     if (s.fuelSt != 1) {
         Spacer(Modifier.height(2.dp))
@@ -742,14 +746,6 @@ private fun sourceLabel(src: Int): String = when (src) {
     1 -> "GPS"
     2 -> "FUSED"
     else -> "SRC$src"
-}
-
-private fun fuelStateLabel(st: Int): String = when (st) {
-    0 -> "OFF"
-    1 -> "OK"
-    2 -> "OPEN"
-    3 -> "SHORT"
-    else -> "ST$st"
 }
 
 private fun fmt(value: Double, places: Int = 1): String =

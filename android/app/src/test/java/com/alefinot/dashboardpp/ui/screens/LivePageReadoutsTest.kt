@@ -1016,4 +1016,93 @@ class LivePageReadoutsTest {
             Regex("writing = state\\.recording && !state\\.paused && !route\\.closed").containsMatchIn(page),
         )
     }
+
+    /**
+     * The bottom shelf's 2026-11-20 edit, in the owner's words: *"remove the imout ok field and
+     * turn it into fuel percentage"* and *"turn the batt and temp into bars styled like the fuel
+     * bar and put them between the speed group and the fuel bar"*.
+     *
+     * Three facts, all easy to undo one at a time: the `INPUT` cell is gone and the strip's
+     * fourth cell is the level; the bar's own line no longer repeats the percentage; and BATT
+     * and TEMP are two `PowerBar`s - the fuel rail's label/figure/bar row - sitting after the
+     * speed strip and before the fuel line, on the scales their retired traces used.
+     */
+    @Test
+    fun theFuelLevelTookTheInputCellsPlaceAndPowerRidesTheFuelRailsShape() {
+        val hud = codeOnly("LiveHud.kt")
+        assertFalse(
+            "the INPUT cell is back: the owner replaced the sender's OK with the fuel percentage",
+            Regex("\"INPUT\"").containsMatchIn(hud),
+        )
+        val fuel = hud.substringAfter("private fun FuelRail")
+            .substringBefore("private data class Figure")
+        assertTrue(
+            "the fuel percentage lost the cell the INPUT state used to own",
+            Regex(
+                "Figure\\(\"PCT\", \"\", \"%\", barColor, num = s\\.fuelPct\\.toDouble\\(\\), " +
+                    "places = 0\\)",
+            ).containsMatchIn(fuel),
+        )
+        assertFalse(
+            "the bar's line prints the percentage a second time - one percentage on the shelf",
+            Regex("FlowFigureText\\(s\\.fuelPct").containsMatchIn(fuel),
+        )
+        val shelf = hud.substringAfter("internal fun BottomShelf").substringBefore("@Composable")
+        assertTrue(
+            "BATT and TEMP left their place between the speed group and the fuel line: the " +
+                "owner's order is SPEED, the two power bars, then FUEL",
+            shelf.indexOf("SpeedStrip(s)") < shelf.indexOf("PowerBar(") &&
+                shelf.indexOf("PowerBar(") < shelf.lastIndexOf("PowerBar(") &&
+                shelf.lastIndexOf("PowerBar(") < shelf.indexOf("FuelRail(s)"),
+        )
+        assertTrue(
+            "BATT and TEMP are not the fuel rail's shape any more: two PowerBars, each drawing " +
+                "its figure over the shared FlowBar",
+            Regex("PowerBar\\(").findAll(shelf).count() == 2 &&
+                Regex("private fun PowerBar\\(").containsMatchIn(hud) &&
+                Regex("FlowBar\\(percent, barColor\\)").containsMatchIn(hud),
+        )
+        assertTrue(
+            "the battery bar lost the retired trace's scale",
+            Regex("\\(s\\.volts - 10\\.0\\) / 6\\.0 \\* 100\\.0").containsMatchIn(hud),
+        )
+        assertTrue(
+            "the coolant bar lost the retired trace's scale",
+            Regex("s\\.temp / 1\\.3").containsMatchIn(hud),
+        )
+    }
+
+    /**
+     * STOP freezes the readings; START lets them go (owner, 2026-11-20: *"when i stop the
+     * recording the live data stop being recorded but they still visible and then when i press
+     * start again the data reset"*). The display lane keeps hearing the unit after the file is
+     * sealed, so the page cannot pass `state.snapshot` straight to the shelves any more: it
+     * holds the last frame of the drive that ended and keeps it on screen.
+     */
+    @Test
+    fun stoppingADriveFreezesTheReadingsUntilTheNextStart() {
+        val page = codeOnly("LiveTab.kt")
+        assertTrue(
+            "the page went back to feeding the shelves the live stream: STOP must hold the last " +
+                "frame of the drive that ended",
+            Regex("var holding by remember \\{ mutableStateOf\\(false\\) \\}").containsMatchIn(page),
+        )
+        assertTrue(
+            "the hold lost one of its three cases - a forgotten unit clears it, a recording " +
+                "follows the stream, and a stopped drive keeps what is on screen",
+            Regex("state\\.deviceKey == null ->").containsMatchIn(page) &&
+                Regex("state\\.recording ->").containsMatchIn(page) &&
+                Regex("holding -> Unit").containsMatchIn(page) &&
+                Regex("else -> shown = live").containsMatchIn(page),
+        )
+        assertTrue(
+            "the shelves stopped reading the held frame",
+            Regex("val snapshot = shown").containsMatchIn(page),
+        )
+        assertTrue(
+            "the map was frozen with the readouts: the car keeps moving after a stop " +
+                "(2.0.7/179), so the trail stays live while the figures hold",
+            Regex("val trail = state\\.liveTrail").containsMatchIn(page),
+        )
+    }
 }
