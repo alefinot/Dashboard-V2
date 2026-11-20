@@ -429,6 +429,7 @@
           "type": "touch-table",
           "label": "Fuel Tank Calibration",
           "pointCount": "FUEL_TOUCH_POINTS",
+          "pointLabel": "Calibration point count",
           "arrayId": "fuelCalOhms",
           "liveId": "fuel-reading",
           "rows": [

@@ -267,7 +267,9 @@ private val WideFormRow = 480.dp
  *   slider; the ~90 dp left beside a long label is a fidget control.
  * - [RowControl.PAIR] is an X and a Y with their reserved widths, and the pair reads as one
  *   control or not at all. It wants the line to itself so the two axes break together.
- * - [RowControl.FUEL_TABLE] is a comma list of up to twenty ohm values plus an apply button.
+ * - [RowControl.FUEL_TABLE] is the calibration array. Its editor is the point table
+ *   ([FuelPointTable]) the owning card draws across the card, never beside a label; the row
+ *   shape only reads the array out, and even that wants the line under its name.
  * - [RowControl.TEXT] is a string, not a figure. Beside its label the row reserves the field
  *   230 dp of the phone's ~317 dp card and gives the setting's own name what is left, which
  *   wraps `Badge Line 1 (e.g., '0-50')` over five lines and shows a third of a 45-character
@@ -363,7 +365,8 @@ private fun Control(
         }
         RowControl.SWATCH -> ColorControl(item, box, enabled, wide) { onEdit(it, null) }
         RowControl.PAIR -> PairControl(item, view, wide) { x, y -> onEdit(x, y) }
-        RowControl.FUEL_TABLE -> FuelTableControl(item, view, enabled, wide) { onEdit(it, null) }
+        // The card draws [FuelPointTable] for this row; the fallback here only reads it out.
+        RowControl.FUEL_TABLE -> FuelTableReadout(view)
         RowControl.SECRET -> HudInput(
             // The unit never streams a secret back, so the field always starts empty
             // and an empty field means "leave the stored one alone".
@@ -729,66 +732,26 @@ private fun PairControl(
 }
 
 /**
- * The fuel calibration table — the ohm array the unit streams as `fuelCalOhms`.
- * Drawn readably (count, empty and full ends) and edited as the comma-separated
- * list the firmware's array actually is. A drag-to-set curve editor belongs with
- * the fuel screens, not here; what matters in the settings tab is that the table is
- * reachable, visible and restorable, which a text list already is.
+ * The fuel calibration array as this row draws it: a one-line read-out, no editor.
+ *
+ * The editor is [FuelPointTable] — the real point table the unit's page drew — and the
+ * card holding the row draws that directly instead of routing it through a row shape the
+ * grid does not fit. This arm exists because the control switch must be exhaustive, and
+ * because a fuel table seen anywhere but on its own card should still read as a table
+ * and not as an empty box.
  */
 @Composable
-private fun FuelTableControl(
-    item: SchemaItem,
-    view: RowView?,
-    enabled: Boolean,
-    wide: Boolean,
-    onApply: (List<Double>) -> Unit,
-) {
+private fun FuelTableReadout(view: RowView?) {
     val points = (view?.value as? List<*>).orEmpty().mapNotNull { (it as? Number)?.toDouble() }
-    var text by remember(item.key, points) {
-        mutableStateOf(points.joinToString(", ") { renderNumber(it, 1) })
-    }
-    Column(
-        Modifier.widthIn(max = if (wide) 420.dp else Dp.Infinity)
-            .padding(start = if (wide) 12.dp else 0.dp),
-    ) {
-        Text(
-            "${points.size} points · " +
-                (points.firstOrNull()?.let { "${renderNumber(it, 1)} Ω empty" } ?: "empty ?") +
-                " → " +
-                (points.lastOrNull()?.let { "${renderNumber(it, 1)} Ω full" } ?: "full ?"),
-            style = HudeCfgNote(),
-            color = HudColors.TextDim,
-        )
-        HudInput(
-            value = text,
-            onValueChange = { raw ->
-                text = raw.filter { it.isDigit() || it == '.' || it == ',' || it == ' ' }
-            },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-            style = HudInputStyle.BARE,
-            // Not the value band: this field is twenty figures on one line, not a figure,
-            // and at 17px the list stops fitting the card and scrolls where it should read.
-            textSize = 13.sp,
-            keyboardType = KeyboardType.Number,
-            onDone = { parseOhmList(text)?.let(onApply) },
-        )
-        HudButton(
-            label = "apply table",
-            style = HudButtonStyle.SECONDARY,
-            enabled = enabled,
-            // The page's SAVE wears this mark, and this is the same act with one row's worth of
-            // scope: it writes what is in the field into the unit. Before the mark existed the two
-            // agreed only in prose.
-            glyph = HudIcons.Flush,
-            modifier = Modifier.padding(top = 6.dp),
-            onClick = { parseOhmList(text)?.let(onApply) },
-        )
-    }
+    Text(
+        "${points.size} points · " +
+            (points.firstOrNull()?.let { "${renderNumber(it, 1)} Ω empty" } ?: "empty ?") +
+            " → " +
+            (points.lastOrNull()?.let { "${renderNumber(it, 1)} Ω full" } ?: "full ?"),
+        style = HudeCfgNote(),
+        color = HudColors.TextDim,
+    )
 }
-
-/** The comma-separated ohms the unit's `fuelCalOhms` array is, or null if unusable. */
-fun parseOhmList(text: String): List<Double>? =
-    text.split(',').mapNotNull { it.trim().toDoubleOrNull() }.ifEmpty { null }
 
 /** A number as the row shows it: no trailing zeros, at most as many digits as the step needs. */
 fun renderNumber(value: Double?, decimals: Int): String {

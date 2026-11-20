@@ -565,7 +565,7 @@
        "key": "FUEL_TOUCH_POINTS",
        "kind": "int",
        "default": 8,
-       "label": "Fuel Touch Points",
+       "label": "Calibration point count",
        "min": 2,
        "max": 20,
        "widget": "pointCount"

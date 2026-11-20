@@ -330,10 +330,13 @@ class PhoneViewportTest {
                 "chips and dropped its label)",
             !Regex("fillMaxWidth\\(\\)\\.padding\\(start = 12\\.dp\\)").containsMatchIn(row),
         )
-        // Three of the wide controls must be capped in the wide shape rather than filling it.
+        // Two of the wide controls must be capped in the wide shape rather than filling it. They
+        // were three until the fuel table's editor left the row: the point table is drawn by its
+        // card across the card's width (`FuelPointTable`), and what is left of that control in the
+        // row is a read-out that caps itself none of the ways a field does.
         assertTrue(
             "the wide controls lost their cap, so they compete with the label for the row again",
-            Regex("widthIn\\(max = if \\(wide\\) 420\\.dp").findAll(row).count() >= 3,
+            Regex("widthIn\\(max = if \\(wide\\) 420\\.dp").findAll(row).count() >= 2,
         )
     }
 

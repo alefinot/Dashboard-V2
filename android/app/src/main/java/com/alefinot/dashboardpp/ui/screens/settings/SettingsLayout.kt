@@ -175,7 +175,11 @@ object SettingsLayout {
             out += RenderBlock(
                 card = RenderCard(card.title, cardHint(card)),
                 body = body,
-                wide = card.widget != null,
+                // A card is wide when it grew an action of its own, or when it holds the fuel
+                // calibration table — the page drew that card `grid-column:1/-1` for exactly the
+                // reason [SettingsLayout.pack] states: the control is a thing with a shape.
+                wide = card.widget != null ||
+                    card.items.any { it.kind == ValueKind.FUEL_TABLE },
             )
         }
         return out

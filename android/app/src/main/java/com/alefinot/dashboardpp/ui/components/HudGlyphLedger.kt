@@ -45,6 +45,10 @@ object HudGlyphLedger {
         "action.edit" to HudIcons.Edit,
         "action.dismiss" to HudIcons.Close,
         "action.accept" to HudIcons.Check,
+        // The fuel calibration table's CAPTURE: accept the sender reading the unit is making
+        // this second, and store it as a point. Same act as [action.accept] — take the thing in
+        // front of you — with the thing being live rather than typed, hence one mark.
+        "action.live-capture" to HudIcons.Check,
         "action.step-up" to HudIcons.Plus,
         "action.step-down" to HudIcons.Minus,
         "action.start" to HudIcons.Play,
@@ -96,6 +100,10 @@ object HudGlyphLedger {
      * look for a collision — so the reason lives next to the assertion that catches the collision.
      */
     val SHARED: Map<String, String> = mapOf(
+        "Check" to "`accept what is in front of you` is one act whether the thing in front of you " +
+            "was typed (a crop, a city name, a dropdown row) or measured — the fuel table's CAPTURE " +
+            "accepts the sender reading the unit is making at the instant of the press. The word on " +
+            "the button is what says which of the two a given press accepts.",
         "Cog" to "`app settings` and `open a system screen` are the same idea at different owners: " +
             "a control panel. The sentence on the node says which panel.",
         "Reset" to "All four are `back to where this came from` — a row's stored default, a crop " +

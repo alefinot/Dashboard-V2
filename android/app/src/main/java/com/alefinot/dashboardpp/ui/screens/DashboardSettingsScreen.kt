@@ -49,6 +49,7 @@ import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.hudPage
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
+import com.alefinot.dashboardpp.ui.screens.settings.FuelPointTable
 import com.alefinot.dashboardpp.ui.screens.settings.LayoutElement
 import com.alefinot.dashboardpp.ui.screens.settings.LayoutElementList
 import com.alefinot.dashboardpp.ui.screens.settings.LayoutElementSheet
@@ -684,6 +685,26 @@ private fun CardBlock(
             delay(800)
         }
     }
+    // The same arrangement for the fuel calibration table: the unit's page put a live sender
+    // reading above the point grid, because the whole point of the grid is to store what the
+    // sender is reading right now. `fuel` is that card's one-shot — ohms plus the input state —
+    // polled only while this card is on screen, exactly like `ambient` above.
+    val fuelTable = block.body
+        .filterIsInstance<RenderRow>()
+        .firstOrNull { it.item.kind == ValueKind.FUEL_TABLE }
+    var liveFuelOhm by remember { mutableStateOf<Double?>(null) }
+    var liveFuelState by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(fuelTable != null && enabled, store) {
+        if (!(fuelTable != null && enabled)) return@LaunchedEffect
+        while (isActive) {
+            val r = store.action("fuel")
+            if (r.ok) {
+                liveFuelOhm = (r.fields["ohm"] as? Number)?.toDouble()
+                liveFuelState = (r.fields["st"] as? Number)?.toInt()
+            }
+            delay(1000)
+        }
+    }
     Column(
         modifier.hudCard().padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
@@ -722,25 +743,45 @@ private fun CardBlock(
                     scope = scope,
                 )
                 is RenderRow -> {
-                    // The two ambient-light points are captured from the unit, not typed, so the
-                    // card puts a small capture mark on the value row it fills (`cal.ambient`);
-                    // every other row has none and the param is null.
-                    val captureWhich = ambientCaptureWhich(renderable.item.key)
-                    SettingsRow(
-                        item = renderable.item,
-                        view = state.rows[renderable.item.key],
-                        imperial = state.imperial,
-                        unitSwap = schema.imperial,
-                        enabled = enabled,
-                        onEdit = { x, y -> store.edit(renderable.item, x, y) },
-                        onReset = { store.reset(renderable.item) },
-                        onCapture = captureWhich?.let { which ->
-                            { captureAmbientPoint(store, which, scope, onNote) }
-                        },
-                        captureDescription = captureWhich?.let {
-                            "store the current ambient reading as the $it point"
-                        },
-                    )
+                    // The fuel calibration array is the one row the page does not draw as a row:
+                    // its control is the point table the unit's page drew — live reading, grid of
+                    // points, fill, slot capture — and a card body, not a label-and-value line, is
+                    // the shape that fits it. It is still one `config.set` of one array underneath.
+                    if (renderable.item.kind == ValueKind.FUEL_TABLE) {
+                        FuelPointTable(
+                            item = renderable.item,
+                            view = state.rows[renderable.item.key],
+                            enabled = enabled,
+                            pointCount = renderable.item.countKey
+                                ?.let { (state.rows[it]?.value as? Number)?.toInt() },
+                            emptyOhm = (state.rows["FUEL_OHM_EMPTY"]?.value as? Number)?.toDouble(),
+                            fullOhm = (state.rows["FUEL_OHM_FULL"]?.value as? Number)?.toDouble(),
+                            liveOhm = liveFuelOhm,
+                            liveState = liveFuelState,
+                            onApply = { list -> store.edit(renderable.item, list) },
+                            onRefresh = { store.syncIfNeeded(force = true) },
+                        )
+                    } else {
+                        // The two ambient-light points are captured from the unit, not typed, so
+                        // the card puts a small capture mark on the value row it fills
+                        // (`cal.ambient`); every other row has none and the param is null.
+                        val captureWhich = ambientCaptureWhich(renderable.item.key)
+                        SettingsRow(
+                            item = renderable.item,
+                            view = state.rows[renderable.item.key],
+                            imperial = state.imperial,
+                            unitSwap = schema.imperial,
+                            enabled = enabled,
+                            onEdit = { x, y -> store.edit(renderable.item, x, y) },
+                            onReset = { store.reset(renderable.item) },
+                            onCapture = captureWhich?.let { which ->
+                                { captureAmbientPoint(store, which, scope, onNote) }
+                            },
+                            captureDescription = captureWhich?.let {
+                                "store the current ambient reading as the $it point"
+                            },
+                        )
+                    }
                 }
             }
         }
