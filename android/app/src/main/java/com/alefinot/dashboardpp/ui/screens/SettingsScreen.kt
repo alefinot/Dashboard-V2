@@ -250,12 +250,6 @@ fun SettingsScreen(
         ) {
             Text("FIRMWARE", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(6.dp))
-            Text(
-                "Writes to the spare flash slot. A refused or interrupted install " +
-                    "leaves the old firmware running.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             FirmwareUpdateControl(
                 unitVersion = version,
                 linked = connected,
@@ -274,12 +268,6 @@ fun SettingsScreen(
             // to fail.
             Text("APP", color = HudColors.Cyan, style = HudeFormLabel())
             Spacer(Modifier.height(6.dp))
-            Text(
-                "The installer replaces this app in place and keeps its data. A refused " +
-                    "or cancelled install changes nothing.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             AppUpdateControl(installed = appVersion)
         }
 
@@ -298,6 +286,9 @@ fun SettingsScreen(
             open = openGroup == "trips",
             onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "trips") },
         ) {
+            // Only START writes this switch (2.0.7/180): ending a drive is a decision about
+            // the one that just finished, while this row decides what the next connection
+            // does - so the STOP that turned it off was switching off the next ride.
             ToggleRow(
                 label = "AUTO-START ON CONNECT",
                 on = recordingEnabled,
@@ -323,15 +314,6 @@ fun SettingsScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                // Only START writes this switch (2.0.7/180): ending a drive is a decision about
-                // the one that just finished, while this row decides what the next connection
-                // does - so the STOP that turned it off was switching off the next ride.
-                "START on the Live and Trips pages sets this switch. STOP only ends the drive.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
             Spacer(Modifier.height(12.dp))
             ToggleRow(
                 label = "MOTION",
@@ -371,14 +353,6 @@ fun SettingsScreen(
                     }
                     routeDrag = null
                 },
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Full keeps the live line at full detail up to 10 000 km of driving. " +
-                    "Lower thins a long drive's line sooner to spare memory. Trip files " +
-                    "always hold every point, and the setting applies to the next drive.",
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
             )
 
             Spacer(Modifier.height(16.dp))

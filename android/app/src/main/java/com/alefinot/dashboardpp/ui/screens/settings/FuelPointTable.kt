@@ -267,7 +267,6 @@ fun FuelPointTable(
         )
 
         Row(
-            verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         ) {
@@ -275,6 +274,7 @@ fun FuelPointTable(
                 "Live sender",
                 style = HudeCfgNote(),
                 color = HudColors.TextDim,
+                modifier = Modifier.alignByBaseline(),
             )
             Text(
                 liveOhm?.let { "${renderNumber(it, 1)} Ω" } ?: "—",
@@ -285,6 +285,7 @@ fun FuelPointTable(
                     liveState != null -> HudColors.Amber
                     else -> HudColors.TextPrimary
                 },
+                modifier = Modifier.alignByBaseline(),
             )
         }
         liveState?.let {

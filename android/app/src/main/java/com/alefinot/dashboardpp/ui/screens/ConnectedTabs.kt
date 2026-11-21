@@ -535,7 +535,6 @@ fun AppShell(
                                 NotLinkedCover(
                                     title = "NO DASHBOARD IN RANGE",
                                     reason = reason,
-                                    note = "Trips and App Settings work without a dashboard.",
                                     vehicleName = coverVehicleName,
                                     onOpenVehicles = openGarage,
                                     permissionProblem = connection.permissionMissing.value,

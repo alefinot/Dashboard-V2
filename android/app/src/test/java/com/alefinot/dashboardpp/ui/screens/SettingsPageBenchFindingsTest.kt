@@ -58,30 +58,24 @@ class SettingsPageBenchFindingsTest {
 
     /** Comment-free source, so a remembered description in a comment cannot satisfy a guard. */
     /**
-     * A card whose action this page cannot carry on its own, and one calibration the page cannot
-     * do at all. The firmware card's work belongs to `OtaController` and the link, not to a
-     * settings row, so the guard is (a) the card states what an install risks, and (b) no settings
-     * screen starts an install by calling an RPC directly — an install that skipped the controller
-     * would own a 1.5 MB transfer nobody is tracking, and could not resume after a dropped link.
-     * The "match to reference" calibrations still cannot be invented: they need a live reading
-     * this page does not hold.
+     * One calibration the page cannot do at all, and the rule that no settings screen installs
+     * firmware on its own. The firmware card's work belongs to `OtaController` and the link, not
+     * to a settings row: no settings screen may start an install by calling an RPC directly — an
+     * install that skipped the controller would own a 1.5 MB transfer nobody is tracking, and
+     * could not resume after a dropped link. The "match to reference" calibrations still cannot
+     * be invented: they need a live reading this page does not hold. (The spare-slot sentence
+     * the card used to carry above its buttons was removed with the rest of the app's
+     * feature-explainer prose on 2026-11-21; what is pinned is the act, not the prose.)
      */
     @Test
     fun aCardWithNoActionAvailableSaysSoInsteadOfInventingOne() {
-        // The spare-slot sentence rode with the card: the firmware push left the unit's
-        // settings page for App Settings on 2026-11-09, and this guard follows the promise,
-        // not the file it happened to sit in. It is still stated above the buttons, wherever
-        // the buttons are.
-        val card = codeOnly("SettingsScreen.kt")
-        assertTrue(
-            "the firmware update card stopped saying where the new image goes: it must state the " +
-                "spare-slot guarantee, because that is what makes START safe to press",
-            card.contains("spare flash slot"),
-        )
         val widgets = codeOnly("SettingsWidgets.kt")
         assertTrue(
-            "a 'match to reference' control was invented without the live reading it needs",
-            widgets.contains("match to reference"),
+            "a 'match to reference' control was invented without the live reading it needs — " +
+                "this page holds configuration, not telemetry, and must draw no calibration button " +
+                "and fire no calibration RPC for the temperature or the battery",
+            !Regex("store\\.action\\(\"(temp|battery|calib)").containsMatchIn(widgets) &&
+                !Regex("\"(MATCH|CALIBRATE)").containsMatchIn(widgets),
         )
         val offenders = root.listFiles { f: File -> f.isFile && f.name.endsWith(".kt") }
             .orEmpty()

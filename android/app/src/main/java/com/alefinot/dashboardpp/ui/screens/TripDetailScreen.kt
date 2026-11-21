@@ -356,12 +356,4 @@ private fun SummaryGrid(s: TripSummary) {
         },
         { StatCell("SAMPLES", s.samples.toString(), modifier = Modifier.fillMaxWidth()) },
     )
-    if (s.gaps > 0) {
-        Text(
-            "Gaps: no sample for more than 10 s.",
-            color = HudColors.TextDim,
-            style = HudeCfgNote(),
-        )
-        Spacer(Modifier.height(8.dp))
-    }
 }

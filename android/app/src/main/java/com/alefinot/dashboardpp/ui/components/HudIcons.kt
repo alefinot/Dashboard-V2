@@ -888,23 +888,25 @@ object HudIcons {
             "M12,12.4 A2.6,2.6 0 1 0 12,17.6 A2.6,2.6 0 1 0 12,12.4 Z"
 
     /**
-     * **FUEL TANK** — the pump, on the fuel card's LINEAR FILL.
+     * **FUEL TANK** — a tank, on the fuel card's LINEAR FILL.
      *
-     * The one mark on that card that names its tank rather than its verb: the body with its
-     * base line, the hose leaving the body and falling down the right edge, and the nozzle
-     * standing under the hose's bend. No display window in the body — a 10-unit body with a
-     * stroked frame inside it closes up at an 18 dp button, the exact mush this file keeps
-     * refusing; at that size the hose and the nozzle are what say *pump* anyway. One open
-     * path through the set's stroke builder, like every other line mark.
+     * The one mark on that card that names its tank rather than its verb, and it says *tank*
+     * the way the thing on the bench is one: a wide capsule with chamfered corners standing on
+     * a flat base, a filler neck and cap centred on its crown, and a level line riding in the
+     * body. No pump, no hose, no nozzle — the maintainer asked for the tank itself, and every
+     * fuel glyph that wore the pump silhouette was retired for it. The chamfers keep the
+     * silhouette wide and low so the neck stays a separate bump at 18 dp, and the daylight
+     * between level line and base never narrows to the stroke width. Open paths through the
+     * set's stroke builder, like every other line mark.
      */
     val FuelTank: ImageVector by lazy { stroked("FuelTank", FuelTankData) }
 
-    /** Body, base, hose with its bend, nozzle — in that order, no closure. */
+    /** Body, base, filler neck with its cap, level line — in that order, no closure. */
     internal val FuelTankData: String =
-        "M4,21.4 L4,4.6 A2.4,2.4 0 0 1 6.4,2.2 L11.6,2.2 A2.4,2.4 0 0 1 14,4.6 L14,21.4 " +
-            "M2.6,21.4 L15.4,21.4 " +
-            "M14,9 L16.2,9 A2,2 0 0 1 18,10.4 L18.6,12 A2,2 0 0 0 20.5,13.3 L21.4,13.3 " +
-            "L21.4,21.4 M17.5,21.4 L17.5,17"
+        "M6,18 L3,13 L6,8 L18,8 L21,13 L18,18 " +
+            "M6,18 L18,18 " +
+            "M12,8 L12,4.5 M10,4.5 L14,4.5 " +
+            "M7.4,16 L16.6,16"
 
     /**
      * **GNSS** — the sky, on the card that reports the fix.

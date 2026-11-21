@@ -157,14 +157,6 @@ internal fun AppUpdateControl(installed: String) {
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
         }
-
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Released builds are debug-signed: an APK built on another machine installs only " +
-                "after an uninstall.",
-            style = HudeCfgNote(),
-            color = HudColors.TextDim,
-        )
     }
 }
 

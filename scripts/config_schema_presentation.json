@@ -397,8 +397,7 @@
       "items": [
         {
           "type": "card_header",
-          "label": "Fuel level Sensor",
-          "content": "<div class=\"cfg-help\" style=\"margin-bottom:8px;\">Wired on GPIO32 (fixed - see the README pinout). A series resistor from 3V3 feeds the sender to ground; the ADC reads the tap.</div>"
+          "label": "Fuel level Sensor"
         },
         {
           "id": "FUEL_INPUT_ENABLED",
@@ -424,10 +423,6 @@
         {
           "id": "FUEL_FILTER_ALPHA",
           "label": "Smoothing Factor"
-        },
-        {
-          "type": "note",
-          "label": "<span id=\"fuel-exciter-hint\" class=\"cfg-help\"></span>"
         },
         {
           "type": "touch-table",
@@ -579,8 +574,7 @@
         },
         {
           "type": "card_header",
-          "label": "Speedometer",
-          "content": "<div class=\"cfg-help\" style=\"margin-bottom:8px;\">Which sensor the speed comes from, how far the hall sensor and GPS are allowed to disagree, and how much filtering the wheel signal gets.</div>"
+          "label": "Speedometer"
         },
         {
           "id": "SPEED_SOURCE_MODE",

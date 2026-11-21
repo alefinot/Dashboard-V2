@@ -177,17 +177,14 @@ fun PhotoCropPanel(
         ) {
             Column(Modifier.hudGlass().fillMaxSize().padding(20.dp)) {
                 Text("FRAME THE PHOTO", color = HudColors.Cyan, style = HudeSectionTitle())
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    if (unreadable) {
-                        "Unreadable picture \u2014 card keeps its photo."
-                    } else {
-                        "The brackets are the square this card keeps. Drag the photo " +
-                            "inside them; pinch, or step with \u2212 and + \u2014 the round arrow starts over."
-                    },
-                    color = HudColors.TextMuted,
-                    style = HudeCfgHelp(),
-                )
+                if (unreadable) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Unreadable picture \u2014 card keeps its photo.",
+                        color = HudColors.TextMuted,
+                        style = HudeCfgHelp(),
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
 
                 // The leftover height, and the crop window centred inside it.

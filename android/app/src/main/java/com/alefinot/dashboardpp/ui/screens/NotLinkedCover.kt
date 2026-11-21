@@ -71,7 +71,6 @@ import com.alefinot.dashboardpp.ui.theme.hudGlass
 fun NotLinkedCover(
     title: String,
     reason: String?,
-    note: String,
     vehicleName: String?,
     onOpenVehicles: () -> Unit,
     permissionProblem: Boolean = false,
@@ -116,17 +115,14 @@ fun NotLinkedCover(
                     style = HudeCfgLive(),
                 )
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    when {
-                        permissionProblem ->
-                            "Bluetooth permission not granted."
-                        firstRun ->
-                            "Switch the dashboard on, then pair it from the vehicle page."
-                        else -> note
-                    },
-                    color = HudColors.TextDim,
-                    style = HudeCfgNote(),
-                )
+                val coverLine = when {
+                    permissionProblem -> "Bluetooth permission not granted."
+                    firstRun -> "Switch the dashboard on, then pair it from the vehicle page."
+                    else -> null
+                }
+                coverLine?.let {
+                    Text(it, color = HudColors.TextDim, style = HudeCfgNote())
+                }
                 Spacer(Modifier.height(18.dp))
                 HudButton(
                     "OPEN VEHICLE PAGE",

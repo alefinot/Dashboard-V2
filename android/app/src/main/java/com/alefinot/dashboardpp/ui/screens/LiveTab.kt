@@ -47,8 +47,6 @@ import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
-import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
-import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import kotlin.math.hypot
 
@@ -361,33 +359,18 @@ private fun shelfExit(top: Boolean): ExitTransition =
  * Two different waits, said differently because they are different facts. With no frame
  * at all the page is waiting for the dashboard the tab bar already names; with a frame in
  * hand and no coordinate in it, the unit is talking and the receiver is the thing that has
- * not settled. The second sentence is the one that keeps the map honest: the firmware
- * sends -1/0 rather than inventing a position, and a compass rose over the Gulf of Guinea
- * is the picture this page refuses to draw.
+ * not settled. A compass rose over the Gulf of Guinea is the picture this page refuses to
+ * draw — the firmware sends -1/0 rather than inventing a position.
  */
 @Composable
 private fun WaitingForPosition(hasFrame: Boolean) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                if (hasFrame) "WAITING FOR GNSS FIX" else "Waiting for the dashboard…",
-                style = HudeSectionCaps(),
-                color = if (hasFrame) HudColors.Amber else HudColors.TextDim,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (hasFrame) {
-                    "The map opens at the first position."
-                } else {
-                    "The live view follows the dashboard's own one-a-second stream."
-                },
-                style = if (hasFrame) HudeCfgNote() else HudeCfgHelp(),
-                color = HudColors.TextMuted,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
-        }
+        Text(
+            if (hasFrame) "WAITING FOR GNSS FIX" else "Waiting for the dashboard…",
+            style = HudeSectionCaps(),
+            color = if (hasFrame) HudColors.Amber else HudColors.TextDim,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

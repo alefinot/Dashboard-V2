@@ -60,7 +60,6 @@ import com.alefinot.dashboardpp.ui.theme.HudRadius
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgLive
-import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.HudeFormLabel
 import com.alefinot.dashboardpp.ui.theme.HudeHeading
 import com.alefinot.dashboardpp.ui.theme.hudCard
@@ -397,11 +396,6 @@ fun VehicleEditorScreen(
                     // that radio, and it changes if the pairing is redone — which is why it is
                     // labelled as a pairing and never offered as an identity.
                     EditorCard("DASHBOARD") {
-                        Text(
-                            "Read-only — what the app measured.",
-                            color = HudColors.TextDim,
-                            style = HudeCfgNote(),
-                        )
                         Fact(
                             "IDENTITY (FROM THE DASHBOARD)",
                             draft.mac ?: "not reported by this dashboard",
@@ -418,11 +412,6 @@ fun VehicleEditorScreen(
                         // form, and deleting is the one button here the user should never
                         // brush past on the way to SAVE.
                         EditorCard("DELETE", titleColor = HudColors.Red) {
-                            Text(
-                                "Removes the card and drops its pairing. Its drives stay in the trip log.",
-                                color = HudColors.TextMuted,
-                                style = HudeCfgHelp(),
-                            )
                             HudButton(
                                 "DELETE VEHICLE",
                                 modifier = Modifier.fillMaxWidth(),
@@ -594,11 +583,6 @@ private fun PhotoCard(
                     style = HudButtonStyle.SECONDARY,
                     glyph = HudIcons.Camera,
                     onClick = onCamera,
-                )
-                Text(
-                    "Shown as a square on the card.",
-                    color = HudColors.TextDim,
-                    style = HudeCfgNote(),
                 )
             }
         }

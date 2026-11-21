@@ -19,7 +19,6 @@ import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
 import com.alefinot.dashboardpp.ui.theme.HudColors
-import com.alefinot.dashboardpp.ui.theme.HudeCfgHelp
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -63,10 +62,10 @@ internal fun WidgetControl(
     when (widget) {
         "tripReset" -> TripResetControl(store, enabled, confirm, onConfirm, onNote, scope)
         "odometerSet" -> OdometerControl(store, enabled, odoText, onOdo, onNote, scope)
-        "ambientCalibrate" -> AmbientCalibrationControl()
+        "ambientCalibrate" -> Unit // the READ action on the value rows is the whole control
         "noiseBench" -> NoiseBenchControl(store, enabled, noiseLine, onNoise, scope)
-        "tempCalibrate" -> NoLiveReadingControl("engine temperature", "NTC_TEMP_OFFSET", enabled)
-        "batteryCalibrate" -> NoLiveReadingControl("battery voltage", "BATTERY_OFFSET", enabled)
+        "tempCalibrate" -> NoLiveReadingControl("engine temperature", enabled)
+        "batteryCalibrate" -> NoLiveReadingControl("battery voltage", enabled)
         else -> Text(
             "no control for \"$widget\"",
             style = HudeCfgNote(),
@@ -102,12 +101,6 @@ private fun TripResetControl(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
     ) {
-        Text(
-            "resets trip distance, time and averages",
-            style = HudeCfgHelp(),
-            color = HudColors.TextDim,
-            modifier = Modifier.weight(1f),
-        )
         HudButton(
             label = if (confirm == "trip.reset") "CONFIRM" else "RESET TRIP",
             // Amber only on the press that does it: the first press arms, and the ink is what says
@@ -182,25 +175,6 @@ private fun OdometerControl(
 }
 
 /**
- * The one line the Auto Brightness card carries above its rows.
- *
- * What used to be two full-width Capture buttons is now a READ action drawn on the value row it
- * fills (`SettingsRow.onCapture`, wired from `CardBlock`), sitting between the point's name and
- * its number. That left this widget with nothing to press — the live reading the READ buttons
- * store is drawn above by `SettingsLayout.CARD_READINGS`, and the press itself is on the row —
- * so all that is left to say is what they do.
- */
-@Composable
-private fun AmbientCalibrationControl() {
-    Text(
-        "the READ button on the Dark and Bright value rows stores the reading above as that point",
-        style = HudeCfgHelp(),
-        color = HudColors.TextDim,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-    )
-}
-
-/**
  * Stores the unit's current ambient reading as one calibration point (`cal.ambient`).
  *
  * `cal.ambient` reports `adjusted` when the other point moved too (the unit keeps the two points
@@ -253,12 +227,6 @@ private fun NoiseBenchControl(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(
-                "measures sensor jitter",
-                style = HudeCfgHelp(),
-                color = HudColors.TextDim,
-                modifier = Modifier.weight(1f),
-            )
             HudButton(
                 label = "RUN",
                 style = HudButtonStyle.SECONDARY,
@@ -308,25 +276,23 @@ private fun NoiseBenchControl(
 }
 
 /**
- * The "match to reference" calibrations the unit's page offers for the temperature and the
- * battery.
+ * The two "match to reference" calibrations the unit's own page offers for the temperature and
+ * the battery, on the cards that only carry their offset rows.
  *
- * The unit's version reads the live temperature, subtracts it from a reference the driver
- * types, and puts the difference in the offset row. That needs a live reading, and this page
- * has none — it holds the configuration, not the telemetry — so the app does not draw a button
- * that would be working from a number it does not have. The offset row is editable, and that
- * is where this lands today; the honest line says which row and why the button is missing.
+ * The unit's version subtracts a live reading from a reference the driver types and puts the
+ * difference in the offset row; that needs telemetry, and this page holds configuration, so the
+ * app draws no button here — `SettingsPageBenchFindingsTest` pins that. With a link the card is
+ * just its offset row, so this draws nothing; with no link the row says so, because a disabled
+ * row on a settings page otherwise reads as a row that refuses to change.
  */
 @Composable
-private fun NoLiveReadingControl(what: String, offsetKey: String, enabled: Boolean) {
-    Text(
-        if (enabled) {
-            "\"match to reference\" works on the unit's own page — use the $offsetKey row above"
-        } else {
-            "$what calibration needs a link"
-        },
-        style = HudeCfgNote(),
-        color = HudColors.TextDim,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-    )
+private fun NoLiveReadingControl(what: String, enabled: Boolean) {
+    if (!enabled) {
+        Text(
+            "$what calibration needs a link",
+            style = HudeCfgNote(),
+            color = HudColors.TextDim,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        )
+    }
 }
