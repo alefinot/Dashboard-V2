@@ -27,11 +27,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -45,10 +42,11 @@ import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
+import com.alefinot.dashboardpp.ui.map.MapCredit
+import com.alefinot.dashboardpp.ui.map.MapStylePref
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
-import kotlin.math.hypot
 
 /**
  * The Live page: a full-screen live map, with every reading in the app's glass over it.
@@ -232,23 +230,25 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
             } else {
                 WaitingForPosition(hasFrame = snapshot != null)
             }
-            // The cockpit wash: a flat tint and a vignette over the tiles, so the map reads
-            // as the ground the glass floats on rather than as a second bright surface
-            // competing with the figures. Deliberately cheap - two full-screen rects, no
-            // shader, no per-frame work - and deliberately static: a wash that moved with
-            // the camera would be a second thing to keep in step with the glide.
-            Box(
-                Modifier.fillMaxSize().drawBehind {
-                    drawRect(Color.Black.copy(alpha = 0.18f))
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
-                            center = center,
-                            radius = hypot(size.width, size.height) / 2f,
-                        ),
-                    )
-                },
-            )
+            // The provider's credit, on the map's own ground. The wash that used to sit here
+            // — a flat 18 % black plus a vignette to 55 %, painted over the whole slot — has
+            // moved inside the map view as an overlay (ui/map/MapChrome.kt). Painted here it
+            // dimmed the drive, its dots and the arrow exactly as much as the tiles under
+            // them, because Compose can only paint over a platform view as one piece; and one
+            // global pair of numbers could not suit a pale street map and aerial imagery at
+            // the same time. Both now belong to the style, and sit under the vectors.
+            //
+            // It rides at the map's bottom-left corner, lifted by the same amount as the
+            // RE-CENTER label at the other one, so both keep clear of the bottom shelf
+            // without moving when the eye puts the glass away.
+            if (hasPosition) {
+                MapCredit(
+                    MapStylePref.current,
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = LiveShelfInset, bottom = recenterBottom),
+                )
+            }
         }
 
         // The HUD, one entrance for the glass rather than a stagger per block: the cards

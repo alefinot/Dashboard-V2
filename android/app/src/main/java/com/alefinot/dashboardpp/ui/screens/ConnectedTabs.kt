@@ -64,6 +64,7 @@ import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.components.PageFade
 import com.alefinot.dashboardpp.ui.components.hudPressable
+import com.alefinot.dashboardpp.ui.map.MapStylePref
 import com.alefinot.dashboardpp.ui.screens.settings.BleConfigGateway
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigSchema
 import com.alefinot.dashboardpp.ui.screens.settings.ConfigStore
@@ -202,6 +203,12 @@ fun AppShell(
     val motionEnabled by settings.motionEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     LaunchedEffect(motionEnabled) { HudMotion.setPrefEnabled(motionEnabled) }
+    // The map ground, mirrored the same way (`ui/map/MapStyles.kt` says why: every map on
+    // screen has to agree the instant the owner picks, and the shell is the one composable
+    // that outlives all of them). The splash seeds it before the first frame; this keeps it
+    // true whenever the picker writes the store.
+    val mapStyle by settings.mapStyle.collectAsStateWithLifecycle(initialValue = "")
+    LaunchedEffect(mapStyle) { MapStylePref.set(mapStyle) }
 
     val pager = rememberPagerState(initialPage = BarLayout.homePage, pageCount = { BarLayout.pages.size })
     // The settled page. The bar's selection and which screen is `active` both follow

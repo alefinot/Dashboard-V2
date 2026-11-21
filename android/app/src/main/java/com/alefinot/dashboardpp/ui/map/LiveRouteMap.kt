@@ -28,7 +28,6 @@ import com.alefinot.dashboardpp.ui.components.LocalEnterActive
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.hudCard
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
@@ -95,6 +94,13 @@ import kotlin.math.sqrt
  * (`interactive = false`): it is a status picture of the drive that takes no touch at
  * all â€” every gesture that starts on it belongs to the page, not to the map.
  *
+ * **The ground is the owner's choice** (App Settings → Live Map, 2026-11-21). Which tiles
+ * this draws on, how they are tinted, how hard the wash over them is pushed and what ink the
+ * route is cased in all come from one [MapStyle] — [MapStylePref.current], the app-wide
+ * mirror of the stored preference. The wash used to be painted by Compose in front of this
+ * slot, which dimmed the drive as much as the basemap; it is an overlay now, sitting under
+ * every line this map draws ([MapGroundOverlay]).
+ *
  * Degradation is the detail map's, unchanged: no tiles and the vector route plus
  * the dots still render - the route is our recorded data, not the tile server's.
  * It is built while there is a position to draw - a recorded piece, a finished
@@ -156,6 +162,11 @@ fun LiveRouteMap(
     zoomOutTicks: Int = 0,
 ) {
     OsmdroidSetup.ensure(LocalContext.current)
+    // The ground the owner chose (App Settings → Live Map). It is read here, as Compose
+    // state, for two reasons: a pick on the settings page has to redraw this map while the
+    // owner is looking at it, and `build` needs the style in hand to put anything on screen
+    // at all — the first frame of a cold start should already be the ground they chose.
+    val style = MapStylePref.current
     val holder = remember { LiveMapHolder(showLabels, interactive) }
     // The newest position the vehicle reported, and the history its direction is measured
     // across. Both are keyed by identity: the frame lane hands out a new trail list once a
@@ -172,8 +183,12 @@ fun LiveRouteMap(
             // Clipped for the same reason RouteMap is: an unclipped interop view
             // paints its basemap over everything the canvas holds, not just its slot.
             modifier = Modifier.fillMaxSize().clipToBounds(),
-            factory = { ctx -> holder.build(ctx) },
+            factory = { ctx -> holder.build(ctx, style) },
             update = { map ->
+                // First, because it can change the zoom bounds the rail clamps to and the ink
+                // every line wears. It returns fast when nothing changed, which is every pass
+                // but the one where the owner picked something.
+                holder.applyStyle(map, style)
                 holder.touchRefusals = touchRefusals
                 holder.zoom(map, zoomInTicks, zoomOutTicks)
                 holder.applyRoute(map, route, cursor, trail, writing, inView)
@@ -234,8 +249,27 @@ private class LiveMapHolder(
     private var map: MapView? = null
     private var driveId = 0L
 
+    /**
+     * The ground on this view — source, tint, wash, zoom bounds — and the ground it was last
+     * asked for. See [applyStyle].
+     */
+    private val chrome = MapStyleApplier()
+
+    /** The style the lines were last inked for, so [inkPieces] can be re-run on a change. */
+    private var style: MapStyle? = null
+
     /** One polyline per recorded piece, created once per drive. */
     private val lines = ArrayList<Polyline>()
+
+    /**
+     * The same pieces again, wider and underneath, in the ink the ground needs
+     * ([MapStyles.casing]): a dark edge on a pale basemap, a heavier one on aerial imagery,
+     * a cyan bloom on a dark one. The pair shares one point list, so a casing costs no
+     * geometry and no bookkeeping — an append feeds both — only one more stroked path per
+     * drawn frame. Insertion order keeps every line above its own casing
+     * ([MapStyleApplier.lineInsertAt]).
+     */
+    private val casings = ArrayList<Polyline>()
 
     /**
      * The map's own copy of each piece, in the geometry osmdroid draws.
@@ -339,9 +373,12 @@ private class LiveMapHolder(
      *
      * Only the difference is applied, so the map never zooms on a recomposition that asked
      * for nothing - the cards around it glide their figures at frame rate and this lambda
-     * runs with them. The level is clamped to the bounds [build] gives the view (4 to 19),
-     * so twenty presses at the edge of the world leave the map where it already was instead
-     * of asking osmdroid for a level it has no tiles for.
+     * runs with them. Everything here stays on the **view's** side of the boundary
+     * ([MapZoom]): the level it reads back and the bounds it clamps to are both the view's
+     * (style bounds, one tile generation deeper than the levels an owner reads), and a step
+     * is one level of ground in either world, so no translation is needed in between. The
+     * clamp is what keeps twenty presses at the edge of the world from asking osmdroid for a
+     * level its source has no tiles for.
      *
      * A step never touches [following] - asking for more detail is not the same claim as
      * taking the camera.
@@ -409,6 +446,9 @@ private class LiveMapHolder(
      * growing toward a moving arrow would draw ground the file never saw.
      */
     private var tail: Polyline? = null
+
+    /** The tail's own casing, created with it and removed with it. */
+    private var tailCasing: Polyline? = null
 
     /** The tail's two ends, reused every frame: where the polyline stops, and the dot. */
     private val tailStart = GeoPoint(0.0, 0.0)
@@ -547,7 +587,7 @@ private class LiveMapHolder(
         return sqrt(dx * dx + dy * dy)
     }
 
-    fun build(context: Context): MapView {
+    fun build(context: Context, style: MapStyle): MapView {
         // A drag is a drag past this much travel; anything less, and the finger meant a tap.
         val slopPx = 12f * context.resources.displayMetrics.density
         val holder = this
@@ -632,7 +672,6 @@ private class LiveMapHolder(
                 return super.onTouchEvent(event)
             }
         }
-        view.setTileSource(TileSourceFactory.MAPNIK)
         if (interactive) {
             view.setMultiTouchControls(true)
         } else {
@@ -643,13 +682,34 @@ private class LiveMapHolder(
             view.setMultiTouchControls(false)
             view.setBuiltInZoomControls(false)
         }
-        // Tiles are a bonus, never a dependency - same rule as the detail map.
+        // Tiles are a bonus, never a dependency - same rule as the detail map. The tile size
+        // and the zoom bounds belong to the ground (MapStyleApplier owns them), not to this view.
         view.setUseDataConnection(true)
-        view.setTilesScaledToDpi(true)
-        view.setMaxZoomLevel(19.0)
-        view.setMinZoomLevel(4.0)
+        // The owner's ground: tile size, source, tint, wash and the zoom bounds the rail
+        // clamps to. What used to be a hard-coded MAPNIK with a hard-coded 4..19 on both maps.
+        chrome.apply(view, style)
+        this.style = style
         map = view
         return view
+    }
+
+    /**
+     * The owner picked another ground, or this view has just been built: move the style onto
+     * it, and re-ink every line the new ground needs.
+     *
+     * Called from the `update` lambda, which Compose re-runs at frame rate while the cards
+     * around the map glide their figures, so the whole thing is an identity compare except on
+     * the one pass that matters. On that pass: the view's tile source is swapped (its
+     * in-memory tile cache goes with it, and the on-disk cache is keyed by the source's name,
+     * so going back to a ground the owner has drawn before is free), the zoom bounds move to
+     * the new source's, and each piece's casing changes ink without its points being touched.
+     */
+    fun applyStyle(view: MapView, style: MapStyle) {
+        if (this.style === style && chrome.isApplied(style)) return
+        chrome.apply(view, style)
+        this.style = style
+        inkPieces(view)
+        view.invalidate()
     }
 
     /**
@@ -719,7 +779,8 @@ private class LiveMapHolder(
             // dropped - and dropped cleanly, with no half-finished travel left to fight the
             // level set here.
             cancelZoomRamp(view)
-            view.controller.setZoom(FOLLOW_ZOOM)
+            // The level is the owner's 15; the view works one tile generation deeper (MapZoom).
+            view.controller.setZoom(MapZoom.toView(FOLLOW_ZOOM))
             if (!endSnapped) snapCamera(view)
         }
         if (endSnapped && !endCentered) {
@@ -770,13 +831,17 @@ private class LiveMapHolder(
             onDetach()
         }
         map = null
+        chrome.release()
+        style = null
         lines.clear()
+        casings.clear()
         mirrors.clear()
         starts.clear()
         pauses.clear()
         endMarker = null
         liveArrow = null
         tail = null
+        tailCasing = null
         lastRoute = null
         lastTrail = null
         writingNow = false
@@ -798,12 +863,14 @@ private class LiveMapHolder(
     private fun reset(view: MapView, id: Long) {
         stopTicker(view)
         for (line in lines) view.overlayManager.remove(line)
+        for (line in casings) view.overlayManager.remove(line)
         hideTail(view)
         for (marker in starts) marker?.let { view.overlayManager.remove(it) }
         for (marker in pauses) view.overlayManager.remove(marker)
         endMarker?.let { view.overlayManager.remove(it) }
         liveArrow?.let { view.overlayManager.remove(it.marker) }
         lines.clear()
+        casings.clear()
         mirrors.clear()
         starts.clear()
         pauses.clear()
@@ -944,9 +1011,9 @@ private class LiveMapHolder(
         writing: Boolean,
     ) {
         while (lines.size < segments.size) {
-            val poly = newLine(view)
-            view.overlayManager.add(0, poly)
-            lines.add(poly)
+            val piece = newPiece(view)
+            lines.add(piece.first)
+            casings.add(piece.second)
             mirrors.add(ArrayList())
         }
         for (i in segments.indices) {
@@ -958,11 +1025,13 @@ private class LiveMapHolder(
                 mirror.clear()
                 for (j in 0 until target) mirror.add(GeoPoint(src[j].lat, src[j].lon))
                 lines[i].setPoints(mirror)
+                casings[i].setPoints(mirror)
             } else {
                 for (j in mirror.size until target) {
                     val point = GeoPoint(src[j].lat, src[j].lon)
                     mirror.add(point)
                     lines[i].addPoint(point)
+                    casings[i].addPoint(point)
                 }
             }
             if (src.isNotEmpty()) ensureStart(view, i, src[0])
@@ -984,18 +1053,18 @@ private class LiveMapHolder(
             hideTail(view)
             return
         }
-        val line = tail ?: newLine(view).also {
-            view.overlayManager.add(0, it)
-            tail = it
-        }
+        val line = tail ?: newTail(view)
         tailStart.setCoords(from.latitude, from.longitude)
         tailTo.setCoords(from.latitude, from.longitude)
         line.setPoints(tailPoints)
+        tailCasing?.setPoints(tailPoints)
     }
 
     private fun hideTail(view: MapView) {
         tail?.let { view.overlayManager.remove(it) }
+        tailCasing?.let { view.overlayManager.remove(it) }
         tail = null
+        tailCasing = null
     }
 
     /**
@@ -1099,17 +1168,78 @@ private class LiveMapHolder(
         view.overlayManager.add(marker)
     }
 
-    private fun newLine(view: MapView): Polyline {
+    /**
+     * One recorded piece: the route's line and the casing it needs on this ground.
+     *
+     * Both are dressed by [inkPair] the moment they exist, and from then on fed the same
+     * points by [syncSegments] — the casing is a second stroked path over one point list, so
+     * it costs no geometry, no mirroring and no bookkeeping.
+     */
+    private fun newPiece(view: MapView): Pair<Polyline, Polyline> {
+        val line = newLine()
+        val casing = newLine()
+        insertPair(view, line, casing)
+        inkPair(view, line, casing)
+        return line to casing
+    }
+
+    /** The forward tail, as a pair like a piece — the line grows under the arrow cased or not. */
+    private fun newTail(view: MapView): Polyline {
+        val line = newLine()
+        val casing = newLine()
+        insertPair(view, line, casing)
+        inkPair(view, line, casing)
+        tail = line
+        tailCasing = casing
+        return line
+    }
+
+    /**
+     * Put a line and its casing into the overlay list as one pair.
+     *
+     * The pairs start just above the wash ([MapStyleApplier.lineInsertAt]) and grow in
+     * creation order, so a piece written later draws over one written earlier — chronology,
+     * which is the way the drive happened — and the markers, appended at the end of the list,
+     * stay over every line, which is the rule the old `add(0, …)` was there to serve.
+     */
+    private fun insertPair(view: MapView, line: Polyline, casing: Polyline) {
+        val at = chrome.lineInsertAt + 2 * lines.size
+        view.overlayManager.add(at, casing)
+        view.overlayManager.add(at + 1, line)
+    }
+
+    private fun newLine(): Polyline {
         val poly = Polyline()
-        // setPoints(), not getPoints().add() - see the MapHolder note: the old
-        // accessor hands back a copy and the line draws nothing at all.
         val paint = poly.getOutlinePaint()
-        paint.color = HudColors.Cyan.toArgb()
-        val density = view.resources.displayMetrics.density
-        paint.strokeWidth = 5f * density
         paint.strokeCap = android.graphics.Paint.Cap.ROUND
         paint.strokeJoin = android.graphics.Paint.Join.ROUND
         return poly
+    }
+
+    /** Re-dress every line this map owns: the ground changed underneath them. */
+    private fun inkPieces(view: MapView) {
+        for (i in lines.indices) inkPair(view, lines[i], casings[i])
+        val line = tail
+        val casing = tailCasing
+        if (line != null && casing != null) inkPair(view, line, casing)
+    }
+
+    /**
+     * The pair's ink for the ground they are drawn on: the route is always the app's cyan at
+     * [ROUTE_DP], and the casing underneath it is [MapStyles.casing] — wider by that many dp,
+     * in the colour the ground needs. Nothing about the points moves: a style change repaints
+     * a 1 000 km drive without touching a coordinate of it.
+     */
+    private fun inkPair(view: MapView, line: Polyline, casing: Polyline) {
+        val s = style ?: return
+        val density = view.resources.displayMetrics.density
+        val route = line.getOutlinePaint()
+        route.color = HudColors.Cyan.toArgb()
+        route.strokeWidth = ROUTE_DP * density
+        val ink = MapStyles.casing(s)
+        val outline = casing.getOutlinePaint()
+        outline.color = ink.colorArgb
+        outline.strokeWidth = (ROUTE_DP + ink.extraDp) * density
     }
 
     private fun awaitSize(view: MapView) {
@@ -1136,7 +1266,16 @@ private class LiveMapHolder(
     }
 
     companion object {
-        /** A drive's corner while it happens: streets readable, a few blocks deep. */
+        /**
+         * The route's width in dp, on every ground. Its casing is wider than this by the
+         * amount the ground asks for and sits underneath it.
+         */
+        private const val ROUTE_DP = 5f
+
+        /**
+         * A drive's corner while it happens: streets readable, a few blocks deep. An owner's
+         * level — what the view is handed goes through [MapZoom].
+         */
         private const val FOLLOW_ZOOM = 15.0
 
         /**

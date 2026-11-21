@@ -70,6 +70,9 @@ import com.alefinot.dashboardpp.ui.components.HudSlider
 import com.alefinot.dashboardpp.ui.components.HudToggle
 import com.alefinot.dashboardpp.ui.components.hudBytes
 import com.alefinot.dashboardpp.ui.components.hudPage
+import com.alefinot.dashboardpp.ui.map.MapStylePref
+import com.alefinot.dashboardpp.ui.map.MapStyles
+import com.alefinot.dashboardpp.ui.map.OsmdroidSetup
 import com.alefinot.dashboardpp.ui.screens.settings.SettingsLayout
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
@@ -136,6 +139,13 @@ fun SettingsScreen(
     // frame, while the label beside the rail still follows the finger.
     val routeQuality by settings.routeQuality.collectAsStateWithLifecycle(initialValue = 100)
     var routeDrag by remember { mutableStateOf<Int?>(null) }
+    // The map ground. The store keeps an id and the catalogue resolves it — an id this build
+    // does not know becomes the shipped default rather than an error, so removing a style
+    // someday cannot break a phone that still has it stored.
+    val mapStyleId by settings.mapStyle.collectAsStateWithLifecycle(initialValue = "")
+    val chosenMapStyle = remember(mapStyleId) { MapStyles.byId(mapStyleId) }
+    var showConfirmTiles by remember { mutableStateOf(false) }
+    var mapLine by remember { mutableStateOf("") }
     // The weather feed has its own store and its own coordinator: the switch and the
     // typed city are the owner's, the schedule belongs to the process-wide feed that the
     // link and the trip service are also waking (one schedule, or the unit gets two).
@@ -410,6 +420,61 @@ fun SettingsScreen(
             }
         }
 
+        // ── Live map ─────────────────────────────────────────────────────
+        GroupCard(
+            title = "Live Map",
+            badge = R.drawable.ic_app_map,
+            open = openGroup == "map",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "map") },
+        ) {
+            // What the drive is drawn on. The choice is the app's own (it changes no setting
+            // on the dashboard and travels with no trip file), and one choice answers for
+            // every map the app draws: the Live page, the recording row's thumbnail and a
+            // sealed drive's detail page.
+            //
+            // Every ground here is served without a key. CARTO's dark basemap would suit this
+            // palette better than anything on the list and is gone as a keyless option — since
+            // 25 September 2026 it answers a keyless request with a watermark placeholder — and
+            // a key cannot live in this repository (AGENTS rule 21). The same note is written
+            // where the list itself is, in ui/map/MapStyles.kt.
+            Text("MAP GROUND", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(4.dp))
+            HudSelectMenu(
+                triggerLabel = chosenMapStyle.label,
+                items = MapStyles.ALL,
+                label = { it.label },
+                isSelected = { it.id == chosenMapStyle.id },
+                onPick = { picked ->
+                    scope.launch {
+                        settings.setMapStyle(picked.id)
+                        // The mirror, as well as the store: the Live page's map is composed
+                        // behind this page, and it should change while the owner watches.
+                        MapStylePref.set(picked.id)
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(chosenMapStyle.sentence, color = HudColors.TextMuted, style = HudeCfgNote())
+            Spacer(Modifier.height(4.dp))
+            // The provider's credit, in settings as well as on the map: the tile policies ask
+            // for the attribution where the tiles are seen, and the map's own chip is the
+            // small print of a surface the owner can also hide behind a shelf.
+            Text(chosenMapStyle.credit, color = HudColors.TextDim, style = HudeCfgNote())
+            Spacer(Modifier.height(14.dp))
+            // The cache is one folder per ground (the tile file name starts with the source's
+            // own name), so the imagery a owner tried once and abandoned is not waiting behind
+            // the street map they went back to. Deleting what is on screen is safe — the view
+            // keeps the tiles it is drawing in memory.
+            HudButton(
+                "CLEAR TILE CACHE",
+                glyph = HudIcons.Bin,
+            ) { showConfirmTiles = true }
+            if (mapLine.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(mapLine, color = HudColors.TextMuted, style = HudeCfgLive())
+            }
+        }
+
         // ── Weather feed ─────────────────────────────────────────────────
         GroupCard(
             title = "Weather Feed",
@@ -576,7 +641,27 @@ fun SettingsScreen(
             },
             onDismiss = { showConfirmClear = false },
         )
-}
+    }
+
+    if (showConfirmTiles) {
+        HudConfirmDialog(
+            message = "Delete every cached map tile? The drives and their routes are untouched; " +
+                "the ground is simply drawn again from its tile server the next time it is seen.",
+            confirmLabel = "CLEAR CACHE",
+            // Rule 7 again: destroy wears the bin, even when what it destroys re-downloads.
+            confirmGlyph = HudIcons.Bin,
+            onConfirm = {
+                // Bytes, because the store is one database, not a folder of images: the old
+                // sentence counted FILES and reported a 27.4 MB cache as "2 cached tiles"
+                // (bench, 2026-11-21).
+                val freed = OsmdroidSetup.clearTileCache()
+                mapLine = if (freed == 0L) "The tile cache was already empty."
+                else "Cleared ${hudBytes(freed)} of cached tiles."
+                showConfirmTiles = false
+            },
+            onDismiss = { showConfirmTiles = false },
+        )
+    }
     }
 
 /**

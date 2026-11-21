@@ -64,16 +64,18 @@ MORE_HORIZONTAL = (
 # same converter draws it - into `ic_perf.xml`, named for the card rather than for a
 # group the schema does not have.
 #
-# The `app_*` three are the accordion headers of App Settings, which was organised into
+# The `app_*` four are the accordion headers of App Settings, which was organised into
 # the same one-open-at-a-time dropdown groups as the dashboard settings page on
 # 2026-11-15. They are drawn from the same `iconSVG` tree, so a badge and its schema
 # sibling cannot drift apart: `system` (the software gear) for Updates, `gnss` (the
-# globe, for drives) for Trips & storage, `weather` (the sun) for the Weather feed.
+# globe, for drives) for Trips & storage, `weather` (the sun) for the Weather feed, and
+# `map` (the folded sheet) for the Live Map card added on 2026-11-21.
 EXTRA_BADGES = {
     "perf": "activity",
     "app_updates": "system",
     "app_trips": "gnss",
     "app_weather": "weather",
+    "app_map": "map",
 }
 
 HEADER = (

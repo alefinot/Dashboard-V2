@@ -155,6 +155,10 @@ class SettingsTabReplacesTheWebPageTest {
             "a URL appeared in code again - if it is a legitimate one (a namespace, a tile " +
                 "user agent, a provider endpoint), add it here and say what it is", listOf(
                 "trips/GpxWriter.kt",
+                // The tile servers the owner's chosen map ground is fetched from (App Settings
+                // → Live Map). Hosts are named, nothing is sent to them but a tile coordinate,
+                // and none of them is ever told anything about a unit.
+                "ui/map/MapStyles.kt",
                 "ui/map/RouteMap.kt",
                 "update/FirmwareReleases.kt",
                 "weather/OpenMeteo.kt",

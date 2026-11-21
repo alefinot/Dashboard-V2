@@ -208,6 +208,20 @@ class RecorderSettings(context: Context) {
         store.edit { it[KEY_TRIP_FILTER] = value }
     }
 
+    /**
+     * The map ground the owner chose, as its id (see the app's `MapStyles`). An id this
+     * build does not know is not an error and never resets the owner's other settings: the
+     * reader falls back to the shipped default, which is what makes removing a style
+     * someday a legal thing to do.
+     */
+    val mapStyle: Flow<String> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_MAP_STYLE] ?: "" }
+
+    suspend fun setMapStyle(id: String) {
+        store.edit { it[KEY_MAP_STYLE] = id }
+    }
+
     /** One-time battery-optimisation hint, so it never nags twice. */
     val batteryPromptShown: Flow<Boolean> =
         store.data.catch { emit(emptyPreferences()) }
@@ -226,6 +240,7 @@ class RecorderSettings(context: Context) {
         notificationEnabled.first()
         tripFilter.first()
         routeQuality.first()
+        mapStyle.first()
     }
 
     /** The persisted session per device, so a trip survives an app restart. */
@@ -298,6 +313,7 @@ class RecorderSettings(context: Context) {
         private val KEY_BATTERY_PROMPT = booleanPreferencesKey("battery_prompt_shown")
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
         private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
+        private val KEY_MAP_STYLE = stringPreferencesKey("map_style")
 
         /** The filter value meaning "no filter". */
         const val FILTER_ALL = "ALL"

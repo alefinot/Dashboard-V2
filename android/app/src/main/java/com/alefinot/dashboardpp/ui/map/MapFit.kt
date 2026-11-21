@@ -30,7 +30,8 @@ object MapFit {
 
     /**
      * Zoom used when the track has no extent to fit: a city block, which is
-     * where a parked vehicle's single position is still readable.
+     * where a parked vehicle's single position is still readable. An owner's
+     * level — a caller hands it to a view through `MapZoom.toView`.
      */
     const val STATIONARY_ZOOM = 15.0
 

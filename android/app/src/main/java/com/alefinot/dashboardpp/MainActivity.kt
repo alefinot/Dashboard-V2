@@ -17,6 +17,7 @@ import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.ClearFocusOnTapOutside
 import com.alefinot.dashboardpp.ui.components.ClearFocusWhenKeyboardCloses
+import com.alefinot.dashboardpp.ui.map.MapStylePref
 import com.alefinot.dashboardpp.ui.screens.DashboardRoot
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudTheme
@@ -122,6 +123,11 @@ class MainActivity : ComponentActivity() {
             val settings = RecorderSettings(application)
             withContext(Dispatchers.IO) { settings.warm() }
             HudMotion.setPrefEnabled(settings.motionEnabled.first())
+            // The map ground, for the same reason and by the same mechanism: a map that
+            // asked DataStore itself would draw its first frame on the shipped default and
+            // swap the basemap a beat later. Mirrored here, the first map a cold start shows
+            // is already the ground the owner chose.
+            MapStylePref.set(settings.mapStyle.first())
         }
     }
 

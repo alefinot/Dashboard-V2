@@ -23,7 +23,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -69,22 +68,55 @@ object OsmdroidSetup {
             done = true
         }
     }
+
+    /**
+     * Empties the tile cache and reports how many bytes went with it.
+     *
+     * Bytes, not a tile count, because the cache is not a folder of images: osmdroid 6.1.20
+     * keeps every tile in one SQLite file — `<tile cache>/cache.db`, one row per tile, keyed
+     * by the `z/x/y` index and tagged with the style's [MapStyle.sourceName] in its `provider`
+     * column. The whole store is two files (bench, 2026-11-21: 2,533 tiles in a 27.4 MB
+     * `cache.db`), so a count of files would tell the owner "2 tiles" about a quarter of a
+     * gigabyte of imagery. Bytes is what this can actually measure and what the owner can act
+     * on. Deleting what is on screen is safe: the view's in-memory cache still holds every
+     * tile it is drawing, and the next pass over that ground fetches it again — the store is
+     * rebuilt on the next write, and a style switch reaches a fresh provider anyway.
+     */
+    fun clearTileCache(): Long {
+        val dir = Configuration.getInstance().getOsmdroidTileCache() ?: return 0L
+        var freed = 0L
+        dir.walkBottomUp().forEach { file ->
+            if (file.isFile) {
+                val size = file.length()
+                if (file.delete()) freed += size
+            }
+        }
+        // Any leftover folder from a pre-database layout; walkBottomUp has been inside each
+        // one already, so this only has to remove the empty directory.
+        dir.listFiles()?.forEach { folder -> if (folder.isDirectory) folder.delete() }
+        return freed
+    }
 }
 
 /**
- * The logged track drawn over OSM raster tiles.
+ * The logged track drawn over the ground the owner chose (App Settings → Live Map).
  *
  * Degradation is deliberate (plan §6): if tiles cannot be fetched — no data
  * connection, tile host blocked, cache empty — osmdroid paints its empty canvas
  * and the vector track, start and end markers still render. The route is our
  * recorded data, not the tile server's, so an offline phone still sees the shape
- * of the drive; only the basemap is missing.
+ * of the drive; only the basemap is missing. The `HUD Ground` style makes that
+ * state a choice rather than a failure: no tiles at all, on a ground the app draws
+ * itself.
  */
 @Composable
 fun RouteMap(points: List<GeoPoint>, modifier: Modifier = Modifier) {
     val context = androidx.compose.ui.platform.LocalContext.current
     OsmdroidSetup.ensure(context)
     val holder = remember { MapHolder() }
+    // The ground the owner chose, read as Compose state so a pick on the settings page
+    // redraws a detail page that is already open.
+    val style = MapStylePref.current
     AndroidView(
         // Clipped here, not in the host: osmdroid sizes its tile painting from
         // the canvas it is handed (TilesOverlay keeps a mCanvasRect taken from
@@ -94,8 +126,8 @@ fun RouteMap(points: List<GeoPoint>, modifier: Modifier = Modifier) {
         // track and markers stay inside the view's real bounds. On top of the
         // visual mess it also fetches and decodes tiles nobody can see.
         modifier = modifier.clipToBounds(),
-        factory = { ctx -> holder.build(ctx) },
-        update = { map -> holder.applyTrack(map, points) },
+        factory = { ctx -> holder.build(ctx, style) },
+        update = { map -> holder.applyTrack(map, points, style) },
     )
     DisposableEffect(Unit) {
         onDispose { holder.release() }
@@ -116,19 +148,42 @@ private class MapHolder {
     /** Filtered track, kept so framing can run after the first layout. */
     private var track: List<GeoPoint> = emptyList()
 
-    fun build(context: Context): MapView {
+    /** The ground on the view — source, tint, wash, zoom bounds. See [applyStyle]. */
+    private val chrome = MapStyleApplier()
+
+    /** The style the track was last inked for, and its casing. */
+    private var style: MapStyle? = null
+
+    /** The drive's casing: the same point list again, wider, in the ink the ground needs. */
+    private var casing: Polyline? = null
+
+    /** The route's own line, kept so a style change can re-ink it without redrawing the track. */
+    private var trackLine: Polyline? = null
+
+    fun build(context: Context, style: MapStyle): MapView {
         val view = MapView(context)
-        view.setTileSource(TileSourceFactory.MAPNIK)
         view.setMultiTouchControls(true)
         // Data connection on: tiles are a bonus, never a dependency (see above).
         view.setUseDataConnection(true)
-        view.setTilesScaledToDpi(true)
-        // OSM's own maximum for the standard layer is z19; below z4 the whole
-        // world is useless for a drive, so stop the pinch there.
-        view.setMaxZoomLevel(19.0)
-        view.setMinZoomLevel(4.0)
+        // The owner's ground, including the zoom bounds the pinch runs out against and the
+        // tile size every level is measured in (MapStyleApplier owns both): what used to be a
+        // hard-coded MAPNIK and a hard-coded 4..19 on both maps.
+        chrome.apply(view, style)
+        this.style = style
         map = view
         return view
+    }
+
+    /**
+     * Move the owner's choice onto this view. Cheap when nothing changed — the update lambda
+     * runs on every recomposition of the detail page.
+     */
+    fun applyStyle(view: MapView, style: MapStyle) {
+        if (this.style === style && chrome.isApplied(style)) return
+        chrome.apply(view, style)
+        this.style = style
+        inkTrack(view)
+        view.invalidate()
     }
 
     /**
@@ -136,7 +191,8 @@ private class MapHolder {
      * size, because a `AndroidView` update block runs before layout and framing
      * an unmeasured map is not merely wrong — see [MapFit].
      */
-    fun applyTrack(view: MapView, points: List<GeoPoint>) {
+    fun applyTrack(view: MapView, points: List<GeoPoint>, style: MapStyle) {
+        applyStyle(view, style)
         track = MapFit.usable(points)
         drawTrack(view)
         if (view.width > 0 && view.height > 0) fit(view) else awaitSize(view)
@@ -168,20 +224,24 @@ private class MapHolder {
     private fun drawTrack(view: MapView) {
         val manager = view.getOverlayManager()
         manager.clear()
+        // `clear()` takes the ground wash with everything else — it lives in the same list.
+        chrome.restoreGround(view)
         if (track.isEmpty()) return
 
-        val density = view.resources.displayMetrics.density
         val line = Polyline()
+        trackLine = line
         // Points must arrive through setPoints(): in osmdroid 6.1.20 the older
         // getPoints() accessor is deprecated and hands back a *copy* of the
         // ring's list, so adding to it draws nothing at all - which is exactly
         // what the trip map did (two markers, no route) until this was found.
         line.setPoints(track)
-        val paint = line.getOutlinePaint()
-        paint.color = HudColors.Cyan.toArgb()
-        paint.strokeWidth = 5f * density
-        paint.strokeCap = Paint.Cap.ROUND
-        paint.strokeJoin = Paint.Join.ROUND
+        // The casing goes in first: the manager draws its list in order, so the route
+        // painted after it lands on top of its own edge.
+        val outline = Polyline()
+        outline.setPoints(track)
+        casing = outline
+        inkTrack(view)
+        manager.add(outline)
         manager.add(line)
 
         if (track.size >= 2) {
@@ -195,8 +255,38 @@ private class MapHolder {
         view.invalidate()
     }
 
+    /**
+     * The route's ink for the ground under it: the app's cyan, cased in what that ground
+     * needs — a dark edge on a pale map, a heavier one on aerial imagery, a cyan bloom on a
+     * dark one. The drive itself is the same cyan on every style.
+     */
+    private fun inkTrack(view: MapView) {
+        val s = style ?: return
+        val line = trackLine ?: return
+        val outline = casing ?: return
+        val density = view.resources.displayMetrics.density
+        val route = line.getOutlinePaint()
+        route.color = HudColors.Cyan.toArgb()
+        route.strokeWidth = 5f * density
+        route.strokeCap = Paint.Cap.ROUND
+        route.strokeJoin = Paint.Join.ROUND
+        val ink = MapStyles.casing(s)
+        val edge = outline.getOutlinePaint()
+        edge.color = ink.colorArgb
+        edge.strokeWidth = (5f + ink.extraDp) * density
+        edge.strokeCap = Paint.Cap.ROUND
+        edge.strokeJoin = Paint.Join.ROUND
+    }
+
     private fun fit(view: MapView) {
-        val plan = MapFit.plan(track, view.width, view.height, view.maxZoomLevel) ?: return
+        // MapFit thinks in the levels an owner reads; the view's bounds are one tile
+        // generation deeper than that (MapZoom), so they are translated on the way in.
+        val plan = MapFit.plan(
+            track,
+            view.width,
+            view.height,
+            MapZoom.fromView(view.maxZoomLevel),
+        ) ?: return
         val key = fitKey(view)
         if (key == fitted) return
         fitted = key
@@ -212,7 +302,7 @@ private class MapHolder {
         } else {
             // A single position, or a map that has no size to fit into: point
             // the camera at it and leave the zoom decision to us.
-            view.controller.setZoom(plan.zoom)
+            view.controller.setZoom(MapZoom.toView(plan.zoom))
             view.controller.setCenter(plan.center)
         }
         view.invalidate()
@@ -243,6 +333,10 @@ private class MapHolder {
             onDetach()
         }
         map = null
+        chrome.release()
+        style = null
+        trackLine = null
+        casing = null
         track = emptyList()
         fitted = null
     }
