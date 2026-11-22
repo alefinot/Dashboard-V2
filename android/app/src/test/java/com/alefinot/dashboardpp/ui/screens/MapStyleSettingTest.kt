@@ -17,7 +17,9 @@ import org.junit.Test
  *  * the choice is **stored** and re-seeded at boot, so it survives a restart rather than
  *    resetting to the default every launch;
  *  * the choice reaches **every** map surface and no map keeps its own hard-coded basemap, so
- *    "the live map is dark" cannot mean "the detail page is still bright".
+ *    "the live map is dark" cannot mean "the detail page is still bright";
+ *  * the choice can also be made **on the map itself** — the Live page's rail steps through the
+ *    grounds (2026-11-22) through those same two doors, so a pick made mid-drive is a pick.
  *
  * These assertions read source text with plain `contains`, not regular expressions: every
  * thing being looked for is a literal call site, and a pattern for a literal is just a place
@@ -229,6 +231,88 @@ class MapStyleSettingTest {
         assertTrue(
             "the card went back to counting something other than bytes",
             page.contains("hudBytes("),
+        )
+    }
+
+    /**
+     * The same choice, made on the map itself (maintainer, 2026-11-22: "add a map icon in the
+     * live map that allows the user to change map style in realtime"). A rail press lays the
+     * next ground under the drive, so this walks the second door and checks the two properties
+     * the first door's tests check for the picker: it writes **both** stores, and it steps
+     * through **the catalogue's** order rather than a list the page wrote for itself.
+     */
+    @Test
+    fun theLivePageCanChangeTheGroundUnderItsOwnMap() {
+        val hud = moduleSource("LiveHud.kt")
+        val rail = hud.substringAfter("internal fun HudRail")
+        assertTrue(
+            "the rail lost the ground mark — with no menu over a moving map, this is the only " +
+                "way to change the ground without leaving the Live page",
+            rail.contains("HudGlyphLedger.mark(\"action.map-ground\")") &&
+                rail.contains("onCycleGround"),
+        )
+        assertTrue(
+            "the ground mark stopped saying what the press does — a glyph-only control without " +
+                "a sentence is invisible to TalkBack, and it is the mark's one job here to say " +
+                "which ground is down",
+            rail.contains("change the map ground") && rail.contains("groundLabel"),
+        )
+        assertTrue(
+            "the ground mark moved above the eye: the eye stays at the top of the rail, in the " +
+                "thumb's first reach, or the control that brings the readings back hides",
+            rail.indexOf("action.hud-visibility") in 0 until rail.indexOf("action.map-ground"),
+        )
+
+        val page = moduleSource("LiveTab.kt")
+        assertTrue(
+            "the page stopped asking the catalogue which ground comes next — the order the rail " +
+                "walks must be the order App Settings shows, not a second list",
+            page.contains("MapStyles.nextAfter(MapStylePref.current)") && !page.contains("MapStyles.ALL"),
+        )
+        assertTrue(
+            "the rail's press no longer writes the stored row — a ground picked mid-drive " +
+                "would be forgotten at the next start, and App Settings would still name the old one",
+            page.contains("groundSettings.setMapStyle(next.id)"),
+        )
+        assertTrue(
+            "the rail's press no longer moves the live mirror — the map under the finger would " +
+                "wait on a DataStore round-trip (or never move at all) instead of changing now",
+            page.contains("MapStylePref.set(next.id)"),
+        )
+        assertTrue(
+            "the page stopped naming the ground it just laid down — the glyph can say \"ground\", " +
+                "it cannot say which one, and every style's label is different",
+            page.contains("groundName = next.label") &&
+                page.contains("visible = groundNamed") &&
+                page.contains("Box(Modifier.hudCard())"),
+        )
+        // The chip's text must outlive the flag that shows it, or the fade-out frame has nothing
+        // left to say and the name snaps off instead of leaving with the page's own fade. So the
+        // name is only ever written by a press, and the window is re-armed off the name itself: a
+        // second press restarts the countdown rather than inheriting the first one's.
+        val clearAt = page.indexOf("groundNamed = false")
+        assertTrue(
+            "the name is cleared along with its visibility, or the window is no longer re-armed " +
+                "by the name itself",
+            clearAt > 0 &&
+                page.indexOf("LaunchedEffect(groundName)") < clearAt &&
+                page.indexOf("delay(GROUND_NAME_MS)") < clearAt &&
+                page.indexOf("groundName = \"\"") < 0,
+        )
+        // Recorded because it is the only way to re-check a 2.4 s chip from a bench: one
+        // `uiautomator dump` on this page costs 2-3 s (the window never goes idle — the map moves
+        // the arrow every fix), so a single timed dump says nothing about a name this short-lived.
+        // A burst across the window does, and it is what proved the name reaches accessibility.
+        assertTrue(
+            "the note that tells the next person how to actually catch this chip on a bench is gone",
+            page.contains("burst of twelve") && page.contains("costs 2-3 s"),
+        )
+        assertTrue(
+            "the ground's name no longer puts itself away — a name that stays is a claim about " +
+                "a map somebody else may have changed since",
+            page.contains("private const val GROUND_NAME_MS") &&
+                page.contains("groundNamed = false") &&
+                page.contains("delay(GROUND_NAME_MS)"),
         )
     }
 

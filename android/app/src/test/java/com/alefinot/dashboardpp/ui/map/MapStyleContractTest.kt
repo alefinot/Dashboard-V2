@@ -43,6 +43,38 @@ class MapStyleContractTest {
         )
     }
 
+    /**
+     * The Live page's rail mark walks the catalogue one press at a time (2026-11-22), so that
+     * walk has to be a closed loop over exactly the grounds the settings picker offers: nothing
+     * skipped, nothing twice, nothing outside the list, and the last ground handing the tour
+     * back to the first rather than stopping or throwing on a driver mid-drive.
+     */
+    @Test
+    fun theLivePageCycleWalksTheCatalogueAndComesBackAround() {
+        val visited = mutableListOf<MapStyle>()
+        var at = MapStyles.Standard
+        repeat(MapStyles.ALL.size) { visited += MapStyles.nextAfter(at).also { at = it } }
+
+        val ids = visited.map { it.id }
+        assertEquals("a full tour must visit as many grounds as the picker offers", MapStyles.ALL.size, ids.size)
+        assertEquals("a tour that lands on the same ground twice", ids.toSet().size, ids.size)
+        assertTrue("the tour left the catalogue: $ids", MapStyles.ALL.all { it.id in ids })
+        assertSame("the tour must come back to the ground it started from", MapStyles.Standard, at)
+        assertSame(
+            "the first press from the shipped default must land on the picker's second row — " +
+                "the rail walks the order App Settings shows, not a list of its own",
+            MapStyles.ALL[1], MapStyles.nextAfter(MapStyles.ALL[0]),
+        )
+
+        // A ground the catalogue stopped shipping: a rail press cannot be allowed to fail, so it
+        // restarts at the default rather than throwing on `[-1 + 1]`.
+        val ghost = MapStyle(id = "ghost", label = "Ghost", sentence = "", attribution = "", sourceName = "Ghost")
+        assertSame(
+            "an unknown ground must restart the tour",
+            MapStyles.ALL.first(), MapStyles.nextAfter(ghost),
+        )
+    }
+
     @Test
     fun aCacheKeyIsSharedOnlyByStylesDrawingTheSameTiles() {
         // The name is the key osmdroid files every tile under inside its one tile database

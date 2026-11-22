@@ -909,6 +909,32 @@ object HudIcons {
             "M7.4,16 L16.6,16"
 
     /**
+     * **LAYERS** — the sheet this map is drawn on, on the Live page's rail.
+     *
+     * The ground cycler (2026-11-22). The press adds nothing and removes nothing: it swaps which
+     * sheet of the world lies under the drive, so the mark is a stack of two sheets and the verb
+     * belongs to the sentence on the node, exactly as the two zoom steps beside it borrow the
+     * ledger's steppers instead of wearing map-shaped plus and minus.
+     *
+     * Built the way the header demands at 22 dp — **no interior detail**, so no stroke ever
+     * closes a counter inside another. The lower sheet is therefore an open `V`, not a second
+     * rhombus behind the first: two closed diamonds at this size read as one blob with a seam
+     * lost, while a rhombus over a chevron keeps the daylight that makes it two things. The
+     * upper sheet returns to its own start with a leg rather than a `Z`, the way every line mark
+     * in this set closes without handing a fill an interior to shut (`HudGlyphGeometryTest`).
+     *
+     * The lower `V` is the upper sheet's lower half moved straight down 4.8 units, so the two
+     * are parallel arms and the seam between them is even all the way along — 4.28 units
+     * perpendicular, 2.38 of it left after the 1.9-unit line that draws both.
+     */
+    val Layers: ImageVector by lazy { stroked("Layers", LayersData) }
+
+    /** Upper sheet, running back to its own start; lower sheet, the `V` a stack shows beneath it. */
+    internal val LayersData: String =
+        "M12,5.2 L20.2,9.4 L12,13.6 L3.8,9.4 L12,5.2 " +
+            "M3.8,14.2 L12,18.4 L20.2,14.2"
+
+    /**
      * **GNSS** — the sky, on the card that reports the fix.
      *
      * A dot with two arcs opening above it. It is not a satellite with solar panels: the panels hang

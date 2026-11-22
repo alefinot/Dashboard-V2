@@ -479,6 +479,13 @@ class LivePageReadoutsTest {
                 Regex("description = \"zoom the map out\"").containsMatchIn(rail),
         )
         assertTrue(
+            "the rail lost the ground cycler — one press, the next map under the drive " +
+                "(2026-11-22), and its mark is the ledger's `action.map-ground` rather than a " +
+                "map shape drawn for this page alone",
+            Regex("HudGlyphLedger\\.mark\\(\"action\\.map-ground\"\\)").containsMatchIn(rail) &&
+                Regex("onCycleGround").containsMatchIn(rail),
+        )
+        assertTrue(
             "the rail is no longer glass: it floats over the map, so it wears the overlay " +
                 "family like the shelves, not a flat card fill",
             Regex("hudGlass\\(").containsMatchIn(rail),

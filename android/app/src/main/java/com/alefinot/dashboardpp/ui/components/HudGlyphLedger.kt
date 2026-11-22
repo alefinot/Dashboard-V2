@@ -72,6 +72,11 @@ object HudGlyphLedger {
         // as the pill's tint says what the recorder is doing. A slashed twin would be a line
         // crossing a line at 22 dp, which is why it was not drawn (see HudIcons.Eye).
         "action.hud-visibility" to HudIcons.Eye,
+        // The Live page's rail, under the zoom steps: one press lays the next ground under the
+        // map (2026-11-22). The mark names the noun the press swaps — which sheet of the world
+        // this drive is drawn on — and the sentence on the node carries the verb, so the mark is
+        // not asked to say "cycle", which is the same division of labour as `action.step-up`.
+        "action.map-ground" to HudIcons.Layers,
 
         // ── Files, in both directions. ──
         "file.in" to HudIcons.ImportFile,

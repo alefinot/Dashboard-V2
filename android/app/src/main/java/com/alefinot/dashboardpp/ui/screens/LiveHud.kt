@@ -291,8 +291,8 @@ private fun SpeedStrip(s: Snapshot) {
 }
 
 /**
- * The page's rail over the map: the readings off and on, and the map's two stepper presses,
- * in the one place a control can live.
+ * The page's rail over the map: the readings off and on, the map's two stepper presses, and
+ * the ground it is drawn on, in the one place a control can live.
  *
  * It is glass on the page, not a widget in the map, for the reason the whole page is
  * arranged around: a Compose control over an osmdroid `AndroidView` receives nothing unless
@@ -318,6 +318,15 @@ private fun SpeedStrip(s: Snapshot) {
  * place it cannot move when the shelves slide away, so the eye that hides the readings is
  * never itself hidden from the thumb that asks for them back (maintainer, 2026-11-19). A
  * thumb finds it there without standing over the car.
+ *
+ * The third mark is the ground cycler (`action.map-ground`, 2026-11-22: "add a map icon in the
+ * live map that allows the user to change map style in realtime"). It is a step, not a menu: a
+ * driver asks for the next ground with one press, and the name of the ground that arrived is
+ * said beside the rail by the page that owns it ([LiveTab]), because a 22 dp glyph can say
+ * "ground" and cannot say "OpenTopoMap". It sits at the bottom of the rail so the eye keeps the
+ * top of it, and its ink is the plain action cyan - unlike the eye, it has no two-sided state
+ * to wear. The mark is last rather than the zoom steps being last because the pair of steppers
+ * belongs together; the rail reads as eye, then zoom, then ground.
  */
 @Composable
 internal fun HudRail(
@@ -325,6 +334,8 @@ internal fun HudRail(
     onToggleHud: () -> Unit,
     onZoomIn: () -> Unit,
     onZoomOut: () -> Unit,
+    groundLabel: String,
+    onCycleGround: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // The one sentence the button cannot print at 22 dp, said to the node instead. It names
@@ -354,6 +365,12 @@ internal fun HudRail(
             glyph = HudGlyphLedger.mark("action.step-down"),
             description = "zoom the map out",
             onClick = onZoomOut,
+        )
+        Box(Modifier.width(26.dp).height(1.dp).background(HudColors.CardHairline))
+        HudGlyphAction(
+            glyph = HudGlyphLedger.mark("action.map-ground"),
+            description = "change the map ground (now $groundLabel)",
+            onClick = onCycleGround,
         )
     }
 }

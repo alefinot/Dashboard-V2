@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,14 +40,19 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.ble.BleApi
 import com.alefinot.dashboardpp.ble.BleRuntime
+import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.MapCredit
 import com.alefinot.dashboardpp.ui.map.MapStylePref
+import com.alefinot.dashboardpp.ui.map.MapStyles
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
+import com.alefinot.dashboardpp.ui.theme.hudCard
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The Live page: a full-screen live map, with every reading in the app's glass over it.
@@ -71,8 +77,9 @@ import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
  * (bench-proven, 2026-11-15). So the shelves hand the map their bounds and the map
  * refuses a DOWN inside them ([LiveRouteMap]'s `touchRefusals`), which is what lets the
  * recorder pill be pressed and a swipe across the trip ribbon page the tabs. The rail -
- * the eye that puts both shelves away, and the two zoom steps that travel ([LiveHud]'s
- * [HudRail]) - hands its bounds to the same list, for the same reason, and it is the one
+ * the eye that puts both shelves away, the two zoom steps that travel, and the mark that lays a
+ * different ground under the map ([LiveHud]'s [HudRail]) - hands its bounds to the same list,
+ * for the same reason, and it is the one
  * glass that stays when the shelves slide off through the page edges. It is pinned to the
  * vertical middle of the whole page rather than to the space between the shelves, so the
  * eye it hides them with never moves (maintainer, 2026-11-19).
@@ -196,6 +203,37 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // map that arrives at the first fix does not shift anything when it does.
     val hasPosition = trail.isNotEmpty() || route.hasTrack
 
+    // The rail's ground cycler (maintainer, 2026-11-22: "add a map icon in the live map that
+    // allows the user to change map style in realtime"). One press lays the next ground from the
+    // catalogue under the map, in place, with the car moving under it.
+    //
+    // It writes through the picker's door and no other: the same `trip_settings` row App
+    // Settings' MAP GROUND writes, and the same `MapStylePref` mirror every map surface reads.
+    // Both, not just the row — the shell's collector is what tells the *other* surfaces
+    // eventually, and a DataStore round-trip is not something a driver should wait on to see the
+    // tiles change under a finger. And the row is what makes the choice survive the drive: a
+    // ground picked at a traffic light is the one the app wakes up on, and App Settings shows it.
+    val groundSettings = remember { RecorderSettings(context) }
+    val writes = rememberCoroutineScope()
+    // The ground that the rail last laid down, and whether its name is on the page. The glyph
+    // can say "ground", it cannot say "OpenTopoMap"; the name is not stored anywhere, because a
+    // chip that outlived the press would be a claim about a map somebody else has since changed.
+    var groundName by remember { mutableStateOf("") }
+    var groundNamed by remember { mutableStateOf(false) }
+    LaunchedEffect(groundName) {
+        if (groundName.isEmpty()) return@LaunchedEffect
+        delay(GROUND_NAME_MS)
+        groundNamed = false
+    }
+    // The name's inset from the page edge: clear of the rail's own width, so it never sits on
+    // top of the mark whose press wrote it. The rail is measured before any press can happen, so
+    // the unmeasured case is only the frame before the map appears.
+    val groundNameEnd = if (hudRail.width > 0f) {
+        with(density) { hudRail.width.toDp() } + LiveShelfInset + 8.dp
+    } else {
+        LiveShelfInset
+    }
+
     // The page clips to itself. The shelves' slide is a graphicsLayer translation, and
     // nothing between them and the window clipped at the page edge - so on the way out the
     // glass was painted over the tab bar below instead of under it (maintainer, 2026-11-19:
@@ -248,6 +286,56 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                         .align(Alignment.BottomStart)
                         .padding(start = LiveShelfInset, bottom = recenterBottom),
                 )
+                // The rail's news, beside the rail: the ground that press just laid down. The
+                // glyph can say "ground", it cannot say "OpenTopoMap" — and the press can happen
+                // with the shelves hidden, so this is the only place the change is written out.
+                //
+                // It hangs in the map's own slot, under the shelves' stacking order, beside the
+                // mark that wrote it, and it is deliberately NOT in the map's refusal list: it is
+                // not a control, so a swipe that starts on it moves the map, exactly as one that
+                // starts on the credit chip above does.
+                //
+                // It fades on the page's own reveal/fade timings, so it also stays a moment longer
+                // than the timer alone: `groundName` outlives `groundNamed` and the fade-out frame
+                // still has something to say.
+                //
+                // How to prove this chip exists from a bench, since it is a 2.4 s thing and this
+                // page defeats the obvious probe: `uiautomator dump` waits for a window that never
+                // goes idle here (the map moves the arrow every fix), so a dump costs 2-3 s and its
+                // snapshot lands whenever it lands. A dump fired "450 ms" after a press is usually
+                // reading a tree two seconds on, and reports nothing — which once looked like the
+                // fade hiding the node from accessibility. It was not: the same burst of twelve
+                // dumps after presses caught the name once on the faded build and exactly once, in
+                // the same position of the sequence, on the build without any transition
+                // (bench, 2026-11-22 — `text="Street Atlas" bounds="[724,1098][876,1127]"`). The
+                // name is exposed on both; the only reliable probe is a burst across the window,
+                // and the thing to read next to it is the rail's own `content-desc`, which names
+                // the same ground on every press and never races the timer.
+                AnimatedVisibility(
+                    visible = groundNamed,
+                    enter = if (HudMotion.enabled) {
+                        fadeIn(tween(HudMotion.REVEAL_MS, easing = HudMotion.Standard))
+                    } else {
+                        EnterTransition.None
+                    },
+                    exit = if (HudMotion.enabled) {
+                        fadeOut(tween(HudMotion.FADE_OUT_MS, easing = HudMotion.Standard))
+                    } else {
+                        ExitTransition.None
+                    },
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = groundNameEnd),
+                ) {
+                    Box(Modifier.hudCard()) {
+                        Text(
+                            groundName,
+                            style = HudeSectionCaps(),
+                            color = HudColors.Cyan,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
             }
         }
 
@@ -313,6 +401,14 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                 onToggleHud = { hudVisible = !hudVisible },
                 onZoomIn = { zoomIn++ },
                 onZoomOut = { zoomOut++ },
+                groundLabel = MapStylePref.current.label,
+                onCycleGround = {
+                    val next = MapStyles.nextAfter(MapStylePref.current)
+                    MapStylePref.set(next.id)
+                    groundName = next.label
+                    groundNamed = true
+                    writes.launch { groundSettings.setMapStyle(next.id) }
+                },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(end = LiveShelfInset)
@@ -377,3 +473,10 @@ private fun WaitingForPosition(hasFrame: Boolean) {
 /** The page's inset from the window edge: 10 dp across, 6 dp above and below. */
 private val LiveShelfInset = 10.dp
 private val LiveEdge = 6.dp
+
+/**
+ * How long the ground's name stays beside the rail after the press that laid it down: long
+ * enough to read once at a glance while driving, short enough that it is not a second label
+ * competing with the credit chip when the owner has stopped thinking about the map.
+ */
+private const val GROUND_NAME_MS = 2_400L

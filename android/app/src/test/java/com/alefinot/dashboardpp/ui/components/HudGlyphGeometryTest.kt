@@ -45,6 +45,7 @@ class HudGlyphGeometryTest {
         "Warn" to HudIcons.Warn,
         "Eye" to HudIcons.Eye,
         "FuelTank" to HudIcons.FuelTank,
+        "Layers" to HudIcons.Layers,
     )
 
     /** Marks filled as a body, keyed by the outline identifier in HudIcons. */
@@ -72,6 +73,7 @@ class HudGlyphGeometryTest {
         "SignalArcs" to HudIcons.SignalArcs,
         "EyeLid" to HudIcons.EyeLid,
         "FuelTankData" to HudIcons.FuelTankData,
+        "LayersData" to HudIcons.LayersData,
     )
 
     private val data: Map<String, String> = bodies + lines
@@ -406,6 +408,53 @@ class HudGlyphGeometryTest {
         for (r in radii) {
             assertTrue("an arc of r$r leaves the grid at its crown", dot.centre.y - r - 1.9f / 2f >= 0f)
         }
+    }
+
+    /**
+     * LAYERS — the Live page's ground cycler (2026-11-22): a sheet over a sheet. The mark's whole
+     * meaning is the seam between the two, so the seam is what gets measured. The lower `V` is
+     * the upper sheet's lower half translated straight down, which is what keeps the gap even all
+     * the way along a sloping arm rather than pinching it at one end; the vertical offset is not
+     * the daylight, though — the arms slope, so the daylight is the perpendicular distance minus
+     * the line that draws both.
+     */
+    @Test
+    fun `layers is a sheet over a sheet with an even seam`() {
+        val subs = polylines(HudIcons.LayersData)
+        assertEquals("one sheet and the seam under it", 2, subs.size)
+        val sheet = subs[0]
+        val seam = subs[1]
+        assertEquals("the sheet must run back to where it started", sheet.first(), sheet.last())
+        assertEquals("the lower sheet is an open V, not a second sheet", 3, seam.size)
+        for (pts in subs) {
+            assertEquals(
+                "a sheet is off the grid's axis", 12f,
+                (pts.minOf { it.x } + pts.maxOf { it.x }) / 2f, 0.01f,
+            )
+        }
+
+        // The seam's three points are the sheet's lower three, mirrored in x and pushed down.
+        val lower = listOf(sheet[1], sheet[2], sheet[3])
+        val offset = seam[1].y - sheet[2].y
+        assertTrue("the seam is above the sheet it sits under", offset > 0f)
+        for (i in seam.indices) {
+            assertEquals("seam arm $i is not parallel to the sheet's", lower[2 - i].x, seam[i].x, 0.01f)
+            assertEquals(
+                "seam arm $i is not the sheet's arm moved down",
+                offset, seam[i].y - lower[2 - i].y, 0.01f,
+            )
+        }
+
+        val rise = sheet[2].y - sheet[1].y
+        val run = sheet[1].x - sheet[2].x
+        val perpendicular = offset * run / hypot(rise, run)
+        val daylight = perpendicular - 1.9f
+        assertTrue(
+            "the seam closes: $daylight units between the two sheets at a $offset vertical offset " +
+                "on a $rise-over-$run slope, against the 2.0 this set will not go below",
+            daylight >= 2.0f,
+        )
+        assertTrue("a sheet $run wide is not a map", run >= 7f)
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────────

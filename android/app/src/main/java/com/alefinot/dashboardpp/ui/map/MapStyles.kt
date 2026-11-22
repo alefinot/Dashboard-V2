@@ -233,6 +233,22 @@ object MapStyles {
     /** The fallback every caller starts from, so nobody has to know the id constant. */
     val Standard: MapStyle get() = byId(STANDARD_ID)
 
+    /**
+     * The ground one press past [current], wrapping at the end of [ALL] — the Live page's rail
+     * mark steps through the grounds rather than opening a menu over a moving map (maintainer,
+     * 2026-11-22).
+     *
+     * It lives next to [ALL] on purpose: the order the owner reads in App Settings is the order
+     * the rail walks, and a second list somewhere in a screen would be a second truth about
+     * which ground comes after Terrain. Unknown input restarts at the shipped default instead of
+     * throwing — a rail press must never be able to fail.
+     */
+    fun nextAfter(current: MapStyle): MapStyle {
+        val at = ALL.indexOfFirst { it.id == current.id }
+        return if (at < 0) ALL.first() else ALL[(at + 1) % ALL.size]
+    }
+
+
     /** The low zoom bound for a style: its own, never below the app's world floor. */
     fun minZoomLevel(style: MapStyle): Double = maxOf(WORLD_FLOOR.toDouble(), style.minZoom.toDouble())
 
