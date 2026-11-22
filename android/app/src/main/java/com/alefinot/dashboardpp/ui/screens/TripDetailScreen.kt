@@ -3,6 +3,7 @@ package com.alefinot.dashboardpp.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.storage.StorageCopy
+import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
@@ -97,6 +99,16 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
 
     val s = detail.summary
     val samples = detail.samples
+    // The drive's 0-50 runs, recovered from the timer column the file has always carried
+    // (trips/runsFrom). Nothing in the file changed to get them, so a drive recorded months ago
+    // wears the same yellow it did on the live map while it happened.
+    val runs = detail.runs
+    // The run whose result this page is holding. Sticky, unlike the live map's card: the route
+    // under it is not going anywhere, so the number has no reason to leave before the owner does.
+    // Keyed on the file for the same reason the detail itself is — if this composable is ever handed
+    // a different drive without leaving the screen, a number from the drive before it must not stay
+    // on the page.
+    var shownRun by remember(row.file.absolutePath) { mutableStateOf<AccelRun?>(null) }
 
     // The screen sits on the page's flat black; `.card` frames the map and
     // `.perf-card` frames each chart.
@@ -145,7 +157,33 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             Box(
                 Modifier.fillMaxWidth().height(260.dp).hudCard().padding(2.dp),
             ) {
-                RouteMap(points, Modifier.fillMaxSize().clip(HudRadius.CardShape))
+                RouteMap(
+                    points = points,
+                    modifier = Modifier.fillMaxSize().clip(HudRadius.CardShape),
+                    // The drive's launches, in the live map's yellow, over the route the same file
+                    // drew. Tapping one reads its result out; tapping it again puts the answer away,
+                    // and so does tapping the card — see below for why the card needs that door too.
+                    runs = runs,
+                    selectedRun = shownRun,
+                    onRunTap = { hit ->
+                        shownRun = if (hit.id == shownRun?.id) null else hit
+                    },
+                )
+                shownRun?.let { run ->
+                    // The same card the live page floats over the drive, for the same question. No
+                    // fade-out here: on the live map the number leaves because the camera is about
+                    // to leave the ground it happened on, and a recorded route is not going anywhere.
+                    // The tap is the card's own because this glass lands at the map's top edge and a
+                    // launch that happened near that edge ends up underneath its own answer: a number
+                    // that could only be put away by poking the few pixels of line still showing would
+                    // be a number with no way back off the page.
+                    Box(
+                        Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                            .clickable { shownRun = null },
+                    ) {
+                        RunResultCard(run)
+                    }
+                }
             }
         } else {
             Box(

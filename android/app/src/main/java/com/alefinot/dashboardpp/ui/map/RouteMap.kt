@@ -11,6 +11,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.view.MotionEvent
 import android.view.ViewTreeObserver
 import kotlin.math.ceil
 import kotlin.math.max
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import com.alefinot.dashboardpp.ui.theme.HudColors
+import com.alefinot.dashboardpp.trips.AccelRun
 import org.osmdroid.config.Configuration
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
@@ -110,7 +112,21 @@ object OsmdroidSetup {
  * itself.
  */
 @Composable
-fun RouteMap(points: List<GeoPoint>, modifier: Modifier = Modifier) {
+fun RouteMap(
+    points: List<GeoPoint>,
+    modifier: Modifier = Modifier,
+    /**
+     * The drive's 0-50 runs, painted in yellow over the route — the same lines the live map drew
+     * while the drive was happening, recovered from the file (see [com.alefinot.dashboardpp.trips.runsFrom]).
+     * Empty is the common case and costs nothing: the detail page of a drive with no launches looks
+     * exactly the way it did before runs existed.
+     */
+    runs: List<AccelRun> = emptyList(),
+    /** The run whose result the page is showing: the one line dressed in white. */
+    selectedRun: AccelRun? = null,
+    /** A run's line was tapped. Not called for open ground — a miss is just a map tap. */
+    onRunTap: (AccelRun) -> Unit = {},
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     OsmdroidSetup.ensure(context)
     val holder = remember { MapHolder() }
@@ -127,7 +143,11 @@ fun RouteMap(points: List<GeoPoint>, modifier: Modifier = Modifier) {
         // visual mess it also fetches and decodes tiles nobody can see.
         modifier = modifier.clipToBounds(),
         factory = { ctx -> holder.build(ctx, style) },
-        update = { map -> holder.applyTrack(map, points, style) },
+        update = { map ->
+            holder.onRunTap = onRunTap
+            holder.applyTrack(map, points, style, runs)
+            holder.selectRun(map, selectedRun)
+        },
     )
     DisposableEffect(Unit) {
         onDispose { holder.release() }
@@ -160,8 +180,58 @@ private class MapHolder {
     /** The route's own line, kept so a style change can re-ink it without redrawing the track. */
     private var trackLine: Polyline? = null
 
+    /**
+     * The drive's 0-50 runs, over the route.
+     *
+     * The same object the live map wears ([RunOverlay]), so a run cannot learn two looks or two tap
+     * radii depending on which page the owner is asking about it on.
+     */
+    private val runOverlay = RunOverlay()
+
+    /** Where a run tap lands. Written from the update lambda, like the live map's holder. */
+    var onRunTap: ((AccelRun) -> Unit)? = null
+
     fun build(context: Context, style: MapStyle): MapView {
-        val view = MapView(context)
+        // A tap is read here rather than through osmdroid's clickable overlays, for the reason the
+        // live map gives at length: touches in this slot belong to the platform view, so the page
+        // can be told where to paint but never what was touched under a finger. This map has no tap
+        // gesture of its own to win against — no follow to resume, no page scroll to serve — so a
+        // hit on a run is the whole story: the number goes up, and the library's double-tap zoom
+        // does not fire under a finger that was asking about a run. A miss falls through untouched.
+        val view = object : MapView(context) {
+            private val slopPx = 12f * context.resources.displayMetrics.density
+            private var downX = 0f
+            private var downY = 0f
+            private var tapCandidate = false
+
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.x; downY = event.y; tapCandidate = true
+                    }
+                    // Two fingers is a pinch, not a question.
+                    MotionEvent.ACTION_POINTER_DOWN -> tapCandidate = false
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.x - downX
+                        val dy = event.y - downY
+                        if (tapCandidate && dx * dx + dy * dy > slopPx * slopPx) tapCandidate = false
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val tapped = tapCandidate
+                        tapCandidate = false
+                        if (tapped) {
+                            val hit = runOverlay.hit(this, event.x, event.y)
+                            if (hit != null) {
+                                onRunTap?.invoke(hit)
+                                return true
+                            }
+                        }
+                    }
+                    MotionEvent.ACTION_CANCEL -> tapCandidate = false
+                }
+                return super.onTouchEvent(event)
+            }
+        }
         view.setMultiTouchControls(true)
         // Data connection on: tiles are a bonus, never a dependency (see above).
         view.setUseDataConnection(true)
@@ -183,18 +253,36 @@ private class MapHolder {
         chrome.apply(view, style)
         this.style = style
         inkTrack(view)
+        // The run lines wear the same ground ink the route does, so they are re-dressed in the same
+        // pass — the yellow itself never changes, only the casing under it.
+        runOverlay.ink(view, style)
         view.invalidate()
+    }
+
+    /**
+     * The run whose result the page is showing, or null for none: the one line dressed in white.
+     *
+     * Kept apart from [applyTrack] because a tap is not a change of drive — it must not re-fit the
+     * camera, and it must not rebuild the route.
+     */
+    fun selectRun(view: MapView, run: AccelRun?) {
+        if (run === runOverlay.selected) return
+        runOverlay.selected = run
+        runOverlay.ink(view)
     }
 
     /**
      * The track is drawn as soon as the view exists; framing waits for a real
      * size, because a `AndroidView` update block runs before layout and framing
      * an unmeasured map is not merely wrong — see [MapFit].
+     *
+     * [runs] rides along with it because the two belong to one picture: a run is a section of the
+     * route, so it is drawn when the route is drawn and never on a map that has no route.
      */
-    fun applyTrack(view: MapView, points: List<GeoPoint>, style: MapStyle) {
+    fun applyTrack(view: MapView, points: List<GeoPoint>, style: MapStyle, runs: List<AccelRun> = emptyList()) {
         applyStyle(view, style)
         track = MapFit.usable(points)
-        drawTrack(view)
+        drawTrack(view, runs)
         if (view.width > 0 && view.height > 0) fit(view) else awaitSize(view)
     }
 
@@ -221,7 +309,7 @@ private class MapHolder {
         layoutListener = null
     }
 
-    private fun drawTrack(view: MapView) {
+    private fun drawTrack(view: MapView, runs: List<AccelRun>) {
         val manager = view.getOverlayManager()
         manager.clear()
         // `clear()` takes the ground wash, and any label layers the ground stacks, with
@@ -244,6 +332,19 @@ private class MapHolder {
         inkTrack(view)
         manager.add(outline)
         manager.add(line)
+
+        // The runs go between the route and its dots, which is the order the live map keeps for the
+        // same reason: a run is a mark painted *on* the drive, so it has to lie over the cyan, and
+        // the START/END dots stay over every line.
+        //
+        // The wipe above took the run lines with it — [RunOverlay.sync] answers "these are already
+        // on screen" by identity, and after a `clear()` that answer is a lie: the polylines it is
+        // remembering are no longer in this manager. So the bookkeeping is dropped here, where the
+        // wipe happens, and the sync below rebuilds them. The page re-asserts the selection straight
+        // after (its `update` lambda), so the forgotten one is back on the same frame; the live map,
+        // which never wipes its whole manager, keeps its guard working.
+        runOverlay.clear()
+        runOverlay.sync(view, runs, manager.size, style)
 
         if (track.size >= 2) {
             manager.add(labelledMarker(view, track.first(), HudColors.Green.toArgb(), "START"))
@@ -339,6 +440,8 @@ private class MapHolder {
         trackLine = null
         casing = null
         track = emptyList()
+        runOverlay.clear()
+        onRunTap = null
         fitted = null
     }
 }

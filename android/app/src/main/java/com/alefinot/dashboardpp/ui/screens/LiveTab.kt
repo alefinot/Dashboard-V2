@@ -45,22 +45,16 @@ import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
-import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.MapCredit
 import com.alefinot.dashboardpp.ui.map.MapStylePref
 import com.alefinot.dashboardpp.ui.map.MapStyles
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
-import com.alefinot.dashboardpp.ui.theme.HudeMetric
-import com.alefinot.dashboardpp.ui.theme.HudeMetricUnit
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * The Live page: a full-screen live map, with every reading in the app's glass over it.
@@ -552,52 +546,6 @@ private fun WaitingForPosition(hasFrame: Boolean) {
         )
     }
 }
-
-/**
- * One finished 0-50, in words: the number the unit timed, and the two facts that let the owner
- * check it means what it says.
- *
- * The label is fixed wording, not the unit's `ACCEL_TARGET_SPEED` fetched over the link — for a
- * card whose whole job is to answer "which run was this?", a config read would be a round trip
- * that adds a way to fail and no information. The speed the run actually ended at is printed next
- * to it instead, so a target of 100 is self-evident on the card rather than contradicted by it.
- *
- * The clock is the run's first fix, not the drive's start and not the frame's receive time: it is
- * the one timestamp that lets the owner place the launch in a drive they are remembering — "that
- * was the pull-out at the light after the bridge".
- */
-@Composable
-private fun RunResultCard(run: AccelRun) {
-    Box(Modifier.hudCard()) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Text("0–50", style = HudeSectionCaps(), color = HudColors.Yellow)
-            Row {
-                Text(
-                    hudNum(run.seconds, 2),
-                    style = HudeMetric(),
-                    color = HudColors.TextPrimary,
-                    modifier = Modifier.alignByBaseline(),
-                )
-                Text(
-                    " s",
-                    style = HudeMetricUnit(),
-                    color = HudColors.TextMuted,
-                    modifier = Modifier.alignByBaseline(),
-                )
-            }
-            Text(
-                clock(run.startedAtMs) + " · " + hudNum(run.finishSpeedKmh, 0) + " km/h",
-                style = HudeSectionCaps(),
-                color = HudColors.TextMuted,
-            )
-        }
-    }
-}
-
-/** A wall clock, second-precise, in the app's fixed US locale (see [hudNum]). */
-private fun clock(ms: Long): String = CLOCK.format(Date(ms))
-
-private val CLOCK = SimpleDateFormat("HH:mm:ss", Locale.US)
 
 /** The page's inset from the window edge: 10 dp across, 6 dp above and below. */
 private val LiveShelfInset = 10.dp

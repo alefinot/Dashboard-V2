@@ -187,6 +187,19 @@ class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
          */
         const val DEFAULT_MAX_RUNS = 20
 
+        /**
+         * The same limit for a **sealed** drive, read back from its file (see [runsFrom]).
+         *
+         * Twenty is a clutter rule for a map the camera is driving: past it the owner cannot pick a
+         * line out anyway, and the ones that fell off were seen minutes ago. A recorded drive is the
+         * opposite case — the ground is not going anywhere, and the owner is looking back through
+         * something they cannot re-run. So the archive is allowed far more, with a ceiling still:
+         * a hundred is more launches than a human makes in a season of Sundays, and it is the number
+         * that keeps a pathological file from handing the detail map a thousand polylines to project
+         * and hit-test per tap.
+         */
+        const val ARCHIVE_MAX_RUNS = 100
+
         /** Ceiling on one open run's positions; see the note where it is enforced. */
         private const val MAX_OPEN_POINTS = 64
 
@@ -205,4 +218,43 @@ class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
         /** The target the badge's "0-50" wording — and the map's yellow line — is named for. */
         private const val TARGET_KMH = 50.0
     }
+}
+
+/**
+ * The 0-50 runs a recorded drive contains, read back out of the rows it was written from.
+ *
+ * Nothing had to be added to the file to get them. Every row already carries `tmr_st` and `tmr_s`
+ * beside the position, because the unit reports its acceleration timer in the same frame as its
+ * fix — so a drive recorded before runs existed still holds all of its launches, and this recovers
+ * them instead of migrating files or adding a column the old app would choke on. (A run list stored
+ * in a sidecar or a header would have been faster to read and worse in every other way: it could
+ * disagree with the rows underneath it, and it could only ever describe drives recorded after the
+ * change.)
+ *
+ * It works by **replaying** the rows through the same [AccelRunTracker] the live frame lane feeds,
+ * in file order. That is the whole point: one implementation of the transition rules, so an
+ * archived run cannot disagree with the yellow line the live map drew a minute earlier, and a fix
+ * to what counts as a run lands on both pages at once.
+ *
+ * Three things a replay cannot know, all of them honest rather than papered over:
+ *
+ * - **A launch that crossed while the file was frozen.** The recorder pauses when the link stalls,
+ *   so a stretch of the run is simply not in the file. The run keeps the part that was written, and
+ *   its line joins across the hole the same single polyline the drive's own route is drawn with on
+ *   this page.
+ * - **A file that begins mid-launch.** The first RUNNING row opens the run there, exactly as it
+ *   does when a phone connects late: a partial path carrying the unit's whole time.
+ * - **When the run happened.** [TripSample.tsMs] is the phone's receive time — the ESP's clock is
+ *   usually unset — which is the same clock the live card printed, so the card's time means what it
+ *   meant live.
+ *
+ * A cost worth stating: it is one pass over the rows and no allocation per row beyond the handful
+ * of points a run holds, and it runs once per file open (see the detail page's `remember`), not per
+ * recomposition.
+ */
+fun runsFrom(samples: List<TripSample>, maxRuns: Int = AccelRunTracker.ARCHIVE_MAX_RUNS): List<AccelRun> {
+    if (samples.isEmpty()) return emptyList()
+    val tracker = AccelRunTracker(maxRuns)
+    for (sample in samples) tracker.onFrame(sample.snapshot, sample.tsMs)
+    return tracker.snapshot()
 }

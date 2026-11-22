@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import com.alefinot.dashboardpp.storage.AppRoot
+import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.CachedSummary
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TrackPoint
@@ -15,6 +16,7 @@ import com.alefinot.dashboardpp.trips.TripStore
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.trips.TripTag
 import com.alefinot.dashboardpp.trips.TripTagReader
+import com.alefinot.dashboardpp.trips.runsFrom
 import com.alefinot.dashboardpp.vehicles.VehicleStore
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,15 @@ data class TripDetail(
     val file: File,
     val summary: TripSummary,
     val samples: List<com.alefinot.dashboardpp.trips.TripSample>,
+    /**
+     * The drive's 0-50 runs, recovered from [samples] — see [runsFrom].
+     *
+     * Computed here, once per file open, rather than in the screen: the screen recomposes for every
+     * tap and every style pick, and a replay of a 43 k-row file has no business running under a
+     * finger. The list's identity is what the map's overlay guard runs on, and this is the one
+     * place that can promise it.
+     */
+    val runs: List<AccelRun>,
 )
 
 /**
@@ -408,7 +419,8 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun detail(row: TripRow): TripDetail? {
         val summary = row.summary ?: TripReader.summarize(row.file.absolutePath) ?: return null
-        return TripDetail(row.file, summary, TripReader.samples(row.file.absolutePath))
+        val samples = TripReader.samples(row.file.absolutePath)
+        return TripDetail(row.file, summary, samples, runsFrom(samples))
     }
 
     fun delete(row: TripRow) {

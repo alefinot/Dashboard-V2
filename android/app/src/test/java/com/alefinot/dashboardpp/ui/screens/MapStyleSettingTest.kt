@@ -109,10 +109,11 @@ class MapStyleSettingTest {
         val detail = mapSource("RouteMap.kt")
         assertTrue(
             "a sealed drive's detail map stopped following the ground — two surfaces of one " +
-                "app drawing two different worlds",
+                "app drawing two different worlds. (The fourth argument is the drive's 0-50 runs, " +
+                "which are dressed for the same ground; the guard is on the style, not on the arity.)",
             detail.contains("val style = MapStylePref.current") &&
                 detail.contains("holder.build(ctx, style)") &&
-                detail.contains("holder.applyTrack(map, points, style)"),
+                detail.contains("holder.applyTrack(map, points, style, runs)"),
         )
         // The point of the feature: no surface is allowed to keep a basemap of its own.
         for ((name, src) in listOf("LiveRouteMap.kt" to live, "RouteMap.kt" to detail)) {

@@ -88,8 +88,8 @@ import kotlin.math.sqrt
  * happened. Tapping that line is what reads the result out, and the finding is this file's job
  * rather than osmdroid's clickable-overlay kind: touches in this slot belong to the platform view,
  * so a page can be told where to paint but never what was touched under a finger. A tap is
- * therefore measured against the run lines — nearest within [RUN_TAP_DP], in pixels, at the zoom on
- * screen — and only a miss falls through to the gesture the map already had.
+ * therefore measured against the run lines — nearest within [RunOverlay.TAP_DP], in pixels, at the
+ * zoom on screen — and only a miss falls through to the gesture the map already had.
  *
  * A finger still wins, and now it wins the moment it moves: the map view's own
  * `onTouchEvent` treats travel past the touch slop as "this camera is mine",
@@ -317,7 +317,11 @@ private class LiveMapHolder(
     private val mirrors = ArrayList<ArrayList<GeoPoint>>()
 
     /**
-     * The 0-50 runs this map has drawn, oldest first, each with the pair of lines it owns.
+     * The 0-50 runs this map has drawn.
+     *
+     * The ink, the width and the tap radius are not here: they are [RunOverlay]'s, because the trip
+     * detail page draws the same runs from a recorded file and a run that changes appearance between
+     * the two maps teaches the owner two languages for one thing.
      *
      * A run's geometry is finished business the moment the unit closes it — the frame lane hands the
      * same object with the same points for as long as the drive is on screen — so a run's line is
@@ -326,13 +330,10 @@ private class LiveMapHolder(
      * a drive's worth of points, and why the frames that mention no result cost nothing but the
      * reference check in [applyRoute].
      */
-    private val runLines = ArrayList<Pair<AccelRun, RunInk>>()
+    private val runOverlay = RunOverlay()
 
-    /** The run list already drawn, by identity - see [syncRuns]. */
+    /** The run list already drawn, by identity — what lets [applyRoute] skip [RunOverlay.sync]. */
     private var lastRuns: List<AccelRun>? = null
-
-    /** The run the lines were last inked for: the one whose result the page is showing. */
-    private var runsSelected: AccelRun? = null
 
     /**
      * Where a tap landed, as the page wants it: a run, or null for open ground. Read from the view's
@@ -785,7 +786,7 @@ private class LiveMapHolder(
         inkPieces(view)
         // The run lines wear the same ground ink the drive's pieces do, so they are re-dressed in
         // the same pass - the yellow itself never changes, only the casing under it.
-        inkRuns(view)
+        runOverlay.ink(view, style)
         view.invalidate()
     }
 
@@ -819,9 +820,9 @@ private class LiveMapHolder(
         // drive, and the run the card is open on is not part of the drive's shape. Two reference
         // compares per pass, and on the one that differs the run lines are re-dressed - no
         // overlay is added, moved or removed, and the camera is not touched.
-        if (selectedRun !== runsSelected) {
-            runsSelected = selectedRun
-            inkRuns(view)
+        if (selectedRun !== runOverlay.selected) {
+            runOverlay.selected = selectedRun
+            runOverlay.ink(view)
         }
         // All three inputs are compared by identity: the recorder and the frame lane hand out a new
         // route / a new trail / a new run list once a second and the same objects in between, so a
@@ -837,7 +838,7 @@ private class LiveMapHolder(
             writingNow = writing
             syncSegments(view, route.segments, writing)
             syncMarkers(view, route, cursor)
-            syncRuns(view, runs)
+            runOverlay.sync(view, runs, chrome.lineInsertAt + 2 * lines.size, style)
             if (cursor != null) advance(trail, cursor, newDrive)
         }
         if (route.closed) closeAt(view, route.endAt) else {
@@ -926,9 +927,8 @@ private class LiveMapHolder(
         lines.clear()
         casings.clear()
         mirrors.clear()
-        runLines.clear()
+        runOverlay.clear()
         lastRuns = null
-        runsSelected = null
         starts.clear()
         pauses.clear()
         endMarker = null
@@ -960,10 +960,7 @@ private class LiveMapHolder(
         // The runs go with the drive they belong to, not with the list they arrived in: a new
         // drive's first fix replaces the picture, and a yellow line from the drive before it would
         // be drawn on ground the new drive never drove.
-        for ((_, ink) in runLines) {
-            view.overlayManager.remove(ink.line)
-            view.overlayManager.remove(ink.casing)
-        }
+        runOverlay.removeFrom(view)
         hideTail(view)
         for (marker in starts) marker?.let { view.overlayManager.remove(it) }
         for (marker in pauses) view.overlayManager.remove(marker)
@@ -972,9 +969,8 @@ private class LiveMapHolder(
         lines.clear()
         casings.clear()
         mirrors.clear()
-        runLines.clear()
+        runOverlay.clear()
         lastRuns = null
-        runsSelected = null
         starts.clear()
         pauses.clear()
         endMarker = null
@@ -1345,124 +1341,13 @@ private class LiveMapHolder(
         outline.strokeWidth = (ROUTE_DP + ink.extraDp) * density
     }
 
-    /** One 0-50 run's two lines, and the screen-independent geometry they are stroked from. */
-    private class RunInk(
-        val line: Polyline,
-        val casing: Polyline,
-        val points: ArrayList<GeoPoint>,
-    )
-
-    /**
-     * Put the drawn run lines in step with [runs].
-     *
-     * A run is finished business the moment the unit closes it - the frame lane hands out the same
-     * object with the same points for as long as its drive is on screen - so this is a rebuild over
-     * at most twenty items, and the frames that mention no new result never get here at all:
-     * [applyRoute] compares the list by identity.
-     *
-     * The pairs go in above the drive's own lines and its tail, in list order. A run is a mark *on*
-     * the drive, so it has to be over it; and where two runs cross, the newer one is on top, which
-     * is the same chronology the drive's pieces follow. The markers were appended at the end of the
-     * manager and stay over every line, including these.
-     */
-    private fun syncRuns(view: MapView, runs: List<AccelRun>) {
-        if (runLines.size == runs.size) {
-            var same = true
-            for (i in runs.indices) {
-                if (runLines[i].first !== runs[i]) {
-                    same = false
-                    break
-                }
-            }
-            if (same) return
-        }
-        for ((_, ink) in runLines) {
-            view.overlayManager.remove(ink.casing)
-            view.overlayManager.remove(ink.line)
-        }
-        runLines.clear()
-        val aboveDrive = chrome.lineInsertAt + 2 * lines.size
-        for ((index, run) in runs.withIndex()) {
-            val points = ArrayList<GeoPoint>(run.points.size)
-            for (point in run.points) points.add(GeoPoint(point.lat, point.lon))
-            val line = newLine()
-            val casing = newLine()
-            line.setPoints(points)
-            casing.setPoints(points)
-            val at = aboveDrive + 2 * index
-            view.overlayManager.add(at, casing)
-            view.overlayManager.add(at + 1, line)
-            runLines.add(run to RunInk(line, casing, points))
-        }
-        inkRuns(view)
-    }
-
-    /**
-     * The yellow, and the one run dressed in white.
-     *
-     * A run lies exactly on the cyan it is part of, at the same width, so the ink has to do what the
-     * drive's ink does - a casing underneath, in the colour the ground needs - or the line turns
-     * into a smear over aerial imagery. The run whose result is on screen takes a white casing
-     * instead: on a line this thin that is the only difference a glance can find, and it is the
-     * same white the card's border is, which is what ties the two together on the screen.
-     */
-    private fun inkRuns(view: MapView) {
-        val s = style ?: return
-        val density = view.resources.displayMetrics.density
-        val ink = MapStyles.casing(s)
-        for ((run, pair) in runLines) {
-            val casing = pair.casing.getOutlinePaint()
-            casing.color = if (run === runsSelected) HudColors.White.toArgb() else ink.colorArgb
-            casing.strokeWidth = (ROUTE_DP + ink.extraDp) * density
-            val line = pair.line.getOutlinePaint()
-            line.color = HudColors.Yellow.toArgb()
-            line.strokeWidth = ROUTE_DP * density
-        }
-        view.invalidate()
-    }
-
     /**
      * The run under `(x, y)`, in view pixels, or null.
      *
-     * Measured in pixels rather than metres, at the zoom on screen: what the owner aimed at is a
-     * thing they could see, and a radius in ground distance would make a run untappable at a city
-     * zoom and, at a parking-lot zoom, steal taps from ground the owner meant. Nearest wins, so two
-     * runs drawn over each other give the finger the decision instead of list order.
+     * The measuring is [RunOverlay]'s, shared with the trip detail page: a run is aimed at the same
+     * way on both maps, and two hit tests would be two answers.
      */
-    fun runAt(view: MapView, x: Float, y: Float): AccelRun? {
-        if (runLines.isEmpty()) return null
-        val radius = RUN_TAP_DP * view.resources.displayMetrics.density
-        val radiusSq = radius * radius
-        val projection = view.projection
-        val screen = android.graphics.Point()
-        var best: AccelRun? = null
-        var bestSq = Float.MAX_VALUE
-        for ((run, ink) in runLines) {
-            val points = ink.points
-            if (points.size < 2) continue
-            // Walk the polyline as a chain of segments: at 1 Hz a run is four or five points, so
-            // this is a handful of arithmetic per run, and the whole test is cheaper than the
-            // overlay hit test it replaces would have been.
-            projection.toPixels(points[0], screen)
-            var ax = screen.x.toFloat()
-            var ay = screen.y.toFloat()
-            for (i in 1 until points.size) {
-                projection.toPixels(points[i], screen)
-                val bx = screen.x.toFloat()
-                val by = screen.y.toFloat()
-                val d2 = pointToSegmentSq(x, y, ax, ay, bx, by)
-                // Two points that project to the same pixel make a zero-length segment, and the
-                // formula falls back to the point distance on its own - no special case to get wrong.
-                if (d2 <= radiusSq && d2 < bestSq) {
-                    bestSq = d2
-                    best = run
-                }
-                ax = bx
-                ay = by
-            }
-        }
-        return best
-    }
+    fun runAt(view: MapView, x: Float, y: Float): AccelRun? = runOverlay.hit(view, x, y)
 
     private fun awaitSize(view: MapView) {
         if (layoutListener != null) return
@@ -1522,15 +1407,6 @@ private class LiveMapHolder(
 
         /** Enough positions for a six-metre heading baseline, and no more per fix. */
         private const val HEADING_POINTS = 64
-
-        /**
-         * How close a tap has to come to a run's line to be about it, in dp.
-         *
-         * The line is 6 px, so a hit area the same width is a thing nobody hits; this is the same
-         * generous-finger logic the +/− slabs use in reverse. Small enough that a tap on the road
-         * beside a launch still re-centres the map, which is the gesture the label promises.
-         */
-        private const val RUN_TAP_DP = 24f
     }
 }
 
@@ -1556,35 +1432,3 @@ private class LiveMapHolder(
  */
 internal fun easeEase(t: Double): Double =
     if (t < 0.5) 4.0 * t * t * t else 1.0 - (-2.0 * t + 2.0).pow(3) / 2.0
-
-/**
- * Squared distance from `(px, py)` to the segment `(ax, ay)-(bx, by)`, in the caller's units.
- *
- * Squared, because every caller has a squared radius at hand and the square root is the one part
- * of this that costs anything. The projection is clamped to the segment, so a point beyond an end
- * measures to that end and not to the line's extension — which for a tap means a finger past the
- * last fix of a run is measured against the fix, where the run actually is.
- *
- * A degenerate segment (both ends at one pixel, which a run of two fixes 15 cm apart really is at
- * a city zoom) takes the `else` branch: `t` is 0 and the answer is the distance to that point.
- */
-internal fun pointToSegmentSq(
-    px: Float,
-    py: Float,
-    ax: Float,
-    ay: Float,
-    bx: Float,
-    by: Float,
-): Float {
-    val dx = bx - ax
-    val dy = by - ay
-    val length = dx * dx + dy * dy
-    val t = if (length > 0f) {
-        ((px - ax) * dx + (py - ay) * dy / length).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    val ox = px - (ax + t * dx)
-    val oy = py - (ay + t * dy)
-    return ox * ox + oy * oy
-}
