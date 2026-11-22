@@ -68,7 +68,7 @@ object BarLayout {
     )
 
     fun glyph(tab: AppTab): Glyph = when (tab) {
-        AppTab.VEHICLES -> Glyph("Vehicle", HudGlyphSize.Card, 52.dp, 1.4f, true)
+        AppTab.VEHICLES -> Glyph("Garage", HudGlyphSize.Card, 52.dp, 1.4f, true)
         AppTab.LIVE -> Glyph("Live", HudGlyphSize.Action, 48.dp, 1f, false)
         AppTab.TRIPS -> Glyph("Trips", HudGlyphSize.Action, 48.dp, 1f, false)
         AppTab.WEB -> Glyph("Dashboard settings", HudGlyphSize.Action, 48.dp, 1f, false)
@@ -78,7 +78,7 @@ object BarLayout {
     fun icon(tab: AppTab): ImageVector = when (tab) {
         AppTab.LIVE -> HudIcons.Gauge
         AppTab.TRIPS -> HudIcons.Pin
-        AppTab.VEHICLES -> HudIcons.SportWheel
+        AppTab.VEHICLES -> HudIcons.Garage
         AppTab.WEB -> HudIcons.Chip
         AppTab.SETTINGS -> HudIcons.Cog
     }

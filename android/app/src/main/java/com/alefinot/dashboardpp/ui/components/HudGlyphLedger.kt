@@ -31,7 +31,7 @@ object HudGlyphLedger {
         // ── Places. The bar, and the same mark on the page it opens. ──
         "nav.live" to HudIcons.Gauge,
         "nav.trips" to HudIcons.Pin,
-        "nav.vehicles" to HudIcons.SportWheel,
+        "nav.vehicles" to HudIcons.Garage,
         "nav.unit-settings" to HudIcons.Chip,
         "nav.app-settings" to HudIcons.Cog,
 
@@ -98,8 +98,8 @@ object HudGlyphLedger {
         "readout.paused" to HudIcons.Pause,
         "readout.stale" to HudIcons.Warn,
         // The vehicle card's empty cover and the editor's empty well. Same mark as the bar's
-        // `nav.vehicles`, and `SHARED["SportWheel"]` is the reason that is not a collision.
-        "vehicle.placeholder" to HudIcons.SportWheel,
+        // `nav.vehicles`, and `SHARED["Garage"]` is the reason that is not a collision.
+        "vehicle.placeholder" to HudIcons.Garage,
     )
 
     /**
@@ -124,9 +124,9 @@ object HudGlyphLedger {
             "that reading (see HudIcons.Gauge).",
         "Pin" to "The TRIPS slot, a recorded trip and its distance are the same object in three " +
             "places — the map, the list and the card already draw one pin.",
-        "SportWheel" to "`the vehicle tab` and `a vehicle with no photo yet` are the same noun: this " +
+        "Garage" to "`the garage tab` and `a vehicle with no photo yet` are the same noun: this " +
             "app's subject. The bar's centre slot, a card's empty cover, the editor's empty well and " +
-            "`OPEN VEHICLE PAGE` therefore draw one Ultraleggera rather than a tab mark and a " +
+            "`OPEN VEHICLE PAGE` therefore draw one garage front rather than a tab mark and a " +
             "placeholder mark that happen to look alike.",
         "Pause" to "The PAUSED pill and the PAUSE action are one act in two voices: the pill reports " +
             "the state the control puts the drive in, exactly as `readout.recording` reports what " +

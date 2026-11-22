@@ -1,6 +1,5 @@
 ﻿package com.alefinot.dashboardpp.ui.screens
 
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
@@ -10,7 +9,6 @@ import com.alefinot.dashboardpp.ui.components.signedArea
 import com.alefinot.dashboardpp.ui.components.subpaths
 import com.alefinot.dashboardpp.ui.components.vertices
 import kotlin.math.hypot
-import kotlin.math.sin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -92,107 +90,106 @@ class BarLayoutTest {
     fun `the vehicle mark is drawn on the same grid as the others`() {
         // Same 24-unit viewport, same language of filled bodies: a borrowed icon from another set
         // would be a second visual language in a bar that already has one.
-        assertEquals(24f, HudIcons.SportWheel.viewportWidth, 0f)
-        assertEquals(24f, HudIcons.SportWheel.viewportHeight, 0f)
+        assertEquals(24f, HudIcons.Garage.viewportWidth, 0f)
+        assertEquals(24f, HudIcons.Garage.viewportHeight, 0f)
     }
 
     /**
-     * The wheel the bar and the cards draw, after OZ's Ultraleggera: a thin low-profile tyre, a
-     * wide rim, and **six double spokes** that run out to the lip with the centre carved open. Two
-     * openings per pitch is the entire design — the daylight between two pairs, and a wedge inside
-     * each pair that starts out at the hub so the two branches keep one shared root and fork only
-     * as they reach the lip. Every one of the twelve is a contour wound against the face, so what
-     * shows through the spokes is the bar's glass sheet or the card's empty panel, never paint.
+     * The garage front the bar and the cards draw, after the maintainer's 2026-11-22 restyle: the
+     * wheel era ended, the car key that replaced it was pulled the same day for assembling a face
+     * out of two round buttons on a square face, the menu became the Garage, and the mark drew what
+     * a garage looks like from the street — gable and eaves, a roller door bored through the front,
+     * three slats floating in the bore. It is the set's one rule stated three ways in one path:
+     * ink, daylight counter-wound against the ink, ink again inside the daylight.
      *
      * The floors are stated in pixels at the bar's 30 dp (one unit ~3.4 px on the bench phone),
      * the size the mark is seen at most and the size a photo-less card cover draws it at; the
      * editor's well is 38 dp, and the `OPEN VEHICLE PAGE` button's 18 dp is deliberately not
-     * floored here because a wheel's twelve openings are not what that size can resolve.
+     * floored here because at that size the slats fall together into one ribbed panel, which is
+     * still a garage door.
      */
     @Test
-    fun `the sport wheel is a thin tyre and six double spokes cut out of the rim`() {
-        val subs = subpaths(HudIcons.SportWheelData)
-        assertEquals("tyre outer, tyre inner, the rim face, six openings, six splits, the bore",
-            16, subs.size)
+    fun `the garage front is a roof over a roller door of three slats`() {
+        val subs = subpaths(HudIcons.GarageData)
+        assertEquals("the building, the door bore, and three slats", 5, subs.size)
 
-        val rings = listOf(circle(subs[0]), circle(subs[1]), circle(subs[2]), circle(subs[15]))
-        for ((i, ring) in rings.withIndex()) {
-            assertEquals("ring $i off-centre in x", 12f, ring.centre.x, 0.01f)
-            assertEquals("ring $i off-centre in y", 12f, ring.centre.y, 0.01f)
+        val shell = contourPoints(subs[0])
+        assertTrue("the garage leaves the 24-unit grid",
+            shell.all { it.x in 0f..24f && it.y in 0f..24f })
+        assertTrue("the shell does not wind as ink", signedArea(shell) > 0.0)
+
+        val left = shell.minOf { it.x }
+        val right = shell.maxOf { it.x }
+        val apex = shell.minOf { it.y }
+        val bottom = shell.maxOf { it.y }
+        assertEquals("the front is off the grid's axis", 12f, (left + right) / 2f, 0.01f)
+
+        // Walls, jambs, sill — the daylight-safe frame the door is cut inside. The wall line is
+        // the bottom edge's own span: the eave tips sit above it, so min/max x there is the wall,
+        // not the overhang.
+        val wallLeft = shell.filter { it.y >= bottom - 0.01f }.minOf { it.x }
+        val wallRight = shell.filter { it.y >= bottom - 0.01f }.maxOf { it.x }
+        assertTrue("the eaves do not overhang the walls, so this is a house, not a garage front",
+            wallLeft - left >= 2.0f && right - wallRight >= 2.0f)
+
+        // The door is daylight bored through the face — wound against the shell exactly as the
+        // pin bores its eye — and centred like everything else in the set.
+        val door = contourPoints(subs[1])
+        assertTrue("the door winds with the shell, so the front has no opening",
+            signedArea(door) < 0.0)
+        val doorLeft = door.minOf { it.x }
+        val doorRight = door.maxOf { it.x }
+        val doorTop = door.minOf { it.y }
+        val doorBottom = door.maxOf { it.y }
+        assertEquals("the door is not centred on the front", 12f, (doorLeft + doorRight) / 2f, 0.01f)
+        assertTrue("a door at x$doorLeft leaves the shell's wall no jamb at 30 dp",
+            doorLeft - wallLeft >= 2.0f && wallRight - doorRight >= 2.0f)
+        assertTrue("the door runs into the sill", bottom - doorBottom >= 2.0f)
+
+        // The lintel: the strip of front between the door's head and the eaves line. The eaves'
+        // y is the only other height the shell's outline carries between them.
+        val eave = shell.filter { it.y > apex + 0.01f && it.y < doorTop }.maxOf { it.y }
+        assertTrue("the roof is only ${eave - apex} units tall over the eaves line",
+            eave - apex >= 4.0f)
+        assertTrue("the door climbs into the eaves, so there is no lintel at 30 dp",
+            doorTop - eave >= 1.5f)
+
+        // The slats: ink again inside the bore, so NonZero paints bars and leaves the grooves the
+        // glass sheet shows through. Three of them, equal, evenly spaced, standing clear of the
+        // bore's own edge so it stays a ring and not a comb.
+        val slats = subs.subList(2, 5).map { contourPoints(it) }
+            .sortedBy { pts -> pts.minOf { it.y } }
+        for ((i, s) in slats.withIndex()) {
+            assertTrue("slat $i winds against the shell, so the door is a solid dark panel",
+                signedArea(s) > 0.0)
+            assertTrue("slat $i pokes out of the bore",
+                s.all { it.x > doorLeft && it.x < doorRight && it.y > doorTop && it.y < doorBottom })
         }
-        val (tyre, tyreIn, lip, bore) = rings
-        assertTrue("the tyre's outer edge does not wind as ink ($tyre)", tyre.sign > 0.0)
-        assertTrue("the tyre's inner edge winds with it, so the tyre fills solid",
-            tyreIn.sign * tyre.sign < 0.0)
-        assertTrue("the rim face does not wind as ink, so the middle of the wheel is a hole",
-            lip.sign * tyre.sign > 0.0)
-        assertTrue("the centre bore winds with the face, so the hub has no bore",
-            bore.sign * lip.sign < 0.0)
+        val heights = slats.map { pts -> pts.maxOf { it.y } - pts.minOf { it.y } }
+        assertTrue("the slats are not equal bars: ${heights.map { "%.2f".format(it) }}",
+            heights.max() - heights.min() <= 0.05f)
+        val grooves = mutableListOf(slats[0].minOf { it.y } - doorTop)
+        grooves += slats.zipWithNext { a, b -> b.minOf { it.y } - a.maxOf { it.y } }
+        grooves += doorBottom - slats.last().maxOf { it.y }
+        assertTrue("the door's daylight is not even: ${grooves.map { "%.2f".format(it) }}",
+            grooves.max() - grooves.min() <= 0.05f)
+        val slatLeft = slats.minOf { pts -> pts.minOf { it.x } }
+        val slatRight = slats.maxOf { pts -> pts.maxOf { it.x } }
+        assertTrue("the slats touch the jambs, so the bore closes into a comb",
+            slatLeft - doorLeft >= 0.75f && doorRight - slatRight >= 0.75f)
 
-        // Twelve openings. A contour that winds *with* the face is filled by NonZero, and the
-        // wheel is a disc again — the one thing this glyph exists not to be.
-        val openings = subs.subList(3, 9).map { contourPoints(it) }
-        val splits = subs.subList(9, 15).map { contourPoints(it) }
-        for ((i, pts) in openings.withIndex()) {
-            assertEquals("opening $i is an arc-chord-arc-chord band", 4, pts.size)
-            assertTrue("opening $i winds with the face, so the wheel has no spokes",
-                signedArea(pts) < 0.0)
-        }
-        for ((i, pts) in splits.withIndex()) {
-            assertEquals("split $i is a wedge of daylight with its apex inboard", 3, pts.size)
-            assertTrue("split $i winds with the face, so the pair is one spoke, not a double",
-                signedArea(pts) < 0.0)
-        }
-
-        // Where the carving stops is what keeps the wheel a wheel: a continuous lip at the edge,
-        // a solid hub at the centre, and a wall of hub left around the bore.
-        val lipIn = openings.maxOf { pts -> pts.maxOf { rad(it) } }
-        val hub = openings.minOf { pts -> pts.minOf { rad(it) } }
-        assertTrue("the openings reach r=$lipIn on a face of r=${lip.radius}: the lip is cut " +
-            "through, and a wheel with a broken rim lip is a snowflake",
-            lipIn <= lip.radius - 0.05f)
-        assertTrue("the openings cut in to r=$hub, so there is no hub left", hub >= 2.0f)
-        assertTrue("a r$hub hub bored to r${bore.radius} has no wall at 30 dp",
-            hub - bore.radius >= 1.2f)
-        val root = splits.minOf { pts -> pts.minOf { rad(it) } }
-        assertTrue("the split starts at r=$root, inboard of the hub's edge (r$hub): the pair " +
-            "never shares a root, and six double spokes become twelve plain ones",
-            root > hub)
-
+        // Pixels at the size the mark is seen most: the front carries the mark, so it gets the
+        // biggest floor; the grooves between slats are the fine thing and the last to survive.
         val px = 82f / 24f   // the card cover's 30 dp on the bench phone
-        val tyreWidth = (tyre.radius - tyreIn.radius) * px
-        val groove = (tyreIn.radius - lip.radius) * px
-        val lipRing = (lip.radius - lipIn) * px
-        assertTrue("a ${tyreWidth}px tyre is not a low-profile sidewall — it is the old wheel",
-            tyreWidth >= 4.5f)
-        assertTrue("${groove}px of daylight between tyre and rim closes up at 30 dp: that band " +
-            "is what says 'wheel' rather than 'solid disc'", groove >= 2.2f)
-        assertTrue("${lipRing}px of rim lip closes up at 30 dp", lipRing >= 2.2f)
-
-        // Six-fold, and the split runs up the middle of a pair rather than through the daylight
-        // beside it, which is the difference between a double spoke and a broken one.
-        val openCentres = openings.map { centre(it) }
-        val splitCentres = splits.map { centre(it) }
-        assertTrue("the six openings are not six-fold apart", closestToEach(openCentres) >= 55.0)
-        assertTrue("the six splits are not six-fold apart", closestToEach(splitCentres) >= 55.0)
-        val offset = openCentres.flatMap { a -> splitCentres.map { b -> apart(a, b) } }
-            .minOrNull() ?: error("the mark has no openings")
-        assertTrue("the split runs $offset degrees off the middle of its pair",
-            offset in 25.0..35.0)
-
-        // The two branches of a pair, measured where they are thinnest-in-practice — at the lip.
-        // 60 degrees of pitch, the daylight's own span, and the split's span leave the rest: that
-        // is what the eye has to resolve, and it is why this is the tight number in the mark.
-        val narrowest = openings.zip(splits).map { (open, split) ->
-            val branchDeg = (60.0 - span(open) - span(split)) / 2.0
-            2.0 * lipIn * sin(Math.toRadians(branchDeg / 2.0))
-        }.minOrNull()!!
-        assertTrue("${"%.1f".format(narrowest * px)}px of branch at 30 dp: below this the pair's " +
-            "two spokes fuse into one and the wheel stops being an Ultraleggera",
-            narrowest * px >= 2.6f)
-        val window = 2.0 * lipIn * sin(Math.toRadians(span(splits.first()) / 2.0))
-        assertTrue("${window * px}px of daylight between a pair's branches at the lip",
-            window * px >= 2.2f)
+        assertTrue("${(right - left) * px}px of front is a shed", (right - left) * px >= 56f)
+        assertTrue("${(eave - apex) * px}px of roof is a flat line at 30 dp",
+            (eave - apex) * px >= 20f)
+        assertTrue("${(doorRight - doorLeft) * px}px of door is a slot", (doorRight - doorLeft) * px >= 26f)
+        val slat = heights.average().toFloat()
+        assertTrue("${slat * px}px of slat is a hair at 30 dp", slat * px >= 4f)
+        val groove = grooves.average().toFloat()
+        assertTrue("${groove * px}px of groove closes up at 30 dp, and the door stops being " +
+            "a roller door", groove * px >= 2.5f)
     }
 
     /**
@@ -285,48 +282,6 @@ class BarLayoutTest {
         assertTrue("the pencil does not point to the lower-left ($tip)", tip.x < 6f && tip.y > 18f)
     }
 
-    // ── reading the wheel's arcs ─────────────────────────────────────────────────────
-    // The wheel's twelve openings are arcs, not chords, so `vertices` cannot see them and the
-    // interesting numbers are angles and radii rather than coordinates. The old mark needed none
-    // of this: its spokes were four straight chords each.
-
-    /** How far a point sits from the grid's centre. */
-    private fun rad(p: Offset): Float = hypot(p.x - 12f, p.y - 12f)
-
-    /** Which way round the grid's centre a point is, in degrees, y growing down. */
-    private fun deg(p: Offset): Double =
-        Math.toDegrees(Math.atan2((p.y - 12f).toDouble(), (p.x - 12f).toDouble()))
-
-    /**
-     * Which way round the centre a whole contour sits. The vector mean, not the arithmetic one:
-     * the pair of spokes that straddles the ±180° line has points at 176.5° and -176.5°, and
-     * averaging those reads as if it sat at 0° — on the opposite side of the wheel.
-     */
-    private fun centre(pts: List<Offset>): Double {
-        val x = pts.sumOf { Math.cos(Math.toRadians(deg(it))) } / pts.size
-        val y = pts.sumOf { Math.sin(Math.toRadians(deg(it))) } / pts.size
-        return Math.toDegrees(Math.atan2(y, x))
-    }
-
-    /**
-     * The angle a contour covers — for these arc-and-chord bands, its width. Twice the widest
-     * reach of any point from the contour's own centre, measured the short way round, which is
-     * what keeps the pair across the ±180° line from being read as a 356° gap.
-     */
-    private fun span(pts: List<Offset>): Double = 2.0 * pts.maxOf { apart(deg(it), centre(pts)) }
-
-    /** The smallest angle between two of a set of centres, folded to ±180°: six-fold says ~60. */
-    private fun closestToEach(centres: List<Double>): Double =
-        centres.flatMap { a -> centres.map { b -> apart(a, b) } }
-            .filter { it > 1e-6 }
-            .minOrNull() ?: error("two features share a centre")
-
-    /** The angle between two directions round the grid, folded into 0..180°. */
-    private fun apart(a: Double, b: Double): Double {
-        var d = Math.abs(a - b) % 360.0
-        if (d > 180.0) d = 360.0 - d
-        return d
-    }
 }
 
 // The path-data readers these tests share (subpaths, vertices, signedArea, circle) live in

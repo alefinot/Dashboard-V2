@@ -545,7 +545,7 @@ private fun EditorCard(
 /**
  * The photo card: the well beside its two doors, then — only for a card that already has a
  * picture — re-frame and remove on their own row. The well keeps the card cover's square
- * and its wheel glyph, because the card the user is editing will show this picture at 76 dp
+ * and its garage glyph, because the card the user is editing will show this picture at 76 dp
  * under the same corners; the buttons are in a column to its right so the photo, not a row of
  * labels, is what the eye lands on, and re-frame comes before remove because it is the kinder
  * answer to "I don't like this framing".
@@ -612,7 +612,7 @@ private fun PhotoCard(
 }
 
 /**
- * The well itself: the card's picture, or the bar's wheel glyph until it has one. The
+ * The well itself: the card's picture, or the bar's garage glyph until it has one. The
  * glyph is the same honesty the card cover keeps — an empty square that shows nothing looks
  * broken, and one that shows the glyph says "vehicle, no photo yet".
  */
@@ -635,7 +635,7 @@ private fun PhotoWell(preview: Bitmap?) {
             )
         } else {
             Icon(
-                HudIcons.SportWheel,
+                HudIcons.Garage,
                 contentDescription = null,
                 tint = HudColors.TextDim,
                 modifier = Modifier.size(38.dp),

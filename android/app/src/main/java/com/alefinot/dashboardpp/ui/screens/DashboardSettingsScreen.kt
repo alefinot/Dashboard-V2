@@ -398,7 +398,7 @@ fun DashboardSettingsScreen(
         if (state.rows.isEmpty()) {
             Text(
                 if (ready) "Reading the unit…" else
-                    "Nothing read from the unit yet — pair it from the Vehicles page.",
+                    "Nothing read from the unit yet — pair it from the Garage page.",
                 style = HudeCfgHelp(),
                 color = HudColors.TextDim,
                 modifier = Modifier.padding(16.dp),

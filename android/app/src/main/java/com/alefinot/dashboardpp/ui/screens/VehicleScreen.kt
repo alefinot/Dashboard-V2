@@ -190,7 +190,7 @@ fun VehicleScreen(
         // put a 13 sp card title at the far left of a 1920 px screen and its buttons under the
         // right edge of it.
         val selectedName = vehicles.firstOrNull { it.id == selectedId }?.name?.ifBlank { null }
-        HudPageHeader(title = "Vehicles") {
+        HudPageHeader(title = "Garage") {
             HudBanner(
                 buildString {
                     append(if (vehicles.size == 1) "1 vehicle" else "${vehicles.size} vehicles")
@@ -383,7 +383,7 @@ private fun CardCover(
                 ScanRing(ringProgress, Modifier.size(28.dp))
             } else {
                 Icon(
-                    HudIcons.SportWheel,
+                    HudIcons.Garage,
                     contentDescription = null,
                     tint = if (selected) HudColors.CyanDim else HudColors.TextDim,
                     modifier = Modifier.size(30.dp),
@@ -413,7 +413,7 @@ private fun CardCover(
  * but on the connected card green wins, because a live link outranks which card is picked.
  *
  * The cover shows the vehicle's photo when the card has one, and until then it is a placeholder
- * panel drawn with the bar's own wheel ([HudIcons.SportWheel]) — the shape that means "vehicle" in
+ * panel drawn with the bar's own garage ([HudIcons.Garage]) — the shape that means "vehicle" in
  * the bar is the shape on an empty card, and the editor's photo well draws it again at a larger
  * size. Drawn dim
  * on purpose: an empty frame that shows the glyph is honest about being empty, one that shows a

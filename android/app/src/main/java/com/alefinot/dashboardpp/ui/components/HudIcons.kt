@@ -26,11 +26,11 @@ import java.util.Locale
  *
  * The one rule the set obeys is legibility at the bar's 22 dp (60 px on the bench phone),
  * and it cuts both ways: a 1.9-unit stroke is ~5 px there, so a mark with interior detail
- * has to be a filled body with the detail *cut* out of it by counter-winding - the wheel, the
+ * has to be a filled body with the detail *cut* out of it by counter-winding - the garage, the
  * cog, the pin, the chip - while a mark that is only a line can be stroked at that weight -
  * the chevron, the reset arrow, the magnifier. What does not survive is a stroked outline
  * with something inside it: the stroke closes every interior, and both of the glyphs redrawn
- * on 2026-11-08 died that way. See [SportWheel] and [Cog].
+ * on 2026-11-08 died that way. See [Garage] and [Cog].
  *
  * One icon is not *drawn* here from scratch: the live view's mark is the launcher's
  * own gauge (see [Gauge]), so the app's face is the thing the user taps to get back to
@@ -469,108 +469,61 @@ object HudIcons {
     }
 
     /**
-     * Vehicles: the app's subject, drawn as OZ's Ultraleggera wheel.
+     * Garage: the app's subject seen from the front — a garage, its roller door cut open.
      *
      * One mark owns all four vehicle places — the bar's centre slot, a card cover that has no photo,
      * the editor's empty photo well, and the `OPEN VEHICLE PAGE` button — exactly as one mark owned
-     * them before 2026-11-13. What changed is the drawing: the old mark was a chunky five-spoke
-     * alloy, and the request was for a thin low-profile tyre, a wide rim, and six double spokes
-     * running out to the lip with the centre carved open. That is OZ Racing's own description of the
-     * Ultraleggera; this is an original drawing of that geometry on this set's 24-unit grid, not a
-     * traced product image, and it carries no OZ mark or lettering.
+     * them before. What changed on 2026-11-22 is the metaphor, twice over: the maintainer retired the
+     * Ultraleggera wheel that had carried the mark since 2026-11-13, the car-key replacement that
+     * followed it was pulled the same day for reading as a face, and the menu itself is now the
+     * Garage — which is what the tour had been calling this page all along. A garage front is the
+     * one drawing that needs no caption at the bar's size, and it cannot assemble eyes. It is an
+     * original drawing on this set's 24-unit grid — no manufacturer's shape, no logo, no lettering.
      *
-     * A garage with an open door and a car inside it was drawn for the centre slot the same day and
-     * deleted the same day at the maintainer's verdict — the wheel is the app's vehicle mark. The
-     * card's "no photo yet" square keeps drawing it, and `SHARED["SportWheel"]` records why the bar
-     * and that square are the same word rather than two.
-     *
-     * The language is the set's one rule — every ring is a filled disc with the next disc wound the
-     * other way cut out of it, and every opening is a band of daylight wound against the face, so
-     * what shows through the spokes is the bar's glass sheet or the card's empty panel and not a
-     * rectangle of paint. Twelve openings per revolution is the design: 40° of daylight between the
-     * pairs, and a 7° wedge inside each pair that stops short of the hub, so the two branches keep
-     * one shared root and only split as they reach the lip.
+     * The language is the set's one rule: the building is a filled body wound as ink; the door is
+     * daylight bored through the face, wound against it exactly as [Pin] winds its bore; and the
+     * three slats are ink again inside that bore, so what shows between them is the bar's glass
+     * sheet or the card's empty panel and not a rectangle of paint. The eaves overhang the walls —
+     * the one line that tells a garage front from a generic house pentagon — and the door keeps its
+     * jambs, sill and lintel standing, which is what keeps a striped rectangle from closing the
+     * mark up into a battery.
      *
      * The floors are stated at the bar's 30 dp, the size the mark is seen at most and the size the
      * card cover draws it at too. One unit is ~3.4 px on the bench phone, and the mark reads as
-     * 5.5 px of tyre, 2.7 px of daylight between tyre and rim, 2.7 px of lip, 3.0 px branches with a
-     * 3.3 px window between them, and a 15 px hub bored with a 5.5 px centre hole. The branches are
-     * the tight thing in it — thinner than the old mark's spokes was the request — and
-     * [BarLayoutTest] holds the line where they still read. The editor's well is 38 dp and roomier
-     * again. At the button's 18 dp the arithmetic says the window falls to ~2.0 px and a branch to
-     * ~1.8 px, so the twelve openings stop resolving one by one and the mark reads as a thin tyre
-     * ring around a bored hub — which is what the old chunky mark did there, and why 18 dp is not
-     * what this drawing is sized for.
+     * 66 px of front under a 25 px roof, on a 31 px door with three 4.8 px slats and 3 px of
+     * daylight between them. The slats' daylight is the fine thing in it, and [BarLayoutTest] holds
+     * the line where they still read. The editor's well is 38 dp and roomier again. At the button's
+     * 18 dp the slats fall together into a single ribbed panel — which is still a garage door, and
+     * why 18 dp is not what this drawing is floored at.
      */
-    val SportWheel: ImageVector by lazy {
+    val Garage: ImageVector by lazy {
         ImageVector.Builder(
-            name = "HudSportWheel", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            name = "HudGarage", defaultWidth = VB.dp, defaultHeight = VB.dp,
             viewportWidth = VB, viewportHeight = VB,
         ).addPath(
-            // One path: tyre ring, then the face inside the groove, then the twelve openings and
-            // the bore, every one of them wound against what it cuts.
-            PathParser().parsePathString(SportWheelData).toNodes(),
+            // One path: the building, the door bored into it, and the three slats floating in
+            // the bore.
+            PathParser().parsePathString(GarageData).toNodes(),
             fill = SolidColor(HudColors.Cyan),
         ).build()
     }
 
     /**
-     * The Ultraleggera's geometry as the single string [SportWheel] fills — kept as a string for
-     * the same reason as [CogOutline], so the test can count the rings, count the twelve openings
-     * and check that every cut winds against the face.
-     */
-    internal val SportWheelData: String = ultraleggeraOutline(
-        tyre = 11.0f, tyreIn = 9.4f, lip = 8.6f, lipIn = 7.8f,
-        pairs = 6, hub = 2.2f, pairDeg = 20.0, splitDeg = 7.0, splitRoot = 4.0f, bore = 0.8f,
-    )
-
-    /**
-     * A six-double-spoke wheel as one path. The tyre is a disc with a smaller disc cut out of it
-     * — a thin one, because a low-profile sidewall is what makes the rim look large — and the face
-     * is a disc drawn back inside that groove, out to the lip. Above the hub it is opened at every
-     * pitch by [opening12], the daylight between two pairs, and each remaining pair is then split
-     * by a wedge of daylight that starts at [splitRoot] rather than at the hub: that shared root
-     * is what turns six spokes into six *pairs*, and a wedge is the shape the real wheel's split
-     * is. Rings are two semicircle arcs, as in [disc12]; the openings are arcs and chords.
+     * The garage's geometry as the single string [Garage] fills — kept as a string for the same
+     * reason as [CogOutline], so the test can count the slats, check that the door really is cut
+     * out of the face rather than painted on it, and check that the walls around it survive.
      *
-     * `Locale.ROOT` is load-bearing, exactly as in [gearOutline]: `%.2f` follows the default
-     * locale, and on a locale that writes `1,23` the path parser would see a comma where a
-     * coordinate belongs.
+     * The building is 13.6 units of wall under a gable, eaves overhanging 2.8 units a side; the
+     * door is a 9.2 × 7.8-unit bore centred on the front, standing 2.2 units clear of each jamb,
+     * 2.2 of sill and 1.6 of lintel. The slats are 7.2 × 1.4-unit ink bars, spaced at four equal
+     * 0.9-unit gaps, inset 1.0 from the door's jambs so the bore stays a ring and not a comb.
      */
-    private fun ultraleggeraOutline(
-        tyre: Float,
-        tyreIn: Float,
-        lip: Float,
-        lipIn: Float,
-        pairs: Int,
-        hub: Float,
-        pairDeg: Double,
-        splitDeg: Double,
-        splitRoot: Float,
-        bore: Float,
-    ): String {
-        val sb = StringBuilder()
-        sb.append(disc12(tyre, ink = true))     // outer tyre edge — ink
-        sb.append(disc12(tyreIn, ink = false))  // inner tyre edge — cut → the tyre is a thin ring
-        sb.append(disc12(lip, ink = true))      // the face: lip and spokes, carved open below
-        val pitch = 360.0 / pairs
-        for (i in 0 until pairs) {
-            // The daylight between two pairs, and a pair keeps `pairDeg` of the pitch to itself.
-            sb.append(opening12(i * pitch + pairDeg / 2.0, (i + 1) * pitch - pairDeg / 2.0,
-                hub, lipIn))
-        }
-        for (i in 0 until pairs) {
-            // The split inside a pair. Outer edge first, then the far outer edge, then back to the
-            // apex: that order is a cut, and the mirror of it would fill and lose the "double".
-            val centre = i * pitch
-            val half = splitDeg / 2.0
-            sb.append("M").append(polar12(centre, splitRoot)).append(" L")
-                .append(polar12(centre + half, lipIn)).append(" L")
-                .append(polar12(centre - half, lipIn)).append(" Z ")
-        }
-        sb.append(disc12(bore, ink = false))    // the centre bore
-        return sb.toString()
-    }
+    internal val GarageData: String =
+        "M12,2.6 L21.6,9.8 L18.8,9.8 L18.8,21.4 L5.2,21.4 L5.2,9.8 L2.4,9.8 Z " +
+            "M7.4,11.4 L7.4,19.2 L16.6,19.2 L16.6,11.4 Z " +
+            "M8.4,12.3 L15.6,12.3 L15.6,13.7 L8.4,13.7 Z " +
+            "M8.4,14.6 L15.6,14.6 L15.6,16.0 L8.4,16.0 Z " +
+            "M8.4,16.9 L15.6,16.9 L15.6,18.3 L8.4,18.3 Z"
 
     /**
      * EDIT: a pencil.
@@ -1054,25 +1007,4 @@ object HudIcons {
         return "M$top A$r 0 1 $sweep $bottom A$r 0 1 $sweep $top Z "
     }
 
-    /** A point on the (12,12) grid at `deg` degrees and `radius` units, as `x,y`. */
-    private fun polar12(deg: Double, radius: Float): String {
-        val a = Math.toRadians(deg)
-        return String.format(
-            Locale.ROOT, "%.2f,%.2f",
-            12.0 + radius * Math.cos(a), 12.0 + radius * Math.sin(a),
-        )
-    }
-
-    /**
-     * A band of daylight between two spokes: from `rIn` to `rOut`, spanning `from`..`to` degrees.
-     * The inner arc runs with the angle and the outer arc runs back against it, which is the way
-     * round a cut has to go in this y-down grid, so a fill rule opens the face it sits in instead
-     * of painting over it. Both arcs are under 180°, hence the 0 large-arc flag.
-     */
-    private fun opening12(from: Double, to: Double, rIn: Float, rOut: Float): String {
-        val ri = String.format(Locale.ROOT, "%.2f,%.2f", rIn, rIn)
-        val ro = String.format(Locale.ROOT, "%.2f,%.2f", rOut, rOut)
-        return "M" + polar12(from, rIn) + " A$ri 0 0 1 " + polar12(to, rIn) +
-            " L" + polar12(to, rOut) + " A$ro 0 0 0 " + polar12(from, rOut) + " Z "
-    }
 }
