@@ -134,6 +134,10 @@ fun SettingsScreen(
     val recordingEnabled by settings.recordingEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     val motionOn by settings.motionEnabled.collectAsStateWithLifecycle(initialValue = true)
+    // The start tour's flag, read the other way round from what the row shows:
+    // the store holds "hidden", the owner chooses "show at startup".
+    val tutorialHidden by settings.tutorialHidden
+        .collectAsStateWithLifecycle(initialValue = false)
     // The route quality slider. `routeDrag` holds the figure mid-drag: the store is only
     // written when the thumb is released, so a drag cannot rewrite the DataStore on every
     // frame, while the label beside the rail still follows the finger.
@@ -244,6 +248,42 @@ fun SettingsScreen(
             IdCard("APP", appVersion, Modifier.weight(1f))
         }
         Spacer(Modifier.height(12.dp))
+
+        // ── Getting started ──────────────────────────────────────────────
+        // The start tour's front door. It stays the top group because the two
+        // things in it are the answers a first week asks: *when does the tour
+        // come up*, and *how do I see it again*. The tour itself (the floating
+        // cards) lives over the whole shell, drawn by DashboardRoot, and this
+        // row is the one place the `tutorial_hidden` flag can be put back
+        // after the tour's own switch has flagged it — which is why the button
+        // works whatever the switch says: asking by hand is never a refusal.
+        GroupCard(
+            title = "Getting Started",
+            badge = R.drawable.ic_app_help,
+            open = openGroup == "help",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "help") },
+        ) {
+            Text(
+                "The floating tour of the app\u2019s pages and main features. It opens " +
+                    "at every start of the app until you switch it off here, or flag it " +
+                    "on the tour itself.",
+                color = HudColors.TextMuted,
+                style = HudeCfgNote(),
+            )
+            Spacer(Modifier.height(12.dp))
+            ToggleRow(
+                label = "SHOW AT STARTUP",
+                on = !tutorialHidden,
+                toggleLabel = "show the start tour at startup",
+            ) { on -> scope.launch { settings.setTutorialHidden(!on) } }
+            Spacer(Modifier.height(12.dp))
+            HudButton(
+                "SHOW START TUTORIAL",
+                modifier = Modifier.fillMaxWidth(),
+                style = HudButtonStyle.SECONDARY,
+                glyph = HudIcons.Play,
+            ) { TutorialHolder.request() }
+        }
 
         // ── Updates ──────────────────────────────────────────────────────
         // One dropdown, two targets: the unit's firmware and this app's own APK. They

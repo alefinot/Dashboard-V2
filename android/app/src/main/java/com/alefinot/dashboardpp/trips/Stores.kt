@@ -228,6 +228,18 @@ class RecorderSettings(context: Context) {
             .map { it[KEY_BATTERY_PROMPT] ?: false }
 
     /**
+     * Whether the start tour has been dismissed for good (the tour's own
+     * "don't show again" switch, and the App Settings *SHOW AT STARTUP* row
+     * reading it the other way round). Default **false**: an owner who has
+     * never seen the tour has not had the chance to refuse it. It lives here
+     * because this DataStore is where the app keeps its preferences, same as
+     * the motion switch is not a recording setting either.
+     */
+    val tutorialHidden: Flow<Boolean> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_TUTORIAL_HIDDEN] ?: false }
+
+    /**
      * Read the three switches once, so the store is in RAM before anything needs
      * an answer. DataStore never answers synchronously, and the boot window (the
      * splash) is the only idle stretch the app gets before its first frame: warmed
@@ -241,6 +253,7 @@ class RecorderSettings(context: Context) {
         tripFilter.first()
         routeQuality.first()
         mapStyle.first()
+        tutorialHidden.first()
     }
 
     /** The persisted session per device, so a trip survives an app restart. */
@@ -306,11 +319,16 @@ class RecorderSettings(context: Context) {
         store.edit { it[KEY_BATTERY_PROMPT] = true }
     }
 
+    suspend fun setTutorialHidden(hidden: Boolean) {
+        store.edit { it[KEY_TUTORIAL_HIDDEN] = hidden }
+    }
+
     companion object {
         private val KEY_RECORDING = booleanPreferencesKey("recording_enabled")
         private val KEY_MOTION = booleanPreferencesKey("motion_enabled")
         private val KEY_NOTIFICATION = booleanPreferencesKey("notification_enabled")
         private val KEY_BATTERY_PROMPT = booleanPreferencesKey("battery_prompt_shown")
+        private val KEY_TUTORIAL_HIDDEN = booleanPreferencesKey("tutorial_hidden")
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
         private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
         private val KEY_MAP_STYLE = stringPreferencesKey("map_style")

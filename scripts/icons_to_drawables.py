@@ -69,13 +69,17 @@ MORE_HORIZONTAL = (
 # 2026-11-15. They are drawn from the same `iconSVG` tree, so a badge and its schema
 # sibling cannot drift apart: `system` (the software gear) for Updates, `gnss` (the
 # globe, for drives) for Trips & storage, `weather` (the sun) for the Weather feed, and
-# `map` (the folded sheet) for the Live Map card added on 2026-11-21.
+# `map` (the folded sheet) for the Live Map card added on 2026-11-21. The
+# `app_help` graduation cap is the Getting Started card that arrived with the
+# start tour on 2026-11-22 — "learn the app", in the same lucide dialect as
+# every badge around it.
 EXTRA_BADGES = {
     "perf": "activity",
     "app_updates": "system",
     "app_trips": "gnss",
     "app_weather": "weather",
     "app_map": "map",
+    "app_help": "help",
 }
 
 HEADER = (

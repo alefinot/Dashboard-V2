@@ -8,15 +8,21 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.update.AppUpdate
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.viewmodel.ConnectionViewModel
 import com.alefinot.dashboardpp.viewmodel.TripsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * The app's one screen, in every state.
@@ -60,6 +66,20 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
     val s = vm.uiState.value
+    // The start tour. One read of `tutorial_hidden` per composition root —
+    // DataStore has warmed by the time this runs (MainActivity.warmPreferences
+    // opens the same store at launch) — and then the once-per-process gate
+    // inside TutorialHolder decides. Coming back from recents or rotating
+    // reaches this effect again; `shownThisProcess` is what makes those not
+    // look like a startup.
+    val settings = remember { RecorderSettings(activity.application) }
+    LaunchedEffect(Unit) {
+        val hidden = withContext(Dispatchers.IO) { settings.tutorialHidden.first() }
+        if (TutorialScript.shouldShowAtStartup(hidden, TutorialHolder.shownThisProcess)) {
+            TutorialHolder.requestStartup()
+        }
+    }
+    val tourVisible by TutorialHolder.visible.collectAsStateWithLifecycle()
     // Keep content inside the safe area: with targetSdk 35 edge-to-edge is
     // enforced, so without these insets the HUD chrome draws behind the
     // status bar / nav bar.
@@ -83,5 +103,11 @@ fun DashboardRoot(activity: android.app.Activity, vm: ConnectionViewModel) {
             connection = vm,
             trips = trips,
         )
+        // Last child of the root Box, so the whole app is the thing it dims —
+        // same modality rule as `HudConfirmDialog`, which is also why the tour
+        // can point at the bar behind its card.
+        if (tourVisible) {
+            TutorialOverlay(activity.application)
+        }
     }
 }
