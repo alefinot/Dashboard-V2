@@ -20,6 +20,7 @@ import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.api.Snapshot
+import com.alefinot.dashboardpp.trips.AccelRunTracker
 import com.alefinot.dashboardpp.trips.CsvTripWriter
 import com.alefinot.dashboardpp.trips.CursorTrail
 import com.alefinot.dashboardpp.trips.RecorderSettings
@@ -79,6 +80,23 @@ class TripLogService : Service() {
      * stop must not take the car off the map.
      */
     private val trail = CursorTrail()
+
+    /**
+     * The 0-50 runs this lane has heard the unit complete, and the drive they belong to.
+     *
+     * Read off the frame stream rather than out of the recorder (see
+     * [com.alefinot.dashboardpp.trips.AccelRunTracker]), so a launch made before anybody pressed
+     * START is still on the map. It is dropped with the drive it belongs to — the same rule the
+     * route follows, so a map never wears the results of a drive it is not drawing.
+     */
+    private val accelRuns = AccelRunTracker()
+
+    /**
+     * The drive [accelRuns] were collected for, as [com.alefinot.dashboardpp.trips.LiveRoute.driveId]
+     * spells it, and the unit they were collected from. A change in either is a new picture.
+     */
+    private var runDriveId = 0L
+    private var runUnitKey: String? = null
 
     /**
      * True while this lane follows the stream for the display alone: no recorder, no file, no
@@ -404,6 +422,17 @@ class TripLogService : Service() {
         noteWeatherFrame(s)
         if (s.hasPosition) trail.add(s.lat, s.lon)
         val heard = trail.snapshot()
+        val now = System.currentTimeMillis()
+        // The unit measures a launch whether or not a file is open, so the runs are read here,
+        // ahead of the branch, and both lanes publish them: a 0-50 the owner made before pressing
+        // START is a run they made, and it belongs on the map.
+        if (deviceKey != runUnitKey) {
+            // Re-pointed at another dashboard: what is on the maps is another unit's launches.
+            accelRuns.clear()
+            runUnitKey = deviceKey
+            runDriveId = 0L
+        }
+        accelRuns.onFrame(s, now)
         val rec = recorder
         if (rec == null) {
             // The watching lane (2.0.7/179): the picture moves, nothing is written. The route
@@ -412,7 +441,8 @@ class TripLogService : Service() {
                 it.copy(
                     snapshot = s,
                     liveTrail = heard,
-                    lastOkMs = System.currentTimeMillis(),
+                    accelRuns = accelRuns.snapshot(),
+                    lastOkMs = now,
                     lastError = null,
                 )
             }
@@ -420,13 +450,21 @@ class TripLogService : Service() {
         }
         val event = rec.onSnapshot(deviceKey, s)
         val summary = rec.summary()
-        val now = System.currentTimeMillis()
+        val route = rec.liveRoute()
+        if (route.driveId != runDriveId) {
+            // The new drive has a position of its own, which is the moment its picture replaces
+            // the last one's ([routeToShow]) - so the last drive's results go out here too.
+            accelRuns.clear()
+            runDriveId = route.driveId
+        }
+        val runs = accelRuns.snapshot()
         TripRuntime.update {
             it.copy(
                 snapshot = s,
                 summary = summary,
-                liveRoute = routeToShow(it.liveRoute, rec.liveRoute()),
+                liveRoute = routeToShow(it.liveRoute, route),
                 liveTrail = heard,
+                accelRuns = runs,
                 lastOkMs = now,
                 recording = rec.isRecording,
                 paused = rec.isPaused,

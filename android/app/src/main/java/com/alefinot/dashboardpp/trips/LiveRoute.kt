@@ -130,7 +130,7 @@ class CursorTrail(private val maxPoints: Int = MAX_POINTS) {
  * point in the Gulf of Guinea, and a poisoned line in a re-opened file must not put a dot in
  * the ocean or an arrow a hemisphere away.
  */
-private fun isRealPosition(lat: Double, lon: Double): Boolean {
+internal fun isRealPosition(lat: Double, lon: Double): Boolean {
     if (!lat.isFinite() || !lon.isFinite()) return false
     if (lat !in -90.0..90.0 || lon !in -180.0..180.0) return false
     return !(lat == 0.0 && lon == 0.0)

@@ -56,6 +56,19 @@ data class TripRuntimeState(
      */
     val liveTrail: List<TrackPoint> = emptyList(),
     /**
+     * The 0-50 runs of the drive the maps are showing, oldest first (see [AccelRun]).
+     *
+     * Not part of [liveRoute], even though it belongs to the same drive, because the recorder does
+     * not own it: the runs come off the frame lane, which sees every frame in both lanes — with a
+     * file open and with none — so a launch the owner made before pressing START is still a launch
+     * they made, and it appears. What ties the two together is the clear: both go out on a new
+     * drive's first recorded fix, so a map never wears the runs of a drive it is not drawing.
+     *
+     * The list is handed out by identity and rebuilt only when a run is added, so a page that
+     * recomposes at frame rate for its gliding figures costs the map a reference check.
+     */
+    val accelRuns: List<AccelRun> = emptyList(),
+    /**
      * True while the frame lane is following the stream for the display alone - no file, no
      * recorder, no foreground notification. It is the Live page's normal reader: the shell
      * starts it whenever a dashboard is linked and the app is in the foreground, so the map,

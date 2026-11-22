@@ -434,6 +434,11 @@ private fun RecordingCard(
                     Modifier.size(72.dp),
                     showLabels = false,
                     interactive = false,
+                    // The yellow runs come along: a row's picture is the drive's whole story in 72
+                    // dp, and a launch the owner made is part of it. It cannot be tapped here - the
+                    // map refuses the touch at its own door - so the line is a fact in the picture,
+                    // and the number is on the Live page, where the same line can be aimed at.
+                    runs = state.accelRuns,
                 )
                 Spacer(Modifier.width(12.dp))
             }

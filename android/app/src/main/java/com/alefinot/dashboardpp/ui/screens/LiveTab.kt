@@ -11,6 +11,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,19 +41,26 @@ import androidx.compose.ui.unit.dp
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.ble.BleApi
 import com.alefinot.dashboardpp.ble.BleRuntime
+import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TripRuntime
 import com.alefinot.dashboardpp.ui.components.HudEnter
+import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.map.LiveRouteMap
 import com.alefinot.dashboardpp.ui.map.MapCredit
 import com.alefinot.dashboardpp.ui.map.MapStylePref
 import com.alefinot.dashboardpp.ui.map.MapStyles
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
+import com.alefinot.dashboardpp.ui.theme.HudeMetric
+import com.alefinot.dashboardpp.ui.theme.HudeMetricUnit
 import com.alefinot.dashboardpp.ui.theme.HudeSectionCaps
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * The Live page: a full-screen live map, with every reading in the app's glass over it.
@@ -108,6 +116,29 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     var zoomIn by remember { mutableIntStateOf(0) }
     var zoomOut by remember { mutableIntStateOf(0) }
 
+    // The 0-50 whose result is on screen, after a tap on its yellow line (2026-11-22).
+    //
+    // It lives here, over the map, and not in a shelf: the line is the question and this is its
+    // answer, and an answer about a place belongs where the place is. It is display-only and
+    // deliberately NOT in the refusal list — a swipe that starts on it moves the map, exactly as
+    // one that starts on the ground-name chip above does; there is nothing to press.
+    //
+    // Six seconds, then it goes on its own: about as long as the ground it belongs to stays on
+    // screen while the camera follows anyway. The next tap takes it away sooner (or replaces it
+    // with the run that tap landed on), and a result the owner wants again is a line they can tap
+    // again. It is not remembered between pages or drives: it answers a question just asked.
+    var shownRun by remember { mutableStateOf<AccelRun?>(null) }
+    // The card's words, which outlive the flag that shows them by exactly the fade's length: the
+    // frame that is fading out still has to have something to say. The same pair of variables the
+    // ground-name chip below is (`groundName`, `groundNamed`), for the same reason — and written
+    // only where a run arrives, so the card's first frame already has its number in it.
+    var runCard by remember { mutableStateOf<AccelRun?>(null) }
+    LaunchedEffect(shownRun) {
+        val run = shownRun ?: return@LaunchedEffect
+        delay(RUN_RESULT_MS)
+        if (shownRun === run) shownRun = null
+    }
+
     // Whether the two glass shelves are on the page. The rail's eye is the only way to
     // change it, and it is deliberately not remembered (2026-11-19): the readings are the
     // page's reason, so a clean map is something the owner asks for on a particular drive,
@@ -142,6 +173,14 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // put away - it sits at the map's own default, because there is nothing under it.
     val recenterBottom = if (hudVisible && bottomShelf.height > 0f) {
         with(density) { bottomShelf.height.toDp() } + LiveEdge + 8.dp
+    } else {
+        6.dp
+    }
+    // The run result card hangs under the top shelf for the same reason RE-CENTER sits above the
+    // bottom one: the glass is painted over the map, so "clear of the shelf" is an inset only the
+    // page can measure. With the glass away it keeps a 6 dp gap from the map's own edge.
+    val runCardTop = if (hudVisible && topShelf.height > 0f) {
+        with(density) { topShelf.height.toDp() } + LiveEdge + 8.dp
     } else {
         6.dp
     }
@@ -264,6 +303,24 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                     recenterBottom = recenterBottom,
                     zoomInTicks = zoomIn,
                     zoomOutTicks = zoomOut,
+                    // The drive's 0-50 runs, in the map's yellow, and the one whose number this
+                    // page is holding. The map finds the tap; this page only decides what to say
+                    // about it — a line again closes the card, open ground closes it too.
+                    runs = state.accelRuns,
+                    selectedRun = shownRun,
+                    onRunTap = { hit ->
+                        shownRun = when {
+                            hit == null -> null
+                            // The same line twice is the owner changing their mind about looking at
+                            // it, which is the only way to close this card without tapping some
+                            // other thing on the map.
+                            hit.id == shownRun?.id -> null
+                            else -> {
+                                runCard = hit
+                                hit
+                            }
+                        }
+                    },
                 )
             } else {
                 WaitingForPosition(hasFrame = snapshot != null)
@@ -335,6 +392,32 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         )
                     }
+                }
+                // The run a tap just picked out, in the same ink as the line it names. It is the
+                // map's answer, so it hangs in the map's slot: top-centre, under the shelf when the
+                // glass is up, where it cannot be mistaken for one of the shelf's own figures and
+                // cannot cover the line it is about either - that line is under the arrow's ground,
+                // and the camera is on it.
+                //
+                // Not a control: no click, no refusal rect. It is a thing the owner just asked for,
+                // on the ground it happened, and it goes away by itself.
+                AnimatedVisibility(
+                    visible = shownRun != null,
+                    enter = if (HudMotion.enabled) {
+                        fadeIn(tween(HudMotion.REVEAL_MS, easing = HudMotion.Standard))
+                    } else {
+                        EnterTransition.None
+                    },
+                    exit = if (HudMotion.enabled) {
+                        fadeOut(tween(HudMotion.FADE_OUT_MS, easing = HudMotion.Standard))
+                    } else {
+                        ExitTransition.None
+                    },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = runCardTop, start = LiveShelfInset, end = LiveShelfInset),
+                ) {
+                    runCard?.let { RunResultCard(it) }
                 }
             }
         }
@@ -470,9 +553,62 @@ private fun WaitingForPosition(hasFrame: Boolean) {
     }
 }
 
+/**
+ * One finished 0-50, in words: the number the unit timed, and the two facts that let the owner
+ * check it means what it says.
+ *
+ * The label is fixed wording, not the unit's `ACCEL_TARGET_SPEED` fetched over the link — for a
+ * card whose whole job is to answer "which run was this?", a config read would be a round trip
+ * that adds a way to fail and no information. The speed the run actually ended at is printed next
+ * to it instead, so a target of 100 is self-evident on the card rather than contradicted by it.
+ *
+ * The clock is the run's first fix, not the drive's start and not the frame's receive time: it is
+ * the one timestamp that lets the owner place the launch in a drive they are remembering — "that
+ * was the pull-out at the light after the bridge".
+ */
+@Composable
+private fun RunResultCard(run: AccelRun) {
+    Box(Modifier.hudCard()) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text("0–50", style = HudeSectionCaps(), color = HudColors.Yellow)
+            Row {
+                Text(
+                    hudNum(run.seconds, 2),
+                    style = HudeMetric(),
+                    color = HudColors.TextPrimary,
+                    modifier = Modifier.alignByBaseline(),
+                )
+                Text(
+                    " s",
+                    style = HudeMetricUnit(),
+                    color = HudColors.TextMuted,
+                    modifier = Modifier.alignByBaseline(),
+                )
+            }
+            Text(
+                clock(run.startedAtMs) + " · " + hudNum(run.finishSpeedKmh, 0) + " km/h",
+                style = HudeSectionCaps(),
+                color = HudColors.TextMuted,
+            )
+        }
+    }
+}
+
+/** A wall clock, second-precise, in the app's fixed US locale (see [hudNum]). */
+private fun clock(ms: Long): String = CLOCK.format(Date(ms))
+
+private val CLOCK = SimpleDateFormat("HH:mm:ss", Locale.US)
+
 /** The page's inset from the window edge: 10 dp across, 6 dp above and below. */
 private val LiveShelfInset = 10.dp
 private val LiveEdge = 6.dp
+
+/**
+ * How long a tapped run's result stays on the map: long enough to read at a glance while the
+ * camera is still on the ground it happened across, short enough that it is gone before it becomes
+ * a claim about where the car is now. A tap takes it away — or replaces it — sooner.
+ */
+private const val RUN_RESULT_MS = 6_000L
 
 /**
  * How long the ground's name stays beside the rail after the press that laid it down: long
