@@ -224,8 +224,9 @@ private class MapHolder {
     private fun drawTrack(view: MapView) {
         val manager = view.getOverlayManager()
         manager.clear()
-        // `clear()` takes the ground wash with everything else — it lives in the same list.
-        chrome.restoreGround(view)
+        // `clear()` takes the ground wash, and any label layers the ground stacks, with
+        // everything else — they live in the same list.
+        chrome.restoreChrome(view)
         if (track.isEmpty()) return
 
         val line = Polyline()

@@ -144,9 +144,9 @@ class MapStyleSettingTest {
         )
         val chrome = mapSource("MapChrome.kt")
         assertTrue(
-            "the ground overlay is no longer inserted at the bottom of the overlay list, so it " +
-                "is above the route again",
-            chrome.contains("manager.add(0, made)"),
+            "the ground overlay is no longer inserted below every other overlay, so it is " +
+                "above the route again — it sits one past whatever label layers the ground stacks",
+            chrome.contains("manager.add(layers.size, made)"),
         )
         assertTrue(
             "a style with no basemap would still fetch tiles — the overlay that asks for them " +
@@ -161,6 +161,57 @@ class MapStyleSettingTest {
         assertTrue(
             "a piece lost its casing — the cyan line has no edge on aerial imagery",
             live.contains("casings[i].setPoints(mirror)") && live.contains("casings[i].addPoint(point)"),
+        )
+    }
+
+    /**
+     * A ground can now paint tile layers over its own tiles (`Hybrid`: road names and place
+     * names over aerial imagery, 2026-11-22). That adds three things a future edit can quietly
+     * undo, each with a symptom only a driver would notice: the layers going above the wash or
+     * above the route, a second ground's provider being left attached to the view every time
+     * the rail cycles past the labelled imagery, or the detail page losing its labels because
+     * `clear()` took them and nothing put them back.
+     */
+    @Test
+    fun aGroundStackingLabelsDrawsThemUnderTheWashAndLetsThemGo() {
+        val chrome = mapSource("MapChrome.kt")
+        assertTrue(
+            "the label layers are no longer built from the style's own layers",
+            chrome.contains("style.overlays.withIndex()"),
+        )
+        assertTrue(
+            "the label layers are no longer inserted below the wash, so they would be painted " +
+                "over the dimming that is meant to apply to every tile on screen",
+            chrome.contains("manager.add(at, overlay)") &&
+                chrome.contains("manager.add(layers.size, made)"),
+        )
+        assertTrue(
+            "route lines no longer start past the label layers, so the drive would be drawn " +
+                "under a road name",
+            chrome.contains("val lineInsertAt: Int get() = layers.size + 1"),
+        )
+        assertTrue(
+            "a label layer's loading slab is visible again — a grey brick over aerial imagery " +
+                "reads as a hole in the map",
+            chrome.contains("setLoadingBackgroundColor(Color.TRANSPARENT)"),
+        )
+        assertTrue(
+            "the applier stopped letting go of the providers behind the label layers: a tile " +
+                "provider is a download queue with a network receiver, and the Live page's rail " +
+                "changes ground with a thumb press, so every press past the labelled imagery " +
+                "would leave one running",
+            chrome.contains("for (p in providers) p.detach()"),
+        )
+        assertTrue(
+            "a ground change or a release stopped clearing them out first — the view would end " +
+                "up holding two sets of layers",
+            chrome.contains("dropLayers(view)"),
+        )
+        val detail = mapSource("RouteMap.kt")
+        assertTrue(
+            "the detail map went back to restoring only the wash after clear(), which would " +
+                "leave a labelled ground without its labels",
+            detail.contains("chrome.restoreChrome(view)"),
         )
     }
 

@@ -45,6 +45,26 @@ import java.util.Collections
  *   keeps a basemap from being asked for a level its server does not serve. (Past the ceiling
  *   osmdroid does not fail — it enlarges the last row it has: bench, 2026-11-21, Terrain at
  *   view 17.999 still drew its z17 tiles, magnified, with no loading tiles on screen.)
+ *   A ceiling is **measured, not read off the service's own `lods` list**, because that list
+ *   describes the tile schema, not the cache: `World_Street_Map` advertises z23 and answers
+ *   z20 with a card. The measurement is a byte hash across zooms and places, and it separates
+ *   three answers that all look like failure on screen (all of these measured 2026-11-22 with
+ *   this app's own User-Agent):
+ *   - one image, byte-identical across *services*, places and levels (Esri: 2,521 B, a grey
+ *     card with something drawn on it) — the host's generic "no tiles at this level". Above
+ *     it, nothing, anywhere: that is a ceiling. Esri's Canvas grey bases and World Hillshade
+ *     stop at z16 this way, and Imagery/Street/Topo at z19.
+ *   - a **flat single colour** matching the basemap's own land fill (Esri Street: 2,420 B) —
+ *     a real, served, deliberately featureless tile: that tile has nothing in it at that
+ *     level. Open country past z16 on `Street Atlas` is this, and so is `Relief` over a
+ *     field at z19. It is the map being honest, not a hole, and a ceiling must not be set to
+ *     "hide" it: Milan, Berlin and NYC all serve real detail at those same levels.
+ *   - an **all-transparent** PNG (Esri's reference layers: 872 B, alpha 0 at every sampled
+ *     pixel) — the layer's own "nothing here", which draws nothing and needs no clamp.
+ * - [MapStyle.overlays] is a second kind of ground: tile layers painted *over* the base
+ *   tiles, which is the only way to get labels on aerial imagery in a raster renderer.
+ *   They are not styles — they never enter [ALL], the picker or the rail — and they share
+ *   the cache-key rule with styles for the same reason.
  */
 enum class MapGround {
     /** A pale basemap: the route needs a dark casing to hold its edge. */
@@ -65,6 +85,34 @@ enum class MapGround {
  * only spend it on maps big enough to show it.
  */
 class MapCasing(val colorArgb: Int, val extraDp: Float)
+
+/**
+ * One tile layer painted **over** a style's base tiles.
+ *
+ * It exists for one ground: aerial imagery with roads and place names on it. A raster
+ * renderer cannot ask an image for its labels, so `Hybrid` stacks Esri's two reference
+ * layers on top of World Imagery — the same composition Esri's own viewer makes. A layer is
+ * deliberately not a [MapStyle]: it has no label, no wash and no place in the picker or the
+ * rail, and calling it a style would let it wander into [MapStyles.ALL] and be offered as a
+ * ground that draws nothing on its own.
+ *
+ * It carries its own [sourceName] because it fetches different bytes than its base does:
+ * two layers of one ground sharing a cache folder would put label tiles in the imagery's
+ * rows and show a driver a road name pasted on a field.
+ */
+class MapTileLayer(
+    /** Key into [MapStyles]' source cache. Distinct from every style id and every other layer. */
+    val id: String,
+    /** osmdroid's tile-cache key — the same rule as [MapStyle.sourceName]. */
+    val sourceName: String,
+    val urls: List<String>,
+    /** ArcGIS's `{z}/{y}/{x}` dialect, as in [MapStyle.arcgis]. */
+    val arcgis: Boolean = true,
+    val minZoom: Int = 4,
+    val maxZoom: Int = 19,
+    /** Whose work this is. Shown as part of the ground's credit, never on its own. */
+    val attribution: String,
+)
 
 /**
  * One entry in the style picker. Plain data on purpose: the catalogue is asserted by a JVM
@@ -90,6 +138,12 @@ class MapStyle(
     val minZoom: Int = 4,
     val maxZoom: Int = 19,
     val ground: MapGround = MapGround.LIGHT,
+    /**
+     * Tile layers painted over these tiles, in order, and **under** the wash — so the scrim
+     * and the vignette dim a label exactly as much as they dim the road it names. Empty for
+     * every ground but `Hybrid`. See [MapTileLayer].
+     */
+    val overlays: List<MapTileLayer> = emptyList(),
     /** A colour matrix for the tiles themselves, or null to paint them as they come. */
     val tileMatrix: List<Double>? = null,
     /** Flat black over the tiles, 0..1. */
@@ -156,6 +210,31 @@ object MapStyles {
         vignette = 0.45f,
     )
 
+    /**
+     * Esri's Canvas grey base — the ground `HUD Dark` only imitates. It is genuinely drawn
+     * dark rather than dimmed, and it carries almost no text, which is the property a driver
+     * actually wants: the route's own labels become the only words on the map.
+     *
+     * z16 is its ceiling, measured at four places (see the header note): Milan, Berlin, NYC
+     * and open country all answer z17 with the same 2,521 B card.
+     */
+    val Graphite = MapStyle(
+        id = "graphite",
+        label = "Graphite",
+        sentence = "A charcoal base drawn dark at source, with almost no labels to fight the route.",
+        attribution = "© Esri, HERE, Garmin · © OpenStreetMap contributors",
+        sourceName = "EsriDarkGray",
+        urls = listOf(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/",
+        ),
+        arcgis = true,
+        maxZoom = 16,
+        ground = MapGround.DARK,
+        // Already the colour this dashboard wants: a heavy wash would just be a dimmer map.
+        scrim = 0.06f,
+        vignette = 0.40f,
+    )
+
     val StreetAtlas = MapStyle(
         id = "street",
         label = "Street Atlas",
@@ -166,6 +245,10 @@ object MapStyles {
             "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/",
         ),
         arcgis = true,
+        // Real detail at least to z19 in every city measured (Milan, Berlin, NYC); the flat
+        // khaki tile open country gives back past z16 is this basemap's own featureless tile,
+        // not a missing one — the same zoom serves a city in full. Do not "fix" the ceiling
+        // for it: the header note keeps the two apart.
         maxZoom = 19,
         ground = MapGround.LIGHT,
         scrim = 0.14f,
@@ -190,6 +273,58 @@ object MapStyles {
         vignette = 0.35f,
     )
 
+    // ─── the layers `Hybrid` stacks over its imagery ──────────────────────────────
+    //
+    // Declared before the style that uses them, and kept out of ALL: these are the label
+    // half of one ground, not grounds of their own. Measured with this app's User-Agent
+    // 2026-11-22 — roads are real to z18 in Milan (5.9 KB) and z19 in Berlin (6.0 KB), and
+    // the same layers answer z17+ over open country with the 872 B all-transparent tile, so
+    // they need no clamp of their own: where they have nothing to say they draw nothing.
+
+    private val EsriRefRoads = MapTileLayer(
+        id = "esri-ref-roads",
+        sourceName = "EsriRefRoads",
+        urls = listOf(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/",
+        ),
+        attribution = "© Esri, HERE, Garmin · © OpenStreetMap contributors",
+    )
+
+    private val EsriRefPlaces = MapTileLayer(
+        id = "esri-ref-places",
+        sourceName = "EsriRefPlaces",
+        urls = listOf(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/",
+        ),
+        attribution = "© Esri, HERE, Garmin · © OpenStreetMap contributors",
+    )
+
+    /**
+     * Aerial imagery with the road network and place names painted on it — the ground the
+     * owner asked for when they said they wanted satellite and street names at once (2026-11-22).
+     *
+     * Three tile fetches per tile instead of one, and about twice the bytes (Milan z15:
+     * 35 KB of image, 31 KB of roads, 0.9 KB of places). That is the price of a label on an
+     * image in a raster renderer, and it is why this is a choice rather than the default.
+     */
+    val Hybrid = MapStyle(
+        id = "hybrid",
+        label = "Hybrid",
+        sentence = "Aerial imagery with the road network and the place names drawn over it.",
+        attribution = "© Esri, Maxar, Earthstar Geographics · © OpenStreetMap contributors",
+        // The same imagery `Satellite` fetches, on purpose: one planet, cached once.
+        sourceName = "EsriImagery",
+        urls = listOf(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/",
+        ),
+        arcgis = true,
+        maxZoom = 19,
+        ground = MapGround.IMAGE,
+        scrim = 0.05f,
+        vignette = 0.35f,
+        overlays = listOf(EsriRefRoads, EsriRefPlaces),
+    )
+
     val Terrain = MapStyle(
         id = "topo",
         label = "Terrain",
@@ -209,6 +344,30 @@ object MapStyles {
         vignette = 0.50f,
     )
 
+    /**
+     * Esri's topographic map: contours, spot heights, indexed relief and cartographic road
+     * shields. It is here because [Terrain] is the one ground that stops early — OpenTopoMap
+     * ends at z17, so a driver who zooms in on a mountain pass on a phone is over the last
+     * level that source has. This one serves real tiles to z19 (measured: Milan z18 8.1 KB,
+     * Berlin and NYC z19 7.5 KB / 8.8 KB), so the same pinch keeps giving detail.
+     */
+    val Relief = MapStyle(
+        id = "esritopo",
+        label = "Relief",
+        sentence = "Contours, spot heights and shaded relief — and it keeps zooming past Terrain.",
+        attribution = "© Esri, HERE, Garmin, USGS, GEBCO · © OpenStreetMap contributors",
+        sourceName = "EsriTopo",
+        urls = listOf(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/",
+        ),
+        arcgis = true,
+        maxZoom = 19,
+        ground = MapGround.LIGHT,
+        // Pale and busy, like every contour sheet: a little more wash than a street map wants.
+        scrim = 0.14f,
+        vignette = 0.50f,
+    )
+
     val HudGround = MapStyle(
         id = "none",
         label = "HUD Ground",
@@ -222,9 +381,17 @@ object MapStyles {
         vignette = 0.30f,
     )
 
-    /** The picker's order. */
+    /**
+     * The picker's order, and the order the Live page's rail walks: pale street maps, then the
+     * dark grounds, then imagery with its labelled twin, then relief, then no ground at all —
+     * each new ground placed beside the one it resembles rather than appended, so an owner who
+     * has learned the cycle keeps the neighbours they learned.
+     */
     val ALL: List<MapStyle> = Collections.unmodifiableList(
-        listOf(OpenStreetMap, Quiet, HudDark, StreetAtlas, Satellite, Terrain, HudGround),
+        listOf(
+            OpenStreetMap, Quiet, HudDark, Graphite, StreetAtlas,
+            Satellite, Hybrid, Terrain, Relief, HudGround,
+        ),
     )
 
     /** The style for a stored id. Unknown, null or absent is the shipped default. */
@@ -279,19 +446,43 @@ object MapStyles {
     private val sources = HashMap<String, OnlineTileSourceBase>()
 
     fun tileSource(context: Context, style: MapStyle): OnlineTileSourceBase = synchronized(sources) {
-        sources.getOrPut(style.id) { buildSource(style) }
+        sources.getOrPut(style.id) {
+            newSource(
+                style.sourceName, style.urls, style.arcgis, style.attribution,
+                style.minZoom, style.maxZoom,
+            )
+        }
     }
 
-    private fun buildSource(style: MapStyle): OnlineTileSourceBase {
-        val urls = style.urls.toTypedArray()
-        val base = urls.firstOrNull() ?: FALLBACK_URL
-        return if (style.arcgis) {
-            ArcGisTileSource(style.sourceName, urls, style.attribution, style.minZoom, style.maxZoom)
+    /**
+     * The same construction, from a layer that paints over a style's tiles. One cache for
+     * both, because the two are keyed the same way: a style by its id, a layer by its own.
+     */
+    fun tileSource(context: Context, layer: MapTileLayer): OnlineTileSourceBase = synchronized(sources) {
+        sources.getOrPut(layer.id) {
+            newSource(
+                layer.sourceName, layer.urls, layer.arcgis, layer.attribution,
+                layer.minZoom, layer.maxZoom,
+            )
+        }
+    }
+
+    private fun newSource(
+        sourceName: String,
+        urls: List<String>,
+        arcgis: Boolean,
+        attribution: String,
+        minZoom: Int,
+        maxZoom: Int,
+    ): OnlineTileSourceBase {
+        val bases = urls.toTypedArray()
+        return if (arcgis) {
+            ArcGisTileSource(sourceName, bases, attribution, minZoom, maxZoom)
         } else {
             XYTileSource(
-                style.sourceName, style.minZoom, style.maxZoom, 256, ".png",
-                if (urls.isEmpty()) arrayOf(FALLBACK_URL) else urls,
-                style.attribution,
+                sourceName, minZoom, maxZoom, 256, ".png",
+                if (bases.isEmpty()) arrayOf(FALLBACK_URL) else bases,
+                attribution,
             )
         }
     }

@@ -17,9 +17,12 @@ import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudeCfgNote
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import androidx.compose.ui.graphics.toArgb
+import org.osmdroid.tileprovider.MapTileProviderBase
+import org.osmdroid.tileprovider.MapTileProviderBasic
 import org.osmdroid.views.MapView
 import org.osmdroid.views.Projection
 import org.osmdroid.views.overlay.Overlay
+import org.osmdroid.views.overlay.TilesOverlay
 import kotlin.math.hypot
 
 /**
@@ -137,7 +140,7 @@ internal class MapGroundOverlay(
 /**
  * Puts one [MapStyle] onto a live [MapView], and remembers which one it put there.
  *
- * Both map holders use this rather than each repeating the four calls, because the order of
+ * Both map holders use this rather than each repeating the same calls, because the order of
  * those calls is the part that can be quietly wrong:
  *
  * 1. the **tile size**, before anything else touches the provider. `setTilesScaleFactor` and
@@ -163,20 +166,41 @@ internal class MapGroundOverlay(
  *    for a tile is that overlay's own draw pass (`TilesOverlay`, line 255 of 6.1.20:
  *    `mTileProvider.getMapTile(...)`). Disabled means nothing is fetched — which is the
  *    promise `HUD Ground` makes.
- * 5. the ground overlay, re-inserted at the bottom of the manager's list.
+ * 5. the label layers a ground stacks over its tiles, in the style's own order, and then
+ *    the ground overlay, re-inserted above them. Order is the whole design: the manager
+ *    draws the tiles, then its list, so a label layer lands over the imagery it names and
+ *    *under* the wash, which dims a place name exactly as much as it dims the road it sits
+ *    on. `Hybrid` is the only ground with any.
  *
  * It also owns the one index that matters downstream: [lineInsertAt]. The manager draws the
  * tiles, then its list in order, and the route lines have always been inserted at the bottom
  * of that list so a later segment cannot paint over the live arrow. With a wash in the list
- * too, "the bottom" is now index 1 — one below the ground, still below every marker.
+ * too, "the bottom" is now one past the ground — and one past the label layers when there are
+ * any — still below every marker.
  */
 internal class MapStyleApplier {
 
     private var applied: MapStyle? = null
     private var ground: MapGroundOverlay? = null
 
-    /** Where a route line goes in the manager's list: above the wash, below the markers. */
-    val lineInsertAt: Int = 1
+    /**
+     * The label layers currently in the manager, and the providers feeding them — held here
+     * because they are the only part of a style that owns something which has to be let go.
+     * A tile provider is a download queue with a network receiver behind it, and the door
+     * osmdroid uses on its own provider when a view is going away is `detach()` (checked in
+     * the 6.1.20 bytecode, `MapView.onDetach`). The Live page's rail changes ground with a
+     * thumb press, so a satellite-with-labels ground abandoned mid-drive would leave that
+     * queue running at a server for nothing, once per press.
+     */
+    private val layers = ArrayList<TilesOverlay>()
+    private val providers = ArrayList<MapTileProviderBase>()
+
+    /**
+     * Where a route line goes in the manager's list: above everything the tile servers draw —
+     * the label layers and the wash — and below every marker. A getter, because the count in
+     * front of the lines belongs to the ground currently on the view.
+     */
+    val lineInsertAt: Int get() = layers.size + 1
 
     /** True when this style is already on the view — the identity check the holders guard with. */
     fun isApplied(style: MapStyle): Boolean = applied === style
@@ -201,26 +225,58 @@ internal class MapStyleApplier {
         }
         val manager = view.overlayManager
         ground?.let { manager.remove(it) }
+        dropLayers(view)
+        for ((at, layer) in style.overlays.withIndex()) {
+            val provider = MapTileProviderBasic(view.context, MapStyles.tileSource(view.context, layer))
+            val overlay = TilesOverlay(provider, view.context).apply {
+                // A loading slab over aerial imagery reads as a hole in the map. The base
+                // tiles may show their grey while they arrive — they are the ground — but a
+                // label layer that has nothing yet must draw nothing, not a grey brick.
+                setLoadingBackgroundColor(Color.TRANSPARENT)
+                setLoadingLineColor(Color.TRANSPARENT)
+            }
+            providers += provider
+            layers += overlay
+            manager.add(at, overlay)
+        }
         val made = MapGroundOverlay(style, view.resources.displayMetrics.density)
         ground = made
-        manager.add(0, made)
+        manager.add(layers.size, made)
         return true
     }
 
     /**
-     * Put the ground back after somebody emptied the overlay manager (the trip detail map
-     * redraws its track by `clear()`ing the list). Not a style change — nothing else moves.
+     * Put the ground — and any label layers it stacks — back after somebody emptied the
+     * overlay manager (the trip detail map redraws its track by `clear()`ing the list). Not a
+     * style change: nothing else moves, and no provider is rebuilt.
      */
-    fun restoreGround(view: MapView) {
+    fun restoreChrome(view: MapView) {
         val made = ground ?: return
         val manager = view.overlayManager
-        if (manager.indexOf(made) < 0) manager.add(0, made)
+        for ((at, layer) in layers.withIndex()) {
+            if (manager.indexOf(layer) < 0) manager.add(at, layer)
+        }
+        if (manager.indexOf(made) < 0) manager.add(layers.size, made)
     }
 
     /** The holder is going away; the view and its overlays go with it. */
     fun release() {
         ground = null
         applied = null
+        // The view is gone, so there is nothing left to draw these into; `layers` goes with
+        // it, but the providers behind them outlive the view unless something says otherwise.
+        for (p in providers) p.detach()
+        providers.clear()
+        layers.clear()
+    }
+
+    /** Take the label layers out of the manager and let go of the providers behind them. */
+    private fun dropLayers(view: MapView) {
+        val manager = view.overlayManager
+        for (layer in layers) manager.remove(layer)
+        layers.clear()
+        for (p in providers) p.detach()
+        providers.clear()
     }
 }
 

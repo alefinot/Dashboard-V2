@@ -79,18 +79,121 @@ class MapStyleContractTest {
     fun aCacheKeyIsSharedOnlyByStylesDrawingTheSameTiles() {
         // The name is the key osmdroid files every tile under inside its one tile database
         // (`cache.db`, the row's `provider` column — measured on the bench 2026-11-21: 2,533
-        // tiles in one 27.4 MB file, no per-style folders), so two styles may share it exactly
+        // tiles in one 27.4 MB file, no per-style folders), so two sources may share it exactly
         // when their tiles are the same bytes. `HUD Dark` does: it tints OpenStreetMap's tiles
-        // rather than downloading a dark copy of a planet.
-        for (a in MapStyles.ALL) {
-            for (b in MapStyles.ALL) {
-                if (a === b || a.sourceName != b.sourceName) continue
+        // rather than downloading a dark copy of a planet. `Hybrid` does the same thing with
+        // `Satellite`'s imagery, and its two label layers must NOT share anything with it —
+        // a label tile filed under the imagery's key would show a road name pasted on a field.
+        // Layers are in this pass with the styles, because they are filed in the same table.
+        val sources = MapStyles.ALL.map { it.sourceName to it.urls } +
+            MapStyles.ALL.flatMap { it.overlays }.map { it.sourceName to it.urls }
+        for (a in sources) {
+            for (b in sources) {
+                if (a === b || a.first != b.first) continue
                 assertEquals(
-                    "${a.id} and ${b.id} share the tile cache key \"${a.sourceName}\" but ask " +
-                        "different servers for their tiles — one of them would draw the " +
-                        "other's map under its own name",
-                    a.urls, b.urls,
+                    "\"${a.first}\" is the tile cache key of two sources that ask different " +
+                        "servers for their tiles — one of them would draw the other's map " +
+                        "under its own name",
+                    a.second, b.second,
                 )
+            }
+        }
+    }
+
+    /**
+     * The whole point of the catalogue being usable without an account or a token (AGENTS rule
+     * 21, and the reason CARTO's dark basemap is not in here): no URL, in a style or in a
+     * layer, may carry a credential. A key can also arrive disguised as a path segment or a
+     * query parameter, so this checks for the shapes a key takes rather than for one word.
+     */
+    @Test
+    fun noSourceAnywhereAsksForAKey() {
+        val urls = MapStyles.ALL.flatMap { it.urls } +
+            MapStyles.ALL.flatMap { it.overlays }.flatMap { it.urls }
+        assertTrue("the catalogue fetched no tiles at all — nothing to check", urls.isNotEmpty())
+        for (url in urls) {
+            val lower = url.lowercase()
+            for (mark in listOf("key=", "apikey", "api_key", "token", "secret", "signature=", "subscribe")) {
+                assertTrue("$url carries a credential ($mark)", !lower.contains(mark))
+            }
+            assertTrue(
+                "$url asks for a query string, which is where a key hides",
+                !url.contains("?"),
+            )
+        }
+    }
+
+    /**
+     * A tile layer is not a ground. It has no label, no wash and no sentence, so letting one
+     * into `ALL` would put a row in the picker that draws nothing on its own and a rail press
+     * that appears to do nothing. Their ids also share the source cache with the styles'
+     * (one map, keyed by id), so a collision would silently serve a style a layer's tiles.
+     */
+    @Test
+    fun aLayerIsALayerAndNeverAGround() {
+        val layers = MapStyles.ALL.flatMap { it.overlays }
+        assertTrue("no ground stacks anything — the labelled ground is dead code", layers.isNotEmpty())
+
+        val styleIds = MapStyles.ALL.map { it.id }
+        val layerIds = layers.map { it.id }
+        assertEquals("two layers share one id", layerIds.size, layerIds.toSet().size)
+        for (id in layerIds) {
+            assertTrue("$id is a layer's id and must not be a ground's too", id !in styleIds)
+        }
+        for (layer in layers) {
+            assertTrue("${layer.id} fetches tiles and has no attribution", layer.attribution.isNotBlank())
+            assertTrue("${layer.id} has no tile server", layer.urls.isNotEmpty())
+            assertTrue(
+                "${layer.id} must not be fetched outside a ground that stacks it",
+                MapStyles.ALL.none { it.id == layer.id },
+            )
+        }
+
+        // The one ground that stacks labels draws its imagery from the same server as the
+        // plain imagery ground, so the owner who toggles between them pays for a planet once.
+        val stacked = MapStyles.ALL.filter { it.overlays.isNotEmpty() }
+        assertEquals(
+            "more than one ground stacks label layers; each one is a second server to keep honest",
+            1, stacked.size,
+        )
+        val imagery = stacked.single()
+        assertTrue(
+            "${imagery.id} stacks labels and should be an imagery ground — labels over a " +
+                "vector map already have labels",
+            imagery.ground == MapGround.IMAGE,
+        )
+        assertTrue(
+            "${imagery.id} must reuse a plain ground's tiles rather than download its own copy " +
+                "of the same planet",
+            MapStyles.ALL.any { it !== imagery && it.overlays.isEmpty() && it.urls == imagery.urls },
+        )
+        // And a ground with no tiles cannot have anything to paint over.
+        for (style in MapStyles.ALL) {
+            if (!style.hasBasemap) {
+                assertTrue("${style.id} draws no tiles and still stacks layers", style.overlays.isEmpty())
+            }
+        }
+    }
+
+    /**
+     * Every ground has to be able to draw the zoom the follow camera sits at, and a stacked
+     * layer as well — a label layer that tops out under the follow zoom would give the Live
+     * page imagery with no names on it, which is the one thing the ground exists to add.
+     */
+    @Test
+    fun everyLayerCoversTheZoomTheLivePageHoldsTheCameraAt() {
+        for (style in MapStyles.ALL) {
+            for (layer in style.overlays) {
+                assertTrue(
+                    "${layer.id} tops out at z${layer.maxZoom}, under the follow zoom of 15",
+                    layer.maxZoom >= 15,
+                )
+                assertTrue(
+                    "${layer.id} stops before its own ground does, so the labels would vanish " +
+                        "while the imagery kept zooming",
+                    layer.maxZoom >= style.maxZoom,
+                )
+                assertTrue("${layer.id}: inverted range", layer.minZoom <= layer.maxZoom)
             }
         }
     }
@@ -345,6 +448,15 @@ class MapStyleContractTest {
             assertTrue(
                 "${style.id} is ArcGIS dialect and still asks for a file extension",
                 !style.urls.any { it.endsWith(".png") || it.endsWith(".jpg") },
+            )
+        }
+        // ...and the same for the layers that paint over them: a label layer built with the
+        // wrong dialect fetches a URL the server answers with an error page, and the driver
+        // sees satellite with no names and nothing else to tell them why.
+        for (layer in MapStyles.ALL.flatMap { it.overlays }.filter { it.arcgis }) {
+            assertTrue(
+                "${layer.id} is ArcGIS dialect and still asks for a file extension",
+                !layer.urls.any { it.endsWith(".png") || it.endsWith(".jpg") },
             )
         }
         // ...and every non-ArcGIS style is the ordinary {z}/{x}/{y}.png form, which is what
