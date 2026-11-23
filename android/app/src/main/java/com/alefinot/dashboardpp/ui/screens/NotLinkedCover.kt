@@ -108,7 +108,7 @@ fun NotLinkedCover(
                 Text(
                     when {
                         !vehicleName.isNullOrBlank() -> "WAITING FOR: $vehicleName"
-                        firstRun -> "NO DASHBOARD PAIRED YET"
+                        firstRun -> "NO DASHBOARD++ PAIRED YET"
                         else -> "NO VEHICLE SELECTED"
                     },
                     color = HudColors.Cyan,
@@ -117,7 +117,7 @@ fun NotLinkedCover(
                 Spacer(Modifier.height(10.dp))
                 val coverLine = when {
                     permissionProblem -> "Bluetooth permission not granted."
-                    firstRun -> "Switch the dashboard on, then pair it from the vehicle page."
+                    firstRun -> "Switch Dashboard++ on, then pair it from the vehicle page."
                     else -> null
                 }
                 coverLine?.let {

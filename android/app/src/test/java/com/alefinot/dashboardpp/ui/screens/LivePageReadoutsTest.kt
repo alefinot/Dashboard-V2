@@ -837,7 +837,7 @@ class LivePageReadoutsTest {
                 "the slot until the first fix, or the tile view opens on a made-up place",
             Regex("if \\(hasPosition\\)[\\s\\S]{0,600}?LiveRouteMap\\(\\s*route").containsMatchIn(page),
         )
-        for (promise in listOf("Waiting for the dashboard…", "WAITING FOR GNSS FIX")) {
+        for (promise in listOf("Waiting for Dashboard++…", "WAITING FOR GNSS FIX")) {
             assertTrue("the no-position promise \"$promise\" is gone from the page", page.contains(promise))
         }
         // The map-opens-here sentence used to ride under those two as explainer prose; the

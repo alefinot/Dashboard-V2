@@ -327,7 +327,7 @@ private fun vehicleLine(row: TripRow): String = when {
     else -> buildString {
         append("Vehicle: ").append(row.vehicleName ?: row.vehicleId)
         if (!row.inGarage) append(" (removed from garage)")
-        row.eff?.let { append(" - dashboard ").append(it) }
+        row.eff?.let { append(" - Dashboard++ ").append(it) }
     }
 }
 
@@ -352,7 +352,7 @@ private fun SummaryGrid(s: TripSummary) {
         { StatCell("GNSS TRACK", hudNum(s.gnssKm, 2), "km", modifier = Modifier.fillMaxWidth(), dim = s.gnssKm <= 0.0) },
     )
     GridRow(
-        { StatCell("ESP TRIP", hudNum(s.espTripKm, 2), "km", modifier = Modifier.fillMaxWidth()) },
+        { StatCell("DASHBOARD++ TRIP", hudNum(s.espTripKm, 2), "km", modifier = Modifier.fillMaxWidth()) },
         { StatCell("AVG SPEED", hudNum(s.avgSpeed, 1), "km/h", modifier = Modifier.fillMaxWidth()) },
     )
     GridRow(

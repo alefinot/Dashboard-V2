@@ -63,11 +63,11 @@ fun ConnectionUiState.Connecting.stageLine(): String = when (stage) {
     // The phone is listening for dashboards it has never met. This is the slow stage, and
     // the one that needs a permission, so the line says what is happening in air terms -
     // "on this network" used to be the honest phrase and is now a lie about the radio.
-    AttemptStage.SCAN -> "Scanning for dashboards…"
+    AttemptStage.SCAN -> "Scanning for a Dashboard++…"
     // The one stage with a task in it. Named for the thing on the dashboard's screen,
     // because that is where the code is, and Android's own dialog does not say whose
     // number it is asking about.
-    AttemptStage.PAIR -> "Pairing — type the code shown on the dashboard"
+    AttemptStage.PAIR -> "Pairing — type the code shown on Dashboard++"
     // Which ladder, for the stage that needs nobody: dialing a pairing this phone holds.
     AttemptStage.DIAL -> when (mode) {
         // A launch-time reconnect: the app is dialing the pairing this vehicle's card

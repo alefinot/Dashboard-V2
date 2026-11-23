@@ -287,7 +287,7 @@ fun VehicleEditorScreen(
                     .hudGlass(fill = HudColors.Bg, elevation = 16.dp, highlight = 0f),
             ) {
                 EditorHeader(
-                    title = if (isNew) "NAME THIS DASHBOARD" else "EDIT VEHICLE",
+                    title = if (isNew) "NAME THIS DASHBOARD++" else "EDIT VEHICLE",
                     name = name,
                     typeLabel = shownType,
                     identityTail = identityTail,
@@ -395,10 +395,10 @@ fun VehicleEditorScreen(
                     // about itself and survives anything; the paired address is this phone's link to
                     // that radio, and it changes if the pairing is redone — which is why it is
                     // labelled as a pairing and never offered as an identity.
-                    EditorCard("DASHBOARD") {
+                    EditorCard("DASHBOARD++") {
                         Fact(
-                            "IDENTITY (FROM THE DASHBOARD)",
-                            draft.mac ?: "not reported by this dashboard",
+                            "IDENTITY (FROM DASHBOARD++)",
+                            draft.mac ?: "not reported by this Dashboard++",
                         )
                         Fact(
                             "PAIRED BY THIS PHONE",

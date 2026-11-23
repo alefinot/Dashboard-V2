@@ -405,8 +405,8 @@ fun AppShell(
     val recordingActions = TripRecordingActions(
         canRecord = conn != null && tripsAvailable,
         blocked = when {
-            conn == null -> "Connect a dashboard to start a drive."
-            !tripsAvailable -> "This dashboard's firmware cannot record trips."
+            conn == null -> "Connect Dashboard++ to start a drive."
+            !tripsAvailable -> "The firmware on Dashboard++ cannot record trips."
             else -> ""
         },
         onStart = {
@@ -540,7 +540,7 @@ fun AppShell(
                                 // "limited features, not a limited app" looks like on the
                                 // page that needs a device most.
                                 NotLinkedCover(
-                                    title = "NO DASHBOARD IN RANGE",
+                                    title = "NO DASHBOARD++ IN RANGE",
                                     reason = reason,
                                     vehicleName = coverVehicleName,
                                     onOpenVehicles = openGarage,

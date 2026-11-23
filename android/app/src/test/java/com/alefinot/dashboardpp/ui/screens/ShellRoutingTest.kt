@@ -78,11 +78,11 @@ class ShellRoutingTest {
             val line = ShellRouting.view(
                 ConnectionUiState.Connecting(mode, AttemptStage.PAIR),
             ).reason!!
-            assertTrue(line, line.contains("code shown on the dashboard"))
+            assertTrue(line, line.contains("code shown on Dashboard++"))
             val scan = ShellRouting.view(
                 ConnectionUiState.Connecting(mode, AttemptStage.SCAN),
             ).reason!!
-            assertTrue(scan, scan.contains("Scanning for dashboards"))
+            assertTrue(scan, scan.contains("Scanning for a Dashboard++"))
             // No line about a link claims a network: there is no network to claim.
             assertFalse("$mode/$line", line.contains("network"))
             assertFalse("$mode/$scan", scan.contains("network"))

@@ -56,7 +56,7 @@ class SettingsTabReplacesTheWebPageTest {
         val bar = moduleSource("BarLayout.kt")
         assertTrue(
             "the ESP slot is still labelled as the unit's web page",
-            Regex("AppTab\\.WEB\\s*->\\s*Glyph\\(\\s*\"Dashboard settings\"").containsMatchIn(codeOnly(bar)),
+            Regex("AppTab\\.WEB\\s*->\\s*Glyph\\(\\s*\"Dashboard\\+\\+ settings\"").containsMatchIn(codeOnly(bar)),
         )
         assertTrue(
             "App Settings has its own slot and must keep it",

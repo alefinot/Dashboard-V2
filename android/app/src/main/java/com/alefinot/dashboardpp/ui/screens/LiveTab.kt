@@ -539,7 +539,7 @@ private fun shelfExit(top: Boolean): ExitTransition =
 private fun WaitingForPosition(hasFrame: Boolean) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
-            if (hasFrame) "WAITING FOR GNSS FIX" else "Waiting for the dashboard…",
+            if (hasFrame) "WAITING FOR GNSS FIX" else "Waiting for Dashboard++…",
             style = HudeSectionCaps(),
             color = if (hasFrame) HudColors.Amber else HudColors.TextDim,
             textAlign = TextAlign.Center,

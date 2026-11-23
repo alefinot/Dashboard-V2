@@ -617,7 +617,7 @@ class TripLogService : Service() {
                 "Recording · ${formatDuration(summary.durationMs)}" +
                     " · ${format1(summary.distanceKm)} km"
             recording -> "Recording this drive"
-            else -> "Waiting for the dashboard"
+            else -> "Waiting for Dashboard++"
         }
         val text = when {
             paused -> "Not logging samples"

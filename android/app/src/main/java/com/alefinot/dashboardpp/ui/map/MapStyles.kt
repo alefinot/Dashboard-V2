@@ -197,7 +197,7 @@ object MapStyles {
     val HudDark = MapStyle(
         id = "dark",
         label = "HUD Dark",
-        sentence = "The OSM map through a dark filter, built for this dashboard's palette.",
+        sentence = "The OSM map through a dark filter, built for the Dashboard++ palette.",
         attribution = "© OpenStreetMap contributors",
         // Same tiles as OpenStreetMap, deliberately: the name is the cache folder, and a
         // tinted copy of a planet is not a second planet.

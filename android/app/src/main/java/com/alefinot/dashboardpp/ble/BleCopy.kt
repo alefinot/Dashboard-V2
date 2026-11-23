@@ -43,17 +43,17 @@ fun linkFailureText(reason: String): String = when (reason) {
     "bluetooth_off" -> "Bluetooth is off. Turn it on and scan again."
     "no_bluetooth" -> "This phone has no Bluetooth LE radio."
     "connect_timeout", "connect_failed", "bad_address" ->
-        "The dashboard did not answer. Move closer and retry."
+        "Dashboard++ did not answer. Move closer and retry."
     "pairing_failed" ->
         "Pairing did not complete — type the 6-digit code the unit shows."
     "security_stalled" ->
-        "The dashboard answered, but pairing did not complete — clear the pairing and pair again."
+        "Dashboard++ answered, but pairing did not complete — clear the pairing and pair again."
     "telem_subscribe_failed", "rpc_subscribe_failed" ->
         "Notification subscription refused — clear the pairing and pair again."
     "service_missing", "telem_missing", "rpc_missing" ->
-        "Not the expected dashboard service. Update the unit's firmware."
+        "Not the expected Dashboard++ service. Update the unit's firmware."
     "disconnected" -> "Link dropped — dialling again."
     "not_connected" -> "There is no link to send that over."
-    "timeout" -> "The dashboard did not answer in time."
+    "timeout" -> "Dashboard++ did not answer in time."
     else -> "Link failed: $reason"
 }

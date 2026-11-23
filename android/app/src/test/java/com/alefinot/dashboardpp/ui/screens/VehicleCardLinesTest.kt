@@ -249,7 +249,7 @@ class VehicleCardLinesTest {
         assertEquals(CardTone.LIVE, addVehicleSearchLine(searching)?.tone)
 
         val failed = ConnectionUiState.Failed(
-            "No dashboard answered and none was found.",
+            "No Dashboard++ answered and none was found.",
             ConnectMode.DISCOVER,
         )
         assertEquals("LAST SEEN YESTERDAY", cardStatusLine(v, failed, now).text)

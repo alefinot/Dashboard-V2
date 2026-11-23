@@ -179,13 +179,13 @@ object ConnectionCore {
      * It is a search result, not a connection failure: nothing was reached for, so there is
      * no vehicle to blame and no link to mourn.
      */
-    const val NO_DASHBOARD_FOUND = "No dashboard found."
+    const val NO_DASHBOARD_FOUND = "No Dashboard++ found."
 
-    private const val UNCLAIMED = "A dashboard answered that no vehicle card knows."
+    private const val UNCLAIMED = "A Dashboard++ answered that no vehicle card knows."
     private const val AMBIGUOUS =
         "Several cards pair with that unit and it reported no identity."
     private const val NOTHING_FOUND =
-        "No dashboard answered and none was found."
+        "No Dashboard++ answered and none was found."
 
     /**
      * [tried] is every address already linked to in this attempt (including the one

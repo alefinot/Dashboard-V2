@@ -65,7 +65,7 @@ fun macConflict(v: Vehicle, others: List<Vehicle>): Vehicle? {
  */
 fun refusalMessage(clash: Vehicle): String {
     val what = clash.name.trim().ifBlank { "the card ${clash.id}" }
-    return "That dashboard is already on a card called $what " +
+    return "That Dashboard++ is already on a card called $what " +
         "(identity ${clash.mac ?: "unknown"}). Remove it there first."
 }
 

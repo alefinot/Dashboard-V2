@@ -71,7 +71,7 @@ object BarLayout {
         AppTab.VEHICLES -> Glyph("Garage", HudGlyphSize.Card, 52.dp, 1.4f, true)
         AppTab.LIVE -> Glyph("Live", HudGlyphSize.Action, 48.dp, 1f, false)
         AppTab.TRIPS -> Glyph("Trips", HudGlyphSize.Action, 48.dp, 1f, false)
-        AppTab.WEB -> Glyph("Dashboard settings", HudGlyphSize.Action, 48.dp, 1f, false)
+        AppTab.WEB -> Glyph("Dashboard++ settings", HudGlyphSize.Action, 48.dp, 1f, false)
         AppTab.SETTINGS -> Glyph("App settings", HudGlyphSize.Action, 48.dp, 1f, false)
     }
 

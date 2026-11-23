@@ -36,7 +36,7 @@ object TutorialScript {
             id = "welcome",
             glyphId = "readout.speed",
             title = "Welcome to Dashboard++",
-            body = "This app is the cockpit of your ESP32 dashboard. It links " +
+            body = "This app is the cockpit of your Dashboard++. It links " +
                 "over Bluetooth, shows live speed and engine data on gauges and a " +
                 "map, records every drive, tunes the unit\u2019s own settings, and " +
                 "keeps both firmwares updated. Here is the bar, page by page.",
@@ -45,7 +45,7 @@ object TutorialScript {
             id = "vehicles",
             glyphId = "nav.vehicles",
             title = "Garage \u2014 the middle",
-            body = "Everything starts here: scan for a dashboard, pair it, give " +
+            body = "Everything starts here: scan for your Dashboard++, pair it, give " +
                 "it a name and a photo, and keep one card per vehicle. The app " +
                 "always opens on this page, whether or not a unit is connected.",
         ),
@@ -54,7 +54,7 @@ object TutorialScript {
             glyphId = "nav.live",
             title = "Live",
             body = "Real-time gauges, five-minute traces and your route on a " +
-                "live map, following the dashboard while it is connected. A drive " +
+                "live map, following Dashboard++ while it is connected. A drive " +
                 "can be started or stopped here.",
         ),
         TutorialStep(
@@ -68,7 +68,7 @@ object TutorialScript {
         TutorialStep(
             id = "unit-settings",
             glyphId = "nav.unit-settings",
-            title = "Dashboard settings",
+            title = "Dashboard++ settings",
             body = "The unit\u2019s own page, drawn on the phone: every firmware " +
                 "parameter read and written over Bluetooth \u2014 units, alarms, " +
                 "brightness, demo mode \u2014 plus unit diagnostics and config " +
@@ -88,7 +88,7 @@ object TutorialScript {
             glyphId = "action.accept",
             title = "Ready",
             body = "Swipe between the pages, or tap the bar to jump. Add your " +
-                "dashboard on the Garage page to begin. Happy driving!",
+                "Dashboard++ on the Garage page to begin. Happy driving!",
         ),
     )
 

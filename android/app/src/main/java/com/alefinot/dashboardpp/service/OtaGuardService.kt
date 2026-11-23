@@ -118,7 +118,7 @@ class OtaGuardService : Service() {
         val channel = NotificationChannel(
             CHANNEL, "Firmware install", NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Shown while a firmware image is being installed on the dashboard"
+            description = "Shown while a firmware image is being installed on Dashboard++"
             setShowBadge(false)
         }
         manager.createNotificationChannel(channel)

@@ -218,7 +218,7 @@ fun VehicleScreen(
                         // folder they can open in a file manager is not the one being read.
                         "Reading your cards from another folder \u2014 an empty file also sits in $it."
                     }
-                    ?: "No dashboards paired yet.",
+                    ?: "No Dashboard++ paired yet.",
                 color = if (garageDamage == null && garageShadow == null) HudColors.TextMuted else HudColors.Amber,
                 style = HudeCfgNote(),
             )
@@ -274,7 +274,7 @@ fun VehicleScreen(
             // would be asking them to adopt a serial number. The MAC is the identity,
             // and it is shown because that is the string worth checking.
             NoticeCard(
-                "A DASHBOARD ANSWERED THAT NO CARD CLAIMS",
+                "A DASHBOARD++ ANSWERED THAT NO CARD CLAIMS",
                 "${it.name} (firmware ${it.version ?: "unknown"}, " +
                     "MAC ${it.mac.uppercase()})",
                 HudColors.Cyan,

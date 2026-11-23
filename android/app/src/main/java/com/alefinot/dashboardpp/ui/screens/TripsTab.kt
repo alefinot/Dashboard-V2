@@ -473,7 +473,7 @@ private fun RecordingCard(
                         Text("Tap to start a drive.", color = HudColors.TextDim, style = HudeCfgNote())
                     control == RecordingControlState.WAITING ->
                         Text(
-                            "Waiting for the dashboard's first sample.",
+                            "Waiting for Dashboard++'s first sample.",
                             color = HudColors.TextDim,
                             style = HudeCfgNote(),
                         )
