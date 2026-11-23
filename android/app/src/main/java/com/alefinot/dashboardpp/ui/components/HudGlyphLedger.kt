@@ -44,6 +44,10 @@ object HudGlyphLedger {
         "action.list-open" to HudIcons.Chevron,
         "action.edit" to HudIcons.Edit,
         "action.dismiss" to HudIcons.Close,
+        // The trip page's overflow: SHARE CSV / SHARE GPX live behind this so the bar's two
+        // ends stay the two things a windscreen glance needs — back, and what else is here.
+        // Not `action.list-open`: the row does not expand in place, it opens a list.
+        "action.more-menu" to HudIcons.More,
         "action.accept" to HudIcons.Check,
         // The fuel calibration table's CAPTURE: accept the sender reading the unit is making
         // this second, and store it as a point. Same act as [action.accept] — take the thing in

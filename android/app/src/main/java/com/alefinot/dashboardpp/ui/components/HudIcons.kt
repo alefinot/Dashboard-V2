@@ -305,6 +305,35 @@ object HudIcons {
     }
 
     /**
+     * **MORE** — there is a menu behind this, and it is not a direction.
+     *
+     * Three dots on the centre line. `MoreVert` was considered and rejected: a down-facing
+     * column of dots is `Close`'s neighbourhood at a glance, and the row it hangs off is
+     * already carrying a `Close`-derived chevron on its other side. A horizontal row reads
+     * "the rest of this" across every surface the owner has already learned it on, and the
+     * one meaning it must not borrow is `expand this row` — that belongs to `Chevron`.
+     *
+     * The dots keep the set's daylight floor between neighbours — 2.8 units at their edges,
+     * measured like `Pause`'s bars — and carry the `Warn` mark's dot floor of r 1.6: three
+     * blobs merged into a bar say nothing at 22 dp, three holes say "there is more" before
+     * the eye finishes the row.
+     */
+    val More: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "HudMore", defaultWidth = VB.dp, defaultHeight = VB.dp,
+            viewportWidth = VB, viewportHeight = VB,
+        ).addPath(
+            PathParser().parsePathString(MoreData).toNodes(), fill = SolidColor(HudColors.Cyan),
+        ).build()
+    }
+
+    /** Three r=1.6 discs at x = 6, 12, 18 on the y=12 line — 2.8 units of daylight between neighbours. */
+    internal val MoreData: String =
+        "M4.4,12 A1.6,1.6 0 1 1 7.6,12 A1.6,1.6 0 1 1 4.4,12 Z" +
+            "M10.4,12 A1.6,1.6 0 1 1 13.6,12 A1.6,1.6 0 1 1 10.4,12 Z" +
+            "M16.4,12 A1.6,1.6 0 1 1 19.6,12 A1.6,1.6 0 1 1 16.4,12 Z"
+
+    /**
      * A row's `config.reset`: a counter-clockwise arrow, the shape that means "put this back".
      *
      * The action used to be the word `reset` in 12 sp dim ink. The maintainer had it drawn

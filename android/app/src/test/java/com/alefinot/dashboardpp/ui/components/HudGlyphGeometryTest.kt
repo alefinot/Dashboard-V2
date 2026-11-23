@@ -46,6 +46,7 @@ class HudGlyphGeometryTest {
         "Eye" to HudIcons.Eye,
         "FuelTank" to HudIcons.FuelTank,
         "Layers" to HudIcons.Layers,
+        "More" to HudIcons.More,
     )
 
     /** Marks filled as a body, keyed by the outline identifier in HudIcons. */
@@ -60,6 +61,7 @@ class HudGlyphGeometryTest {
         "WarnData" to HudIcons.WarnData,
         "SignalDot" to HudIcons.SignalDot,
         "EyePupil" to HudIcons.EyePupil,
+        "MoreData" to HudIcons.MoreData,
     )
 
     /** Marks drawn as a line, keyed by the stroke identifier in HudIcons. */
@@ -455,6 +457,30 @@ class HudGlyphGeometryTest {
             daylight >= 2.0f,
         )
         assertTrue("a sheet $run wide is not a map", run >= 7f)
+    }
+
+    /**
+     * MORE is three dots and the daylight between them is the mark. Measured like `Pause`:
+     * at a row's 18 dp the gap between neighbours is ~3.7 px against a stroke of ~4, so a
+     * row of touching dots is a dash — which reads as "divider", not as "press me".
+     */
+    @Test
+    fun `more is three dots with daylight between them`() {
+        val subs = subpaths(HudIcons.MoreData)
+        assertEquals("more is three dots", 3, subs.size)
+        val dots = subs.map { circle(it) }
+        for (d in dots) {
+            assertEquals("a dot is off the centre line", 12f, d.centre.y, 0.01f)
+            assertTrue("a r${d.radius} dot is a smudge at 18 dp", d.radius >= 1.6f)
+        }
+        val xs = dots.map { it.centre.x }.sorted()
+        assertEquals("the dots are not centred on the grid", 12f, xs[1], 0.01f)
+        assertEquals("the dots are not evenly spaced", xs[1] - xs[0], xs[2] - xs[1], 0.01f)
+        val daylight = xs[1] - xs[0] - dots[0].radius - dots[1].radius
+        assertTrue(
+            "the dots sit $daylight apart, so they read as one dash",
+            daylight >= 2.0f,
+        )
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────────
