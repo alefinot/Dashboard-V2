@@ -298,7 +298,13 @@ int TZ_DST_RULE = TZ_DST_RULE_EU;
 // One place the release version is written (AGENTS.md rule 3). The macro is what
 // the literals are built from - including the image marker below - and the array
 // is what the code compares and prints.
-#define FW_VERSION_STR "2.0.9"
+//
+// 2.1.3 re-unites the two version lines: the app had run ahead to 2.1.2 while the
+// ESP sat at 2.0.9 (nothing in src/ changed, so V2.1.2 shipped no image), and on
+// 2026-11-23 the maintainer ordered both lines brought to one number - "both to
+// 2.1.3" - rather than keep patching a firmware with no changes in it. Rule 3's
+// +0.0.1 is the default again from here.
+#define FW_VERSION_STR "2.1.3"
 const char FW_VERSION[] = FW_VERSION_STR;
 
 // Self-describing marker for the firmware image. Anything holding a .bin - the

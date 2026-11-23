@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 210
-        versionName = "2.1.2"
+        versionName = "2.1.3"
     }
 
     // Distribution decision (see Dashboard-Android-App-Implementation-Plan.md §15):
