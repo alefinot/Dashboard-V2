@@ -382,10 +382,12 @@ object MapStyles {
     )
 
     /**
-     * The picker's order, and the order the Live page's rail walks: pale street maps, then the
-     * dark grounds, then imagery with its labelled twin, then relief, then no ground at all —
-     * each new ground placed beside the one it resembles rather than appended, so an owner who
-     * has learned the cycle keeps the neighbours they learned.
+     * The picker's order, and the order the Live page's rail walks — across a narrowed cycle or
+     * all of it: pale street maps, then the dark grounds, then imagery with its labelled twin,
+     * then relief, then no ground at all — each new ground placed beside the one it resembles
+     * rather than appended, so an owner who has learned the cycle keeps the neighbours they
+     * learned. [cycleFrom] returns a chosen subset **in this order**, so narrowing the tour
+     * removes grounds without ever reordering the ones that stay.
      */
     val ALL: List<MapStyle> = Collections.unmodifiableList(
         listOf(
@@ -401,18 +403,40 @@ object MapStyles {
     val Standard: MapStyle get() = byId(STANDARD_ID)
 
     /**
-     * The ground one press past [current], wrapping at the end of [ALL] — the Live page's rail
-     * mark steps through the grounds rather than opening a menu over a moving map (maintainer,
-     * 2026-11-22).
+     * The ground one press past [current], wrapping at the end of the walk — the Live page's
+     * rail mark steps through the grounds rather than opening a menu over a moving map
+     * (maintainer, 2026-11-22).
      *
-     * It lives next to [ALL] on purpose: the order the owner reads in App Settings is the order
-     * the rail walks, and a second list somewhere in a screen would be a second truth about
-     * which ground comes after Terrain. Unknown input restarts at the shipped default instead of
-     * throwing — a rail press must never be able to fail.
+     * The walk is [cycle] when the owner has narrowed it (App Settings → Live Map → RAIL CYCLE,
+     * 2026-11-23): the rail then steps through only the grounds kept in the cycle, still in the
+     * catalogue's order — [cycleFrom] guarantees a subset carries [ALL]'s order, so "which
+     * ground comes after Terrain" has one answer wherever it is asked. An empty cycle is not
+     * the owner saying "cycle nothing": it means they never narrowed the rail, and the walk is
+     * all of [ALL] — which is also the safe reading of a corrupt or stale stored list.
+     *
+     * It lives next to [ALL] on purpose: a second list somewhere in a screen would be a second
+     * truth about the order. Unknown input restarts the walk at its first ground instead of
+     * throwing — a rail press must never be able to fail — so a ground dropped from the cycle
+     * simply lands the next press on the first kept one.
      */
-    fun nextAfter(current: MapStyle): MapStyle {
-        val at = ALL.indexOfFirst { it.id == current.id }
-        return if (at < 0) ALL.first() else ALL[(at + 1) % ALL.size]
+    fun nextAfter(current: MapStyle, cycle: List<MapStyle> = emptyList()): MapStyle {
+        val walk = if (cycle.isEmpty()) ALL else cycle
+        val at = walk.indexOfFirst { it.id == current.id }
+        return if (at < 0) walk.first() else walk[(at + 1) % walk.size]
+    }
+
+    /**
+     * The rail's cycle from stored ids: the catalogue filtered to what the owner kept, in the
+     * catalogue's order. Ids this build does not know drop out silently — the same rule
+     * [byId] applies to a stored style, so removing a style someday cannot strand a phone's
+     * cycle on a ground that no longer draws. A cycle that resolves to nothing is returned as
+     * nothing and [nextAfter] reads that as "walk everything", which is also what a row that
+     * was never narrowed holds.
+     */
+    fun cycleFrom(ids: Collection<String>): List<MapStyle> {
+        if (ids.isEmpty()) return emptyList()
+        val kept = ids.toSet()
+        return ALL.filter { it.id in kept }
     }
 
 

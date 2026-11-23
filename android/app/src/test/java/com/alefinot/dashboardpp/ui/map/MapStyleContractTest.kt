@@ -75,6 +75,65 @@ class MapStyleContractTest {
         )
     }
 
+    /**
+     * The owner can narrow the rail's tour to a handful of grounds (App Settings → Live Map →
+     * RAIL CYCLE, 2026-11-23). The narrowed tour must obey the same rules as the full one — a
+     * closed loop, no repeats, nothing outside the kept set — and it must still walk the
+     * catalogue's order rather than the order the taps happened to make. An empty cycle is
+     * "never narrowed", not "cycle nothing": the walk goes back to the whole catalogue.
+     */
+    @Test
+    fun theChosenCycleWalksOnlyItsGrounds() {
+        val kept = listOf(MapStyles.OpenStreetMap, MapStyles.Graphite, MapStyles.Satellite)
+        val visited = mutableListOf<MapStyle>()
+        var at = kept.first()
+        repeat(kept.size) { visited += MapStyles.nextAfter(at, kept).also { at = it } }
+
+        assertEquals(
+            "a narrowed tour must visit exactly the grounds it was given, in their order",
+            listOf("graphite", "satellite", "osm"),
+            visited.map { it.id },
+        )
+        assertSame("the narrowed tour must come back to the ground it started from", kept.first(), at)
+
+        // A ground dropped out of the cycle: the press must not fail and must not land on an
+        // unkept neighbour — it restarts at the cycle's first ground.
+        assertSame(
+            "a ground outside the cycle must restart it at the first kept ground",
+            kept.first(), MapStyles.nextAfter(MapStyles.Quiet, kept),
+        )
+
+        // An empty cycle means the owner never narrowed the rail — it must not dead-stop or
+        // crash; it walks the full catalogue, exactly like the one-argument call.
+        assertSame(
+            "an empty cycle must be read as the full catalogue",
+            MapStyles.nextAfter(MapStyles.ALL[0]),
+            MapStyles.nextAfter(MapStyles.ALL[0], emptyList()),
+        )
+    }
+
+    /**
+     * The stored row is a list of ids in whatever order the taps assembled it (the settings
+     * page writes catalogue order today; tomorrow's build must not care). [MapStyles.cycleFrom]
+     * is the one place that resolves it, and it must return catalogue order and drop ids this
+     * build does not know.
+     */
+    @Test
+    fun cycleFromResolvesIdsToCatalogueOrderAndDropsUnknownOnes() {
+        val stored = listOf("satellite", "osm", "ghost-style", "dark")
+        assertEquals(
+            "the cycle must carry the catalogue's order, not the stored order",
+            listOf("osm", "dark", "satellite"),
+            MapStyles.cycleFrom(stored).map { it.id },
+        )
+        assertTrue(
+            "a cycle of nothing, or of ids nobody knows, must resolve to nothing — nextAfter " +
+                "reads that as the full catalogue",
+            MapStyles.cycleFrom(listOf("ghost-style")).isEmpty() &&
+                MapStyles.cycleFrom(emptyList()).isEmpty(),
+        )
+    }
+
     @Test
     fun aCacheKeyIsSharedOnlyByStylesDrawingTheSameTiles() {
         // The name is the key osmdroid files every tile under inside its one tile database

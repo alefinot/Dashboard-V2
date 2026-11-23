@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -148,6 +149,13 @@ fun SettingsScreen(
     // someday cannot break a phone that still has it stored.
     val mapStyleId by settings.mapStyle.collectAsStateWithLifecycle(initialValue = "")
     val chosenMapStyle = remember(mapStyleId) { MapStyles.byId(mapStyleId) }
+    // Which grounds the Live page's rail mark steps through (maintainer, 2026-11-23: "the user
+    // can select which of the various map styles cycle through when pressing the icon in the
+    // live map"). An empty stored row means "never narrowed", so the rows below all show
+    // checked — the owner's untouched state is a full cycle, not an empty one.
+    val mapCycleIds by settings.mapCycle.collectAsStateWithLifecycle(initialValue = emptyList())
+    val cycleShown = if (mapCycleIds.isEmpty()) MapStyles.ALL.map { it.id } else mapCycleIds
+    var cycleLine by remember { mutableStateOf("") }
     var showConfirmTiles by remember { mutableStateOf(false) }
     var mapLine by remember { mutableStateOf("") }
     // The weather feed has its own store and its own coordinator: the switch and the
@@ -500,6 +508,65 @@ fun SettingsScreen(
             // for the attribution where the tiles are seen, and the map's own chip is the
             // small print of a surface the owner can also hide behind a shelf.
             Text(chosenMapStyle.credit, color = HudColors.TextDim, style = HudeCfgNote())
+
+            Spacer(Modifier.height(14.dp))
+            // The rail's tour, chosen here (2026-11-23). The rows stay in the catalogue's order
+            // whatever order the taps made it in — `MapStyles.cycleFrom` walks the catalogue,
+            // and a tour that reordered with each tap would train nobody. Tapping a row is the
+            // whole control: no separate "apply", the store write lands the way the picker's
+            // does, and the Live page behind this accordion reads the same row.
+            Text("RAIL CYCLE", color = HudColors.Cyan, style = HudeFormLabel())
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Which grounds the Live page's map mark steps through: one press lays the next " +
+                    "checked ground under the map. All checked steps through every style; the " +
+                    "menu above still sets the ground the map starts on.",
+                color = HudColors.TextMuted, style = HudeCfgNote(),
+            )
+            Spacer(Modifier.height(8.dp))
+            MapStyles.ALL.forEach { style ->
+                val checked = style.id in cycleShown
+                // One flip for both targets: the row and the switch share it, so a tap anywhere
+                // on the line lands the same write.
+                val flip: (Boolean) -> Unit = { on ->
+                    val next = if (on) cycleShown + style.id else cycleShown - style.id
+                    if (next.isEmpty()) {
+                        // The last ground cannot leave the tour: a rail with nothing to
+                        // step to is a dead mark on a moving map, and a silent no-op
+                        // would read as a broken switch — so the row says why.
+                        cycleLine = "The rail needs at least one ground to step through."
+                    } else {
+                        cycleLine = ""
+                        scope.launch {
+                            settings.setMapCycle(
+                                // Catalogue order, not tap order — see above.
+                                MapStyles.ALL.filter { it.id in next.toSet() }
+                                    .map { it.id },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { flip(!checked) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        style.label,
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
+                        color = if (checked) HudColors.TextPrimary else HudColors.TextDim,
+                        style = HudeCfgNote(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    HudToggle(on = checked, label = "cycle ${style.label}", onToggle = flip)
+                }
+            }
+            if (cycleLine.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(cycleLine, color = HudColors.TextMuted, style = HudeCfgLive())
+            }
             Spacer(Modifier.height(14.dp))
             // The cache is one folder per ground (the tile file name starts with the source's
             // own name), so the imagery a owner tried once and abandoned is not waiting behind

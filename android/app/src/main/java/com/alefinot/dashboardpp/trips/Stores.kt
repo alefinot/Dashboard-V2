@@ -222,6 +222,24 @@ class RecorderSettings(context: Context) {
         store.edit { it[KEY_MAP_STYLE] = id }
     }
 
+    /**
+     * The grounds the Live page's rail mark steps through, as their ids (see the app's
+     * `MapStyles`, and `MapStyles.cycleFrom` for how the ids become the walk). The row is a
+     * comma-joined list in the same catalogue order the settings page shows. An empty row is
+     * not "cycle nothing" — it is "never narrowed", and the rail walks every ground, which is
+     * what makes an unknown or stale id in the list a drop, not a break.
+     */
+    val mapCycle: Flow<List<String>> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { prefs ->
+                prefs[KEY_MAP_CYCLE].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            }
+
+    /** Store the cycle as the caller assembled it; the settings page assembles it in catalogue order. */
+    suspend fun setMapCycle(ids: List<String>) {
+        store.edit { it[KEY_MAP_CYCLE] = ids.joinToString(",") }
+    }
+
     /** One-time battery-optimisation hint, so it never nags twice. */
     val batteryPromptShown: Flow<Boolean> =
         store.data.catch { emit(emptyPreferences()) }
@@ -253,6 +271,7 @@ class RecorderSettings(context: Context) {
         tripFilter.first()
         routeQuality.first()
         mapStyle.first()
+        mapCycle.first()
         tutorialHidden.first()
     }
 
@@ -332,6 +351,7 @@ class RecorderSettings(context: Context) {
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
         private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
         private val KEY_MAP_STYLE = stringPreferencesKey("map_style")
+        private val KEY_MAP_CYCLE = stringPreferencesKey("map_cycle")
 
         /** The filter value meaning "no filter". */
         const val FILTER_ALL = "ALL"

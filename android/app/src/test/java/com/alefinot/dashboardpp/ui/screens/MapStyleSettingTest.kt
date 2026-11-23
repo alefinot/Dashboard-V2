@@ -319,7 +319,14 @@ class MapStyleSettingTest {
         assertTrue(
             "the page stopped asking the catalogue which ground comes next — the order the rail " +
                 "walks must be the order App Settings shows, not a second list",
-            page.contains("MapStyles.nextAfter(MapStylePref.current)") && !page.contains("MapStyles.ALL"),
+            page.contains("MapStyles.nextAfter(MapStylePref.current, cycleStyles)") &&
+                !page.contains("MapStyles.ALL"),
+        )
+        assertTrue(
+            "the rail no longer consults the owner's chosen cycle — it would walk every ground " +
+                "again no matter what App Settings' RAIL CYCLE says",
+            page.contains("groundSettings.mapCycle.collectAsStateWithLifecycle") &&
+                page.contains("MapStyles.cycleFrom(cycleIds)"),
         )
         assertTrue(
             "the rail's press no longer writes the stored row — a ground picked mid-drive " +
@@ -365,6 +372,54 @@ class MapStyleSettingTest {
             page.contains("private const val GROUND_NAME_MS") &&
                 page.contains("groundNamed = false") &&
                 page.contains("delay(GROUND_NAME_MS)"),
+        )
+    }
+
+    /**
+     * Which grounds the rail walks is itself a choice now (maintainer, 2026-11-23: "make it so
+     * the user can select which of the various map styles cycle through when pressing the icon
+     * in the live map"). The lane is the picker's lane again — settings page, DataStore row,
+     * the Live page that reads it — so this walks it and checks the three properties that
+     * matter: the rows exist with a floor under them, the row they write is warmed at boot,
+     * and the rail reads the store rather than a copy of the list.
+     */
+    @Test
+    fun theRailCycleIsChosenInAppSettings() {
+        val page = moduleSource("SettingsScreen.kt")
+        assertTrue(
+            "the RAIL CYCLE section left the Live Map card — the cycle could not be narrowed",
+            page.contains("\"RAIL CYCLE\""),
+        )
+        assertTrue(
+            "the cycle rows no longer offer the catalogue, or stopped collecting the stored " +
+                "cycle — the switches would not show what the rail actually walks",
+            page.contains("MapStyles.ALL.forEach") &&
+                page.contains("settings.mapCycle.collectAsStateWithLifecycle"),
+        )
+        assertTrue(
+            "toggling a ground no longer writes the store — the choice would die with the page",
+            page.contains("settings.setMapCycle("),
+        )
+        assertTrue(
+            "the last ground in the cycle can now be switched off, which strands the rail's " +
+                "mark with nowhere to step — the page must refuse and say why",
+            page.contains("needs at least one ground"),
+        )
+
+        val store = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/Stores.kt")
+        assertTrue(
+            "the map_cycle key left the store — every owner's narrowed tour would reset",
+            store.contains("stringPreferencesKey(\"map_cycle\")"),
+        )
+        assertTrue(
+            "setMapCycle went missing, or stopped writing the list the page assembled",
+            store.contains("suspend fun setMapCycle(ids: List<String>)") &&
+                store.contains("it[KEY_MAP_CYCLE] = ids.joinToString(\",\")"),
+        )
+        assertTrue(
+            "mapCycle is not warmed at boot — the first rail press of a cold start would pay a " +
+                "cold DataStore read the splash already has time for",
+            store.contains("mapCycle.first()"),
         )
     }
 

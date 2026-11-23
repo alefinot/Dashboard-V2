@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.api.Snapshot
 import com.alefinot.dashboardpp.ble.BleApi
 import com.alefinot.dashboardpp.ble.BleRuntime
@@ -238,7 +239,9 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
 
     // The rail's ground cycler (maintainer, 2026-11-22: "add a map icon in the live map that
     // allows the user to change map style in realtime"). One press lays the next ground from the
-    // catalogue under the map, in place, with the car moving under it.
+    // owner's cycle under the map, in place, with the car moving under it — and since 2026-11-23
+    // the cycle itself is the owner's: App Settings → Live Map → RAIL CYCLE picks which grounds
+    // the press steps through, in catalogue order.
     //
     // It writes through the picker's door and no other: the same `trip_settings` row App
     // Settings' MAP GROUND writes, and the same `MapStylePref` mirror every map surface reads.
@@ -248,6 +251,12 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
     // ground picked at a traffic light is the one the app wakes up on, and App Settings shows it.
     val groundSettings = remember { RecorderSettings(context) }
     val writes = rememberCoroutineScope()
+    // The grounds the owner let the rail walk (App Settings → Live Map → RAIL CYCLE, 2026-11-23).
+    // Collected here rather than mirrored like MapStylePref: nothing draws from this list — it is
+    // consulted at the press and nowhere else — and this page is composed behind the settings
+    // accordion, so the list is already fresh on the next press without a second global.
+    val cycleIds by groundSettings.mapCycle.collectAsStateWithLifecycle(initialValue = emptyList())
+    val cycleStyles = remember(cycleIds) { MapStyles.cycleFrom(cycleIds) }
     // The ground that the rail last laid down, and whether its name is on the page. The glyph
     // can say "ground", it cannot say "OpenTopoMap"; the name is not stored anywhere, because a
     // chip that outlived the press would be a claim about a map somebody else has since changed.
@@ -480,7 +489,7 @@ fun LiveTab(active: Boolean, actions: TripRecordingActions) {
                 onZoomOut = { zoomOut++ },
                 groundLabel = MapStylePref.current.label,
                 onCycleGround = {
-                    val next = MapStyles.nextAfter(MapStylePref.current)
+                    val next = MapStyles.nextAfter(MapStylePref.current, cycleStyles)
                     MapStylePref.set(next.id)
                     groundName = next.label
                     groundNamed = true
