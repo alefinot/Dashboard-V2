@@ -472,7 +472,7 @@ object HudIcons {
      * Garage: the app's subject seen from the front — a garage, its roller door cut open.
      *
      * One mark owns all four vehicle places — the bar's centre slot, a card cover that has no photo,
-     * the editor's empty photo well, and the `OPEN VEHICLE PAGE` button — exactly as one mark owned
+     * the editor's empty photo well, and the `GO TO GARAGE` button — exactly as one mark owned
      * them before. What changed on 2026-11-22 is the metaphor, twice over: the maintainer retired the
      * Ultraleggera wheel that had carried the mark since 2026-11-13, the car-key replacement that
      * followed it was pulled the same day for reading as a face, and the menu itself is now the

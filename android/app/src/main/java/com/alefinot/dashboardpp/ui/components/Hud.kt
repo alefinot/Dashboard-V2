@@ -103,7 +103,7 @@ enum class HudButtonStyle { PRIMARY, SECONDARY, WARNING, DANGER }
  *    The word is the second channel that survives the mark, on the acts that must not
  *    be guessed.
  *  - **D4 — the labels that cannot be drawn.** `ALLOW INSTALLS`, `GRANT STORAGE
- *    ACCESS`, `PHONE BLUETOOTH SETTINGS`, `OPEN VEHICLE PAGE`, `RETRY`: a mark says the
+ *    ACCESS`, `PHONE BLUETOOTH SETTINGS`, `GO TO GARAGE`, `RETRY`: a mark says the
  *    family (usually the cog, "an errand into a screen this app does not own") and the
  *    word says which.
  *

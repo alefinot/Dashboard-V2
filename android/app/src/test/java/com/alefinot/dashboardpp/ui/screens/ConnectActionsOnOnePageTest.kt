@@ -72,13 +72,13 @@ class ConnectActionsOnOnePageTest {
 
     /** The covers' whole vocabulary: one action, and it is navigation, not connection. */
     @Test
-    fun offlineCoverOffersOnlyTheWayToTheVehiclePage() {
+    fun offlineCoverOffersOnlyTheWayToTheGarage() {
         val src = moduleSource("NotLinkedCover.kt")
         val actions = Regex("HudButton\\(\\s*\"([^\"]+)\"").findAll(src)
             .map { it.groupValues[1] }.toList()
         assertEquals(
-            "a cover must offer exactly one action, the one that opens the vehicle page; found: $actions",
-            listOf("OPEN VEHICLE PAGE"),
+            "a cover must offer exactly one action, the one that opens the garage page; found: $actions",
+            listOf("GO TO GARAGE"),
             actions,
         )
         assertFalse("a cover must not reach for the view model", codeOnly(src).contains("ConnectionViewModel"))

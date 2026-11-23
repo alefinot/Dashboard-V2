@@ -104,7 +104,7 @@ class BarLayoutTest {
      *
      * The floors are stated in pixels at the bar's 30 dp (one unit ~3.4 px on the bench phone),
      * the size the mark is seen at most and the size a photo-less card cover draws it at; the
-     * editor's well is 38 dp, and the `OPEN VEHICLE PAGE` button's 18 dp is deliberately not
+     * editor's well is 38 dp, and the `GO TO GARAGE` button's 18 dp is deliberately not
      * floored here because at that size the slats fall together into one ribbed panel, which is
      * still a garage door.
      */

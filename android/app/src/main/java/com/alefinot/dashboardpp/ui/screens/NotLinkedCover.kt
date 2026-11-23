@@ -125,10 +125,10 @@ fun NotLinkedCover(
                 }
                 Spacer(Modifier.height(18.dp))
                 HudButton(
-                    "OPEN VEHICLE PAGE",
+                    "GO TO GARAGE",
                     style = HudButtonStyle.PRIMARY,
                     // The bar's own garage: the mark that means "vehicle" in the bar is the mark on
-                    // the door to the vehicle page, so the cover points at the tab it is sending you
+                    // the door to the garage, so the cover points at the tab it is sending you
                     // to rather than only spelling it.
                     glyph = HudIcons.Garage,
                     onClick = onOpenVehicles,

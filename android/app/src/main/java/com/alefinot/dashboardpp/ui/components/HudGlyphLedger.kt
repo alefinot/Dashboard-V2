@@ -126,7 +126,7 @@ object HudGlyphLedger {
             "places — the map, the list and the card already draw one pin.",
         "Garage" to "`the garage tab` and `a vehicle with no photo yet` are the same noun: this " +
             "app's subject. The bar's centre slot, a card's empty cover, the editor's empty well and " +
-            "`OPEN VEHICLE PAGE` therefore draw one garage front rather than a tab mark and a " +
+            "`GO TO GARAGE` therefore draw one garage front rather than a tab mark and a " +
             "placeholder mark that happen to look alike.",
         "Pause" to "The PAUSED pill and the PAUSE action are one act in two voices: the pill reports " +
             "the state the control puts the drive in, exactly as `readout.recording` reports what " +
