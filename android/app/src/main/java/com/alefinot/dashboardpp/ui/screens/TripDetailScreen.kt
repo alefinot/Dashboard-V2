@@ -650,23 +650,24 @@ private fun MenuRow(glyph: ImageVector, label: String, onClick: () -> Unit) {
 /**
  * The channels the trend card offers, in chip order, built once per read file.
  *
- * A channel appears only if the drive logged it — a night run with no economy readings gets two chips,
- * not three, and the card says so rather than drawing a flat line at zero, which would read as a
+ * A channel appears only if the drive logged it — a night run with no economy readings gets three
+ * chips, not four, and the card says so rather than drawing a flat line at zero, which would read as a
  * measurement of zero. Order is fixed, and so is the ink: the card paints channel *n* in the colour
  * the page has always used for that quantity, so SPEED stays cyan when ALTITUDE drops out.
  *
  * For SPEED the two figures come from [TripSummary] rather than from the channel, deliberately: they
  * are the same numbers the hero band wears, and a chart whose `avg` disagreed with the hero would make
- * the owner doubt one of them. ALTITUDE and ECONOMY have no summary figure that means "mean of these
- * samples" (`economyKml` is fuel over distance, a different measurement entirely), so theirs is the
- * channel's own mean — which is also exactly what the dashed rule is drawn at.
+ * the owner doubt one of them. ALTITUDE, ECONOMY and COOLANT have no summary figure that means "mean
+ * of these samples" (`economyKml` is fuel over distance, and `minTemp`/`maxTemp` are a range, not a
+ * mean), so theirs is the channel's own mean — which is also exactly what the dashed rule is drawn at.
  */
 private fun trendChannels(detail: TripDetail): List<Channel> {
     val s = detail.summary
     val speed = detail.series.speed
     val altitude = detail.series.altitude
     val economy = detail.series.economy
-    val out = ArrayList<Channel>(3)
+    val temp = detail.series.temp
+    val out = ArrayList<Channel>(4)
     if (speed.isPlottable) {
         out += Channel(
             label = "SPEED",
@@ -675,7 +676,6 @@ private fun trendChannels(detail: TripDetail): List<Channel> {
             series = speed,
             avg = s.avgSpeed,
             peak = s.maxSpeed,
-            runStarts = runStartSeconds(detail),
         )
     }
     if (altitude.isPlottable) {
@@ -698,36 +698,32 @@ private fun trendChannels(detail: TripDetail): List<Channel> {
             peak = economy.maxValue(),
         )
     }
-    return out
-}
-
-/**
- * Where the drive's launches began, as whole seconds from its start: the yellow ticks on the speed
- * channel's time axis, in the same ink as the map's run lines.
- *
- * These are the runs the page *shows* — the quickest ten, see [com.alefinot.dashboardpp.trips.RunSelection.QUICKEST]
- * — not every launch the file held. A tick the owner cannot find in the run list would be a mark with
- * no explanation, and the accordion above already says which ten they are.
- */
-private fun runStartSeconds(detail: TripDetail): List<Int> {
-    if (detail.runs.isEmpty()) return emptyList()
-    val start = detail.summary.startMs
-    return detail.runs.mapNotNull { run ->
-        val sec = ((run.startedAtMs - start) / 1000L).toInt()
-        if (sec >= 0) sec else null // a run stamped before the drive's first row cannot be placed
+    if (temp.isPlottable) {
+        out += Channel(
+            // The name the ledger row directly below it wears, so the chip and the figure it comes from
+            // are never two words for one thing.
+            label = "COOLANT",
+            unit = "°C",
+            digits = 0,
+            series = temp,
+            avg = temp.meanValue(),
+            peak = temp.maxValue(),
+        )
     }
+    return out
 }
 
 /**
  * How long the drive is, in whole seconds: the last second **any** channel holds a sample at.
  *
- * The channels are not co-extensive (economy drops rows, altitude drops rows), so the widest one is
- * the drive. The chart's window is measured in these seconds, which is also what [trendEnvelope]
- * indexes on, so a pan or a zoom never re-derives anything from a wall clock.
+ * The channels are not co-extensive (economy drops rows, altitude drops rows, coolant drops rows), so
+ * the widest one is the drive. The chart's window is measured in these seconds, which is also what
+ * [trendEnvelope] indexes on, so a pan or a zoom never re-derives anything from a wall clock.
  */
 private fun driveSpanSec(detail: TripDetail): Int = maxOf(
     detail.series.speed.lastSecond(),
     maxOf(detail.series.altitude.lastSecond(), detail.series.economy.lastSecond()),
+    detail.series.temp.lastSecond(),
 )
 
 /**

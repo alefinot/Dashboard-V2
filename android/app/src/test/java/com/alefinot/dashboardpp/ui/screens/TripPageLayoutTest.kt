@@ -130,17 +130,17 @@ class TripPageLayoutTest {
     // ------------------------------------------------------------------ the chart
 
     @Test
-    fun `the page has one trend card, three channels and no sparkline of its own`() {
+    fun `the page has one trend card, four channels and no sparkline of its own`() {
         val page = screenSource()
         assertTrue("one card, holding chips and plot together", page.contains("TrendCard("))
         assertFalse("the three sparkline cards are gone", page.contains("fun ChartRow("))
         assertFalse("and the page no longer borrows the Live page's sparkline", page.contains("components.Sparkline"))
-        for (name in listOf("SPEED", "ALTITUDE", "ECONOMY")) {
+        for (name in listOf("SPEED", "ALTITUDE", "ECONOMY", "COOLANT")) {
             assertTrue("channel $name", Regex("""label = "$name"""").containsMatchIn(page))
         }
         // A channel the drive did not log is not offered at all, rather than drawn flat at zero.
-        val guards = Regex("if \\((speed|altitude|economy)\\.isPlottable\\)").findAll(page).count()
-        assertTrue("each channel is offered only if it was logged, saw $guards", guards == 3)
+        val guards = Regex("if \\((speed|altitude|economy|temp)\\.isPlottable\\)").findAll(page).count()
+        assertTrue("each channel is offered only if it was logged, saw $guards", guards == 4)
     }
 
     @Test
@@ -219,14 +219,35 @@ class TripPageLayoutTest {
     }
 
     @Test
-    fun `the speed channel keeps the run ticks and the empty ones are not hidden behind a lie`() {
+    fun `the plot carries no run ticks and paints nothing yellow`() {
         val chart = chartSource()
-        assertTrue("run ticks on the time axis", chart.contains("drawRunTicks(ch.runStarts, state, xOf, bottom)"))
-        assertTrue("only inside the visible window", chart.contains("if (sec < state.fromSec || sec >= state.toSec) continue"))
-        assertTrue("the map's run yellow", chart.contains("drawLine(HudColors.Yellow"))
+        // Maintainer, 2026-11-24: the yellow launch marks come off the speed chart. The 0-50 RUNS list
+        // and the route map keep theirs — this is the plot's paint, and a test is the only thing that
+        // keeps the marks from drifting back in on the next "helpful" pass.
+        assertFalse("the run ticks are gone", chart.contains("drawRunTicks"))
+        assertFalse("nothing on this card is the map's run yellow", chart.contains("HudColors.Yellow"))
+        assertFalse("and a channel carries no run starts at all", chart.contains("runStarts"))
         // A channel with nothing to plot says so in words; a flat line at zero reads as a measurement.
         assertTrue(chart.contains("This drive logged no"))
         assertTrue(chart.contains("drawEmptyPlot(left, size.width, bottom)"))
+    }
+
+    @Test
+    fun `the card keeps its size across a zoom so the plot never moves under a finger`() {
+        val chart = chartSource()
+        // The refit control means nothing while the plot is the whole drive, but its 48 dp touch box is
+        // laid out either way: the header used to grow ~28 dp the instant a pinch began.
+        assertTrue(
+            "the refit's slot is reserved whether or not the control is in it",
+            Regex("Box\\(Modifier\\.size\\(HudTouch\\.Min\\),[^)]*\\)\\s*\\{\\s*if \\(state\\.isZoomed\\)")
+                .containsMatchIn(chart),
+        )
+        // Same for the window readout: one Text, empty when there is nothing to report, so the 200 dp
+        // plot below it cannot gain or lose a line mid-gesture.
+        assertTrue("the window line has a permanent line box",
+            Regex("Text\\(\\s*text = if \\(state\\.isZoomed\\)").containsMatchIn(chart))
+        assertFalse("it is not added and removed with the state",
+            Regex("if \\(state\\.isZoomed\\) \\{\\s*Text\\(").containsMatchIn(chart))
     }
 
     @Test
@@ -234,6 +255,11 @@ class TripPageLayoutTest {
         val chart = chartSource()
         assertTrue(chart.contains("ChannelChip("))
         assertTrue("the Trips filter chip's anatomy", chart.contains("hudPressable(role = Role.Button"))
+        // Four channels are wider than a phone card, and a clipped chip is a channel nobody can pick.
+        assertTrue("the chip row scrolls instead of clipping the last chip",
+            chart.contains("Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())"))
+        assertTrue("so it is the Trips row's scroll, not a Material scroller",
+            chartCode().contains("import androidx.compose.foundation.horizontalScroll"))
         assertTrue(chart.contains("animateColorAsState"))
         assertTrue("and the page's own easing", chart.contains("tween(ms, easing = HudMotion.Ease)"))
         assertFalse(chartCode().contains("FilterChip"))

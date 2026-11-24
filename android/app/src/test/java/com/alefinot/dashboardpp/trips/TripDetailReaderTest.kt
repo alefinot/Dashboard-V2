@@ -47,6 +47,7 @@ class TripDetailReaderTest {
         spd: Double = 40.0,
         alt: Double = 120.0,
         ikml: Double = 12.0,
+        temp: Double = 88.0,
         fix: Int = 1,
     ) = TripSample(
         tsMs = 1_700_000_000_000L + second * 1_000L,
@@ -57,6 +58,7 @@ class TripDetailReaderTest {
             trpKm = 1.0 + second * 0.01,
             trpL = 0.5 + second * 0.005,
             alt = alt,
+            temp = temp,
             lat = if (fix == 0) 0.0 else 45.0 + second * 0.0001,
             lon = if (fix == 0) 0.0 else 9.0,
             fix = fix,
@@ -71,6 +73,7 @@ class TripDetailReaderTest {
                 spd = 20.0 + i,
                 alt = if (i < 25) 100.0 + i else -1.0,
                 ikml = if (i % 2 == 0) 12.0 else 0.0,
+                temp = if (i < 20) 80.0 + i else 0.0,
             )
         }
 
@@ -88,15 +91,20 @@ class TripDetailReaderTest {
         assertEquals(rows.last().snapshot.lon, detail.routes[0].last().lon, 0.0)
 
         // Every row the drive logged carries a speed; only the rows with a reading carry the other
-        // two — `-1` and `0` are "no reading", which is what decides whether a channel is offered at
-        // all. One value per logged row, and **nothing thrown away any more**: reducing to fit the
-        // screen is the chart's job, not the reader's (`trendEnvelope`), and a series cut to 600
-        // points here could never be zoomed.
+        // three — `-1` and `0` are "no reading", which is what decides whether a channel is offered at
+        // all. Coolant uses the accumulator's own rule (`temp > 0`, the same test that decides whether
+        // the drive has a COOLANT range at all), so the chart and the ledger never disagree about which
+        // rows were measurements. One value per logged row, and **nothing thrown away any more**:
+        // reducing to fit the screen is the chart's job, not the reader's (`trendEnvelope`), and a
+        // series cut to 600 points here could never be zoomed.
         assertEquals(30, detail.series.speed.count)
         assertEquals(25, detail.series.altitude.count)
         assertEquals(15, detail.series.economy.count)
+        assertEquals(20, detail.series.temp.count)
         assertEquals(49.0, detail.series.speed.maxValue(), 0.0)
         assertEquals(124.0, detail.series.altitude.maxValue(), 0.0)
+        assertEquals(99.0, detail.series.temp.maxValue(), 0.0)
+        assertEquals(89.5, detail.series.temp.meanValue(), 0.001)
 
         // Each channel carries its **own** seconds, whole seconds from the drive's start. On the old
         // shared index axis a time label under ALTITUDE was a lie: the rows it dropped silently
@@ -106,7 +114,13 @@ class TripDetailReaderTest {
         assertEquals(29, detail.series.speed.lastSecond())
         assertEquals(24, detail.series.altitude.lastSecond())
         assertEquals(28, detail.series.economy.lastSecond())
-        for (ch in listOf(detail.series.speed, detail.series.altitude, detail.series.economy)) {
+        // And a channel may stop before the drive does: the coolant rows ran out at second 19, ten
+        // seconds short of the drive, which is why the window is measured off the widest series.
+        assertEquals(19, detail.series.temp.lastSecond())
+        for (ch in listOf(
+            detail.series.speed, detail.series.altitude,
+            detail.series.economy, detail.series.temp,
+        )) {
             assertTrue("a channel's seconds must be non-decreasing for the window search", ch.isPlottable)
             for (i in 1 until ch.count) {
                 assertTrue("second went backwards at $i", ch.seconds[i] >= ch.seconds[i - 1])

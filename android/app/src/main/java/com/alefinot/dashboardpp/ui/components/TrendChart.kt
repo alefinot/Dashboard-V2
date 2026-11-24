@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +18,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +56,7 @@ import com.alefinot.dashboardpp.ui.theme.HudeSectionTitle
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudMotion
 import com.alefinot.dashboardpp.ui.theme.HudRadius
+import com.alefinot.dashboardpp.ui.theme.HudTouch
 import com.alefinot.dashboardpp.ui.theme.hudCard
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -70,9 +74,12 @@ import kotlin.math.roundToInt
  * without reference points"*. A shape with no axis tells you neither *when* something happened nor
  * *what* it reached. So every mark in here is a reference point — labelled y gridlines that refit to
  * the visible window, time labels on nice time steps, the whole-drive average as a dashed rule that
- * does **not** move when you zoom, a cursor that reads out the exact instant and figure you tapped,
- * and yellow ticks on the speed channel marking where the drive's 0-50 launches began, in the same
- * ink the map draws those same runs in.
+ * does **not** move when you zoom, and a cursor that reads out the exact instant and figure you tapped.
+ *
+ * **The card does not change shape.** The window readout and the refit control only mean something
+ * while the plot is zoomed, but their space is reserved whether it is or not: a card that grew by two
+ * lines the moment a pinch started used to shove the plot out from under the finger mid-gesture
+ * (maintainer, 2026-11-24). Nothing below this card moves for a zoom, a pan or a refit.
  *
  * **Not a charting library.** Like the route map, this paints on one `Canvas` with the app's own
  * tokens; the arithmetic that decides *where the labels go* is in [ChartScale.kt], where a test can
@@ -115,7 +122,6 @@ private val LABEL_GAP = 12.dp
  * @param avg the whole drive's mean of **this channel's own samples**, so the dashed rule compares
  *   like with like instead of quoting a figure derived some other way
  * @param peak the whole drive's maximum of the same samples
- * @param runStarts seconds of the drive at which an acceleration run began; only speed has them
  */
 data class Channel(
     val label: String,
@@ -124,7 +130,6 @@ data class Channel(
     val series: TrendChannel,
     val avg: Double,
     val peak: Double,
-    val runStarts: List<Int> = emptyList(),
 )
 
 /**
@@ -228,8 +233,17 @@ class TrendViewState {
     }
 }
 
-/** The channel ink, by position: the trip page's own speed / altitude / economy colours. */
-private val ACCENTS = listOf(HudColors.Cyan, HudColors.Amber, HudColors.Green)
+/**
+ * The channel ink, by position: the trip page's own speed / altitude / economy colours, then the hot
+ * end of the unit's own coolant ramp for COOLANT.
+ *
+ * The fourth entry is chosen by elimination rather than by taste: cyan, amber and green are already
+ * worn by the channels above it, blue sits too close to cyan to read as a different quantity at a
+ * glance, and [HudColors.Red] is what [com.alefinot.dashboardpp.ui.screens.PowerScales.tempColor]
+ * gives an engine that has actually reached temperature — so the trace is the colour the Live page's
+ * coolant bar turns for the same reading.
+ */
+private val ACCENTS = listOf(HudColors.Cyan, HudColors.Amber, HudColors.Green, HudColors.Red)
 
 private fun accentOf(index: Int): Color = ACCENTS[index % ACCENTS.size]
 
@@ -261,20 +275,31 @@ fun TrendCard(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("TREND", color = HudColors.Cyan, style = HudeSectionTitle(0.2f / 13f))
             Spacer(Modifier.weight(1f))
-            // The refit control exists only while the window is not the drive, so a page showing
-            // everything never offers an action that would change nothing.
-            if (state.isZoomed) {
-                HudGlyphAction(
-                    glyph = HudIcons.Reset,
-                    description = "Fit the whole drive",
-                    size = HudGlyphSize.Row,
-                    onClick = { state.fit() },
-                )
+            // The slot is reserved whether or not the control is in it. The refit only means something
+            // while the window is not the drive, but the glyph's touch box is 48 dp and the title is
+            // not, so drawing it conditionally made the header jump ~28 dp taller the moment a zoom
+            // began — and the plot moved with it, under the fingers.
+            Box(Modifier.size(HudTouch.Min), contentAlignment = Alignment.Center) {
+                if (state.isZoomed) {
+                    HudGlyphAction(
+                        glyph = HudIcons.Reset,
+                        description = "Fit the whole drive",
+                        size = HudGlyphSize.Row,
+                        onClick = { state.fit() },
+                    )
+                }
             }
         }
 
         Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Scrollable for the same reason the Trips filter row is: four of these (`SPEED`, `ALTITUDE`,
+        // `ECONOMY`, `COOLANT`) are wider than a phone card, and a clipped `COOLANT` would be a channel
+        // the drive logged that the owner cannot reach. Orthogonal axes, so scrolling the chips sideways
+        // never competes with scrolling the page.
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             channels.forEachIndexed { i, c ->
                 ChannelChip(c.label, i == index) { state.channel = i }
             }
@@ -298,14 +323,19 @@ fun TrendCard(
                 style = HudeCfgNote(),
             )
         }
-        if (state.isZoomed) {
-            Text(
+        // The window's span, in the slot under the figures. Reserved and empty while the plot is the
+        // whole drive: this is the line that says where a zoom stops, and a Text that appears and
+        // disappears here moves the 200 dp plot below it — precisely while the owner is pinching.
+        Text(
+            text = if (state.isZoomed) {
                 hudDuration(state.fromSec * 1000L) + " – " + hudDuration(state.toSec * 1000L) +
-                    " of " + hudDuration(state.endSec * 1000L),
-                color = HudColors.TextDim,
-                style = HudeCfgNote(),
-            )
-        }
+                    " of " + hudDuration(state.endSec * 1000L)
+            } else {
+                ""
+            },
+            color = HudColors.TextDim,
+            style = HudeCfgNote(),
+        )
 
         Spacer(Modifier.height(4.dp))
         TrendChartView(channels, state, startMs, Modifier.fillMaxWidth())
@@ -342,8 +372,7 @@ private fun ChannelChip(label: String, on: Boolean, onSelect: () -> Unit) {
 }
 
 /**
- * The plot itself: axes, envelope, average rule, run ticks, cursor — and the gestures that move the
- * window.
+ * The plot itself: axes, envelope, average rule, cursor - and the gestures that move the window.
  */
 @Composable
 fun TrendChartView(
@@ -455,7 +484,6 @@ fun TrendChartView(
             drawGrid(scale, left, size.width, bottom)
             drawAverageRule(ch.avg, scale, yOf, left, size.width, bottom, accent)
             drawEnvelope(sink, frame.filled, xOf, scale, yOf, bottom, accent)
-            if (ch.runStarts.isNotEmpty()) drawRunTicks(ch.runStarts, state, xOf, bottom)
             if (state.cursorSec >= 0) {
                 drawCursor(xOf(state.cursorSec), bottom, cursorBucketY(sink, frame.filled, state.cursorSec, yOf))
             }
@@ -729,21 +757,6 @@ private fun DrawScope.drawEnvelope(
         ),
     )
     drawPath(trace, accent, style = Stroke(width = 1.6f))
-}
-
-/** Where each recorded 0-50 launch began, on the time axis, in the map's run yellow. */
-private fun DrawScope.drawRunTicks(
-    runStarts: List<Int>,
-    state: TrendViewState,
-    xOf: (Int) -> Float,
-    bottom: Float,
-) {
-    for (i in runStarts.indices) {
-        val sec = runStarts[i]
-        if (sec < state.fromSec || sec >= state.toSec) continue
-        val x = xOf(sec)
-        drawLine(HudColors.Yellow, Offset(x, bottom - 8f), Offset(x, bottom), 2f)
-    }
 }
 
 /** The cursor: a hairline at the tapped instant, and a dot on the bucket it stands on. */

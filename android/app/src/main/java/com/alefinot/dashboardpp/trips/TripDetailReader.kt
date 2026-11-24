@@ -43,12 +43,18 @@ data class TripDetail(
 )
 
 /**
- * The three channels the detail page's trend chart can draw.
+ * The four channels the detail page's trend chart can draw.
  *
- * `speed` covers every row the drive logged; `altitude` and `economy` hold only the rows that
- * carried a reading for them (`alt >= 0` and `ikml > 0` respectively) — which is why each channel
- * carries its **own** seconds array: on the old shared index axis, drawing a time label under
+ * `speed` covers every row the drive logged; `altitude`, `economy` and `temp` hold only the rows that
+ * carried a reading for them (`alt >= 0`, `ikml > 0` and `temp > 0` respectively) — which is why each
+ * channel carries its **own** seconds array: on the old shared index axis, drawing a time label under
  * ALTITUDE would have been a lie, since dropped rows silently shifted everything after them.
+ *
+ * `temp` is the engine coolant, the same quantity the page's VEHICLE ledger names COOLANT and the Live
+ * page names TEMP. It uses the accumulator's own validity rule (`TripAccumulator` ignores a `temp` of
+ * zero or less when it works out its min/max), so the chart and the ledger agree about which rows were
+ * measurements. Ambient air is logged too (`amb`) and is deliberately not charted: on a coolant page a
+ * second, far flatter trace would cost a chip and answer nothing the owner asks about an engine.
  *
  * Raw on purpose. Until 2026-11-24 the reader collapsed each series to 600 points here, which
  * bounded memory and made zooming impossible: the page had one fixed-resolution copy of the drive
@@ -61,6 +67,7 @@ class TripSeries(
     val speed: TrendChannel,
     val altitude: TrendChannel,
     val economy: TrendChannel,
+    val temp: TrendChannel,
 )
 
 /** Reading a sealed (or still-open) trip file into everything its detail page draws. */
@@ -84,6 +91,7 @@ object TripDetailReader {
         val speed = SeriesBuffer()
         val altitude = SeriesBuffer()
         val economy = SeriesBuffer()
+        val temp = SeriesBuffer()
         val replay = RunReplay()
         var any = false
 
@@ -97,6 +105,7 @@ object TripDetailReader {
                     speed.add(s.spd, sample.tsMs)
                     if (s.alt >= 0.0) altitude.add(s.alt, sample.tsMs)
                     if (s.ikml > 0.0) economy.add(s.ikml, sample.tsMs)
+                    if (s.temp > 0.0) temp.add(s.temp, sample.tsMs)
                     // Streamed rather than collected: the replay only ever needs the row in front
                     // of it, and a 43 k-row file has no reason to stay in memory for its runs.
                     replay.row(sample)
@@ -116,6 +125,7 @@ object TripDetailReader {
                 speed = speed.channel(),
                 altitude = altitude.channel(),
                 economy = economy.channel(),
+                temp = temp.channel(),
             ),
         )
     }
