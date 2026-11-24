@@ -4,10 +4,11 @@ import android.app.Application
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import com.alefinot.dashboardpp.storage.AppRoot
-import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.CachedSummary
 import com.alefinot.dashboardpp.trips.RecorderSettings
 import com.alefinot.dashboardpp.trips.TrackPoint
+import com.alefinot.dashboardpp.trips.TripDetail
+import com.alefinot.dashboardpp.trips.TripDetailReader
 import com.alefinot.dashboardpp.trips.TripExport
 import com.alefinot.dashboardpp.trips.TripFormat
 import com.alefinot.dashboardpp.trips.TripIndex
@@ -16,7 +17,6 @@ import com.alefinot.dashboardpp.trips.TripStore
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.trips.TripTag
 import com.alefinot.dashboardpp.trips.TripTagReader
-import com.alefinot.dashboardpp.trips.runsFrom
 import com.alefinot.dashboardpp.vehicles.VehicleStore
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -24,11 +24,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** One row in the Trips list. `summary` is null until it has been computed. */
 data class TripRow(
@@ -60,22 +62,6 @@ data class TripRow(
 /** One chip in the Trips filter row. */
 data class TripFilterOption(val value: String, val label: String)
 
-/** Everything the detail screen draws. */
-data class TripDetail(
-    val file: File,
-    val summary: TripSummary,
-    val samples: List<com.alefinot.dashboardpp.trips.TripSample>,
-    /**
-     * The drive's 0-50 runs, recovered from [samples] — see [runsFrom].
-     *
-     * Computed here, once per file open, rather than in the screen: the screen recomposes for every
-     * tap and every style pick, and a replay of a 43 k-row file has no business running under a
-     * finger. The list's identity is what the map's overlay guard runs on, and this is the one
-     * place that can promise it.
-     */
-    val runs: List<AccelRun>,
-)
-
 /**
  * The Trips tab's model: list (from the summary cache, not by re-reading every
  * CSV), delete, share, and detail loading. All file work runs on the IO
@@ -92,6 +78,14 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _rows = MutableStateFlow<List<TripRow>>(emptyList())
     val rows: StateFlow<List<TripRow>> = _rows
+
+    /**
+     * App Settings → Trips & Storage → **AUTO QUALITY**, read as Compose state by the detail page:
+     * whether a page that cannot hold 20 fps may draw its route at a coarser rung. Default on —
+     * the step only ever happens on a page that is already too slow to read (see
+     * `ui/map/AdaptiveQuality.kt`).
+     */
+    val adaptiveQuality: Flow<Boolean> = settings.adaptiveQuality
 
     private val _filter = MutableStateFlow(RecorderSettings.FILTER_ALL)
     val filter: StateFlow<String> = _filter
@@ -417,10 +411,22 @@ class TripsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun detail(row: TripRow): TripDetail? {
-        val summary = row.summary ?: TripReader.summarize(row.file.absolutePath) ?: return null
-        val samples = TripReader.samples(row.file.absolutePath)
-        return TripDetail(row.file, summary, samples, runsFrom(samples))
+    /**
+     * One recorded drive, read off disk on the IO dispatcher.
+     *
+     * `suspend` on purpose: the page used to call this from its own composition, and a 43 k-row
+     * file turned the first frame into a full parse. It now paints its shell immediately and fills
+     * in when this returns (see `TripDetailScreen`'s loading state).
+     *
+     * No cache: every open re-reads the file, so a drive can never be shown from a copy that no
+     * longer matches the disk (maintainer, 2026-11-24).
+     *
+     * [TripRow.summary], when the list already has one, is passed only as the answer for a file
+     * that yields no readable row at all — a revoked grant or a truncated file still shows the
+     * figures the list knew, exactly as it did before, instead of claiming the drive is gone.
+     */
+    suspend fun detail(row: TripRow): TripDetail? = withContext(Dispatchers.IO) {
+        TripDetailReader.read(row.file, row.summary)
     }
 
     fun delete(row: TripRow) {

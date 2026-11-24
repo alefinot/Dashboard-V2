@@ -116,6 +116,16 @@ fun RouteMap(
     points: List<GeoPoint>,
     modifier: Modifier = Modifier,
     /**
+     * What a camera framing is keyed on: **the drive**, not the point list.
+     *
+     * A recorded drive is drawn at the finest route rung its phone can hold (see
+     * `RouteThinning.ladder` and `AdaptiveQuality`), so the same drive can reach this map as two
+     * different lists within one visit. Framing is a property of the ground the owner came to look
+     * at, not of how many vertices it took to draw it — so a step down to a coarser rung must
+     * redraw the line without yanking a camera the owner may have panned.
+     */
+    fitKey: Any,
+    /**
      * The drive's 0-50 runs, painted in yellow over the route — the same lines the live map drew
      * while the drive was happening, recovered from the file (see [com.alefinot.dashboardpp.trips.runsFrom]).
      * Empty is the common case and costs nothing: the detail page of a drive with no launches looks
@@ -145,7 +155,7 @@ fun RouteMap(
         factory = { ctx -> holder.build(ctx, style) },
         update = { map ->
             holder.onRunTap = onRunTap
-            holder.applyTrack(map, points, style, runs)
+            holder.applyTrack(map, points, style, runs, fitKey)
             holder.selectRun(map, selectedRun)
         },
     )
@@ -159,14 +169,23 @@ private class MapHolder {
     private var layoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     /**
-     * Framing is applied once per point set and viewport size. Re-fitting on
-     * every recomposition would yank the viewport back while the user is
-     * panning around the route.
+     * The drive this view was framed on, and the viewport it was framed for. Framing is applied
+     * once per drive and size: re-fitting on every recomposition would yank the viewport back
+     * while the user is panning around the route, and a coarser route rung is the same drive.
      */
-    private var fitted: Long? = null
+    private var framedDrive: Any? = null
+    private var framedWidth = 0
+    private var framedHeight = 0
+
+    /** The drive key the map is waiting to frame on, once it has a size. */
+    private var frameOn: Any? = null
 
     /** Filtered track, kept so framing can run after the first layout. */
     private var track: List<GeoPoint> = emptyList()
+
+    /** What the overlays were last built from. Identity, because the page remembers both. */
+    private var drawnPoints: List<GeoPoint>? = null
+    private var drawnRuns: List<AccelRun>? = null
 
     /** The ground on the view — source, tint, wash, zoom bounds. See [applyStyle]. */
     private val chrome = MapStyleApplier()
@@ -276,14 +295,31 @@ private class MapHolder {
      * size, because a `AndroidView` update block runs before layout and framing
      * an unmeasured map is not merely wrong — see [MapFit].
      *
-     * [runs] rides along with it because the two belong to one picture: a run is a section of the
-     * route, so it is drawn when the route is drawn and never on a map that has no route.
+     * The update lambda runs on **every** recomposition of the page (a tapped run, a settings
+     * pick, a route step-down), and rebuilding the overlays there was the detail map's most
+     * expensive habit: a `clear()` of the manager, two polylines, two marker bitmaps and the run
+     * lines, all to draw the same drive. Both lists are remembered by the page, so their identity
+     * is the answer to "is this the same picture?" — a tap now costs one paint of the run overlay.
+     *
+     * [runs] rides along with the track because the two belong to one picture: a run is a section
+     * of the route, so it is drawn when the route is drawn and never on a map that has no route.
      */
-    fun applyTrack(view: MapView, points: List<GeoPoint>, style: MapStyle, runs: List<AccelRun> = emptyList()) {
+    fun applyTrack(
+        view: MapView,
+        points: List<GeoPoint>,
+        style: MapStyle,
+        runs: List<AccelRun>,
+        fitKey: Any,
+    ) {
         applyStyle(view, style)
-        track = MapFit.usable(points)
-        drawTrack(view, runs)
-        if (view.width > 0 && view.height > 0) fit(view) else awaitSize(view)
+        if (points !== drawnPoints || runs !== drawnRuns) {
+            drawnPoints = points
+            drawnRuns = runs
+            track = MapFit.usable(points)
+            drawTrack(view, runs)
+        }
+        frameOn = fitKey
+        if (view.width > 0 && view.height > 0) fit(view, fitKey) else awaitSize(view)
     }
 
     private fun awaitSize(view: MapView) {
@@ -293,7 +329,7 @@ private class MapHolder {
             override fun onGlobalLayout() {
                 if (view.width > 0 && view.height > 0) {
                     detachListener(view)
-                    fit(view)
+                    fit(view, frameOn)
                 }
             }
         }
@@ -380,7 +416,16 @@ private class MapHolder {
         edge.strokeJoin = Paint.Join.ROUND
     }
 
-    private fun fit(view: MapView) {
+    /**
+     * Put the camera on the drive, once per drive and viewport.
+     *
+     * [drive] is the page's `fitKey` — the file it is drawing, not the list it drew. A coarser
+     * route rung must not move a camera the owner has panned, and a page that is re-visited in a
+     * different window gets its own framing because the size changed with it.
+     */
+    private fun fit(view: MapView, drive: Any?) {
+        if (track.isEmpty()) return
+        if (drive == framedDrive && view.width == framedWidth && view.height == framedHeight) return
         // MapFit thinks in the levels an owner reads; the view's bounds are one tile
         // generation deeper than that (MapZoom), so they are translated on the way in.
         val plan = MapFit.plan(
@@ -389,9 +434,9 @@ private class MapHolder {
             view.height,
             MapZoom.fromView(view.maxZoomLevel),
         ) ?: return
-        val key = fitKey(view)
-        if (key == fitted) return
-        fitted = key
+        framedDrive = drive
+        framedWidth = view.width
+        framedHeight = view.height
         if (plan.useBoundingBox) {
             val density = view.resources.displayMetrics.density
             // strokeSize is the pixel padding kept around the track so the start
@@ -408,17 +453,6 @@ private class MapHolder {
             view.controller.setCenter(plan.center)
         }
         view.invalidate()
-    }
-
-    /** Identity of "this track in this viewport", used to fit exactly once. */
-    private fun fitKey(view: MapView): Long {
-        var h = (view.width.toLong() shl 20) xor view.height.toLong()
-        h = h * 31 + track.size
-        if (track.isNotEmpty()) {
-            h = h * 31 + track.first().latitude.hashCode()
-            h = h * 31 + track.last().longitude.hashCode()
-        }
-        return h
     }
 
     /**
@@ -442,7 +476,12 @@ private class MapHolder {
         track = emptyList()
         runOverlay.clear()
         onRunTap = null
-        fitted = null
+        framedDrive = null
+        framedWidth = 0
+        framedHeight = 0
+        frameOn = null
+        drawnPoints = null
+        drawnRuns = null
     }
 }
 

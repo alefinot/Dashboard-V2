@@ -489,7 +489,14 @@ object TripReader {
     /** Summary of a file on disk; see [scan] for the one-pass rule. */
     fun summarize(path: String): TripSummary? = scan(path).summary
 
-    private fun forEachLine(path: String, block: (String) -> Unit) {
+    /**
+     * Every line of a trip file, handed to [block] in file order.
+     *
+     * `internal` because [TripDetailReader] walks the same file: a partial read (storage revoked,
+     * file deleted mid-read) leaves the caller with whatever was parsed, and that decision should
+     * not be made twice with two different answers.
+     */
+    internal fun forEachLine(path: String, block: (String) -> Unit) {
         val f = File(path)
         if (!f.exists()) return
         try {

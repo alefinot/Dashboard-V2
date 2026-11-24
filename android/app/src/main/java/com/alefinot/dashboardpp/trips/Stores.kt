@@ -196,6 +196,20 @@ class RecorderSettings(context: Context) {
             .map { it[KEY_ROUTE_QUALITY] ?: 100 }
 
     /**
+     * Whether a recorded drive's detail page may draw its route at a coarser rung when the phone
+     * cannot hold 20 fps (default **on**). It changes nothing on disk and nothing on the map the
+     * camera drives: the page starts at the full 3 000-point line and only steps down if it
+     * measurably cannot draw it (see `ui/map/AdaptiveQuality.kt`).
+     */
+    val adaptiveQuality: Flow<Boolean> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_ADAPTIVE_QUALITY] ?: true }
+
+    suspend fun setAdaptiveQuality(enabled: Boolean) {
+        store.edit { it[KEY_ADAPTIVE_QUALITY] = enabled }
+    }
+
+    /**
      * Which vehicles the Trips list is narrowed to: `ALL`, `UNKNOWN`, or a vehicle
      * id. A deleted vehicle's id stays a legal value — the list then shows that
      * vehicle's drives, which is the whole point of tagging trips by id [plan §6].
@@ -270,6 +284,7 @@ class RecorderSettings(context: Context) {
         notificationEnabled.first()
         tripFilter.first()
         routeQuality.first()
+        adaptiveQuality.first()
         mapStyle.first()
         mapCycle.first()
         tutorialHidden.first()
@@ -350,6 +365,7 @@ class RecorderSettings(context: Context) {
         private val KEY_TUTORIAL_HIDDEN = booleanPreferencesKey("tutorial_hidden")
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
         private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
+        private val KEY_ADAPTIVE_QUALITY = booleanPreferencesKey("adaptive_quality")
         private val KEY_MAP_STYLE = stringPreferencesKey("map_style")
         private val KEY_MAP_CYCLE = stringPreferencesKey("map_cycle")
 

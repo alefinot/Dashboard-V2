@@ -46,17 +46,31 @@ class RunLinesOnBothMapsTest {
         }
     }
 
-    /** A drive read back from its file reaches the detail map, with its runs recovered once. */
+    /**
+     * A drive read back from its file reaches the detail map, with its runs recovered once.
+     *
+     * The recovery moved out of the view model when the detail page became a single pass over the
+     * file ([com.alefinot.dashboardpp.trips.TripDetailReader]): the rows are gone by the time the
+     * page sees anything, so the runs have to be streamed beside the route and the charts or they
+     * cost a second parse of a 43 k-row file. What must not move is the rule — one replay state
+     * machine, the same one the live frame lane feeds.
+     */
     @Test
     fun aRecordedDriveArrivesWithItsRunsAndThePageHandsThemToTheMap() {
-        val vm = moduleFile("src/main/java/com/alefinot/dashboardpp/viewmodel/TripsViewModel.kt")
+        val reader = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/TripDetailReader.kt")
         assertTrue(
-            "the detail stopped recovering the drive's launches from its own rows",
-            vm.contains("runsFrom(samples)"),
+            "the detail reader stopped feeding the file's rows through the run replay",
+            reader.contains("replay.row(sample)"),
         )
         assertTrue(
             "TripDetail no longer carries them across to the screen",
-            vm.contains("val runs: List<AccelRun>"),
+            reader.contains("val runs: List<AccelRun>"),
+        )
+        val replay = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/AccelRun.kt")
+        assertTrue(
+            "RunReplay stopped being the same state machine the live lane runs — an archived run " +
+                "could then disagree with the yellow line the live map drew a minute earlier",
+            replay.contains("class RunReplay") && replay.contains("AccelRunTracker(maxRuns, RunSelection.QUICKEST)"),
         )
         val page = moduleSource("TripDetailScreen.kt")
         assertTrue("the detail map stopped receiving the drive's runs", page.contains("runs = runs"))

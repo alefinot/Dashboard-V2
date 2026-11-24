@@ -144,6 +144,11 @@ fun SettingsScreen(
     // frame, while the label beside the rail still follows the finger.
     val routeQuality by settings.routeQuality.collectAsStateWithLifecycle(initialValue = 100)
     var routeDrag by remember { mutableStateOf<Int?>(null) }
+    // Whether a sealed drive's page may drop to a coarser route rung when the phone cannot hold
+    // 20 fps (maintainer, 2026-11-24). Default on: the step only ever happens on a page that is
+    // already too slow to read.
+    val adaptiveQuality by settings.adaptiveQuality
+        .collectAsStateWithLifecycle(initialValue = true)
     // The map ground. The store keeps an id and the catalogue resolves it — an id this build
     // does not know becomes the shipped default rather than an error, so removing a style
     // someday cannot break a phone that still has it stored.
@@ -411,6 +416,24 @@ fun SettingsScreen(
                     }
                     routeDrag = null
                 },
+            )
+
+            Spacer(Modifier.height(12.dp))
+            // The safety net under the slider above, and a separate switch because the two answer
+            // different questions: the slider sets how much the *live* line keeps, this decides
+            // whether a *recorded* drive steps down when the phone cannot draw it (maintainer,
+            // 2026-11-24). It never writes to a trip file: the route is thinned for the screen.
+            ToggleRow(
+                label = "AUTO QUALITY",
+                on = adaptiveQuality,
+                toggleLabel = "automatic route quality",
+            ) { on -> scope.launch { settings.setAdaptiveQuality(on) } }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Steps a recorded drive's route from 3 000 points down only when the page " +
+                    "cannot hold 20 fps. Nothing written to disk changes.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
             )
 
             Spacer(Modifier.height(16.dp))

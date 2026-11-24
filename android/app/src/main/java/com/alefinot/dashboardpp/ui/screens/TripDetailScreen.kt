@@ -23,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -40,7 +41,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alefinot.dashboardpp.storage.AppRoot
 import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.trips.AccelRun
+import com.alefinot.dashboardpp.trips.TripDetail
 import com.alefinot.dashboardpp.trips.TripSummary
+import com.alefinot.dashboardpp.ui.components.HudAccordion
+import com.alefinot.dashboardpp.ui.components.HudAccordionBody
+import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
@@ -49,12 +54,12 @@ import com.alefinot.dashboardpp.ui.components.HudGlyphAction
 import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.Sparkline
-import com.alefinot.dashboardpp.ui.components.bucketMax
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.hudPressable
 import com.alefinot.dashboardpp.ui.components.StatCell
 import com.alefinot.dashboardpp.ui.map.RouteMap
+import com.alefinot.dashboardpp.ui.map.rememberAdaptiveRouteLevel
 import com.alefinot.dashboardpp.ui.theme.HudColors
 import com.alefinot.dashboardpp.ui.theme.HudBrushes
 import com.alefinot.dashboardpp.ui.theme.HudMotion
@@ -91,17 +96,32 @@ import java.util.Locale
  * a kebab at the trailing end, because a windscreen glance needs a route and a
  * distance, not two share buttons.
  *
- * Below the hero: the drive's 0-50 runs as rows that answer to the same yellow
- * lines on the map above them, the series charts, and two groups of figures —
- * what the vehicle used, and how trustworthy the log is. Charts are drawn by hand
- * from the CSV — a charting library would be another dependency and a worse fit
- * for a fixed HUD look — and every series is bucketed to a bounded point count so
- * a 12 h trip (43k samples) costs the same paint as a 5 minute one.
+ * Below the hero: the drive's 0-50 runs behind a dropdown (the ten quickest, not
+ * every launch the file ever had — see `RunSelection.QUICKEST`), the series charts,
+ * and two groups of figures — what the vehicle used, and how trustworthy the log is.
+ *
+ * The page is **painted before it is read** (maintainer, 2026-11-24). A twelve-hour
+ * file is ~43 000 rows, and parsing it inside composition meant the first frame was
+ * a full parse of the drive; the loading state is now a real state of this screen,
+ * painted on the same frame the page opens, and the figures arrive when the reader
+ * finishes on the IO dispatcher. Charts and the route are built in that same pass,
+ * so nothing here ever walks the samples again — a recomposition costs a repaint,
+ * not a re-parse.
  */
 @Composable
 fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val detail = remember(row.file.absolutePath) { vm.detail(row) }
+    // One pass over the file, off the main thread, every time the page opens: no cache, so a drive
+    // that was deleted or replaced on disk can never be shown from a stale copy.
+    val state by produceState<DetailState>(DetailState.Loading, row.file.absolutePath) {
+        value = DetailState.Loading
+        value = try {
+            vm.detail(row)?.let { DetailState.Ready(it) } ?: DetailState.Unreadable
+        } catch (e: Exception) {
+            DetailState.Unreadable
+        }
+    }
+    val detail = (state as? DetailState.Ready)?.detail
     val sharedStorage by vm.shared.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -111,7 +131,7 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
     BackHandler(enabled = menuOpen) { menuOpen = false }
     BackHandler(enabled = !menuOpen) { onDismiss() }
 
-    if (detail == null) {
+    if (state == DetailState.Unreadable) {
         Column(
             Modifier.fillMaxSize().background(HudColors.Bg).padding(16.dp),
         ) {
@@ -132,36 +152,48 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
         return
     }
 
-    val s = detail.summary
-    val samples = detail.samples
-    // The drive's 0-50 runs, recovered from the timer column the file has always carried
-    // (trips/runsFrom). Nothing in the file changed to get them, so a drive recorded months ago
-    // wears the same yellow it did on the live map while it happened.
-    val runs = detail.runs
+    val summary = detail?.summary
+    val runs = detail?.runs.orEmpty()
     // The run whose result this page is holding. Sticky, unlike the live map's card: the route
     // under it is not going anywhere, so the number has no reason to leave before the owner does.
     // One state answers to two doors — a tap on the map's yellow line and a tap on the run's row
     // below set the same value — so the highlighted row and the dressed line can never disagree.
-    // Keyed on the file for the same reason the detail itself is — if this composable is ever handed
-    // a different drive without leaving the screen, a number from the drive before it must not stay
-    // on the page.
+    // Keyed on the file for the same reason the detail itself is.
     var shownRun by remember(row.file.absolutePath) { mutableStateOf<AccelRun?>(null) }
 
-    val points = remember(samples) {
-        samples.filter { it.snapshot.hasPosition }
-            .map { GeoPoint(it.snapshot.lat, it.snapshot.lon) }
+    // The drive's line at every rung the reader prepared, converted for osmdroid once per load.
+    // The conversion is what the map's own guard keys on, so a recomposition that changes nothing
+    // hands it the same two lists it already drew.
+    val routes = remember(detail) {
+        detail?.routes.orEmpty().map { rung ->
+            rung.map { GeoPoint(it.lat, it.lon) }
+        }
     }
+    // Below 20 fps the page draws a coarser rung of the same drive: 3 000 points down to 400,
+    // monotonically, and only when App Settings says it may (AUTO QUALITY, on by default).
+    val adaptiveOn by vm.adaptiveQuality.collectAsStateWithLifecycle(initialValue = true)
+    val rung = rememberAdaptiveRouteLevel(
+        driveKey = row.file.absolutePath,
+        enabled = adaptiveOn && routes.size > 1,
+        rungs = routes.size,
+    )
+    // The rung this page has spent, never past the last one its own drive produced.
+    val points = routes.getOrNull(rung.coerceAtMost(routes.lastIndex)).orEmpty()
 
-    // The screen sits on the page's flat black. Two panes, fixed: the hero keeps its
+    // The page sits on the page's flat black. Two panes, fixed: the hero keeps its
     // ground and the scroll column gets whatever is left.
     Box(Modifier.fillMaxSize().background(HudColors.Bg)) {
         Column(Modifier.fillMaxSize()) {
             // ── The hero: the drive's ground, pinned. Not inside the scroll column,
             // so a map pan is a map pan and never a flung list. ──
             Box(Modifier.fillMaxWidth().weight(2f)) {
-                if (points.size >= 2) {
-                    RouteMap(
+                when {
+                    summary == null -> LoadingPane()
+                    points.size >= 2 -> RouteMap(
                         points = points,
+                        // Framing belongs to the drive, not the rung: stepping down must not move
+                        // a camera the owner has panned.
+                        fitKey = row.file.absolutePath,
                         modifier = Modifier.fillMaxSize(),
                         // The drive's launches, in the live map's yellow, over the route the same
                         // file drew. Tapping one reads its result out; tapping it again puts the
@@ -172,28 +204,30 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
                             shownRun = if (hit.id == shownRun?.id) null else hit
                         },
                     )
-                } else {
-                    // The same pane, holding the honest answer instead of a route: a drive
-                    // with no fixes still has every figure on this page, it just has no shape.
-                    Box(
-                        Modifier.fillMaxSize().hudCard(fill = HudColors.Msg).padding(12.dp),
-                    ) {
-                        Text(
-                            if (points.isEmpty()) {
-                                "No GNSS positions in this trip."
-                            } else {
-                                "Only one position."
-                            },
-                            color = HudColors.TextMuted,
-                            style = HudeCfgNote(),
-                        )
+                    else -> {
+                        // The same pane, holding the honest answer instead of a route: a drive
+                        // with no fixes still has every figure on this page, it just has no shape.
+                        Box(
+                            Modifier.fillMaxSize().hudCard(fill = HudColors.Msg).padding(12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                if (points.isEmpty()) {
+                                    "No GNSS positions in this trip."
+                                } else {
+                                    "Only one position."
+                                },
+                                color = HudColors.TextMuted,
+                                style = HudeCfgNote(),
+                            )
+                        }
                     }
                 }
 
                 // The figures the owner came for, worn at the map's bottom edge: a scrim from
                 // nothing to near-black carries them off the ground without hiding it, and the
                 // distance is the one figure allowed to be big.
-                HeroBand(s, Modifier.align(Alignment.BottomCenter))
+                summary?.let { HeroBand(it, Modifier.align(Alignment.BottomCenter)) }
 
                 shownRun?.let { run ->
                     // The same card the live page floats over the drive, for the same question. No
@@ -218,83 +252,15 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             Column(
                 Modifier.weight(3f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             ) {
-                if (runs.isNotEmpty()) {
-                    HudEnter(delayMs = HudMotion.STAGGER_MS * 2) {
-                        Column(Modifier.fillMaxWidth()) {
-                            RunsCard(runs, shownRun) { run ->
-                                shownRun = if (run.id == shownRun?.id) null else run
-                            }
-                        }
-                    }
+                if (detail != null) {
+                    DetailBody(
+                        detail = detail,
+                        shownRun = shownRun,
+                        onRun = { run -> shownRun = if (run.id == shownRun?.id) null else run },
+                        sharedStorage = sharedStorage,
+                        onDelete = { confirmDelete = true },
+                    )
                 }
-
-                HudEnter(delayMs = HudMotion.STAGGER_MS * 3) {
-                    Column(Modifier.fillMaxWidth()) {
-                        ChartRow(
-                            title = "SPEED",
-                            unit = "km/h",
-                            values = bucketMax(samples.map { it.snapshot.spd }, CHART_POINTS),
-                            accent = HudColors.Cyan,
-                        )
-                    }
-                }
-                val altitude = samples.filter { it.snapshot.alt >= 0.0 }
-                if (altitude.size >= 2) {
-                    HudEnter(delayMs = HudMotion.STAGGER_MS * 4) {
-                        Column(Modifier.fillMaxWidth()) {
-                            ChartRow(
-                                title = "ALTITUDE",
-                                unit = "m",
-                                values = bucketMax(altitude.map { it.snapshot.alt }, CHART_POINTS),
-                                accent = HudColors.Amber,
-                            )
-                        }
-                    }
-                }
-                val eco = samples.filter { it.snapshot.ikml > 0.0 }
-                if (eco.size >= 2) {
-                    HudEnter(delayMs = HudMotion.STAGGER_MS * 5) {
-                        Column(Modifier.fillMaxWidth()) {
-                            ChartRow(
-                                title = "INSTANT ECONOMY",
-                                unit = "km/L",
-                                values = bucketMax(eco.map { it.snapshot.ikml }, CHART_POINTS),
-                                accent = HudColors.Green,
-                            )
-                        }
-                    }
-                }
-
-                HudEnter(delayMs = HudMotion.STAGGER_MS * 6) {
-                    Column(Modifier.fillMaxWidth()) {
-                        VehicleGroup(s)
-                    }
-                }
-                HudEnter(delayMs = HudMotion.STAGGER_MS * 7) {
-                    Column(Modifier.fillMaxWidth()) {
-                        LogQualityGroup(s)
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-                // Where the file the kebab just handed over actually lives, in the same words the
-                // Trips header and the settings page use. Said here because this is the moment a user
-                // wonders where a drive went, and because the CSV is no longer copied anywhere to be
-                // shared: the share sheet opens the file in that folder, so the folder is the thing
-                // worth knowing. Only the CSV — the GPX is built for the occasion and lives in the cache.
-                Text(
-                    StorageCopy.tripFileNote(
-                        sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
-                        AppRoot.sharedRootLabel(), AppRoot.TRIPS,
-                    ),
-                    color = HudColors.TextDim,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Spacer(Modifier.height(10.dp))
-                HudButton("DELETE THIS TRIP", style = HudButtonStyle.DANGER, glyph = HudIcons.Bin) {
-                    confirmDelete = true
-                }
-                Spacer(Modifier.height(24.dp))
             }
         }
 
@@ -315,7 +281,10 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
             )
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 Text(
-                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(s.startMs)),
+                    // The file's name carries the start even before the summary lands: the page
+                    // must be able to say what it is opening on its first frame.
+                    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+                        .format(Date(summary?.startMs ?: row.startMs)),
                     color = HudColors.TextPrimary,
                     style = HudeHeading().copy(fontSize = 17.sp),
                     maxLines = 1,
@@ -388,6 +357,149 @@ fun TripDetailScreen(row: TripRow, vm: TripsViewModel, onDismiss: () -> Unit) {
 }
 
 /**
+ * What the detail page is doing right now.
+ *
+ * A drive is read off disk on the IO dispatcher, so "no detail yet" is the page's ordinary first
+ * state rather than a failure. It used to be a local `null` that the page had to interpret, and
+ * the only meaning it could have had was "unreadable" — which is why the loading state is a type
+ * now: the two answers must never be mistaken for one another.
+ */
+private sealed interface DetailState {
+    data object Loading : DetailState
+    data class Ready(val detail: TripDetail) : DetailState
+    data object Unreadable : DetailState
+}
+
+/**
+ * The hero while the file is being read: the page's own pane, holding the one sentence that
+ * answers "did my tap do anything?".
+ *
+ * Same shape and ink as the no-position pane under it, because it *is* the same pane — the page
+ * has a ground to show or it has a sentence to show, and neither state is allowed to be a blank.
+ */
+@Composable
+private fun LoadingPane() {
+    Box(
+        Modifier.fillMaxSize().hudCard(fill = HudColors.Msg).padding(12.dp),
+        // Centred, not pinned to the top-left: the floating bar owns the top of this pane, and a
+        // sentence half under it answers nothing (bench, 2026-11-24). It goes where the route will.
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "reading the drive\u2026",
+            color = HudColors.TextMuted,
+            style = HudeCfgNote(),
+        )
+    }
+}
+
+/**
+ * Everything under the hero: the drive's launches, its charts, and the two figure groups.
+ *
+ * Split out of [TripDetailScreen] so the loading state and the loaded page are two shapes of one
+ * screen rather than one function with a `detail != null` wrapped around most of its body — and so
+ * a recomposition caused by a tapped run cannot re-read a chart or a figure group's inputs.
+ */
+@Composable
+private fun DetailBody(
+    detail: TripDetail,
+    shownRun: AccelRun?,
+    onRun: (AccelRun) -> Unit,
+    sharedStorage: Boolean,
+    onDelete: () -> Unit,
+) {
+    // Collapsed by default (maintainer, 2026-11-24): ten rows of earlier launches pushed the
+    // charts below them off the first screen, and the map above already carries the lines.
+    var runsOpen by remember(detail.file.absolutePath) { mutableStateOf(false) }
+
+    if (detail.runs.isNotEmpty()) {
+        HudEnter(delayMs = HudMotion.STAGGER_MS * 2) {
+            Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                HudAccordion(open = runsOpen) {
+                    HudAccordionHeader(
+                        title = "0-50 RUNS",
+                        open = runsOpen,
+                        onClick = { runsOpen = !runsOpen },
+                    )
+                    HudAccordionBody(open = runsOpen) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            RunsCard(detail.runs, detail.runsSeen, shownRun, onRun)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+    }
+
+    HudEnter(delayMs = HudMotion.STAGGER_MS * 3) {
+        Column(Modifier.fillMaxWidth()) {
+            ChartRow(
+                title = "SPEED",
+                unit = "km/h",
+                values = detail.series.speed,
+                accent = HudColors.Cyan,
+            )
+        }
+    }
+    if (detail.series.altitude.size >= 2) {
+        HudEnter(delayMs = HudMotion.STAGGER_MS * 4) {
+            Column(Modifier.fillMaxWidth()) {
+                ChartRow(
+                    title = "ALTITUDE",
+                    unit = "m",
+                    values = detail.series.altitude,
+                    accent = HudColors.Amber,
+                )
+            }
+        }
+    }
+    if (detail.series.economy.size >= 2) {
+        HudEnter(delayMs = HudMotion.STAGGER_MS * 5) {
+            Column(Modifier.fillMaxWidth()) {
+                ChartRow(
+                    title = "INSTANT ECONOMY",
+                    unit = "km/L",
+                    values = detail.series.economy,
+                    accent = HudColors.Green,
+                )
+            }
+        }
+    }
+
+    HudEnter(delayMs = HudMotion.STAGGER_MS * 6) {
+        Column(Modifier.fillMaxWidth()) {
+            VehicleGroup(detail.summary)
+        }
+    }
+    HudEnter(delayMs = HudMotion.STAGGER_MS * 7) {
+        Column(Modifier.fillMaxWidth()) {
+            LogQualityGroup(detail.summary)
+        }
+    }
+
+    Spacer(Modifier.height(10.dp))
+    // Where the file the kebab just handed over actually lives, in the same words the
+    // Trips header and the settings page use. Said here because this is the moment a user
+    // wonders where a drive went, and because the CSV is no longer copied anywhere to be
+    // shared: the share sheet opens the file in that folder, so the folder is the thing
+    // worth knowing. Only the CSV — the GPX is built for the occasion and lives in the cache.
+    Text(
+        StorageCopy.tripFileNote(
+            sharedStorage, AppRoot.grantPath(android.os.Build.VERSION.SDK_INT),
+            AppRoot.sharedRootLabel(), AppRoot.TRIPS,
+        ),
+        color = HudColors.TextDim,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Spacer(Modifier.height(10.dp))
+    HudButton("DELETE THIS TRIP", style = HudButtonStyle.DANGER, glyph = HudIcons.Bin) {
+        onDelete()
+    }
+    Spacer(Modifier.height(24.dp))
+}
+
+/**
  * The hero's figures: the distance big enough to read through a windscreen, and
  * the three figures that frame it at the page's perf size. It is a scrim rather
  * than a card — the drive under it is the subject, and a framed card on the map
@@ -446,18 +558,48 @@ private fun HeroFig(label: String, value: String, unit: String = "") {
 }
 
 /**
- * The drive's 0-50 launches, oldest first — the list under the map that says which
- * yellow line was which. Tapping a row does what tapping the line does: the number
- * floats over the route and the line dresses for it. The quickest run earns the
- * BEST mark; there is no prize for the slowest, so it is only drawn where a
- * quickest actually exists.
+ * The drive's 0-50 launches, oldest first — the list inside the map's dropdown that says which
+ * yellow line was which. Tapping a row does what tapping the line does: the number floats over the
+ * route and the line dresses for it.
+ *
+ * The list is at most ten rows (a recorded drive keeps its **quickest** ten — see
+ * [com.alefinot.dashboardpp.trips.RunSelection.QUICKEST]), so the line above it says which ten they
+ * are when the file held more: `10 of 27 runs` is a short list, not a lie about the drive. The
+ * row's number is [AccelRun.id], not its position in this list, for the same reason — the 14th
+ * launch of the drive is not made the 1st by being the only one kept.
  */
 @Composable
-private fun RunsCard(runs: List<AccelRun>, shownRun: AccelRun?, onRun: (AccelRun) -> Unit) {
-    SectionCaps("0-50 RUNS")
+private fun RunsCard(
+    runs: List<AccelRun>,
+    seen: Int,
+    shownRun: AccelRun?,
+    onRun: (AccelRun) -> Unit,
+) {
     val clock = SimpleDateFormat("HH:mm:ss", Locale.US)
     val best = if (runs.size > 1) runs.minByOrNull { it.seconds } else null
-    runs.forEachIndexed { i, run ->
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when {
+                runs.size == 1 -> "1 run"
+                seen > runs.size -> "${runs.size} of $seen runs"
+                else -> "${runs.size} runs"
+            },
+            color = HudColors.TextMuted,
+            style = HudeCfgNote(),
+        )
+        Spacer(Modifier.weight(1f))
+        if (best != null) {
+            Text(
+                "BEST ${hudNum(best.seconds, 2)} s",
+                color = HudColors.Green,
+                style = HudeSectionTitle(0.2f / 13f),
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    runs.forEach { run ->
         val selected = run.id == shownRun?.id
         Row(
             // The press before the card, so the whole tile takes the scale down with it.
@@ -471,7 +613,7 @@ private fun RunsCard(runs: List<AccelRun>, shownRun: AccelRun?, onRun: (AccelRun
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "${i + 1}",
+                "${run.id}",
                 color = HudColors.TextDim,
                 style = HudePerfLabel(),
                 modifier = Modifier.width(22.dp),
@@ -497,7 +639,6 @@ private fun RunsCard(runs: List<AccelRun>, shownRun: AccelRun?, onRun: (AccelRun
             }
         }
     }
-    Spacer(Modifier.height(10.dp))
 }
 
 /** A group's name, in the page's `.section-title` caps. */
@@ -524,13 +665,6 @@ private fun MenuRow(glyph: ImageVector, label: String, onClick: () -> Unit) {
         Text(label, color = HudColors.TextPrimary, style = HudeFormLabel())
     }
 }
-
-/**
- * Point budget for the hand-drawn charts. A bucketed 600-point polyline already
- * exceeds the pixel width of the widest phone screen, so anything past this only
- * costs paint time; the bucketing keeps peaks rather than averaging them away.
- */
-private const val CHART_POINTS = 600
 
 @Composable
 private fun ChartRow(title: String, unit: String, values: List<Double>, accent: Color) {

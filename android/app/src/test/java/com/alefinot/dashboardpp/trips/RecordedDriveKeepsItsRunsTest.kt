@@ -125,11 +125,13 @@ class RecordedDriveKeepsItsRunsTest {
     }
 
     /**
-     * A sealed drive is allowed more launches than a live one: the map is not driving past them, and
-     * an owner looking back through a season of Sundays should not have the early ones quietly gone.
+     * A sealed drive keeps its **ten quickest** launches, not all thirty: the detail page is read
+     * for what the drive achieved, and the map has room for ten yellow lines before they turn into
+     * a tangle (maintainer, 2026-11-24: *only the best 10 runs of the accel timer should be kept,
+     * no need for more*).
      */
     @Test
-    fun aLongArchiveDriveKeepsMoreThanTheLiveMapShows() {
+    fun anArchiveKeepsItsTenQuickestLaunches() {
         val rows = mutableListOf<TripSample>()
         for (launch in 0 until 30) {
             rows.add(row(launch * 2, tmrSt = 1, tmrS = 1.0, spd = 20.0))
@@ -137,13 +139,14 @@ class RecordedDriveKeepsItsRunsTest {
         }
 
         val runs = runsFrom(rows)
-        assertEquals(30, runs.size)
-        assertEquals(3.0, runs.first().seconds, 0.0)
-        assertEquals(32.0, runs.last().seconds, 0.0)
-        // And the ceiling is still a ceiling: a pathological file cannot hand the map a thousand
-        // polylines.
-        assertEquals(4, runsFrom(rows, maxRuns = 4).size)
-        assertEquals(29.0 + 3.0, runsFrom(rows, maxRuns = 4).last().seconds, 0.0)
+        assertEquals(10, runs.size)
+        // 3.0 s through 12.0 s: the ten quickest, still in the order the drive made them.
+        assertEquals((3..12).map { it.toDouble() }, runs.map { it.seconds })
+        // The same rule at any size the caller asks for.
+        assertEquals(
+            listOf(3.0, 4.0, 5.0, 6.0),
+            runsFrom(rows, maxRuns = 4).map { it.seconds },
+        )
     }
 
     /**

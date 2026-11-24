@@ -110,10 +110,12 @@ class MapStyleSettingTest {
         assertTrue(
             "a sealed drive's detail map stopped following the ground — two surfaces of one " +
                 "app drawing two different worlds. (The fourth argument is the drive's 0-50 runs, " +
-                "which are dressed for the same ground; the guard is on the style, not on the arity.)",
+                "which are dressed for the same ground, and the fifth is the drive the camera is " +
+                "framed on — a coarser route rung must not re-frame a camera the owner panned. " +
+                "The guard is on the style, not on the arity.)",
             detail.contains("val style = MapStylePref.current") &&
                 detail.contains("holder.build(ctx, style)") &&
-                detail.contains("holder.applyTrack(map, points, style, runs)"),
+                detail.contains("holder.applyTrack(map, points, style, runs, fitKey)"),
         )
         // The point of the feature: no surface is allowed to keep a basemap of its own.
         for ((name, src) in listOf("LiveRouteMap.kt" to live, "RouteMap.kt" to detail)) {

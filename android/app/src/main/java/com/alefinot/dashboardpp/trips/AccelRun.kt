@@ -67,12 +67,30 @@ data class AccelRun(
  * nothing that was already counted ([com.alefinot.dashboardpp.service.TelemetryFeed] dedups on
  * uptime), and a frame the lane rejects never reaches a tracker.
  */
-class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
+class AccelRunTracker(
+    private val maxRuns: Int = DEFAULT_MAX_RUNS,
+    /**
+     * Which launches a full list spends its room on. The two lanes answer different questions:
+     * a drive in progress wants the newest results (and its one best), a sealed file wants the
+     * quickest the owner ever managed. See [RunSelection].
+     */
+    private val selection: RunSelection = RunSelection.RECENT_AND_BEST,
+) {
 
     private val limit = maxRuns.coerceAtLeast(1)
 
-    /** Completed runs, oldest first, never more than [limit]. */
-    private val runs = ArrayList<AccelRun>(DEFAULT_MAX_RUNS)
+    /** Completed runs, oldest first, never more than [limit] plus the one best they guarantee. */
+    private val runs = ArrayList<AccelRun>(DEFAULT_MAX_RUNS + 1)
+
+    /**
+     * Launch results this drive has produced, whether or not they are still on the list.
+     *
+     * The map draws a bounded number of them, so the page has to be able to say *which* ones it
+     * is drawing — "10 of 27" is the difference between a short list and a drive that lied about
+     * how many launches it had.
+     */
+    var seen: Int = 0
+        private set
 
     /** The immutable view of [runs], dropped whenever one is added or thrown out. */
     private var view: List<AccelRun>? = null
@@ -140,6 +158,7 @@ class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
         openPoints.clear()
         open = false
         view = null
+        seen = 0
     }
 
     /**
@@ -174,31 +193,80 @@ class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
                 finishSpeedKmh = s.spd,
             ),
         )
-        while (runs.size > limit) runs.removeAt(0)
+        seen++
+        trim()
         view = null
         return true
     }
 
+    /**
+     * Spend the list's room the way [selection] asks.
+     *
+     * [RunSelection.RECENT_AND_BEST] keeps the drive's newest [limit] launches **and** its
+     * quickest, which is one run more than [limit] whenever the best is older than the ten on
+     * screen: the owner watching a launch happen should not lose it because the morning's best
+     * is still the number to beat, and a best that scrolls off the map is the one result nobody
+     * can go back and re-run.
+     *
+     * [RunSelection.QUICKEST] keeps the [limit] fastest and nothing else — a recorded drive is
+     * read for its results, not for its recency, so the slow ones are the ones to let go.
+     */
+    private fun trim() {
+        if (runs.size <= limit) return
+        when (selection) {
+            RunSelection.RECENT_AND_BEST -> {
+                // Keep the newest `limit` by position and the quickest wherever it sits.
+                val keep = HashSet<Long>(limit + 1)
+                for (i in (runs.size - limit).coerceAtLeast(0) until runs.size) keep.add(runs[i].id)
+                bestRun()?.let { keep.add(it.id) }
+                runs.removeAll { it.id !in keep }
+            }
+            RunSelection.QUICKEST -> {
+                while (runs.size > limit) {
+                    val slowest = runs.maxWithOrNull(SLOWEST_LAST) ?: return
+                    runs.remove(slowest)
+                }
+            }
+        }
+    }
+
+    /**
+     * The drive's quickest launch, or null when there is none to compare.
+     *
+     * A tie on seconds goes to the launch that started **first**: two identical results are one
+     * measurement made twice, and the earlier one is the one the owner can still remember.
+     */
+    private fun bestRun(): AccelRun? =
+        runs.minWithOrNull(compareBy<AccelRun>({ it.seconds }, { it.startedAtMs }))
+
     companion object {
         /**
-         * Results a drive may wear before the oldest is dropped. Twenty launches is a lot of
-         * laps, and every one of them is a cased polyline on the map — beyond that the picture is
-         * a yellow tangle rather than a record.
+         * Results a live drive wears before the oldest (unimportant) one is dropped.
+         *
+         * Ten launches is a lot of laps, and every one of them is a cased polyline on the map —
+         * beyond that the picture is a yellow tangle rather than a record. The best run of the
+         * drive is held on top of this number, so a drive in progress shows at most eleven lines.
          */
-        const val DEFAULT_MAX_RUNS = 20
+        const val DEFAULT_MAX_RUNS = 10
 
         /**
          * The same limit for a **sealed** drive, read back from its file (see [runsFrom]).
          *
-         * Twenty is a clutter rule for a map the camera is driving: past it the owner cannot pick a
-         * line out anyway, and the ones that fell off were seen minutes ago. A recorded drive is the
-         * opposite case — the ground is not going anywhere, and the owner is looking back through
-         * something they cannot re-run. So the archive is allowed far more, with a ceiling still:
-         * a hundred is more launches than a human makes in a season of Sundays, and it is the number
-         * that keeps a pathological file from handing the detail map a thousand polylines to project
-         * and hit-test per tap.
+         * A recorded drive is looked at for what it achieved, not for what just happened, so the
+         * archive spends its ten slots on the quickest launches in the file instead of the newest
+         * (maintainer, 2026-11-24: *only the best 10 runs of the accel timer should be kept*).
+         * Ten lines is also what the detail map can draw without the yellow turning into a
+         * tangle, and it bounds the hit-test the page runs on every tap.
          */
-        const val ARCHIVE_MAX_RUNS = 100
+        const val ARCHIVE_MAX_RUNS = 10
+
+        /**
+         * Orders runs so the **slowest** sorts last, which is what [RunSelection.QUICKEST] drops.
+         * A tie on seconds goes to the later start, so the earlier of two identical results is
+         * the one that survives.
+         */
+        private val SLOWEST_LAST =
+            compareBy<AccelRun>({ it.seconds }, { it.startedAtMs })
 
         /** Ceiling on one open run's positions; see the note where it is enforced. */
         private const val MAX_OPEN_POINTS = 64
@@ -254,7 +322,47 @@ class AccelRunTracker(private val maxRuns: Int = DEFAULT_MAX_RUNS) {
  */
 fun runsFrom(samples: List<TripSample>, maxRuns: Int = AccelRunTracker.ARCHIVE_MAX_RUNS): List<AccelRun> {
     if (samples.isEmpty()) return emptyList()
-    val tracker = AccelRunTracker(maxRuns)
-    for (sample in samples) tracker.onFrame(sample.snapshot, sample.tsMs)
-    return tracker.snapshot()
+    val replay = RunReplay(maxRuns)
+    for (sample in samples) replay.row(sample)
+    return replay.runs()
+}
+
+/**
+ * [runsFrom] as a lane the reader can feed while it parses, instead of a list it has to hold.
+ *
+ * A twelve-hour drive is 43 000 rows, and the detail page's one-pass reader has no reason to keep
+ * a single [TripSample] alive after its speed, altitude and position have been taken: the runs are
+ * closed by the same state machine that closes them live, and it only ever needs the frame in
+ * front of it. Wrapping the tracker here keeps the replay policy in one place — [runsFrom] is this
+ * class over a list, and the page is this class over a file.
+ */
+class RunReplay(maxRuns: Int = AccelRunTracker.ARCHIVE_MAX_RUNS) {
+    private val tracker = AccelRunTracker(maxRuns, RunSelection.QUICKEST)
+
+    /** One file row, in file order. */
+    fun row(sample: TripSample) {
+        tracker.onFrame(sample.snapshot, sample.tsMs)
+    }
+
+    /** The drive's quickest [maxRuns] launches, oldest first. */
+    fun runs(): List<AccelRun> = tracker.snapshot()
+
+    /** How many launches the file held, including the ones the archive did not keep. */
+    val seen: Int get() = tracker.seen
+}
+
+/**
+ * Where a tracker spends its room once it holds more launches than the map should draw.
+ *
+ * The live lane and a recorded file are not asking the same question. A drive in progress is read
+ * from its newest end — the launch that just happened is the one the owner is looking at — while a
+ * sealed file is read for what the drive achieved, and a slow scramble from a cold start is not
+ * worth a line on a picture that is looked at months later.
+ */
+enum class RunSelection {
+    /** The newest `maxRuns` launches, **plus** the drive's quickest wherever it sits. */
+    RECENT_AND_BEST,
+
+    /** The `maxRuns` quickest launches in the drive. */
+    QUICKEST,
 }

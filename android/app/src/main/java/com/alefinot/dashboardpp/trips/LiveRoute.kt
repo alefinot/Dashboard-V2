@@ -383,8 +383,11 @@ private const val METRES_PER_DEG_LAT = 111_320.0
  * arithmetic instead of trigonometry per point (only the cosine of one latitude is needed).
  * Distances to the *segment*, not the infinite line: a piece that doubles back is not
  * redundant just because it is near a line's extension.
+ *
+ * `internal` rather than private because [RouteThinning] draws a recorded drive with the same
+ * rule: the live line and the detail page must never disagree about what a redundant position is.
  */
-private fun deviationM(a: TrackPoint, b: TrackPoint, c: TrackPoint): Double {
+internal fun deviationM(a: TrackPoint, b: TrackPoint, c: TrackPoint): Double {
     val ky = METRES_PER_DEG_LAT
     val kx = ky * cos(Math.toRadians(b.lat))
     val ax = a.lon * kx

@@ -191,21 +191,50 @@ class AccelRunTrackerTest {
         assertSame(after, tracker.snapshot())
     }
 
-    /** Beyond the cap the oldest launch falls off: twenty lines is the picture, twenty-one is a tangle. */
+    /**
+     * A full list is spent on its newest launches, and never on the drive's best one: the number
+     * to beat stays on the map even after the launch that set it has scrolled out of the ten.
+     */
     @Test
-    fun theOldestRunLeavesWhenTheCapIsReached() {
+    fun theNewestRunsStayAndTheBestIsNeverLost() {
         val small = AccelRunTracker(maxRuns = 2)
-        for (launch in 0..2) {
-            small.onFrame(frame(launch * 2, tmrSt = 1, tmrS = 1.0, spd = 20.0), 1_000L * launch)
-            small.onFrame(
-                frame(launch * 2 + 1, tmrSt = 2, tmrS = 3.0 + launch, spd = 55.0),
-                1_000L * launch,
-            )
+        var clock = 1_000L
+        fun launch(seconds: Double) {
+            small.onFrame(frame(0, tmrSt = 1, tmrS = 1.0, spd = 20.0), clock)
+            clock += 1_000
+            small.onFrame(frame(1, tmrSt = 2, tmrS = seconds, spd = 55.0), clock)
+            clock += 1_000
         }
+        launch(2.0) // the drive's best, and the first to be old enough to fall off
+        launch(5.0)
+        launch(6.0)
+        launch(7.0)
+
         val runs = small.snapshot()
-        assertEquals(2, runs.size)
-        assertEquals(4.0, runs[0].seconds, 0.0)
-        assertEquals(5.0, runs[1].seconds, 0.0)
+        // The newest two (6.0, 7.0) plus the best (2.0), oldest first: the 5.0 launch is the one
+        // that made room, because it is neither recent nor the number to beat.
+        assertEquals(listOf(2.0, 6.0, 7.0), runs.map { it.seconds })
+        assertEquals(4, small.seen)
+    }
+
+    /** A recorded drive spends the same room on its results, not on what happened last. */
+    @Test
+    fun aSealedDriveSpendsTheCapOnItsQuickestLaunches() {
+        val archive = AccelRunTracker(
+            maxRuns = 3,
+            selection = RunSelection.QUICKEST,
+        )
+        var clock = 1_000L
+        for (seconds in listOf(9.0, 4.0, 7.0, 2.0, 5.0)) {
+            archive.onFrame(frame(0, tmrSt = 1, tmrS = 1.0, spd = 20.0), clock)
+            clock += 1_000
+            archive.onFrame(frame(1, tmrSt = 2, tmrS = seconds, spd = 55.0), clock)
+            clock += 1_000
+        }
+
+        // The three quickest, in the order the drive made them; the slow ones are gone.
+        assertEquals(listOf(4.0, 2.0, 5.0), archive.snapshot().map { it.seconds })
+        assertEquals(5, archive.seen)
     }
 
     /** A drive ending takes its runs with it: no map wears a launch of a drive it is not drawing. */
