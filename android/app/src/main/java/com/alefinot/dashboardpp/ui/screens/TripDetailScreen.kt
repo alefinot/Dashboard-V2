@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -43,6 +44,7 @@ import com.alefinot.dashboardpp.storage.StorageCopy
 import com.alefinot.dashboardpp.trips.AccelRun
 import com.alefinot.dashboardpp.trips.TripDetail
 import com.alefinot.dashboardpp.trips.TripSummary
+import com.alefinot.dashboardpp.ui.components.Channel
 import com.alefinot.dashboardpp.ui.components.HudAccordion
 import com.alefinot.dashboardpp.ui.components.HudAccordionBody
 import com.alefinot.dashboardpp.ui.components.HudAccordionHeader
@@ -53,11 +55,11 @@ import com.alefinot.dashboardpp.ui.components.HudEnter
 import com.alefinot.dashboardpp.ui.components.HudGlyphAction
 import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
-import com.alefinot.dashboardpp.ui.components.Sparkline
+import com.alefinot.dashboardpp.ui.components.TrendCard
+import com.alefinot.dashboardpp.ui.components.TrendViewState
 import com.alefinot.dashboardpp.ui.components.hudDuration
 import com.alefinot.dashboardpp.ui.components.hudNum
 import com.alefinot.dashboardpp.ui.components.hudPressable
-import com.alefinot.dashboardpp.ui.components.StatCell
 import com.alefinot.dashboardpp.ui.map.RouteMap
 import com.alefinot.dashboardpp.ui.map.rememberAdaptiveRouteLevel
 import com.alefinot.dashboardpp.ui.theme.HudColors
@@ -97,8 +99,8 @@ import java.util.Locale
  * distance, not two share buttons.
  *
  * Below the hero: the drive's 0-50 runs behind a dropdown (the ten quickest, not
- * every launch the file ever had — see `RunSelection.QUICKEST`), the series charts,
- * and two groups of figures — what the vehicle used, and how trustworthy the log is.
+ * every launch the file ever had — see `RunSelection.QUICKEST`), one trend chart that zooms, and two
+ * ledger groups of figures — what the vehicle used, and how trustworthy the log is.
  *
  * The page is **painted before it is read** (maintainer, 2026-11-24). A twelve-hour
  * file is ~43 000 rows, and parsing it inside composition meant the first frame was
@@ -412,6 +414,17 @@ private fun DetailBody(
     // charts below them off the first screen, and the map above already carries the lines.
     var runsOpen by remember(detail.file.absolutePath) { mutableStateOf(false) }
 
+    // The chart's window, **once per opened drive**. The chips and the plot read the same object, so
+    // they can never disagree about which minute of the drive the owner is standing in, and switching
+    // SPEED → ALTITUDE keeps the window: that continuity is the whole point of putting a time axis
+    // under the trace. Keyed on the file, because a different drive is a different drive.
+    val viewState = remember(detail.file.absolutePath) { TrendViewState() }
+    val channels = remember(detail) { trendChannels(detail) }
+    val spanSec = remember(detail) { driveSpanSec(detail) }
+    // Only when the drive's length changes — never on recomposition, or a zoom the owner made would be
+    // thrown away by an unrelated repaint.
+    LaunchedEffect(spanSec) { viewState.openAt(spanSec) }
+
     if (detail.runs.isNotEmpty()) {
         HudEnter(delayMs = HudMotion.STAGGER_MS * 2) {
             Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
@@ -434,45 +447,20 @@ private fun DetailBody(
 
     HudEnter(delayMs = HudMotion.STAGGER_MS * 3) {
         Column(Modifier.fillMaxWidth()) {
-            ChartRow(
-                title = "SPEED",
-                unit = "km/h",
-                values = detail.series.speed,
-                accent = HudColors.Cyan,
+            TrendCard(
+                channels = channels,
+                state = viewState,
+                startMs = detail.summary.startMs,
             )
         }
     }
-    if (detail.series.altitude.size >= 2) {
-        HudEnter(delayMs = HudMotion.STAGGER_MS * 4) {
-            Column(Modifier.fillMaxWidth()) {
-                ChartRow(
-                    title = "ALTITUDE",
-                    unit = "m",
-                    values = detail.series.altitude,
-                    accent = HudColors.Amber,
-                )
-            }
-        }
-    }
-    if (detail.series.economy.size >= 2) {
-        HudEnter(delayMs = HudMotion.STAGGER_MS * 5) {
-            Column(Modifier.fillMaxWidth()) {
-                ChartRow(
-                    title = "INSTANT ECONOMY",
-                    unit = "km/L",
-                    values = detail.series.economy,
-                    accent = HudColors.Green,
-                )
-            }
-        }
-    }
 
-    HudEnter(delayMs = HudMotion.STAGGER_MS * 6) {
+    HudEnter(delayMs = HudMotion.STAGGER_MS * 4) {
         Column(Modifier.fillMaxWidth()) {
             VehicleGroup(detail.summary)
         }
     }
-    HudEnter(delayMs = HudMotion.STAGGER_MS * 7) {
+    HudEnter(delayMs = HudMotion.STAGGER_MS * 5) {
         Column(Modifier.fillMaxWidth()) {
             LogQualityGroup(detail.summary)
         }
@@ -641,13 +629,6 @@ private fun RunsCard(
     }
 }
 
-/** A group's name, in the page's `.section-title` caps. */
-@Composable
-private fun SectionCaps(text: String) {
-    Text(text, color = HudColors.Cyan, style = HudeSectionCaps())
-    Spacer(Modifier.height(8.dp))
-}
-
 /** One row of a glass sheet: the mark, the word, and nothing else it has to say. */
 @Composable
 private fun MenuRow(glyph: ImageVector, label: String, onClick: () -> Unit) {
@@ -666,31 +647,88 @@ private fun MenuRow(glyph: ImageVector, label: String, onClick: () -> Unit) {
     }
 }
 
-@Composable
-private fun ChartRow(title: String, unit: String, values: List<Double>, accent: Color) {
-    // Each chart sits on a `.perf-card` tile: rgba(18,25,38,.8), 8px radius, hairline.
-    Column(
-        Modifier.fillMaxWidth()
-            .hudCard(fill = HudColors.CardInner)
-            .padding(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, color = HudColors.Cyan, style = HudeSectionTitle(0.2f / 13f))
-            Spacer(Modifier.width(8.dp))
-            // Peak and average, because a spike and a trend read the same shape apart and
-            // the trace alone makes the owner guess which one they just saw.
-            Text(
-                "peak ${hudNum(values.maxOrNull(), if (unit == "m") 0 else 1)}" +
-                    " · avg ${hudNum(values.average(), if (unit == "m") 0 else 1)} $unit",
-                color = accent,
-                style = HudePerfValue(),
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Sparkline(values, Modifier.fillMaxWidth().height(96.dp), line = accent, fill = accent)
+/**
+ * The channels the trend card offers, in chip order, built once per read file.
+ *
+ * A channel appears only if the drive logged it — a night run with no economy readings gets two chips,
+ * not three, and the card says so rather than drawing a flat line at zero, which would read as a
+ * measurement of zero. Order is fixed, and so is the ink: the card paints channel *n* in the colour
+ * the page has always used for that quantity, so SPEED stays cyan when ALTITUDE drops out.
+ *
+ * For SPEED the two figures come from [TripSummary] rather than from the channel, deliberately: they
+ * are the same numbers the hero band wears, and a chart whose `avg` disagreed with the hero would make
+ * the owner doubt one of them. ALTITUDE and ECONOMY have no summary figure that means "mean of these
+ * samples" (`economyKml` is fuel over distance, a different measurement entirely), so theirs is the
+ * channel's own mean — which is also exactly what the dashed rule is drawn at.
+ */
+private fun trendChannels(detail: TripDetail): List<Channel> {
+    val s = detail.summary
+    val speed = detail.series.speed
+    val altitude = detail.series.altitude
+    val economy = detail.series.economy
+    val out = ArrayList<Channel>(3)
+    if (speed.isPlottable) {
+        out += Channel(
+            label = "SPEED",
+            unit = "km/h",
+            digits = 1,
+            series = speed,
+            avg = s.avgSpeed,
+            peak = s.maxSpeed,
+            runStarts = runStartSeconds(detail),
+        )
     }
-    Spacer(Modifier.height(10.dp))
+    if (altitude.isPlottable) {
+        out += Channel(
+            label = "ALTITUDE",
+            unit = "m",
+            digits = 0,
+            series = altitude,
+            avg = altitude.meanValue(),
+            peak = altitude.maxValue(),
+        )
+    }
+    if (economy.isPlottable) {
+        out += Channel(
+            label = "ECONOMY",
+            unit = "km/L",
+            digits = 2,
+            series = economy,
+            avg = economy.meanValue(),
+            peak = economy.maxValue(),
+        )
+    }
+    return out
 }
+
+/**
+ * Where the drive's launches began, as whole seconds from its start: the yellow ticks on the speed
+ * channel's time axis, in the same ink as the map's run lines.
+ *
+ * These are the runs the page *shows* — the quickest ten, see [com.alefinot.dashboardpp.trips.RunSelection.QUICKEST]
+ * — not every launch the file held. A tick the owner cannot find in the run list would be a mark with
+ * no explanation, and the accordion above already says which ten they are.
+ */
+private fun runStartSeconds(detail: TripDetail): List<Int> {
+    if (detail.runs.isEmpty()) return emptyList()
+    val start = detail.summary.startMs
+    return detail.runs.mapNotNull { run ->
+        val sec = ((run.startedAtMs - start) / 1000L).toInt()
+        if (sec >= 0) sec else null // a run stamped before the drive's first row cannot be placed
+    }
+}
+
+/**
+ * How long the drive is, in whole seconds: the last second **any** channel holds a sample at.
+ *
+ * The channels are not co-extensive (economy drops rows, altitude drops rows), so the widest one is
+ * the drive. The chart's window is measured in these seconds, which is also what [trendEnvelope]
+ * indexes on, so a pan or a zoom never re-derives anything from a wall clock.
+ */
+private fun driveSpanSec(detail: TripDetail): Int = maxOf(
+    detail.series.speed.lastSecond(),
+    maxOf(detail.series.altitude.lastSecond(), detail.series.economy.lastSecond()),
+)
 
 /**
  * The one line naming whose drive this is. A file with no tag says so in words
@@ -708,74 +746,57 @@ private fun vehicleLine(row: TripRow): String = when {
     }
 }
 
-@Composable
-private fun GridRow(first: @Composable () -> Unit, second: @Composable () -> Unit) {
-    Row(Modifier.fillMaxWidth()) {
-        Box(Modifier.weight(1f)) { first() }
-        Spacer(Modifier.width(8.dp))
-        Box(Modifier.weight(1f)) { second() }
-    }
-    Spacer(Modifier.height(8.dp))
-}
-
 /** What the drive cost: fuel, economy, and the two things worth watching under the hood. */
 @Composable
 private fun VehicleGroup(s: TripSummary) {
-    SectionCaps("VEHICLE")
-    GridRow(
-        { StatCell("FUEL USED", hudNum(s.fuelUsedL, 2), "L", modifier = Modifier.fillMaxWidth()) },
-        { StatCell("ECONOMY", hudNum(s.economyKml, 2), "km/L", modifier = Modifier.fillMaxWidth()) },
-    )
-    GridRow(
-        {
-            StatCell(
-                "BATTERY", "${hudNum(s.minVolts, 1)}–${hudNum(s.maxVolts, 1)}", "V",
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        {
-            StatCell(
-                "COOLANT", "${hudNum(s.minTemp, 0)}–${hudNum(s.maxTemp, 0)}", "°C",
-                modifier = Modifier.fillMaxWidth(), dim = s.maxTemp <= 0.0,
-            )
-        },
-    )
+    LedgerGroup(label = "VEHICLE") {
+        LedgerRow(label = "FUEL USED", value = hudNum(s.fuelUsedL, 2), unit = "L", topRule = false)
+        LedgerRow(label = "ECONOMY", value = hudNum(s.economyKml, 2), unit = "km/L")
+        LedgerRow(
+            label = "BATTERY",
+            value = "${hudNum(s.minVolts, 1)}–${hudNum(s.maxVolts, 1)}",
+            unit = "V",
+        )
+        LedgerRow(
+            label = "COOLANT",
+            value = "${hudNum(s.minTemp, 0)}–${hudNum(s.maxTemp, 0)}",
+            unit = "°C",
+            // A drive that never saw the coolant bus recedes rather than explains itself (decision 2).
+            ink = if (s.maxTemp <= 0.0) HudColors.TextDim else HudColors.TextPrimary,
+        )
+    }
     Spacer(Modifier.height(10.dp))
 }
 
 /** How much of this drive the log can actually vouch for. */
 @Composable
 private fun LogQualityGroup(s: TripSummary) {
-    SectionCaps("LOG QUALITY")
-    GridRow(
-        {
-            StatCell(
-                "GNSS FIX", "${s.fixPct}%",
-                accent = if (s.fixPct > 60) HudColors.Green else HudColors.Amber,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        {
-            StatCell(
-                "GNSS TRACK", hudNum(s.gnssKm, 2), "km",
-                modifier = Modifier.fillMaxWidth(), dim = s.gnssKm <= 0.0,
-            )
-        },
-    )
-    GridRow(
-        { StatCell("DASHBOARD++ TRIP", hudNum(s.espTripKm, 2), "km", modifier = Modifier.fillMaxWidth()) },
-        {
-            StatCell(
-                "LOG GAPS", s.gaps.toString(),
-                unit = if (s.gapSeconds > 0) "${s.gapSeconds} s lost" else "",
-                accent = if (s.gaps == 0) HudColors.Green else HudColors.Amber,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-    )
-    GridRow(
-        { StatCell("SAMPLES", s.samples.toString(), modifier = Modifier.fillMaxWidth()) },
-        // No partner cell: a lone sample count would have to make up a figure to sit beside.
-        {},
-    )
+    LedgerGroup(label = "LOG QUALITY") {
+        LedgerRow(
+            label = "GNSS FIX",
+            value = "${s.fixPct}%",
+            // The bar carries what the number cannot: that this is a proportion of the whole drive.
+            ink = if (s.fixPct > 60) HudColors.Green else HudColors.Amber,
+            bar = s.fixPct.toDouble(),
+            topRule = false,
+        )
+        LedgerRow(
+            label = "GNSS TRACK",
+            value = hudNum(s.gnssKm, 2),
+            unit = "km",
+            ink = if (s.gnssKm <= 0.0) HudColors.TextDim else HudColors.TextPrimary,
+        )
+        // The unit's own cumulative counter, not this drive's distance — hence a figure that can
+        // exceed the hero's. The maintainer refused renaming it on 2026-11-24, so the wording stands
+        // and the hero band above is what says how far this drive went.
+        LedgerRow(label = "DASHBOARD++ TRIP", value = hudNum(s.espTripKm, 2), unit = "km")
+        LedgerRow(
+            label = "LOG GAPS",
+            value = s.gaps.toString(),
+            unit = if (s.gapSeconds > 0) "${s.gapSeconds} s lost" else "",
+            ink = if (s.gaps == 0) HudColors.Green else HudColors.Amber,
+        )
+        LedgerRow(label = "SAMPLES", value = s.samples.toString())
+    }
+    Spacer(Modifier.height(10.dp))
 }

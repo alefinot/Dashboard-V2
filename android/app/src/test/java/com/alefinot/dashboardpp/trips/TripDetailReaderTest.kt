@@ -88,13 +88,30 @@ class TripDetailReaderTest {
         assertEquals(rows.last().snapshot.lon, detail.routes[0].last().lon, 0.0)
 
         // Every row the drive logged carries a speed; only the rows with a reading carry the other
-        // two — `-1` and `0` are "no reading", which is what decides whether a chart exists at all.
-        assertEquals(30, detail.series.speed.size)
-        assertEquals(25, detail.series.altitude.size)
-        assertEquals(15, detail.series.economy.size)
-        assertTrue(detail.series.speed.size <= TripSeries.MAX_POINTS)
-        assertEquals(49.0, detail.series.speed.max(), 0.0)
-        assertEquals(124.0, detail.series.altitude.max(), 0.0)
+        // two — `-1` and `0` are "no reading", which is what decides whether a channel is offered at
+        // all. One value per logged row, and **nothing thrown away any more**: reducing to fit the
+        // screen is the chart's job, not the reader's (`trendEnvelope`), and a series cut to 600
+        // points here could never be zoomed.
+        assertEquals(30, detail.series.speed.count)
+        assertEquals(25, detail.series.altitude.count)
+        assertEquals(15, detail.series.economy.count)
+        assertEquals(49.0, detail.series.speed.maxValue(), 0.0)
+        assertEquals(124.0, detail.series.altitude.maxValue(), 0.0)
+
+        // Each channel carries its **own** seconds, whole seconds from the drive's start. On the old
+        // shared index axis a time label under ALTITUDE was a lie: the rows it dropped silently
+        // shifted everything after them, so the 25th altitude value would have been drawn at second
+        // 25 when it was logged at second 24.
+        assertEquals(0, detail.series.speed.seconds[0])
+        assertEquals(29, detail.series.speed.lastSecond())
+        assertEquals(24, detail.series.altitude.lastSecond())
+        assertEquals(28, detail.series.economy.lastSecond())
+        for (ch in listOf(detail.series.speed, detail.series.altitude, detail.series.economy)) {
+            assertTrue("a channel's seconds must be non-decreasing for the window search", ch.isPlottable)
+            for (i in 1 until ch.count) {
+                assertTrue("second went backwards at $i", ch.seconds[i] >= ch.seconds[i - 1])
+            }
+        }
     }
 
     @Test
@@ -105,7 +122,7 @@ class TripDetailReaderTest {
 
         // The row happened: it is in the summary and it has a speed on the chart.
         assertEquals(3, detail.summary.samples)
-        assertEquals(3, detail.series.speed.size)
+        assertEquals(3, detail.series.speed.count)
         // It happened somewhere the unit could not say, so the line must not invent a ground:
         // the two fixed positions are the whole route.
         assertEquals(2, detail.routes[0].size)
@@ -181,9 +198,9 @@ class TripDetailReaderTest {
         assertEquals(listOf(emptyList<TrackPoint>()), detail.routes)
         assertTrue(detail.runs.isEmpty())
         assertEquals(0, detail.runsSeen)
-        assertTrue(detail.series.speed.isEmpty())
-        assertTrue(detail.series.altitude.isEmpty())
-        assertTrue(detail.series.economy.isEmpty())
+        assertEquals(0, detail.series.speed.count)
+        assertEquals(0, detail.series.altitude.count)
+        assertEquals(0, detail.series.economy.count)
     }
 
     @Test
