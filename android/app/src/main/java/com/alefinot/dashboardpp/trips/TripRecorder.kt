@@ -42,6 +42,12 @@ class TripRecorder(
     initialSession: SessionRecord? = null,
     /** The app's ROUTE QUALITY slider (0..100), read once at start-up. */
     private val routeQuality: Int = TrackQuality.MAX,
+    /**
+     * Whether the dashboard's trip boundary is the app's (App Settings → SYNC TRIP WITH
+     * DASHBOARD). A lambda rather than a value: the switch can be flipped while a drive is
+     * open, and the next sample is the first one that should obey the new answer.
+     */
+    private val tripSync: () -> Boolean = { true },
 ) {
     var openTrip: TripRef? = null
         private set
@@ -147,6 +153,22 @@ class TripRecorder(
      */
     private var cappedTripPath: String? = null
 
+    /**
+     * When the app itself asked the dashboard to reset its trip (a manual START with the
+     * sync switch on), so the drop that causes is not read as a second, manual reset.
+     *
+     * It is a time rather than a flag because the request can be answered and then dropped
+     * by the unit (a firmware-update screen owns the sensor pass), and a marker that never
+     * expires would swallow the next real reset. It clears the moment a frame shows the
+     * counter back at zero, and on its own after [OWN_RESET_WINDOW_MS].
+     */
+    private var ownTripResetAtMs = 0L
+
+    /** Say that the app has just sent `trip.reset`; see [ownTripResetAtMs]. */
+    fun noteOwnTripReset() {
+        ownTripResetAtMs = nowMs()
+    }
+
     fun ip(): String = ip
 
     /**
@@ -161,6 +183,9 @@ class TripRecorder(
             if (openTrip != null && ip.isNotEmpty()) seal("device-changed")
             ip = newIp
             session = null
+            // A different unit's trip counter is not a reset of this one's: with no
+            // previous reading there is nothing to compare the new unit against.
+            lastSnapshot = null
         }
     }
 
@@ -245,12 +270,26 @@ class TripRecorder(
         var opened = false
         var reopened = false
         var sealedBeforeOpen = false
+        var resetSealed = false
+
+        // The app's own START reset is not a trip boundary: the file it belongs to was
+        // opened by the same press. Read before the seal checks so the drop it causes is
+        // swallowed, and so a reset seen after a silent seal does not drop the session.
+        val ownReset = ownResetSeen(s, now)
 
         if (openTrip != null) {
             val prev = lastSnapshot
             if (prev != null && rebooted(prev, s)) {
+                // A reboot zeroes the RAM-only trip as well; it is one new drive, not a
+                // reboot plus a manual reset, so this branch wins over the reset check.
                 seal("esp-reboot")
                 sealedBeforeOpen = true
+            } else if (prev != null && !ownReset && tripSync() && EspTripSync.isReset(prev, s)) {
+                // The dashboard's trip ended (GPIO25 or RESET TRIP): the app's drive ends
+                // with it, and the file must not be re-opened by the 24 h rule.
+                seal(EspTripSync.RESET_SEAL_REASON, forgetPath = true)
+                sealedBeforeOpen = true
+                resetSealed = true
             } else if (now - (openTrip?.startMs ?: now) >= TripPolicy.MAX_TRIP_MS) {
                 cappedTripPath = openTrip?.path
                 seal("session-cap-12h")
@@ -265,10 +304,20 @@ class TripRecorder(
         if (isPaused) {
             lastSampleMs = now
             lastSnapshot = s
-            return TripEvent.NONE
+            // A reset while paused still ends the file; RESUME opens the new one, because
+            // nothing may be written until the owner asks for it. Only the reset reports
+            // SEALED - the service persists the forgotten path on it, which is what stops
+            // an app death here from re-opening the file the dashboard closed.
+            return if (resetSealed) TripEvent.SEALED else TripEvent.NONE
         }
 
         if (openTrip == null) {
+            val prev = lastSnapshot
+            if (prev != null && !ownReset && tripSync() && EspTripSync.isReset(prev, s)) {
+                // The drive was sealed while the link was quiet, and the dashboard's trip
+                // ended in the gap: the next file is a new drive, not the old one continued.
+                session = session?.copy(tripPath = null)
+            }
             val reuse = reusableSession(s, now)
             if (reuse != null && reuse.tripPath != null) {
                 writer.reopen(reuse.tripPath)
@@ -344,6 +393,27 @@ class TripRecorder(
         return s.max < prev.max - MAX_SPEED_EPS
     }
 
+    /**
+     * True when this frame is the dashboard's answer to the app's own `trip.reset`.
+     *
+     * The marker is cleared as soon as the counter is seen back at zero (or was already
+     * there), and it expires after [OWN_RESET_WINDOW_MS] so a reset the unit never applied
+     * cannot swallow a later, real one. A pre-reset frame - the RPC raced the 1 Hz stream -
+     * is not the answer yet; the marker waits for the frame that shows the zero.
+     */
+    private fun ownResetSeen(s: Snapshot, now: Long): Boolean {
+        if (ownTripResetAtMs == 0L) return false
+        if (now - ownTripResetAtMs > OWN_RESET_WINDOW_MS) {
+            ownTripResetAtMs = 0L
+            return false
+        }
+        if (s.trpKm <= EspTripSync.RESET_EPSILON_KM) {
+            ownTripResetAtMs = 0L
+            return true
+        }
+        return false
+    }
+
     private fun reusableSession(s: Snapshot, now: Long): SessionRecord? {
         val r = session ?: return null
         val path = r.tripPath ?: return null
@@ -383,7 +453,7 @@ class TripRecorder(
         }
     }
 
-    private fun seal(reason: String) {
+    private fun seal(reason: String, forgetPath: Boolean = false) {
         val trip = openTrip ?: return
         // The drive's last written position - what the END dot marks. The route itself is
         // not thrown away: a closed drive stays on the maps, with every pause dot it
@@ -399,13 +469,21 @@ class TripRecorder(
             tripPath = trip.path,
             tripStartMs = trip.startMs,
             sealed = false,
-        )).copy(sealed = true)
+        )).copy(
+            sealed = true,
+            // A trip ended by the dashboard's own reset must not be re-opened by the
+            // 24 h rule: the next sample belongs to a new drive.
+            tripPath = if (forgetPath) null else trip.path,
+        )
         lastSealReason = reason
     }
 
     companion object {
         /** Guard against float noise when comparing the ESP's session peak. */
         private const val MAX_SPEED_EPS = 0.15
+
+        /** How long the app's own trip reset may be expected before it is forgotten. */
+        private const val OWN_RESET_WINDOW_MS = 10_000L
 
         /** See [liveTrack]: double the stored preview's 128, for the follow maps. */
         /** Positions a live route piece holds before it is examined for redundant ones. */

@@ -210,6 +210,24 @@ class RecorderSettings(context: Context) {
     }
 
     /**
+     * Whether the app's trip and the dashboard's trip share one boundary (App Settings →
+     * SYNC TRIP WITH DASHBOARD, default **on**). The two directions are one switch because
+     * they answer the same question - does a trip end when the dashboard says it does? -
+     * and an owner who wants them aligned wants both halves.
+     *
+     * Off is not "remember but stop splitting": it is "the app records its own drives and
+     * never writes the dashboard's counter", so START and RESET TRIP behave exactly as they
+     * did before this setting existed.
+     */
+    val tripSyncEnabled: Flow<Boolean> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_TRIP_SYNC] ?: true }
+
+    suspend fun setTripSyncEnabled(enabled: Boolean) {
+        store.edit { it[KEY_TRIP_SYNC] = enabled }
+    }
+
+    /**
      * Which vehicles the Trips list is narrowed to: `ALL`, `UNKNOWN`, or a vehicle
      * id. A deleted vehicle's id stays a legal value — the list then shows that
      * vehicle's drives, which is the whole point of tagging trips by id [plan §6].
@@ -285,6 +303,7 @@ class RecorderSettings(context: Context) {
         tripFilter.first()
         routeQuality.first()
         adaptiveQuality.first()
+        tripSyncEnabled.first()
         mapStyle.first()
         mapCycle.first()
         tutorialHidden.first()
@@ -366,6 +385,7 @@ class RecorderSettings(context: Context) {
         private val KEY_TRIP_FILTER = stringPreferencesKey("trip_filter")
         private val KEY_ROUTE_QUALITY = intPreferencesKey("route_quality")
         private val KEY_ADAPTIVE_QUALITY = booleanPreferencesKey("adaptive_quality")
+        private val KEY_TRIP_SYNC = booleanPreferencesKey("trip_sync_enabled")
         private val KEY_MAP_STYLE = stringPreferencesKey("map_style")
         private val KEY_MAP_CYCLE = stringPreferencesKey("map_cycle")
 

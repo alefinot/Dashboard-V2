@@ -149,6 +149,10 @@ fun SettingsScreen(
     // already too slow to read.
     val adaptiveQuality by settings.adaptiveQuality
         .collectAsStateWithLifecycle(initialValue = true)
+    // The dashboard trip sync switch (App Settings → SYNC TRIP WITH DASHBOARD, default on):
+    // START resets the dashboard's trip, and a dashboard reset starts a new app trip.
+    val tripSyncOn by settings.tripSyncEnabled
+        .collectAsStateWithLifecycle(initialValue = true)
     // The map ground. The store keeps an id and the catalogue resolves it — an id this build
     // does not know becomes the shipped default rather than an error, so removing a style
     // someday cannot break a phone that still has it stored.
@@ -383,6 +387,26 @@ fun SettingsScreen(
                 on = motionOn,
                 toggleLabel = "motion",
             ) { on -> scope.launch { settings.setMotionEnabled(on) } }
+
+            Spacer(Modifier.height(12.dp))
+            // One switch for both directions (maintainer, 2026-11-25): START resets the
+            // dashboard's trip, and the dashboard's own reset (GPIO25 or RESET TRIP) starts
+            // a new app trip. Reopening the app is not a reset - the recorded drive
+            // continues where it left, which is the half this switch deliberately does not
+            // touch.
+            ToggleRow(
+                label = "SYNC TRIP WITH DASHBOARD",
+                on = tripSyncOn,
+                toggleLabel = "trip sync with the dashboard",
+            ) { on -> scope.launch { settings.setTripSyncEnabled(on) } }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "START also resets the dashboard's trip. A dashboard trip reset (GPIO25 " +
+                    "button or RESET TRIP) starts a new app trip. Reopening the app never " +
+                    "resets anything: the recorded drive continues.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
 
             Spacer(Modifier.height(16.dp))
             // How much of the drive's line the LIVE map keeps thinning away on a long ride

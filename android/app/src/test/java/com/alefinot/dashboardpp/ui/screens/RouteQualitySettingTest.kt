@@ -67,7 +67,7 @@ class RouteQualitySettingTest {
             "the recorder is built without reading the slider again - the page's switch " +
                 "would be decoration",
             Regex("appSettings\\.routeQuality\\.first\\(\\)").containsMatchIn(service) &&
-                Regex("\\}, prior, routeQuality\\)").containsMatchIn(service),
+                Regex("\\}, prior, routeQuality,").containsMatchIn(service),
         )
         val recorder = moduleFile("src/main/java/com/alefinot/dashboardpp/trips/TripRecorder.kt")
         assertTrue(

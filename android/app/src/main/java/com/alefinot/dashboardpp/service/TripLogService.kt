@@ -149,6 +149,17 @@ class TripLogService : Service() {
      */
     private var manualStart = false
 
+    /**
+     * The App Settings → SYNC TRIP WITH DASHBOARD switch, mirrored here so a flip reaches
+     * the recorder's next sample without the service being rebuilt. Default on, matching
+     * the store's default.
+     */
+    @Volatile
+    private var tripSyncEnabled = true
+
+    /** The collector that keeps [tripSyncEnabled] live for this service's lifetime. */
+    private var syncJob: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -286,6 +297,8 @@ class TripLogService : Service() {
     fun shutdown(keepDisplay: Boolean = false) {
         feedJob?.cancel()
         feedJob = null
+        syncJob?.cancel()
+        syncJob = null
         pausedByUser = false
         val finishing = recorder
         finishing?.stop()
@@ -483,7 +496,8 @@ class TripLogService : Service() {
         applyWake(rec.isRecording && !rec.isPaused)
         notify(s, summary)
         when (event) {
-            TripEvent.OPENED, TripEvent.REOPENED, TripEvent.SEALED_THEN_OPENED -> persistSession()
+            TripEvent.OPENED, TripEvent.REOPENED, TripEvent.SEALED_THEN_OPENED,
+            TripEvent.SEALED -> persistSession()
             TripEvent.APPENDED -> if (summary != null && summary.samples % 30 == 0) persistSession()
             else -> Unit
         }
@@ -539,6 +553,21 @@ class TripLogService : Service() {
         } catch (e: Exception) {
             TrackQuality.MAX
         }
+        // The dashboard trip sync switch: read once here and kept live, because a flip in
+        // App Settings must reach the next sample, not the next service.
+        tripSyncEnabled = try {
+            appSettings.tripSyncEnabled.first()
+        } catch (e: Exception) {
+            true
+        }
+        syncJob?.cancel()
+        syncJob = scope.launch {
+            try {
+                appSettings.tripSyncEnabled.collect { tripSyncEnabled = it }
+            } catch (e: Exception) {
+                // The store died; the last answer stands.
+            }
+        }
         if (!wanted && !manualStart) {
             TripRuntime.update { it.copy(lastError = "disabled-by-user") }
             shutdown()
@@ -554,7 +583,7 @@ class TripLogService : Service() {
         }
         recorder = TripRecorder(csvWriter, { startMs -> tripStore.newName(startMs) }, {
             System.currentTimeMillis()
-        }, prior, routeQuality)
+        }, prior, routeQuality, { tripSyncEnabled })
         // The identity arrives on the intent, the recorder is built later (this is
         // the first place it can be built): hand it over before the first sample.
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
@@ -563,6 +592,15 @@ class TripLogService : Service() {
         if (pausedByUser) {
             recorder?.pause()
             publishPaused(true)
+        }
+        // A manual START is the owner's new trip, so with sync on it begins on both sides:
+        // the dashboard's counter goes back to zero and the app's new file starts from it.
+        // One attempt, no retry - a lost answer means the counter was not reset, and a retry
+        // could zero a counter the new file has already logged. The marker tells the
+        // recorder that the drop this causes is not a second, manual reset.
+        if (manualStart && tripSyncEnabled) {
+            val reply = BleApi(BleRuntime.link(this@TripLogService)).resetTrip()
+            if (reply.ok) recorder?.noteOwnTripReset()
         }
         return true
     }
