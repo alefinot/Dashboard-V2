@@ -21,7 +21,13 @@ data class SessionRecord(
     val lastMaxSpeed: Double,
     val tripPath: String?,
     val tripStartMs: Long,
-    /** True once the trip was sealed; a sealed trip may still be re-opened. */
+    /**
+     * True once the trip was sealed. Both states are re-openable: a sealed row is the
+     * link-drop case, and an unsealed one is a process killed mid-drive - the file is
+     * append-only, so the next launch continues it. The one drive that must never be
+     * re-opened is the one the owner stopped, which the service handles by dropping
+     * this row when STOP is pressed.
+     */
     val sealed: Boolean,
 )
 
@@ -417,7 +423,11 @@ class TripRecorder(
     private fun reusableSession(s: Snapshot, now: Long): SessionRecord? {
         val r = session ?: return null
         val path = r.tripPath ?: return null
-        if (!r.sealed) return null
+        // Both a sealed drive and one whose process died mid-drive are re-openable: the
+        // file is append-only, so the next launch continues it - closing or killing the
+        // app must cost no drive (maintainer, 2026-11-25). A STOP is the exception, and
+        // it is not expressed here: the service deletes the row, because the owner ended
+        // that drive and the next automatic start begins a new one.
         if (path == cappedTripPath) return null
         if (!writer.exists(path)) return null
         if (now - r.lastSampleMs > TripPolicy.REOPEN_WINDOW_MS) return null

@@ -202,7 +202,11 @@ class TripLogService : Service() {
                 // ride, while STOP answers "end this one". Every stop - pill, card or shade - is
                 // therefore just a stop, and the switch keeps whatever the owner left it.
                 val keep = intent.getBooleanExtra(EXTRA_KEEP_DISPLAY, true)
-                shutdown(keepDisplay = keep)
+                // A running recorder is the owner ending a drive: its continuity note goes
+                // with it, so the next automatic start - the next relaunch or reconnect -
+                // opens a new file. A stop of the display lane has no recorder and must
+                // leave an earlier drive's note alone.
+                shutdown(keepDisplay = keep, ownerStop = recorder != null)
                 return START_NOT_STICKY
             }
             ACTION_PAUSE -> {
@@ -294,7 +298,7 @@ class TripLogService : Service() {
      * app behind it has nobody looking at a map, and a lane nobody puts down would stream for
      * the rest of the day.
      */
-    fun shutdown(keepDisplay: Boolean = false) {
+    fun shutdown(keepDisplay: Boolean = false, ownerStop: Boolean = false) {
         feedJob?.cancel()
         feedJob = null
         syncJob?.cancel()
@@ -302,6 +306,10 @@ class TripLogService : Service() {
         pausedByUser = false
         val finishing = recorder
         finishing?.stop()
+        // The owner closed this drive: forget that it can be continued. Done after the
+        // seal so the file is complete first; the write is fire-and-forget, like the
+        // per-30-sample session save below.
+        if (ownerStop) forgetContinuity()
         // Read the route after the stop: [TripRecorder.stop] is what turns a paused drive's
         // orange dot into the red END dot, and the shape stays on the maps after the service
         // is gone (2.0.7/179) - it is replaced by the next START, not by a service ending.
@@ -613,6 +621,33 @@ class TripLogService : Service() {
                     settings?.saveSession(record)
                 } catch (e: Exception) {
                     // Losing the session note costs the 24 h re-open, never the trip.
+                }
+            }
+        } catch (e: Exception) {
+            // scope already cancelled during shutdown
+        }
+    }
+
+    /**
+     * Drop the continuity note for this dashboard, because its owner pressed STOP.
+     *
+     * The note is what lets the next launch continue the same file, so a stopped drive
+     * must not leave one behind: clearing the row is what makes the next automatic start
+     * a new drive. This is the counterpart of the unsealed row being re-openable (see
+     * `TripRecorder.reusableSession`) - without it, an app relaunch would resume the drive
+     * the owner had just ended.
+     */
+    private fun forgetContinuity() {
+        val key = deviceKey
+        if (key.isEmpty()) return
+        val store = settings ?: return
+        try {
+            scope.launch {
+                try {
+                    store.clearSessions(listOf(key))
+                } catch (e: Exception) {
+                    // A failed clear means the next automatic start may continue the stopped
+                    // drive; no sample is lost either way, so this is not worth a retry.
                 }
             }
         } catch (e: Exception) {
