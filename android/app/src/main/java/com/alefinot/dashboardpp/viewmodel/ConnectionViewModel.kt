@@ -20,8 +20,11 @@ import com.alefinot.dashboardpp.ble.BleLink
 import com.alefinot.dashboardpp.ble.BleLinkState
 import com.alefinot.dashboardpp.ble.BleRuntime
 import com.alefinot.dashboardpp.ble.DPP_CONN_LOG_TAG
+import com.alefinot.dashboardpp.ble.OtaController
 import com.alefinot.dashboardpp.ble.scanFailureText
+import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.trips.RecorderSettings
+import com.alefinot.dashboardpp.trips.TripsEnabled
 import com.alefinot.dashboardpp.trips.RecorderTarget
 import com.alefinot.dashboardpp.vehicles.UnitIdentity
 import com.alefinot.dashboardpp.weather.HostFrames
@@ -134,6 +137,18 @@ class ConnectionViewModel(
     private var foreground = false
 
     /**
+     * True while the always-on foreground service is keeping this process alive for the
+     * link (the Background card's switch, or a boot start). It is the second reason an
+     * automatic dial is allowed, and the only one that survives the screen going off:
+     * [onForegroundChanged] must not cancel the quiet restart while it is true.
+     */
+    @Volatile
+    private var backgroundWanted = false
+
+    /** [boot] runs once per process: the service may get there before the first window. */
+    private var booted = false
+
+    /**
      * True while the last word about the current failure was a give-up — the only state the
      * quiet restart serves. Cleared by a link coming up and by any press, because both mean
      * something else owns the ladder now.
@@ -237,9 +252,6 @@ class ConnectionViewModel(
      */
     private var weatherWokenFor: String? = null
 
-    /** The 60 s feed tick. Owned here because this is where a link's life is visible. */
-    private var weatherTick: Job? = null
-
     /**
      * Bumped every time a card's photo changes on disk. A cover that recomposes on it
      * follows a crop that landed while the editor was open; without it the composable keeps
@@ -298,18 +310,69 @@ class ConnectionViewModel(
     }
 
     fun boot() {
+        if (booted) return
+        booted = true
         watchAdapter()
         watchLink()
-        // The weather schedule is the phone's, not the link's: it fetches whether or not a
-        // unit is connected, so a unit that comes up between two fetches can be handed the
-        // frame in hand (`WeatherCoordinator.unitWoke`) instead of showing an empty card
-        // until the interval expires. Started here, once, because "is a fetch due" does not
-        // depend on having anyone to send it to yet.
-        startWeatherTick()
         adapterOn.value = link.enabled()
         permissionMissing.value = missingBlePermissions().isNotEmpty()
         scope.launch {
-            selectedVehicleId.value = vehicles.selectedId()
+            // The service can reach here before the first window (a boot start, a
+            // sticky restart), so the selection read must not overwrite a target the
+            // service already resolved and asked us to chase.
+            if (selectedVehicleId.value == null) {
+                selectedVehicleId.value = vehicles.selectedId()
+            }
+        }
+    }
+
+    /**
+     * The always-on foreground service is up ([on] true) or gone (false).
+     *
+     * It is the second reason an automatic dial is allowed, beside [foreground], and
+     * the only one that survives the screen going off. The service sets it when it
+     * enters background mode and clears it in `onDestroy`, so a killed service takes
+     * the background licence with it.
+     */
+    fun setBackgroundWanted(on: Boolean) {
+        if (backgroundWanted == on) return
+        Log.d(DPP_CONN_LOG_TAG, "background wanted=$on")
+        backgroundWanted = on
+        if (!on) {
+            // No service, no dial behind the owner's back. The foreground rule is
+            // unchanged: a page in front still owns its own retries.
+            if (!foreground) {
+                rearm?.cancel()
+                rearm = null
+            }
+            return
+        }
+        boot()
+        scope.launch {
+            if (gaveUp && rearmWantedNow()) dialForRearm()
+        }
+    }
+
+    /**
+     * The service resolved a background target: point the one dialer at that card and
+     * reach for it, unless a link or an attempt already answers for it.
+     *
+     * Selecting the card is deliberate: the ladder, the pairing and the recorder all
+     * speak in the selected vehicle, and a background target the rest of the app does
+     * not know about would be a second source of truth. The card the owner sees is the
+     * dashboard the phone last talked to, which is also the one the service picked.
+     */
+    fun chaseBackground(vehicleId: String) {
+        boot()
+        backgroundWanted = true
+        scope.launch {
+            if (selectedVehicleId.value != vehicleId) {
+                vehicles.select(vehicleId)
+                selectedVehicleId.value = vehicleId
+            }
+            val st = uiState.value
+            if (st is ConnectionUiState.Connected && st.vehicleId == vehicleId) return@launch
+            if (st is ConnectionUiState.Connecting || ladder?.isActive == true) return@launch
             startAttempt(ConnectMode.SILENT)
         }
     }
@@ -333,16 +396,47 @@ class ConnectionViewModel(
         Log.d(DPP_CONN_LOG_TAG, "foreground on=$on gaveUp=$gaveUp rearms=$rearms")
         foreground = on
         if (!on) {
-            // Only the timer is cancelled. The counter survives, because the screen going
+            // Only the timer is cancelled, and only when the background service is not
+            // holding the licence: with it up, the quiet restart is exactly the work the
+            // owner asked for. The counter survives either way, because the screen going
             // off is not a new failure and says nothing about the unit.
-            rearm?.cancel()
-            rearm = null
+            if (!backgroundWanted) {
+                rearm?.cancel()
+                rearm = null
+            }
             return
         }
         scope.launch {
-            if (!gaveUp) return@launch
-            if (rearmWantedNow()) dialForRearm() else scheduleRearm()
+            if (gaveUp) {
+                if (rearmWantedNow()) dialForRearm() else scheduleRearm()
+                return@launch
+            }
+            // The launch dial lives here now that the controller outlives the window:
+            // `boot()` may run for a service start with no page in front, so the first
+            // `ON_START` is what says a person is looking at the app and the usual
+            // "reach for the selected card" belongs on the radio.
+            dialForForeground()
         }
+    }
+
+    /**
+     * The old launch dial: reach for the selected card once the window is in front.
+     * Refused while a link or an attempt already answers, and while the owner has
+     * paused that card by hand - the background service must not undo a DISCONNECT.
+     */
+    private suspend fun dialForForeground() {
+        val st = uiState.value
+        if (st is ConnectionUiState.Connected || st is ConnectionUiState.Connecting) return
+        if (ladder?.isActive == true) return
+        val card = selectedCard() ?: return
+        if (!card.hasPairing) return
+        val paused = try {
+            BackgroundTarget.isPaused(card, tripSettings.pausedUnits.first())
+        } catch (e: Exception) {
+            false
+        }
+        if (paused) return
+        startAttempt(ConnectMode.SILENT)
     }
 
     /**
@@ -473,6 +567,17 @@ class ConnectionViewModel(
         scope.launch {
             vehicles.select(vehicleId)
             selectedVehicleId.value = vehicleId
+            // CONNECT is the owner undoing their own DISCONNECT: the card is allowed to
+            // be chased in the background again, from this moment and across a reboot.
+            val card = try { vehicles.get(vehicleId) } catch (e: Exception) { null }
+            if (card != null) {
+                try {
+                    tripSettings.clearPause(UnitIdentity.key(card.mac, card.bleAddress))
+                } catch (e: Exception) {
+                    // A failed clear leaves the card paused for the background service
+                    // only; this press still dials, because the user is looking at it.
+                }
+            }
             notice.value = null
             unclaimed.value = null
             startAttempt(mode)
@@ -508,7 +613,18 @@ class ConnectionViewModel(
                 LinkEvent.UserAsked, attempts, card?.hasPairing == true, link.enabled(),
             )) {
                 is LadderStep.GiveUp -> uiState.value = ConnectionUiState.Failed(step.reason)
-                else -> startAttempt(mode)
+                else -> {
+                    // A finger on CONNECT is also the end of a manual DISCONNECT for this
+                    // card, exactly as the card's own button is.
+                    if (card != null) {
+                        try {
+                            tripSettings.clearPause(UnitIdentity.key(card.mac, card.bleAddress))
+                        } catch (e: Exception) {
+                            // Same trade as connectVehicle: the press dials anyway.
+                        }
+                    }
+                    startAttempt(mode)
+                }
             }
         }
     }
@@ -740,9 +856,17 @@ class ConnectionViewModel(
                 v.bleAddress?.let { link.isBonded(it) } == true,
             )
             // Deleting the card you are standing on ends the session it owns, exactly as a
-            // forget did: the ladder, the retries and the re-arm all go with it.
-            if (ownsSession) disconnect()
+            // forget did: the ladder, the retries and the re-arm all go with it. The drop
+            // must not pause the unit: forgetting a vehicle removes its key below, so a
+            // later re-pair is free to be chased again.
+            if (ownsSession) dropLink(pauseKey = null)
             val key = UnitIdentity.key(v.mac, v.bleAddress)
+            try {
+                tripSettings.clearPause(key)
+            } catch (e: Exception) {
+                // A failed clear only leaves a key with no card left to name it; the next
+                // pairing of the same unit writes its own CONNECT over it.
+            }
             tripSettings.clearSessions(listOf(key))
             WeatherSettings(appContext).clearCaches(listOf(key))
             HostFrames.clear(key)
@@ -901,6 +1025,22 @@ class ConnectionViewModel(
 
     /** The connected card's DISCONNECT. The selection stays; the unit goes. */
     fun disconnect() {
+        val connected = uiState.value as? ConnectionUiState.Connected
+        dropLink(
+            pauseKey = connected?.let { UnitIdentity.key(it.mac, it.address) },
+        )
+    }
+
+    /**
+     * Put the link down and remember the owner's decision.
+     *
+     * [pauseKey] is the unit whose card was disconnected by hand. It goes into the
+     * persisted pause set before the service is asked to re-derive its target, so the
+     * quiet restart and a boot start both leave that unit alone until CONNECT. Null
+     * means "this is not a manual DISCONNECT" (forgetting a card uses the same drop
+     * without pausing the unit that is being removed).
+     */
+    private fun dropLink(pauseKey: String?) {
         ladder?.cancel()
         retry?.cancel()
         // A deliberate DISCONNECT must not be undone by a timer sixty seconds later: the
@@ -909,8 +1049,24 @@ class ConnectionViewModel(
         gaveUp = false
         attempts = 0
         link.disconnect()
-        if (uiState.value !is ConnectionUiState.Connected) return
-        uiState.value = ConnectionUiState.Idle(null)
+        if (uiState.value is ConnectionUiState.Connected) {
+            uiState.value = ConnectionUiState.Idle(null)
+        }
+        if (pauseKey == null) return
+        scope.launch {
+            try {
+                tripSettings.pauseUnit(pauseKey)
+            } catch (e: Exception) {
+                // The latch is a promise across a reboot; a failed write weakens it to
+                // "this process", which is still better than an instant reconnect.
+            }
+            val background = try {
+                tripSettings.backgroundEnabled.first()
+            } catch (e: Exception) {
+                true
+            }
+            if (background) TripLogService.reconsider(appContext)
+        }
     }
 
     // ------------------------------------------------------------- the attempt loop
@@ -920,6 +1076,16 @@ class ConnectionViewModel(
         pinned: Found? = null,
         preScanned: List<Found>? = null,
     ) {
+        // An automatic background dial must never take the radio from a firmware
+        // install: OtaController holds the link from `begin_ok` to the reboot it
+        // triggers, and a dial here would tear that down. A CONNECT the owner pressed
+        // is not automatic, so it still runs (the installer's own begin is on that
+        // path and the app must not refuse the person holding the phone).
+        if (backgroundWanted && !foreground && OtaController.busy()) {
+            Log.d(DPP_CONN_LOG_TAG, "attempt deferred: firmware install in progress")
+            gaveUp = true
+            return
+        }
         Log.d(DPP_CONN_LOG_TAG, "attempt start mode=$mode pinned=${pinned?.address ?: "-"} attempts=$attempts")
         attemptVehicleId = selectedVehicleId.value
         ladder?.cancel()
@@ -1196,6 +1362,63 @@ class ConnectionViewModel(
             vehicleId = n.vehicleId,
             mtu = n.mtu,
         )
+        // With the always-on service up, a link coming back is also the moment the next
+        // drive begins - no window, no page, no finger. The STOP latch lives in the
+        // service and is cleared by the drop this link just proved, so a drive the owner
+        // ended on the previous link is not reopened here.
+        if (backgroundWanted) {
+            ensureBackgroundService()
+            autoRecordInBackground(uiState.value as ConnectionUiState.Connected)
+        }
+    }
+
+    /**
+     * Keep the foreground service alive for the link while the master switch is on.
+     * Called on every link-up because the process can be rebuilt by the system under a
+     * service that has not been recreated yet.
+     */
+    private fun ensureBackgroundService() {
+        scope.launch {
+            val enabled = try {
+                RecorderSettings(appContext).backgroundEnabled.first()
+            } catch (e: Exception) {
+                true
+            }
+            if (enabled) TripLogService.ensure(appContext)
+        }
+    }
+
+    /**
+     * Start the recorder for a link the background service brought up.
+     *
+     * The pages do this themselves while they are on screen (their effect owns the
+     * manual-START flag); this is the same door for the no-window case. A manual START
+     * cannot happen here, so the 24 h continuity row is what keeps a process death from
+     * splitting the drive.
+     */
+    private fun autoRecordInBackground(connected: ConnectionUiState.Connected) {
+        if (!TripsEnabled.forFirmware(connected.version)) return
+        scope.launch {
+            val recording = try {
+                RecorderSettings(appContext).recordingEnabled.first()
+            } catch (e: Exception) {
+                true
+            }
+            if (!recording) return@launch
+            val target = recorderTarget() ?: return@launch
+            try {
+                // `newLink` because this runs once per established link, and a link coming
+                // up is the one automatic event that may open a drive after the owner
+                // pressed STOP on the previous one.
+                TripLogService.start(
+                    appContext, target.deviceKey, target.vehicleId,
+                    target.vehicleName, target.eff,
+                    newLink = true,
+                )
+            } catch (e: Exception) {
+                Log.w(DPP_CONN_LOG_TAG, "background recorder start refused: ${e.message}")
+            }
+        }
     }
 
     // ------------------------------------------------------------- the radio's events
@@ -1235,16 +1458,6 @@ class ConnectionViewModel(
             IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-    }
-
-    private fun stopAdapterWatch() {
-        val r = adapterReceiver ?: return
-        adapterReceiver = null
-        try {
-            appContext.unregisterReceiver(r)
-        } catch (e: Exception) {
-            // Already gone: the system drops receivers with the process anyway.
-        }
     }
 
     /**
@@ -1351,43 +1564,6 @@ class ConnectionViewModel(
                 WeatherRuntime.coordinator(appContext).unitWoke(weatherKeyFor(address))
             }
         }
-    }
-
-    /**
-     * Every minute: enough for the five-minute rule to land within a minute of its due time
-     * and for the 2 km rule to notice within a couple of kilometres at motorway speed.
-     * The wake itself is cheap when nothing is due — the coordinator reads its own memory
-     * first and asks the unit for nothing.
-     *
-     * It runs whether or not there is a link, and is not cancelled when one falls over:
-     * the fetch is for the phone's own schedule, and a unit that comes up five minutes into
-     * an interval is the case that benefits.
-     */
-    private fun startWeatherTick() {
-        if (weatherTick?.isActive == true) return
-        weatherTick = scope.launch {
-            while (isActive) {
-                delay(WEATHER_TICK_MS)
-                val key = feedUnitKey() ?: continue
-                WeatherRuntime.coordinator(appContext).wake("tick", key)
-            }
-        }
-    }
-
-    /**
-     * The unit the feed runs for: the connected one when there is one, otherwise the card
-     * the owner selected. With no link there is no address to key on, so the card's MAC is
-     * the identity — the same key the trip files and the weather cache already use.
-     */
-    private suspend fun feedUnitKey(): String? {
-        (uiState.value as? ConnectionUiState.Connected)?.let {
-            return UnitIdentity.key(it.mac, it.address)
-        }
-        val selected = vehicles.all().first().firstOrNull { it.id == selectedVehicleId.value }
-            ?: return null
-        // Neither a MAC nor a pairing means no identity to file a forecast under.
-        return UnitIdentity.key(selected.mac, selected.bleAddress)
-            .takeIf { it != UnitIdentity.UNKNOWN }
     }
 
     /**
@@ -1515,9 +1691,17 @@ class ConnectionViewModel(
      */
     private suspend fun rearmWantedNow(except: Job? = null): Boolean {
         val card = selectedCard()
+        // A card the owner disconnected by hand is not a candidate for the quiet
+        // restart, foreground or background. CONNECT is the only thing that clears it.
+        val paused = card != null && try {
+            BackgroundTarget.isPaused(card, tripSettings.pausedUnits.first())
+        } catch (e: Exception) {
+            false
+        }
+        if (paused) return false
         val s = link.state.value
         return ReconnectLadder.rearmWanted(
-            foreground = foreground,
+            foreground = foreground || backgroundWanted,
             hasPairing = card?.hasPairing == true,
             adapterOn = link.enabled(),
             // A link that is up already answers the question, and one being built reports
@@ -1575,23 +1759,10 @@ class ConnectionViewModel(
         startAttempt(ConnectMode.PROBE)
     }
 
-    fun dispose() {
-        stopAdapterWatch()
-        ladder?.cancel()
-        retry?.cancel()
-        rearm?.cancel()
-        linkWatch?.cancel()
-        weatherTick?.cancel()
-        job.cancel()
-    }
-
     private fun now(): Long = System.currentTimeMillis()
 
     private companion object {
         /** How long one radio sweep runs; the link panel used the same window. */
         const val BLE_SCAN_MS = 15_000L
-
-        /** How often this host wakes the weather feed while a link is up. */
-        const val WEATHER_TICK_MS = 60_000L
     }
 }

@@ -8,8 +8,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
 import androidx.lifecycle.lifecycleScope
 import com.alefinot.dashboardpp.service.TripLogService
 import com.alefinot.dashboardpp.storage.AppRoot
@@ -28,6 +26,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * The dialer, from the Application (2026-11-26, background link plan §2).
+     *
+     * It used to be built here and disposed with the window, which is what made a link a
+     * thing this phone only had while a page was open: the ladder, the re-arm timer and the
+     * weather tick were fields of it. Same class, one level up, so the page in front of the
+     * driver and the always-on lane cannot each be reaching for a different car.
+     */
+    val vm: ConnectionViewModel by lazy { (application as DashboardApp).controller }
 
     /**
      * POST_NOTIFICATIONS is asked for on Android 13+ because the foreground
@@ -59,10 +67,6 @@ class MainActivity : ComponentActivity() {
         requestPermissionsIfNeeded()
         warmPreferences()
         setContent {
-            val vm = remember { ConnectionViewModel(application) }
-            DisposableEffect(vm) {
-                onDispose { vm.dispose() }
-            }
             HudTheme {
                 // One rule for every text field in the app, both halves of it at the
                 // window: Back closes the keyboard and the field lets go of focus at
@@ -90,6 +94,17 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         TripLogService.setAppForeground(true)
+        // The always-on lane is asked for on the way in (plan §4): a phone that rebooted
+        // while the app was force-stopped - the one case a boot receiver cannot answer - gets
+        // its companion back the first time the owner opens the app, not at the next reboot.
+        // The switch is read first because asking costs an announcement: the lane puts its
+        // notification up before it can re-derive that the owner turned it off, and a
+        // notification that appears and vanishes on every launch is worse than no ask.
+        lifecycleScope.launch {
+            if (RecorderSettings(this@MainActivity).backgroundEnabled.first()) {
+                TripLogService.ensure(this@MainActivity)
+            }
+        }
         val state = TripRuntime.state.value
         if (!state.recording && !state.paused && !state.polling) {
             TripLogService.watch(this)

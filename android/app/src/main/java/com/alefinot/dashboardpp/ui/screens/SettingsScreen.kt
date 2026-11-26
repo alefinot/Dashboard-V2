@@ -24,8 +24,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +64,7 @@ import com.alefinot.dashboardpp.ui.components.HudBanner
 import com.alefinot.dashboardpp.ui.components.HudButton
 import com.alefinot.dashboardpp.ui.components.HudButtonStyle
 import com.alefinot.dashboardpp.ui.components.HudConfirmDialog
+import com.alefinot.dashboardpp.ui.components.HudGlyphSize
 import com.alefinot.dashboardpp.ui.components.HudIcons
 import com.alefinot.dashboardpp.ui.components.HudInput
 import com.alefinot.dashboardpp.ui.components.HudInputStyle
@@ -129,10 +133,14 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var storageLine by remember { mutableStateOf("") }
+    /** One-line answer from the Always On card's autostart button. */
+    var backgroundLine by remember { mutableStateOf("") }
     var showConfirmClear by remember { mutableStateOf(false) }
     val settings = remember { RecorderSettings(context) }
     val scope = rememberCoroutineScope()
     val recordingEnabled by settings.recordingEnabled
+        .collectAsStateWithLifecycle(initialValue = true)
+    val backgroundOn by settings.backgroundEnabled
         .collectAsStateWithLifecycle(initialValue = true)
     val motionOn by settings.motionEnabled.collectAsStateWithLifecycle(initialValue = true)
     // The start tour's flag, read the other way round from what the row shows:
@@ -338,6 +346,128 @@ fun SettingsScreen(
             AppUpdateControl(installed = appVersion)
         }
 
+        // ── Always on ────────────────────────────────────────────────────
+        // The companion half of the app (background link plan, 2026-11-26): the link, the
+        // recorder and the weather feed with no window open, and back on their own after a
+        // reboot. It is a card of its own because it is the only part of the app the phone
+        // itself can veto - three times, on three different system pages, none of them this
+        // one - and an owner who does not know that reads a silent week as a broken app. So
+        // the card states what it does, what it needs, and what ends it, in that order.
+        GroupCard(
+            title = "Always On",
+            badge = R.drawable.ic_app_background,
+            open = openGroup == "background",
+            onToggle = { openGroup = SettingsLayout.tapOpen(openGroup, "background") },
+        ) {
+            // `storageTick` is this page's "came back from the system" tick (it exists for
+            // the storage card, which has the same problem: a grant made on a page the card
+            // opened). The three answers below are read the same way for the same reason -
+            // a card that latched them would go on asking for a permission it now has.
+            val exempt = remember(storageTick) { BackgroundPermissions.batteryExempt(context) }
+            val notifOk = remember(storageTick) { BackgroundPermissions.notificationsAllowed(context) }
+            val batteryPromptDone by settings.batteryPromptShown
+                .collectAsStateWithLifecycle(initialValue = true)
+            ToggleRow(
+                label = "FOLLOW THE CAR IN THE BACKGROUND",
+                on = backgroundOn,
+                toggleLabel = "follow the car in the background",
+            ) { on ->
+                scope.launch {
+                    settings.setBackgroundEnabled(on)
+                    if (on) {
+                        // Turning the mode on is the owner's explicit act for every card, so
+                        // it is also the one thing that clears a manual DISCONNECT: the
+                        // latch says "not this unit while you are away", not "never".
+                        settings.clearAllPauses()
+                        TripLogService.ensure(context)
+                    } else {
+                        // And off is off, drive included: the lane that writes trip files is
+                        // the thing being switched off, not something that keeps going.
+                        TripLogService.disable(context)
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "The app keeps one Bluetooth link to the dashboard it last talked to, starts " +
+                    "recording when the ignition does and stops when the link dies, and keeps " +
+                    "the weather feed fresh - with the app closed, and again after the phone " +
+                    "reboots. It asks no other car: a unit you disconnected by hand stays " +
+                    "disconnected until you press CONNECT.",
+                color = HudColors.TextMuted,
+                style = HudeCfgNote(),
+            )
+            Spacer(Modifier.height(8.dp))
+            // The sentence a first week needs, shown once, before the owner has had a reason
+            // to look for it. It disappears the moment they press the battery button, because
+            // at that point the answer is either yes or visibly not.
+            if (backgroundOn && !exempt && !batteryPromptDone) {
+                Text(
+                    "This phone is still allowed to put the app to sleep. The first button " +
+                        "below is what stops it.",
+                    color = HudColors.Amber,
+                    style = HudeCfgNote(),
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            GrantRow(
+                label = "BATTERY",
+                ok = exempt,
+                okLine = "Always-on: Android will not put the app to sleep.",
+                needLine = "Restricted: Android may freeze the app any time the screen is off, " +
+                    "which is how a drive loses its start.",
+                buttonLabel = "ALLOW ALWAYS-ON BATTERY",
+                onTap = {
+                    scope.launch { settings.setBatteryPromptShown() }
+                    BackgroundPermissions.askBatteryExemption(context)
+                },
+            )
+            Spacer(Modifier.height(12.dp))
+            GrantRow(
+                label = "NOTIFICATION",
+                ok = notifOk,
+                okLine = "Allowed: the ongoing notification explains why the app is running.",
+                needLine = "Blocked: a foreground service with no notification is the one thing " +
+                    "Android tears down most reliably.",
+                buttonLabel = "OPEN NOTIFICATION SETTINGS",
+                onTap = { BackgroundPermissions.openNotificationSettings(context) },
+            )
+            Spacer(Modifier.height(12.dp))
+            // No status, because there is nothing to read: MIUI's autostart switch is not an
+            // Android permission, and the only ways to query it are reflection into Xiaomi's
+            // own provider or guessing. The card says what to look for instead of pretending.
+            GrantRow(
+                label = "AUTOSTART (XIAOMI)",
+                ok = null,
+                okLine = "",
+                needLine = "On MIUI and HyperOS the security app decides whether a stopped app " +
+                    "may start at all, and no API can read that switch. Open the list and make " +
+                    "sure Dashboard++ is allowed - without it, nothing happens after a reboot.",
+                buttonLabel = "OPEN AUTOSTART LIST",
+                onTap = {
+                    if (!BackgroundPermissions.openAutoStartPage(context)) {
+                        backgroundLine = "This phone has no autostart page this app can open. " +
+                            "The app's info page is the fallback."
+                        BackgroundPermissions.openAppDetails(context)
+                    }
+                },
+            )
+            if (backgroundLine.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(backgroundLine, color = HudColors.TextMuted, style = HudeCfgNote())
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Swiping the app away changes nothing: the link and the recorder stay up. " +
+                    "The one thing that ends it is Settings → Apps → Dashboard++ → Force stop, " +
+                    "and the app cannot undo that by itself - open it once and the lane comes " +
+                    "back.",
+                color = HudColors.TextDim,
+                style = HudeCfgNote(),
+            )
+        }
+
         // ── Trips & Storage ──────────────────────────────────────────────
         // One dropdown, because the three questions are one story: is the drive being
         // recorded, where does it go, and what is already in there. They used to be
@@ -379,6 +509,12 @@ fun SettingsScreen(
                     } else {
                         TripLogService.stop(context)
                     }
+                    // Then the garage rule, which since the always-on lane (2026-11-26) also
+                    // owns the standby half: recording switched off with no drive open means
+                    // nothing is left for the lane to do, and switching it on with a link
+                    // gives it a job. Off mid-drive is deliberately not a stop - `reconsider`
+                    // never seals a drive it did not open.
+                    TripLogService.reconsider(context)
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -1045,6 +1181,64 @@ private fun ToggleRow(
             Text(label, color = HudColors.Cyan, style = HudeFormLabel())
         }
         HudToggle(on = on, label = toggleLabel, onToggle = onToggle)
+    }
+}
+
+/**
+ * One thing the always-on lane needs from the phone, whether the phone has granted it, and the
+ * button that goes to the page where the answer changes.
+ *
+ * `ok = null` means the question cannot be read at all (MIUI's autostart switch), which is a
+ * different state from "no" and is deliberately not drawn as one: a warning line about a
+ * permission the app cannot inspect is a lie either way, so the row says what to do instead of
+ * giving a verdict.
+ */
+@Composable
+private fun GrantRow(
+    label: String,
+    ok: Boolean?,
+    okLine: String,
+    needLine: String,
+    buttonLabel: String,
+    onTap: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // The answer, drawn. A typed U+25CF is a mark this app can neither size nor weight and
+            // the bench phone's font has already failed on a relative of it (see HudSelectMenu's
+            // row mark), so the pair is the app's own: a check for granted, the warn triangle for
+            // not. `ok = null` deliberately wears nothing rather than a third dot — a verdict about
+            // a switch no API can read is a lie either way — but it keeps the column's width.
+            when (ok) {
+                true -> Image(
+                    HudIcons.Check,
+                    contentDescription = "granted",
+                    colorFilter = ColorFilter.tint(HudColors.Green),
+                    modifier = Modifier.size(HudGlyphSize.Row.dp),
+                )
+                false -> Image(
+                    HudIcons.Warn,
+                    contentDescription = "not granted",
+                    colorFilter = ColorFilter.tint(HudColors.Amber),
+                    modifier = Modifier.size(HudGlyphSize.Row.dp),
+                )
+                null -> Spacer(Modifier.size(HudGlyphSize.Row.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(label, color = HudColors.Cyan, style = HudeFormLabel())
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(if (ok == true) okLine else needLine, color = HudColors.TextMuted, style = HudeCfgNote())
+        Spacer(Modifier.height(6.dp))
+        HudButton(
+            buttonLabel,
+            modifier = Modifier.fillMaxWidth(),
+            style = HudButtonStyle.SECONDARY,
+            // `action.system-panel`: every one of these buttons leaves the app for a page the
+            // phone owns about this app. Cog is the ledger's mark for that, and the word on the
+            // button says which page.
+            glyph = HudIcons.Cog,
+        ) { onTap() }
     }
 }
 

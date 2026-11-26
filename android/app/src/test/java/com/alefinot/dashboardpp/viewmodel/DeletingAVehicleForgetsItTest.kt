@@ -36,8 +36,12 @@ class DeletingAVehicleForgetsItTest {
             body.contains("isBonded("),
         )
         assertTrue(
-            "deleting the card that owns the session must drop the link, not just blank the state",
-            body.contains("disconnect()"),
+            "deleting the card that owns the session must put the link down, not just blank the " +
+                "state. Since the always-on lane (2026-11-26) that drop is dropLink(), which also " +
+                "writes the hand-disconnect latch - so the call is pinned with the latch switched " +
+                "off: forgetting a vehicle removes its key below, and a later re-pairing of the " +
+                "same unit is a fresh start, not a resume of an old refusal.",
+            body.contains("dropLink(pauseKey = null)"),
         )
         assertTrue(
             "the bond half the app cannot do has to reach the page, exactly as a FORGET raised it",

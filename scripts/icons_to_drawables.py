@@ -72,7 +72,9 @@ MORE_HORIZONTAL = (
 # `map` (the folded sheet) for the Live Map card added on 2026-11-21. The
 # `app_help` graduation cap is the Getting Started card that arrived with the
 # start tour on 2026-11-22 — "learn the app", in the same lucide dialect as
-# every badge around it.
+# every badge around it. `app_background` is the Always On card of the background
+# link plan (2026-11-26): the Bluetooth rune, because everything on that card is about
+# a link the phone keeps up with nobody watching it.
 EXTRA_BADGES = {
     "perf": "activity",
     "app_updates": "system",
@@ -80,6 +82,7 @@ EXTRA_BADGES = {
     "app_weather": "weather",
     "app_map": "map",
     "app_help": "help",
+    "app_background": "bluetooth",
 }
 
 HEADER = (

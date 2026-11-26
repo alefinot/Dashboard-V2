@@ -8,7 +8,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.alefinot.dashboardpp.vehicles.UnitIdentity
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -278,6 +280,48 @@ class RecorderSettings(context: Context) {
             .map { it[KEY_BATTERY_PROMPT] ?: false }
 
     /**
+     * The always-on background link (App Settings -> Background, default **on**).
+     *
+     * On means the foreground service may start at boot, reconnect to the last
+     * connected dashboard and record the drive with no window open. Off means the
+     * service is stopped and the link is released; the switch is the owner's, not
+     * a consequence of anything else in the app.
+     */
+    val backgroundEnabled: Flow<Boolean> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_BACKGROUND] ?: true }
+
+    suspend fun setBackgroundEnabled(enabled: Boolean) {
+        store.edit { it[KEY_BACKGROUND] = enabled }
+    }
+
+    /**
+     * Unit keys the owner disconnected by hand. The background link must not undo
+     * that decision - not on a swipe, not on a process restart, not on a reboot.
+     * A key leaves the set only when its CONNECT is pressed (or when the master
+     * switch is cycled off -> on, which is the same explicit act for every card).
+     */
+    val pausedUnits: Flow<Set<String>> =
+        store.data.catch { emit(emptyPreferences()) }
+            .map { it[KEY_PAUSED_UNITS] ?: emptySet() }
+
+    suspend fun pauseUnit(unitKey: String) {
+        if (unitKey.isEmpty() || unitKey == UnitIdentity.UNKNOWN) return
+        store.edit { it[KEY_PAUSED_UNITS] = (it[KEY_PAUSED_UNITS] ?: emptySet()) + unitKey }
+    }
+
+    suspend fun clearPause(unitKey: String) {
+        store.edit { prefs ->
+            val now = prefs[KEY_PAUSED_UNITS] ?: return@edit
+            prefs[KEY_PAUSED_UNITS] = now - unitKey
+        }
+    }
+
+    suspend fun clearAllPauses() {
+        store.edit { it[KEY_PAUSED_UNITS] = emptySet() }
+    }
+
+    /**
      * Whether the start tour has been dismissed for good (the tour's own
      * "don't show again" switch, and the App Settings *SHOW AT STARTUP* row
      * reading it the other way round). Default **false**: an owner who has
@@ -388,6 +432,8 @@ class RecorderSettings(context: Context) {
         private val KEY_TRIP_SYNC = booleanPreferencesKey("trip_sync_enabled")
         private val KEY_MAP_STYLE = stringPreferencesKey("map_style")
         private val KEY_MAP_CYCLE = stringPreferencesKey("map_cycle")
+        private val KEY_BACKGROUND = booleanPreferencesKey("background_link_enabled")
+        private val KEY_PAUSED_UNITS = stringSetPreferencesKey("background_paused_units")
 
         /** The filter value meaning "no filter". */
         const val FILTER_ALL = "ALL"

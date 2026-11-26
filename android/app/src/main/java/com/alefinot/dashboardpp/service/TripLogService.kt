@@ -10,10 +10,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.alefinot.dashboardpp.MainActivity
+import com.alefinot.dashboardpp.DashboardApp
 import com.alefinot.dashboardpp.R
 import com.alefinot.dashboardpp.ble.BleApi
 import com.alefinot.dashboardpp.ble.BleLink
@@ -35,6 +37,10 @@ import com.alefinot.dashboardpp.weather.HostFrames
 import com.alefinot.dashboardpp.weather.WeatherRuntime
 import com.alefinot.dashboardpp.trips.TripSummary
 import com.alefinot.dashboardpp.trips.routeToShow
+import com.alefinot.dashboardpp.vehicles.UnitIdentity
+import com.alefinot.dashboardpp.vehicles.Vehicle
+import com.alefinot.dashboardpp.vehicles.VehicleStore
+import com.alefinot.dashboardpp.viewmodel.BackgroundTarget
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -104,6 +110,39 @@ class TripLogService : Service() {
      */
     private var watching = false
 
+    /**
+     * The always-on mode (2026-11-26): the service owns the link for the background card,
+     * keeps the foreground notification up, and follows the stream whether or not a page
+     * is open. Set by [ACTION_ENSURE] and by a sticky restart; cleared by the master
+     * switch or by [onDestroy].
+     */
+    @Volatile
+    private var backgroundMode = false
+
+    /**
+     * The owner ended this drive: do not open another one on the link that is up.
+     *
+     * In memory and tied to the connection on purpose. A process death also drops the GATT
+     * link, so the next link - the one that makes the car a candidate again - is exactly the
+     * event that clears this, either through [watchLink] or through the fresh-link flag the
+     * view model sends with the auto-record ask ([EXTRA_LINK_NEW]). It is read by
+     * [onStartCommand], which is where every automatic start arrives.
+     */
+    @Volatile
+    private var stopLatch = false
+
+    /** The one target resolution at a time; a link-up may ask again after it finished. */
+    private var backgroundJob: Job? = null
+
+    /** Mirrors the link while [backgroundMode] is up (see [watchLink]). */
+    private var linkWatch: Job? = null
+
+    /** The weather tick, for the stretch of a day with no link to carry it (see [startWeatherHeartbeat]). */
+    private var weatherJob: Job? = null
+
+    /** The card this lane was resolved to, kept so a no-link tick has an identity to fetch for. */
+    private var backgroundTarget: Vehicle? = null
+
     private var writer: CsvTripWriter? = null
     private var store: TripStore? = null
     private var settings: RecorderSettings? = null
@@ -167,8 +206,189 @@ class TripLogService : Service() {
         ensureChannel()
     }
 
+    /**
+     * The always-on lane's entry (2026-11-26, background link plan §3).
+     *
+     * Announce first, decide second: `startForegroundService()` gives ten seconds and a
+     * cold boot spends them in DataStore, so a target read in front of
+     * `startForeground()` is how a boot start becomes a crash. What the read decides is
+     * then applied by [reconsider], which is the same answer every other start asks for.
+     */
+    private fun beginBackgroundMode(): Int {
+        if (!announce()) return START_NOT_STICKY
+        backgroundMode = true
+        reconsider("ensure")
+        return START_STICKY
+    }
+
+    /**
+     * Put the ongoing notification up. False when the platform refuses the lane, which is
+     * the only thing that may end a boot start here.
+     *
+     * `connectedDevice` needs `BLUETOOTH_CONNECT` from Android 14, and a revoked grant
+     * would otherwise throw straight out of a receiver with no window to explain it.
+     */
+    private fun announce(): Boolean = try {
+        ServiceCompat.startForeground(
+            this, NOTIF_ID, buildNotification(null, null),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+        )
+        laneIsForeground = true
+        true
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "foreground refused: ${e.message}")
+        stopLane()
+        false
+    }
+
+    /**
+     * Re-derive what this lane should be doing from what is on disk.
+     *
+     * The one place the answer is worked out, called by the boot start, by a sticky
+     * restart, by the master switch and by a manual DISCONNECT - so the question "which
+     * car does the app chase now" is never answered twice with different facts. The rule
+     * itself is [BackgroundTarget.pick], which is pure and unit-tested; this is the part
+     * that reads the stores and moves the service.
+     */
+    private fun reconsider(reason: String) {
+        backgroundJob?.cancel()
+        backgroundJob = scope.launch {
+            val cfg = settings ?: RecorderSettings(this@TripLogService).also { settings = it }
+            val vehicles = VehicleStore(this@TripLogService)
+            val enabled = try {
+                cfg.backgroundEnabled.first()
+            } catch (e: Exception) {
+                true
+            }
+            if (!enabled) {
+                Log.d(LOG_TAG, "reconsider($reason): switch off")
+                shutdown(ownerStop = true)
+                return@launch
+            }
+            val picked = try {
+                BackgroundTarget.pick(vehicles.all().first(), vehicles.selectedId(), cfg.pausedUnits.first())
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "reconsider($reason): no target (${e.message})")
+                null
+            }
+            val controller = DashboardApp.controllerFor(this@TripLogService)
+            if (picked == null) {
+                // Nothing to chase - no card paired, or the owner disconnected this one by
+                // hand. The licence to dial behind their back goes with the target; a drive
+                // that is still open is finished on its own terms, because the lane that
+                // writes the file is the one being put down.
+                Log.d(LOG_TAG, "reconsider($reason): no target, lane down")
+                controller?.setBackgroundWanted(false)
+                backgroundTarget = null
+                backgroundMode = false
+                if (recorder == null && feedJob?.isActive != true) {
+                    stopLane()
+                } else {
+                    // A drive is still open, so the lane lives until that file is sealed -
+                    // but standby is over, and nothing should keep ticking for a car this
+                    // service is no longer following.
+                    linkWatch?.cancel()
+                    linkWatch = null
+                    weatherJob?.cancel()
+                    weatherJob = null
+                }
+                return@launch
+            }
+            backgroundTarget = picked
+            if (!laneIsForeground && !announce()) return@launch
+            backgroundMode = true
+            controller?.chaseBackground(picked.id)
+            watchLink()
+            startWeatherHeartbeat()
+            refreshNotification()
+            Log.d(LOG_TAG, "reconsider($reason): chasing ${picked.name} (${picked.id})")
+        }
+    }
+
+    /**
+     * Follow the link for the standby lane.
+     *
+     * The link is the only thing that says "the ignition came on", and a service with no
+     * window has no other way to hear it. Two answers are taken from it: a link that is
+     * gone clears the STOP latch (the next link is the new drive the owner allowed), and
+     * the notification says standby or linked, because an ongoing notification that never
+     * changes is one the owner learns to ignore.
+     *
+     * It deliberately does not start recorders: the link's identity - the MAC that files
+     * the trip and the firmware version that decides whether trips exist at all - is read
+     * by [com.alefinot.dashboardpp.viewmodel.ConnectionViewModel] over an RPC, and that
+     * is the one place that asks this service for a recording.
+     */
+    private fun watchLink() {
+        if (linkWatch?.isActive == true) return
+        linkWatch = scope.launch {
+            BleRuntime.link(this@TripLogService).state.collect { s ->
+                if (s !is BleLinkState.Ready) {
+                    if (stopLatch) {
+                        Log.d(LOG_TAG, "link gone: recording re-armed")
+                        stopLatch = false
+                    }
+                }
+                if (backgroundMode) refreshNotification()
+            }
+        }
+    }
+
+    /**
+     * The weather tick, moved here from the link's view model.
+     *
+     * A `delay` in a window-scoped collector dies with the window, which is the half of
+     * the day the forecast is supposed to stay fresh: this loop runs as long as the lane
+     * does. While a link is up the frames do the same job more cheaply
+     * ([noteWeatherFrame]), so this is the no-link case; with no wake lock held, Doze is
+     * allowed to slow it down, and a forecast that refreshes in a maintenance window is
+     * the honest trade for not holding the CPU for weather alone.
+     */
+    private fun startWeatherHeartbeat() {
+        if (weatherJob?.isActive == true) return
+        weatherJob = scope.launch {
+            while (isActive) {
+                delay(WEATHER_TICK_MS)
+                val key = weatherHeartbeatKey() ?: continue
+                WeatherRuntime.coordinator(applicationContext).wake("tick", key)
+            }
+        }
+    }
+
+    /** The unit the tick runs for: the live link when there is one, else the background card. */
+    private suspend fun weatherHeartbeatKey(): String? {
+        (TripRuntime.state.value.deviceKey as String?)?.takeIf { it.isNotEmpty() }?.let { return it }
+        val card = backgroundTarget ?: return null
+        return UnitIdentity.key(card.mac, card.bleAddress).takeIf { it != UnitIdentity.UNKNOWN }
+    }
+
+    /**
+     * A restart with no intent (the OEM killed the process and the system is handing the
+     * lane back): nothing is remembered, everything is read from disk.
+     */
+    private fun onStickyRestart(): Int {
+        Log.d(LOG_TAG, "sticky restart")
+        if (!announce()) return START_NOT_STICKY
+        backgroundMode = true
+        reconsider("restart")
+        return START_STICKY
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_ENSURE -> return beginBackgroundMode()
+            ACTION_DISABLE -> {
+                // The master switch went off. The lane goes with it, drive and all: nobody
+                // should be left with a recording writing after they told the app to stop
+                // following their car.
+                Log.d(LOG_TAG, "background disabled")
+                shutdown(ownerStop = true)
+                return START_NOT_STICKY
+            }
+            ACTION_RECONSIDER -> {
+                reconsider("owner")
+                return START_STICKY
+            }
             ACTION_WATCH -> {
                 // The display-only reader: the same frame lane with no recorder behind it.
                 // Since 2.0.7/179 it keeps a finished drive's live map moving; since the
@@ -187,8 +407,17 @@ class TripLogService : Service() {
                 if (key.isNullOrEmpty()) {
                     // No link to follow. The shell starts this lane from the owner it just
                     // resolved, so an empty key means the link went away in between.
-                    stopSelf()
-                    return START_NOT_STICKY
+                    //
+                    // Standby is the exception, and the reason this is a guard rather than
+                    // a filter: MainActivity asks for a display reader every time the app
+                    // comes to the front, parked car included, and with no link that ask has
+                    // no key. Ending the standby lane there would mean opening the app for a
+                    // second is what stops it following the car.
+                    if (!backgroundMode) {
+                        stopLane()
+                        return START_NOT_STICKY
+                    }
+                    return START_STICKY
                 }
                 deviceKey = key
                 watching = true
@@ -202,6 +431,16 @@ class TripLogService : Service() {
                 // ride, while STOP answers "end this one". Every stop - pill, card or shade - is
                 // therefore just a stop, and the switch keeps whatever the owner left it.
                 val keep = intent.getBooleanExtra(EXTRA_KEEP_DISPLAY, true)
+                if (backgroundMode) {
+                    // Standby: an owner's STOP ends the drive, not the link. The file is
+                    // sealed and its continuity note dropped exactly as in a normal stop,
+                    // and the STOP latch is what keeps the link that is still up from being
+                    // read as a new drive - the ignition, not a finger, ends that one.
+                    stopLatch = recorder != null
+                    sealTrip(ownerStop = recorder != null)
+                    refreshNotification()
+                    return START_STICKY
+                }
                 // A running recorder is the owner ending a drive: its continuity note goes
                 // with it, so the next automatic start - the next relaunch or reconnect -
                 // opens a new file. A stop of the display lane has no recorder and must
@@ -211,7 +450,9 @@ class TripLogService : Service() {
             }
             ACTION_PAUSE -> {
                 if (recorder == null && feedJob?.isActive != true) {
-                    stopSelf()
+                    // Not stopSelf: the lane may have announced itself, and the companion
+                    // has to know it is gone or it will keep calling it a live lane.
+                    stopLane()
                     return START_NOT_STICKY
                 }
                 pausedByUser = true
@@ -223,7 +464,9 @@ class TripLogService : Service() {
             }
             ACTION_RESUME -> {
                 if (recorder == null && feedJob?.isActive != true) {
-                    stopSelf()
+                    // Not stopSelf: the lane may have announced itself, and the companion
+                    // has to know it is gone or it will keep calling it a live lane.
+                    stopLane()
                     return START_NOT_STICKY
                 }
                 pausedByUser = false
@@ -234,16 +477,59 @@ class TripLogService : Service() {
                 return START_STICKY
             }
         }
-        val key = intent?.getStringExtra(EXTRA_DEVICE_KEY)
+        // No intent means the system is handing the lane back after the process died, and
+        // the answer to "should this still be running" comes off the disk, not from what
+        // this instance remembered.
+        if (intent == null) return onStickyRestart()
+        val key = intent.getStringExtra(EXTRA_DEVICE_KEY)
         if (key.isNullOrEmpty()) {
             shutdown()
             return START_NOT_STICKY
         }
+        val manual = intent.getBooleanExtra(EXTRA_MANUAL, false)
+        // "This is a link that just came up", which is the only thing that re-arms recording
+        // after an owner's STOP. The pages' own auto-start effect fires on a link that is
+        // merely Ready, so it cannot claim this; the view model's background auto-record can,
+        // because it runs once per established link and never on a link that was already up.
+        val newLink = intent.getBooleanExtra(EXTRA_LINK_NEW, false)
+        if (backgroundMode && !manual && stopLatch && !newLink) {
+            // The owner pressed STOP on the link that is still up. A reconnect attempt, a
+            // settings change or the shell's auto-start effect must not read that link as a
+            // new drive: only a link coming up re-arms recording (see [stopLatch]), and a
+            // finger on START is never refused.
+            Log.d(LOG_TAG, "auto-start held off: drive stopped on this link")
+            refreshNotification()
+            return START_STICKY
+        }
+        if (newLink) stopLatch = false
+        armRecorder(
+            key, manual,
+            intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty(),
+            intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty(),
+            intent.getStringExtra(EXTRA_EFF).orEmpty(),
+        )
+        return START_STICKY
+    }
+
+    /**
+     * Point the lane at a dashboard and start writing.
+     *
+     * Split out of [onStartCommand] because the recorder is built lazily by the feed
+     * ([awaitRecorder]) and everything decided here is the file's tag, whether a display
+     * lane has to hand over, and that the lane exists at all.
+     */
+    private fun armRecorder(
+        key: String,
+        manual: Boolean,
+        vehicleId: String,
+        vehicleName: String,
+        eff: String,
+    ) {
         deviceKey = key
-        manualStart = intent.getBooleanExtra(EXTRA_MANUAL, false)
-        vehicleId = intent.getStringExtra(EXTRA_VEHICLE_ID).orEmpty()
-        vehicleName = intent.getStringExtra(EXTRA_VEHICLE_NAME).orEmpty()
-        eff = intent.getStringExtra(EXTRA_EFF).orEmpty()
+        manualStart = manual
+        this.vehicleId = vehicleId
+        this.vehicleName = vehicleName
+        this.eff = eff
         // The owner's START does NOT blank the maps (owner, 2026-11-18: "when the recording is
         // stopped and you press to start it the live map disappears for a moment"). Clearing the
         // finished drive's shape here left the page with nothing to draw for a whole sample
@@ -274,12 +560,8 @@ class TripLogService : Service() {
         recorder?.bindVehicle(vehicleId, eff, vehicleName)
         // A foreground service must announce itself immediately after
         // startForegroundService(); without this the process is ANR'd in ~5 s.
-        ServiceCompat.startForeground(
-            this, NOTIF_ID, buildNotification(null, null),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-        )
+        if (!announce()) return
         beginFeeding()
-        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -303,7 +585,50 @@ class TripLogService : Service() {
         feedJob = null
         syncJob?.cancel()
         syncJob = null
+        linkWatch?.cancel()
+        linkWatch = null
+        backgroundJob?.cancel()
+        backgroundJob = null
+        weatherJob?.cancel()
+        weatherJob = null
         pausedByUser = false
+        backgroundMode = false
+        // The licence to dial the phone's own ladder in the background died with this
+        // service: the dialer must not go on reaching for a car nobody is recording, and
+        // the only signal it has that the always-on mode is over is this call.
+        DashboardApp.controllerFor(this)?.setBackgroundWanted(false)
+        sealTrip(ownerStop)
+        stopLane()
+        // With the app on screen a Stop leaves the display lane running - a finished drive's
+        // map is still worth watching, and since the Live page became a map, so is a drive
+        // that never started. Only the foreground window changes that: a lane nobody puts
+        // down would stream for the rest of the day.
+        if (keepDisplay && appForeground) watch(applicationContext)
+    }
+
+    /**
+     * End the ongoing notification, the wake lock and the service.
+     *
+     * The half of [shutdown] that is also the answer to "the platform refused us": there is
+     * no trip to seal and no state to publish, only things to let go of.
+     */
+    private fun stopLane() {
+        laneIsForeground = false
+        releaseWake()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        // The notification is re-posted through [notify] while the lane runs, and some builds
+        // keep a re-posted one after the foreground remove. Cancel the id outright; cancelling
+        // one that is already gone costs nothing. (When checking this by dumpsys: a dismissed
+        // notification lives on in `mArchive`, so read the shade, not the history.)
+        getSystemService(NotificationManager::class.java)?.cancel(NOTIF_ID)
+        stopSelf()
+    }
+
+    /**
+     * Seal the open drive and publish its end. Shared by the two ways a drive ends: the
+     * service going away, and an owner's STOP in standby mode, where the service stays.
+     */
+    private fun sealTrip(ownerStop: Boolean) {
         val finishing = recorder
         finishing?.stop()
         // The owner closed this drive: forget that it can be continued. Done after the
@@ -317,7 +642,6 @@ class TripLogService : Service() {
         recorder = null
         writer?.closeAll()
         writer = null
-        releaseWake()
         val route = keptRoute ?: TripRuntime.state.value.liveRoute
         TripRuntime.update {
             it.copy(
@@ -325,13 +649,6 @@ class TripLogService : Service() {
                 watching = false, liveRoute = routeToShow(it.liveRoute, route),
             )
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        // With the app on screen a Stop leaves the display lane running - a finished drive's
-        // map is still worth watching, and since the Live page became a map, so is a drive
-        // that never started. Only the foreground window changes that: a lane nobody puts
-        // down would stream for the rest of the day.
-        if (keepDisplay && appForeground) watch(applicationContext)
     }
 
     /**
@@ -372,7 +689,10 @@ class TripLogService : Service() {
     private fun beginFeeding() {
         if (feedJob?.isActive == true) return
         feedJob = scope.launch {
-            if (!watching && !awaitRecorder()) return@launch
+            // In standby a "no recorder" answer is a decision about the file, not about the
+            // lane: the loop below treats a null recorder as the display reader, and that is
+            // what keeps the weather heartbeat and the next link-up inside a live service.
+            if (!watching && !awaitRecorder() && !backgroundMode) return@launch
             val link = BleRuntime.link(this@TripLogService)
             val api = BleApi(link)
             var lastUp = -1L
@@ -432,6 +752,12 @@ class TripLogService : Service() {
 
     /** True when the device has been unreachable long enough to stop the service. */
     private fun shouldGiveUp(): Boolean {
+        // Standby is the whole point of not giving up (background link plan §3): the unit is
+        // vehicle-powered, so an idle link is a parked car, and "the ignition has been off
+        // for fifteen minutes" is exactly the state the owner wants to be in - the next
+        // ignition is what the lane exists for. The idle rule is a courtesy for a lane that
+        // only exists because a drive was open.
+        if (backgroundMode) return false
         val state = TripRuntime.state.value
         if (state.recording) return false
         if (state.lastOkMs == 0L) return false
@@ -517,8 +843,8 @@ class TripLogService : Service() {
      * The frame itself is only a map write — the coordinator reads it later as the free
      * answer to "has the car moved 2 km?", which is the question that would otherwise
      * cost a `snapshot` RPC. The wake-up is throttled because the store read it does is
-     * not free: at 2 km at 100 km/h that is 72 seconds of driving, so ten seconds is
-     * plenty of resolution for the trigger and six store reads a minute instead of sixty.
+     * not free: at 2 km at 100 km/h that is 72 seconds of driving, so a minute is plenty of
+     * resolution for the trigger, and it is one store read a minute instead of sixty.
      */
     private fun noteWeatherFrame(s: Snapshot) {
         val key = deviceKey
@@ -578,7 +904,10 @@ class TripLogService : Service() {
         }
         if (!wanted && !manualStart) {
             TripRuntime.update { it.copy(lastError = "disabled-by-user") }
-            shutdown()
+            // Standby answers "no recorder" with no recorder, not with the lane gone: the
+            // switch says nothing about following the car, and the notification, the link
+            // and the next target are still this service's job.
+            if (!backgroundMode) shutdown()
             return false
         }
         // Carry the last session across service restarts, so the ESP rebooting
@@ -670,6 +999,10 @@ class TripLogService : Service() {
     }
 
     private fun notify(snapshot: Snapshot?, summary: TripSummary?) {
+        // Once the lane is coming down, this door is shut: the seal of the last drive calls
+        // back through here, and a re-post that lands after stopForeground() is a notification
+        // with no foreground owner and nobody left to cancel it.
+        if (!laneIsForeground) return
         val manager = getSystemService(NotificationManager::class.java) ?: return
         try {
             manager.notify(NOTIF_ID, buildNotification(snapshot, summary))
@@ -681,6 +1014,11 @@ class TripLogService : Service() {
     private fun buildNotification(snapshot: Snapshot?, summary: TripSummary?): Notification {
         val recording = recorder?.isRecording == true
         val paused = recording && recorder?.isPaused == true
+        // The always-on lane with no drive open. It gets its own wording because the old
+        // "Waiting for Dashboard++" line, shown for hours at a time on a parked car, reads
+        // like a fault - and it must not offer STOP, which would end a drive that was never
+        // started and tell the owner the app had failed at something they never asked for.
+        val standby = backgroundMode && !recording
         val title = when {
             paused && summary != null ->
                 "Paused · ${formatDuration(summary.durationMs)}" +
@@ -690,10 +1028,12 @@ class TripLogService : Service() {
                 "Recording · ${formatDuration(summary.durationMs)}" +
                     " · ${format1(summary.distanceKm)} km"
             recording -> "Recording this drive"
+            standby -> "Dashboard++ on watch"
             else -> "Waiting for Dashboard++"
         }
         val text = when {
             paused -> "Not logging samples"
+            standby -> standbyText()
             !telemetryInNotification -> "Logging is on"
             snapshot == null -> "No answer from the device yet"
             else -> "${snapshot.spd.toInt()} km/h · ${format1(snapshot.trpL)} L · " +
@@ -736,6 +1076,7 @@ class TripLogService : Service() {
                 },
             )
         when {
+            standby -> builder
             paused -> builder
                 .addAction(0, "Resume recording", recordingPending(ACTION_RESUME, 3))
                 .addAction(0, "Stop recording", stopPending)
@@ -745,6 +1086,17 @@ class TripLogService : Service() {
             else -> builder.addAction(0, "Stop recording", stopPending)
         }
         return builder.build()
+    }
+
+    /** What the standby lane is doing right now, in the one line the shade shows. */
+    private fun standbyText(): String {
+        if (stopLatch) return "Drive ended · records again when the link does"
+        val linked = BleRuntime.link(this).state.value is BleLinkState.Ready
+        return if (linked) {
+            "Linked · a drive starts when the car does"
+        } else {
+            "Watching for the car · nothing to record"
+        }
     }
 
     private fun recordingPending(action: String, requestCode: Int): PendingIntent {
@@ -790,13 +1142,33 @@ class TripLogService : Service() {
     }
 
     companion object {
+        /** `adb logcat -s DPP-BG` - the always-on lane's own tag. */
+        const val LOG_TAG = "DPP-BG"
+
         const val ACTION_STOP = "com.alefinot.dashboardpp.action.STOP_TRIPS"
         const val ACTION_PAUSE = "com.alefinot.dashboardpp.action.PAUSE_TRIPS"
         const val ACTION_RESUME = "com.alefinot.dashboardpp.action.RESUME_TRIPS"
 
         /** Follow the stream for the display, with no recorder behind it (see [watch]). */
         const val ACTION_WATCH = "com.alefinot.dashboardpp.action.WATCH_TRIPS"
+
+        /** Start the always-on lane and keep it up (see [ensure]). */
+        const val ACTION_ENSURE = "com.alefinot.dashboardpp.action.ENSURE_LINK"
+
+        /** Re-derive which car the always-on lane should chase (see [reconsider]). */
+        const val ACTION_RECONSIDER = "com.alefinot.dashboardpp.action.RECONSIDER_LINK"
+
+        /** The master switch is off: end the always-on lane (see [disable]). */
+        const val ACTION_DISABLE = "com.alefinot.dashboardpp.action.DISABLE_LINK"
+
         const val EXTRA_DEVICE_KEY = "device_key"
+
+        /**
+         * True when the start request is for a link that has just come up, which is the
+         * only automatic reason recording may restart after an owner's STOP (see
+         * [stopLatch]).
+         */
+        const val EXTRA_LINK_NEW = "link_new"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_LIVE = "live"
 
@@ -817,8 +1189,19 @@ class TripLogService : Service() {
         private const val CHANNEL = "trip_recording"
         private const val NOTIF_ID = 4201
 
-        /** How often the frame stream may wake the weather feed (see [noteWeatherFrame]). */
-        private const val WEATHER_WAKE_INTERVAL_MS = 10_000L
+        /**
+         * How often the frame stream may wake the weather feed (see [noteWeatherFrame]).
+         *
+         * A minute, because the frame lane is now the only timer the app has for weather:
+         * the view model's 60 s tick went with it (the always-on lane runs [startWeatherHeartbeat]
+         * instead, for the hours with no link). Five minutes and two kilometres are the rules
+         * the coordinator is checking, so a minute of resolution is four times finer than the
+         * trigger and one store read a minute instead of six.
+         */
+        private const val WEATHER_WAKE_INTERVAL_MS = 60_000L
+
+        /** How often the always-on lane wakes the feed with no link to carry it. */
+        private const val WEATHER_TICK_MS = 60_000L
         private const val WAKE_TAG = "dashboardpp:trip"
 
         /**
@@ -832,10 +1215,90 @@ class TripLogService : Service() {
         @Volatile
         private var appForeground = false
 
+        /**
+         * True while the lane has its ongoing notification up, set by
+         * [TripLogService.announce] and cleared by [TripLogService.stopLane].
+         *
+         * It is the companion's answer to "may this lane take a command without the
+         * foreground-service dance". A running foreground service accepts a plain
+         * `startService` from anywhere, while another `startForegroundService` is a fresh
+         * promise to the platform - and from a background app on Android 12+ that promise
+         * is refused, which must never be what costs a drive its first samples.
+         */
+        @Volatile
+        private var laneIsForeground = false
+
         /** Tell the recorder's lane that the app came to the front, or went away from it. */
         fun setAppForeground(foreground: Boolean) {
             appForeground = foreground
         }
+
+        /**
+         * Hand the lane a command that only makes sense while it is running - STOP, PAUSE,
+         * RESUME, a re-derivation.
+         *
+         * A lane that is not up has nothing to end, and starting one just to tell it to stop
+         * is how `startForegroundService()` ends without ever calling `startForeground()`:
+         * a crash about a promise nobody meant to make. The display lane may not ask for the
+         * foreground promise at all, which is why [watch] is deliberately not here.
+         */
+        private fun command(
+            context: Context,
+            action: String,
+            extras: (Intent) -> Unit = {},
+        ) {
+            if (!laneIsForeground) return
+            try {
+                context.startService(
+                    Intent(context, TripLogService::class.java).apply {
+                        this.action = action
+                        extras(this)
+                    },
+                )
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "command refused ($action): ${e.message}")
+            }
+        }
+
+        /**
+         * Ask for the lane itself, which may need to be built.
+         *
+         * The one door that takes the foreground-service promise, and it is wrapped because
+         * that promise is exactly what Android 12+ refuses a background app: a boot start on
+         * a phone where the owner never granted the battery-optimisation exemption is a
+         * refused start, not a crash. The App Settings → Always-on card is what asks.
+         */
+        private fun submit(context: Context, intent: Intent) {
+            try {
+                if (laneIsForeground) context.startService(intent)
+                else ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "start refused (${intent.action ?: "record"}): ${e.message}")
+            }
+        }
+
+        /**
+         * Keep the always-on lane up (background link plan §3): the notification, the
+         * background dial, the auto-record and the weather tick.
+         *
+         * Safe to call from anywhere, and called from everywhere ordinary - the boot
+         * receiver, the app coming to the front, the settings switch - because [TripLogService.reconsider]
+         * re-reads the master switch and puts itself down if the owner has since turned it
+         * off. Cheap when the lane is already up: it re-derives the target and returns.
+         */
+        fun ensure(context: Context) {
+            submit(context, Intent(context, TripLogService::class.java).apply { action = ACTION_ENSURE })
+        }
+
+        /**
+         * Something the lane's target depends on changed - a manual DISCONNECT, a card
+         * forgotten, the master switch. No-op while the lane is down: the next [ensure]
+         * reads the same facts from disk.
+         */
+        fun reconsider(context: Context) = command(context, ACTION_RECONSIDER)
+
+        /** The master switch went off: end the lane, drive included. */
+        fun disable(context: Context) = command(context, ACTION_DISABLE)
 
         /**
          * Point the recorder at a dashboard. No address in the signature anywhere: the
@@ -849,6 +1312,7 @@ class TripLogService : Service() {
             vehicleName: String,
             eff: String,
             manual: Boolean = false,
+            newLink: Boolean = false,
         ) {
             val intent = Intent(context, TripLogService::class.java).apply {
                 putExtra(EXTRA_DEVICE_KEY, deviceKey)
@@ -856,8 +1320,9 @@ class TripLogService : Service() {
                 putExtra(EXTRA_VEHICLE_NAME, vehicleName)
                 putExtra(EXTRA_EFF, eff)
                 putExtra(EXTRA_MANUAL, manual)
+                putExtra(EXTRA_LINK_NEW, newLink)
             }
-            ContextCompat.startForegroundService(context, intent)
+            submit(context, intent)
         }
 
         /**
@@ -889,36 +1354,18 @@ class TripLogService : Service() {
          * looking at the map and the app being put away: the first leaves a finished drive on
          * the maps and asks the lane back to keep its picture moving, the second is the very
          * moment the picture is allowed to freeze (2.0.7/179).
+         *
+         * In always-on mode it is the same press with a different scope (plan §3): the drive
+         * ends and the link does not, so the notification goes to standby instead of away.
          */
         fun stop(context: Context, keepDisplay: Boolean = true) {
-            val intent = Intent(context, TripLogService::class.java).apply {
-                action = ACTION_STOP
-                putExtra(EXTRA_KEEP_DISPLAY, keepDisplay)
-            }
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                // Already stopped.
-            }
+            command(context, ACTION_STOP) { it.putExtra(EXTRA_KEEP_DISPLAY, keepDisplay) }
         }
 
         /** Pause the open trip; the file stays open and the service keeps following the link. */
-        fun pause(context: Context) {
-            sendAction(context, ACTION_PAUSE)
-        }
+        fun pause(context: Context) = command(context, ACTION_PAUSE)
 
         /** Continue appending to the same open trip. */
-        fun resume(context: Context) {
-            sendAction(context, ACTION_RESUME)
-        }
-
-        private fun sendAction(context: Context, action: String) {
-            val intent = Intent(context, TripLogService::class.java).apply { this.action = action }
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                // The service is already gone; there is no open trip to act on.
-            }
-        }
+        fun resume(context: Context) = command(context, ACTION_RESUME)
     }
 }

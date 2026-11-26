@@ -46,6 +46,13 @@
          install time, only offered once in the UI. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- The always-on companion (background link plan §4): the phone reboots, the receiver
+         puts the link lane back, and the 06:40 ignition is recorded with the app closed.
+         On MIUI this is only half the story - the OEM's own autostart switch has to be on
+         for the broadcast to reach the app at all, which is why the Background card offers
+         a jump to that page instead of assuming the grant. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <!-- Shared storage (shared storage plan §1). Trip CSVs, vehicle card JPEGs and the
          garage file are written to Documents/Dashboard++, a folder the owner can open in a
          file manager and see over USB - which is the whole point, and the only way to get it
@@ -142,13 +149,29 @@
         </activity>
 
         <!-- stopWithTask=false: swiping the app away must not end a drive that is
-             being logged. The service seals the trip and stops on its own once
-             the device has been unreachable past the idle window. -->
+             being logged. Since the always-on lane (2026-11-26) it is also the rule that
+             makes the app a companion: the task going away is not the owner telling the app
+             to stop following the car. The one thing that still ends it is a Force stop, and
+             the Background card says so in plain words rather than discovering it later. -->
         <service
             android:name=".service.TripLogService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice"
             android:stopWithTask="false" />
+
+        <!-- The reboot half of the always-on lane (service/BootReceiver.kt). It starts nothing
+             on its own authority: it reads the master switch, the paired cards and the manual
+             disconnect latch, and asks for the lane only when all three allow it. Android 12+
+             may still refuse the foreground-service start - that refusal is caught, and the
+             battery-exemption ask on the Background card is what makes the start legal. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- The install guard (service/OtaGuardService.kt): a second, short-lived connectedDevice
              foreground service armed by `OtaController.start()` for the ~minute an install needs
