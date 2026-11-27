@@ -860,6 +860,10 @@ static const int OTA_WARN_TOP = 185;   // 16 px "DO NOT TURN OFF THE DEVICE"
 // measured line height of the warning; the initialiser is only a fallback for a
 // counters call that somehow arrives before the frame was drawn.
 static int otaCounterBandTop = OTA_WARN_TOP + 24;
+// What the counters band currently says. The cache is file scope, not a static
+// local of drawOTAProgressCounters(), so showUpdatingScreen() can drop it when
+// it wipes the panel: a retry at the same 0 / N paints nothing otherwise.
+static char otaCounterLastLine[48] = "";
 
 void showUpdatingScreen() {
   // Start the bar empty, but keep any target already set by the OTA task
@@ -880,6 +884,10 @@ void showUpdatingScreen() {
 
   display.startWrite();
   display.fillScreen(TFT_BLACK);
+  // The counters band was wiped with the rest of the panel. Forget what it
+  // said, or the next tick at an unchanged byte count returns early and leaves
+  // the band blank until the transfer moves the number.
+  otaCounterLastLine[0] = '\0';
 
   const char *title = "UPDATING...";
   display.loadVLWFont("/Fonts/Conthrax_SemiBold_28px.vlw");
@@ -945,9 +953,8 @@ void drawOTAProgressCounters() {
     snprintf(line, sizeof(line), "%ld / %ld", done, total);
   }
 
-  static char lastLine[sizeof(line)] = "";
-  if (strcmp(lastLine, line) == 0) return;
-  snprintf(lastLine, sizeof(lastLine), "%s", line);
+  if (strcmp(otaCounterLastLine, line) == 0) return;
+  snprintf(otaCounterLastLine, sizeof(otaCounterLastLine), "%s", line);
 
   // The band starts below the warning line (see OTA_WARN_TOP) and is cleared
   // and painted with the same metrics: measure with the built-in font selected,
