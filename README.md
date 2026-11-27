@@ -1417,7 +1417,6 @@ Dashboard++ for ESP32/
     ├── bt_ota.cpp         # The firmware install state machine: begin/ack/end, CRC-32 written out, spare-slot write, resume window, gate
     ├── noisebench.cpp/.h  # The 4-run ADC noise bench (idle / tft / bl10 / bl90), on demand over the link
     ├── bootinfo.cpp/.h    # Reset-reason forensics, boot-storm detection, last-reboot tag
-    ├── otahash.cpp/.h     # SHA-256 over the running image, for the install gates and the boot report
     ├── demo_track.h       # GENERATED Monza centreline the demo GPS drives (scripts/gen_demo_track.py)
     └── units.h            # km/mi and °C/°F helpers shared by the panel and the payloads
     # web.cpp and webui.html are GONE - deleted 2026-11-02 (`git show 7104bf96^:src/web.cpp`
@@ -1532,7 +1531,7 @@ platformio device monitor
 that protects the panel is live; the half that carried the bytes is deleted.
 
 *Live in the tree right now* — the panel and safety side of an install, in
-`src/main.cpp`, `src/gfx.cpp`, `src/bootinfo.cpp`, `src/otahash.cpp`:
+`src/main.cpp`, `src/gfx.cpp`, `src/bootinfo.cpp`:
 
 - the three update frames (updating / complete-and-rebooting / failed), their
   stages (`otaScreenStage`, `OTA_SCREEN_*`), the 15 s failure-frame dwell and the
@@ -1544,8 +1543,8 @@ that protects the panel is live; the half that carried the bytes is deleted.
   3 s hold (`OTA_HOLD_RESTART_MS`) to restart the unit, and that hold refused
   while a flash write is in flight (`otaFlashWriteActive()`);
 - the identity machinery: `FW_VERSION` compiled in, the `DPPVER=` tag baked into
-  `firmware.bin`, the boot report of running vs previous version, the boot-storm
-  forensics, and the SHA-256 helpers.
+  `firmware.bin`, the boot report of running vs previous version, and the
+  boot-storm forensics.
 
 *Deleted with `src/web.cpp` on 2026-11-02*: `POST /api/ota` and its multipart
 handler, `GET /api/ota/check`, the REST allow-list and its `503`, the NVS mirror
@@ -3416,7 +3415,7 @@ rule 3): `1.5.0` → `1.5.1`.
 
 - **Cloud pull:** the `.sig` sibling fetch (`fetchSignatureAsset()`) is deleted, as are the `no_key` and `sig_missing` refusals. A pull now installs an image that passes the version, size and completeness gates. Byte-range resume after a stalled connection is **enabled again** — it had been switched off so no byte could bypass the signature hash — so a flaky link now resumes where it stopped instead of restarting the whole 1.75 MB.
 - **LAN install (`POST /api/ota`):** the signature gate, the staged-signature bookkeeping (`g_otaUpSig*`), the `sig_missing` / `sig_invalid` / `sig_bad` / `no_key` / `hash_failed` refusals, and `-DOTA_REQUIRE_SIG`. A part named `signature` is still **accepted, counted, logged and ignored**, so an older client or a cached page does not start failing.
-- **The verification code itself:** `src/otasign.cpp` / `src/otasign.h` are deleted and their streaming-hash half survives as `src/otahash.cpp` / `src/otahash.h`; `include/ota_pubkey.h` (the compiled-in public key) is deleted. The SHA-256 digest taken while streaming is kept — it gates nothing, it is the log line (`OTA web: image accepted (1754704 bytes, sha256 32178d87…)`, `OTA Pull: image complete, sha256 …`) that lets a person compare what a unit wrote against `sha256sum firmware.bin`. A hash failure now costs the log its digest instead of refusing an otherwise fine install.
+- **The verification code itself:** `src/otasign.cpp` / `src/otasign.h` are deleted and their streaming-hash half survives as `src/otahash.cpp` / `src/otahash.h`; `include/ota_pubkey.h` (the compiled-in public key) is deleted. The SHA-256 digest taken while streaming is kept — it gates nothing, it is the log line (`OTA web: image accepted (1754704 bytes, sha256 32178d87…)`, `OTA Pull: image complete, sha256 …`) that lets a person compare what a unit wrote against `sha256sum firmware.bin`. A hash failure now costs the log its digest instead of refusing an otherwise fine install. *(Post-V2.1.4 cleanup, 2026-11-27: `src/otahash.cpp` / `src/otahash.h` were then deleted as well — issue #64 — because no code in the BLE-only tree called them; the digests described here were a log line of the Web UI install path, which left with the HTTP server.)*
 - **Build flags:** `-DOTA_ALLOW_UNSIGNED` (pull) and `-DOTA_REQUIRE_SIG` (LAN) are deleted from `platformio.ini` with no replacement.
 - **API:** `GET /api/ota/check` no longer reports `signature_required` or `signing_key_present`. Nothing in the Web UI or the app read them; a client that still asks gets nothing.
 - **Web UI:** the firmware card's copy no longer describes a signature step; the push progress hint reads — *"the unit writes the image to flash as it arrives and takes a SHA-256 of what lands, for the log"*.

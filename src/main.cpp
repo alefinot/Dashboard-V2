@@ -38,7 +38,6 @@ volatile bool otaScreenDrawn = false;
 // below and never touches the panel, which is the same handoff the existing
 // pendingOtaScreen already uses.
 volatile uint8_t otaScreenStage = OTA_SCREEN_OFF;
-volatile bool pendingOtaDoneScreen = false;
 volatile bool pendingOtaErrorScreen = false;
 // How long the failure frame stays up before the dashboard comes back on its
 // own. Long enough to read a two-line reason from the driver's seat and walk
@@ -57,24 +56,14 @@ bool otaPanelTaken() {
 
 void otaScreenShowUpdate() {
   otaScreenStage = OTA_SCREEN_UPDATING;
-  pendingOtaDoneScreen = false;
   pendingOtaErrorScreen = false;
   otaScreenDrawn = false;
   pendingOtaScreen = true;
 }
 
-void otaScreenShowDone() {
-  otaScreenStage = OTA_SCREEN_DONE;
-  pendingOtaScreen = false;
-  pendingOtaErrorScreen = false;
-  otaScreenDrawn = false;
-  pendingOtaDoneScreen = true;
-}
-
 void otaScreenShowError() {
   otaScreenStage = OTA_SCREEN_FAILED;
   pendingOtaScreen = false;
-  pendingOtaDoneScreen = false;
   otaScreenDrawn = false;
   pendingOtaErrorScreen = true;
 }
@@ -82,7 +71,6 @@ void otaScreenShowError() {
 void otaScreenRelease() {
   otaScreenStage = OTA_SCREEN_OFF;
   pendingOtaScreen = false;
-  pendingOtaDoneScreen = false;
   pendingOtaErrorScreen = false;
   forceFullRedraw = true;
 }
@@ -671,11 +659,6 @@ static void handleOtaPanelRequests() {
     // ack - the update screen is the only thing a quiet window shows.
     otaScreenDrawn = true;
   }
-  if (pendingOtaDoneScreen) {
-    pendingOtaDoneScreen = false;
-    showOtaDoneScreen();
-    otaScreenDrawn = true;
-  }
   if (pendingOtaErrorScreen) {
     pendingOtaErrorScreen = false;
     long errBytes = 0, errTotal = 0;
@@ -750,10 +733,10 @@ static void animateOtaProgress() {
   if (otaUpdateSuccess && fillW >= 258 && !otaRebootShown) {
     otaRebootShown = true;
     // Same ending as the push path: the panel says what happened and stays
-    // that way long enough to read before the new firmware takes over. Here
-    // the frame is drawn directly rather than through the pendingOtaDoneScreen
-    // handoff because this *is* the display task - there is no other task to
-    // hand it to, and the restart follows in the next statement.
+    // that way long enough to read before the new firmware takes over. This
+    // frame and the delay are the completion feedback - there is no separate
+    // DONE handoff - and the app shows its own success state once the unit
+    // comes back.
     otaScreenStage = OTA_SCREEN_DONE;
     showOtaDoneScreen();
     // Long enough for two things: the driver reading the panel, and the `done`

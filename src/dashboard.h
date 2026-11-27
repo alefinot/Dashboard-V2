@@ -606,18 +606,18 @@ enum OtaScreenStage : uint8_t {
   OTA_SCREEN_FAILED
 };
 extern volatile uint8_t otaScreenStage;
-extern volatile bool pendingOtaDoneScreen;
 extern volatile bool pendingOtaErrorScreen;
 // The one question everything else asks: may the dashboard draw, and may GPIO25
 // reset the trip? False only when no transfer is live and no screen is up. True
 // for the whole install, including the moment a transfer started before the
 // display task has taken the panel.
 bool otaPanelTaken();
-// Ask for a screen / give the panel back. All four only set flags the display
+// Ask for a screen / give the panel back. All three only set flags the display
 // loop consumes; none of them touches the panel, so they are safe to call from
-// the BLE task. otaScreenRelease() also requests a full redraw.
+// the BLE task. otaScreenRelease() also requests a full redraw. There is no
+// DONE request: a live install finishes in animateOtaProgress(), which draws
+// showOtaDoneScreen() directly and then restarts.
 void otaScreenShowUpdate();
-void otaScreenShowDone();
 void otaScreenShowError();
 void otaScreenRelease();
 // The same ownership as a word for API replies: off | claimed | updating |
