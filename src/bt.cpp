@@ -52,6 +52,21 @@ static volatile bool s_advertising = false;
 // hand-over, short enough that the next phone just waits for the card to appear.
 static constexpr uint32_t BT_PAIR_DELAY_MS = 10000;
 static volatile uint32_t s_advResumeAt = 0;
+// Advertising is not taken on faith. start() only reports that the stack took
+// the request (and BLEServer::startAdvertising() is void in this core), so the
+// controller's ADV_START_COMPLETE event is the only proof that GAP is on air.
+// These track that confirmation and drive the retries when it never comes.
+static volatile bool s_advPending = false;      // a start request is in flight
+static volatile uint32_t s_advStartMs = 0;      // when it was requested
+static volatile uint32_t s_advConfirmedMs = 0;  // last successful confirmation
+static volatile uint32_t s_advRetryAt = 0;      // when to re-ask after a failure
+static volatile uint32_t s_advRearmAt = 0;      // when to start after a re-arm stop
+static constexpr uint32_t BT_ADV_CONFIRM_MS = 5000;
+static constexpr uint32_t BT_ADV_RETRY_MS = 5000;
+// A unit that has advertised this long with no client is restarted. The failure
+// this guards against is a stack that answers "advertising" while scans find
+// nothing (issue #60); a periodic clean restart costs a few ms of airtime.
+static constexpr uint32_t BT_ADV_REARM_MS = 5UL * 60UL * 1000UL;
 // Raised by the security callback when an authentication failure said the stored
 // keys were wrong and this peer's bond was deleted with it. The link that is left
 // behind can never encrypt, but the callback must not block the stack (see the
@@ -516,6 +531,10 @@ static void btCloseLink(void) {
   s_secAskAt = 0;  // the link it belonged to is gone
   s_closeAfterBondDrop = false;  // and so is the link that verdict was about
   s_ntfTry = 0;    // the refusals were about that link, not the next one
+  s_mtu = 23;      // the negotiated value belonged to that link too
+  s_advPending = false;
+  s_advRetryAt = 0;
+  s_advRearmAt = 0;
   memset(s_peerAddr, 0, sizeof(s_peerAddr));
   // Anything half-received belongs to the link that just died.
   s_rxOpen = false;
@@ -533,6 +552,9 @@ class BtServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
     s_connected = true;
     s_advertising = false;
+    s_advPending = false;
+    s_advRetryAt = 0;
+    s_advRearmAt = 0;
     s_rpcNotifyLogged = 0;
     s_linkUpMs = (uint32_t)millis();
     // A fresh link gets a fresh opinion. Without the timestamp reset the very
@@ -570,6 +592,41 @@ class BtServerCallbacks : public BLEServerCallbacks {
               (unsigned)param->disconnect.reason, (unsigned)BT_PAIR_DELAY_MS);
   }
 };
+
+// The controller's verdict on every advertising start, called after the BLE
+// library's own handler (which already retries one failed start internally).
+// This is what makes `bt=1` a statement about the air instead of about our
+// intent, and what lets btTask tell "advertising" from "asked to advertise".
+static void btGapObserver(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+  if (event != ESP_GAP_BLE_ADV_START_COMPLETE_EVT) return;
+  const uint8_t status = param->adv_start_cmpl.status;
+  if (status == ESP_BT_STATUS_SUCCESS) {
+    s_advPending = false;
+    s_advRetryAt = 0;
+    s_advConfirmedMs = millis();
+    s_advertising = true;
+    logPrintf("BT: advertising confirmed by the controller\n");
+  } else {
+    s_advPending = false;
+    s_advertising = false;
+    s_advRetryAt = millis() + BT_ADV_RETRY_MS;
+    logPrintf("BT: advertising start failed (status %u), retrying in %u ms\n",
+              (unsigned)status, (unsigned)BT_ADV_RETRY_MS);
+  }
+}
+
+// Every start in this file goes through here, so none can set s_advertising
+// from the request again. `why` is for the log, not for state.
+static void btRequestAdvertising(const char *why) {
+  s_advPending = true;
+  s_advStartMs = millis();
+  const bool rc = BLEDevice::getAdvertising()->start();
+  logPrintf("BT: advertising start requested (%s), rc=%d\n", why, rc ? 1 : 0);
+  if (!rc) {
+    s_advPending = false;
+    s_advRetryAt = s_advStartMs + BT_ADV_RETRY_MS;
+  }
+}
 
 // ----------------------------------------------------------------------------
 // Telemetry
@@ -683,15 +740,46 @@ static void btTask(void *pvParameters) {
   unsigned long lastLinkLog = 0;
   for (;;) {
     const unsigned long now = millis();
+    const uint32_t now32 = (uint32_t)now;
 
     // Pairing resumes on a delay, never from the GAP callback (blocking there
     // stalls the whole stack). The unit is uncontactable while this is pending.
     if (!s_connected && s_advResumeAt && now >= s_advResumeAt) {
       s_advResumeAt = 0;
-      BLEDevice::getAdvertising()->start();
-      s_advertising = true;
-      logPrintf("BT: pairing mode on, %u ms after the link dropped\n",
-                (unsigned)BT_PAIR_DELAY_MS);
+      btRequestAdvertising("pairing after drop");
+    }
+
+    // A start request that never reports back is not advertising. Ask again;
+    // the library's own retry only covers a failed ADV_START_COMPLETE, not an
+    // event the controller never sent.
+    if (!s_connected && s_advPending &&
+        (uint32_t)(now32 - s_advStartMs) > BT_ADV_CONFIRM_MS) {
+      s_advPending = false;
+      s_advRetryAt = now32 + BT_ADV_RETRY_MS;
+      logPrintf("BT: advertising not confirmed in %u ms, retrying\n",
+                (unsigned)BT_ADV_CONFIRM_MS);
+    }
+    if (!s_connected && s_advRetryAt &&
+        (int32_t)(now32 - s_advRetryAt) >= 0) {
+      s_advRetryAt = 0;
+      btRequestAdvertising("retry");
+    }
+
+    // A confirmed advertiser can still go stale: client-terminated disconnects
+    // (reason 0x13) are where this stack has answered "advertising" while no
+    // scanner could find the unit. Stop it cleanly and re-ask on the next pass.
+    if (!s_connected && s_advertising &&
+        (uint32_t)(now32 - s_advConfirmedMs) > BT_ADV_REARM_MS) {
+      BLEDevice::getAdvertising()->stop();
+      s_advertising = false;
+      s_advRearmAt = now32 + 250;
+      logPrintf("BT: advertising on air %lu s with no client, re-arming\n",
+                (unsigned long)(BT_ADV_REARM_MS / 1000UL));
+    }
+    if (!s_connected && s_advRearmAt &&
+        (int32_t)(now32 - s_advRearmAt) >= 0) {
+      s_advRearmAt = 0;
+      btRequestAdvertising("re-arm");
     }
 
     // The other half of the grace period (see BT_PAIR_GRACE_MS): if the peer
@@ -916,6 +1004,9 @@ void btInit() {
   snprintf(s_adName, sizeof(s_adName), "%s", name);
 
   BLEDevice::init(name);
+  // Observe the advertiser's own GAP events: btGapObserver turns a start request
+  // into an on-air confirmation (or a logged failure) for btTask to retry.
+  BLEDevice::setCustomGapHandler(btGapObserver);
   BLEDevice::setMTU(517);
   BLEDevice::setSecurityCallbacks(new BtSecurityCallbacks());
 
@@ -978,8 +1069,7 @@ void btInit() {
   }
   adv->setScanResponse(true);
   adv->setMinPreferred(0x06);  // Android's connection interval hint
-  adv->start();
-  s_advertising = true;
+  btRequestAdvertising("boot");
 
   // 8 KB, not the 4 KB this task started with: the RPC handlers parse JSON on
   // this stack (bt_rpc.cpp), and Phase 0b measured 3,336 B free with the pump
