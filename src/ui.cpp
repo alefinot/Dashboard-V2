@@ -265,6 +265,9 @@ void processMemSaverRestore() {
             isVLW120FontReady() ? 1 : 0);
 }
 
+// Any caller that caches the grid this measures must clear its cached count on
+// layoutReset (see updateBigDisplay): the digit counts can change from the app,
+// and a grid measured for the old width places - or truncates - the new value.
 static void measureDs15Cells(int *cells, int &totalW, int count, int decimalPos) {
   constexpr int G = 1;
   // Second line of defence against a config value that reached us unclamped:
@@ -1542,6 +1545,7 @@ if (!vlw120Ready) {
     }
     static int instCells[MAX_CELLS] = {0};
     static int instCellW = 0, instCellsCount = 0;
+    if (layoutReset) instCellsCount = 0;
     if (instCellsCount == 0) {
       instCellsCount = clampCells(INST_INT_DIGITS + 1 + INST_DEC_DIGITS);
       measureDs15Cells(instCells, instCellW, instCellsCount, INST_INT_DIGITS);
@@ -1662,6 +1666,7 @@ if (!vlw120Ready) {
     }
     static int avgCells[MAX_CELLS] = {0};
     static int avgCellW = 0, avgCellsCount = 0;
+    if (layoutReset) avgCellsCount = 0;
     if (avgCellsCount == 0) {
       avgCellsCount = clampCells(AVG_INT_DIGITS + 1 + AVG_DEC_DIGITS);
       measureDs15Cells(avgCells, avgCellW, avgCellsCount, AVG_INT_DIGITS);
@@ -1779,6 +1784,7 @@ if (!vlw120Ready) {
     }
     static int avgSpdCells[MAX_CELLS] = {0};
     static int avgSpdCellW = 0, avgSpdCellsCount = 0;
+    if (layoutReset) avgSpdCellsCount = 0;
     if (avgSpdCellsCount == 0) {
       avgSpdCellsCount = clampCells(AVG_SPEED_INT_DIGITS + (AVG_SPEED_DEC_DIGITS > 0 ? 1 + AVG_SPEED_DEC_DIGITS : 0));
       measureDs15Cells(avgSpdCells, avgSpdCellW, avgSpdCellsCount, AVG_SPEED_DEC_DIGITS > 0 ? AVG_SPEED_INT_DIGITS : -1);
@@ -1927,6 +1933,7 @@ if (!vlw120Ready) {
     }
     static int maxSpdCells[MAX_CELLS] = {0};
     static int maxSpdCellW = 0, maxSpdCellsCount = 0;
+    if (layoutReset) maxSpdCellsCount = 0;
     if (maxSpdCellsCount == 0) {
       maxSpdCellsCount = clampCells(MAX_SPEED_INT_DIGITS + (MAX_SPEED_DEC_DIGITS > 0 ? 1 + MAX_SPEED_DEC_DIGITS : 0));
       measureDs15Cells(maxSpdCells, maxSpdCellW, maxSpdCellsCount, MAX_SPEED_DEC_DIGITS > 0 ? MAX_SPEED_INT_DIGITS : -1);
@@ -2061,6 +2068,7 @@ if (!vlw120Ready) {
     }
     static int fuelCells[MAX_CELLS] = {0};
     static int fuelCellW = 0, fuelCellsCount = 0;
+    if (layoutReset) fuelCellsCount = 0;
     if (fuelCellsCount == 0) {
       fuelCellsCount = clampCells(FUEL_INT_DIGITS + 1 + FUEL_DEC_DIGITS);
       measureDs15Cells(fuelCells, fuelCellW, fuelCellsCount, FUEL_INT_DIGITS);
@@ -2227,6 +2235,7 @@ if (!vlw120Ready) {
     }
     static int odoCells[MAX_CELLS] = {0};
     static int odoCellW = 0, odoCellsCount = 0;
+    if (layoutReset) odoCellsCount = 0;
     if (odoCellsCount == 0) {
       odoCellsCount = clampCells(ODO_INT_DIGITS + 1 + ODO_DEC_DIGITS);
       measureDs15Cells(odoCells, odoCellW, odoCellsCount, ODO_INT_DIGITS);
