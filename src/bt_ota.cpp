@@ -438,9 +438,12 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_openedMs = otaQuietLastByteMs;
   s_reason[0] = 0;
   s_detail[0] = 0;
-  s_active = true;
   s_strayBytes = 0;
-  // Drop anything a previous install left in the ring.
+  // Drop anything a previous install left in the ring BEFORE publishing
+  // s_active. btOtaFeed() runs on the Bluedroid callback task and treats a
+  // frame as payload the moment that flag is true; publishing it first lets a
+  // late chunk from the previous session land in the ring only to be wiped by
+  // this reset, and the write-without-response link can never tell the phone.
   s_ringHead = 0;
   s_ringTail = 0;
   s_overShape = false;
@@ -455,6 +458,7 @@ bool btOtaBegin(uint32_t size, uint32_t crc32, uint32_t *off, uint32_t *chunk,
   s_lastArriveMs = 0;
   s_arriveGapMaxMs = 0;
   s_ringsOver = false;
+  s_active = true;  // last: from here on btOtaFeed() may write into the ring
 
   // The ACK window for this session, capped at half the usable handoff ring for
   // the chunk size this link negotiated. This is not the phone's pacing ceiling
